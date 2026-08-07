@@ -67,31 +67,40 @@ function loadOrGeneratePairingSecrets() {
   return secrets;
 }
 
-async function telegramApi(botToken, method, body = {}, timeoutMs = 30000) {
+async function telegramApi(botToken, method, body = {}, timeoutMs = 30000, retries = 3) {
   const url = `https://api.telegram.org/bot${botToken}/${method}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Telegram API HTTP ${response.status}: ${text}`);
+  let lastErr;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Telegram API HTTP ${response.status}: ${text}`);
+      }
+      const data = await response.json();
+      if (!data.ok) {
+        throw new Error(`Telegram API Error: ${data.description}`);
+      }
+      return data.result;
+    } catch (err) {
+      clearTimeout(timer);
+      lastErr = err;
+      if (attempt < retries && (err.name === "AbortError" || (err.message && err.message.includes("fetch failed")))) {
+        await new Promise((r) => setTimeout(r, 500 * attempt));
+        continue;
+      }
+      throw err;
     }
-    const data = await response.json();
-    if (!data.ok) {
-      throw new Error(`Telegram API Error: ${data.description}`);
-    }
-    return data.result;
-  } catch (err) {
-    clearTimeout(timer);
-    throw err;
   }
+  throw lastErr;
 }
 
 async function sendTelegramMessage(botToken, chatId, text) {
@@ -176,14 +185,14 @@ async function main() {
 
   // Clear any existing Webhook to ensure getUpdates Long Polling works
   try {
-    await telegramApi(botToken, "deleteWebhook", { drop_pending_updates: false }, 15000);
+    await telegramApi(botToken, "deleteWebhook", { drop_pending_updates: false }, 15000, 2);
   } catch (err) {
     console.warn("[Telegram Bridge] Webhook clear notice:", err.message);
   }
 
   let botInfo;
   try {
-    botInfo = await telegramApi(botToken, "getMe", {}, 15000);
+    botInfo = await telegramApi(botToken, "getMe", {}, 15000, 3);
     console.log(`[Telegram Bridge] Connected to Telegram Bot: @${botInfo.username} (${botInfo.first_name})`);
   } catch (err) {
     console.error("[Telegram Bridge] ERROR connecting to Telegram Bot:", err.message);
@@ -232,7 +241,8 @@ async function main() {
           offset,
           timeout: 15,
         },
-        30000
+        30000,
+        1
       );
 
       for (const update of updates) {
@@ -306,7 +316,9 @@ async function main() {
           console.log(`[Telegram Bridge] Processing /status check for Chat ID ${chatId}...`);
           (async () => {
             try {
-              await telegramApi(botToken, "sendChatAction", { chat_id: chatId, action: "typing" });
+              try {
+                await telegramApi(botToken, "sendChatAction", { chat_id: chatId, action: "typing" });
+              } catch (_) {}
               const statusOutput = await runAntigravityPrompt("ha-config-check 결과를 확인하고 Home Assistant 시스템 상태를 간략히 요약해줘.");
               await sendTelegramMessage(botToken, chatId, statusOutput);
             } catch (err) {
@@ -328,13 +340,17 @@ async function main() {
         console.log(`[Telegram Bridge] Processing AI prompt for Chat ID ${chatId}: "${text}"`);
         (async () => {
           try {
-            await telegramApi(botToken, "sendChatAction", { chat_id: chatId, action: "typing" });
+            try {
+              await telegramApi(botToken, "sendChatAction", { chat_id: chatId, action: "typing" });
+            } catch (_) {}
             const aiResponse = await runAntigravityPrompt(text);
             console.log(`[Telegram Bridge] AI response generated (${aiResponse.length} chars), sending to Telegram...`);
             await sendTelegramMessage(botToken, chatId, aiResponse);
           } catch (err) {
-            console.error(`[Telegram Bridge] AI execution error:`, err.message);
-            await sendTelegramMessage(botToken, chatId, `⚠️ 처리 중 오류가 발생했습니다: ${err.message}`);
+            console.error(`[Telegram Bridge] AI execution error:`, err.stack || err.message);
+            try {
+              await sendTelegramMessage(botToken, chatId, `⚠️ 처리 중 오류가 발생했습니다: ${err.message}`);
+            } catch (_) {}
           }
         })();
       }
