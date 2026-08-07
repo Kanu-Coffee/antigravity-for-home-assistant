@@ -1,6 +1,6 @@
 {
   "name": "antigravity-ha-playwright",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "private": true,
   "dependencies": {
     "@playwright/mcp": "0.0.78",

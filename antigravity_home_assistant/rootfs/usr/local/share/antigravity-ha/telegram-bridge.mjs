@@ -1,7 +1,10 @@
-import { spawn } from "node:child_process";
+import { exec, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { promisify } from "node:util";
+
+const execAsync = promisify(exec);
 
 const OPTIONS_PATH = "/data/options.json";
 const DATA_DIR = "/data/antigravity";
@@ -105,6 +108,9 @@ async function telegramApi(botToken, method, body = {}, timeoutMs = 30000, retri
 
 async function sendTelegramMessage(botToken, chatId, text) {
   const maxLen = 4000;
+  if (!text || !text.trim()) {
+    text = "*(답변 없음)*";
+  }
   if (text.length <= maxLen) {
     await telegramApi(botToken, "sendMessage", {
       chat_id: chatId,
@@ -130,41 +136,71 @@ function stripAnsiCodes(text) {
 }
 
 async function runAntigravityPrompt(promptText) {
-  return new Promise((resolve) => {
-    const safePrompt = promptText.replace(/'/g, "'\\''");
-    // Run via pseudo-TTY using script command to satisfy bubbletea TTY requirement
-    const child = spawn(
-      "script",
-      ["-q", "-c", `antigravity --dangerously-skip-permissions -p '${safePrompt}'`, "/dev/null"],
-      {
-        cwd: "/config",
-        env: { ...process.env, HOME: "/data/home" },
+  const options = loadOptions();
+  const sessionName = (options.tmux_session_name || "antigravity-ha").trim();
+  const safePrompt = promptText.replace(/"/g, '\\"').replace(/\$/g, "\\$");
+
+  // Method A: Check if interactive tmux session is active
+  try {
+    const { stdout: hasSession } = await execAsync(`tmux has-session -t ${sessionName} 2>/dev/null && echo "YES" || echo "NO"`);
+    if (hasSession.trim() === "YES") {
+      console.log(`[Telegram Bridge] Routing prompt into active tmux session '${sessionName}'...`);
+      const { stdout: beforePane } = await execAsync(`tmux capture-pane -p -t ${sessionName} -S -200 2>/dev/null || true`);
+      const beforeLen = beforePane.trim().length;
+
+      // Send prompt to running Antigravity CLI in tmux
+      await execAsync(`tmux send-keys -t ${sessionName} -l "${safePrompt}"`);
+      await execAsync(`tmux send-keys -t ${sessionName} Enter`);
+
+      // Wait up to 60s for new output in tmux
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const { stdout: currentPane } = await execAsync(`tmux capture-pane -p -t ${sessionName} -S -200 2>/dev/null || true`);
+        const cleanCurrent = stripAnsiCodes(currentPane);
+        if (cleanCurrent.length > beforeLen + 10) {
+          // If response looks finished (contains Antigravity prompt or idle)
+          const newText = cleanCurrent.slice(Math.max(0, cleanCurrent.lastIndexOf(promptText) + promptText.length)).trim();
+          if (newText.length > 5 && (i >= 5 || newText.includes("\n") || cleanCurrent.includes("antigravity>"))) {
+            return newText;
+          }
+        }
       }
-    );
+    }
+  } catch (err) {
+    console.warn(`[Telegram Bridge] Tmux session check note:`, err.message);
+  }
 
-    let stdout = "";
-    let stderr = "";
+  // Method B: Dedicated detached tmux PTY session for non-interactive prompt execution
+  const tempSession = `agy-tg-${randomBytes(3).toString("hex")}`;
+  const outPath = `/tmp/${tempSession}.out`;
 
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString("utf8");
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
-    });
+  try {
+    console.log(`[Telegram Bridge] Executing prompt in dedicated PTY session '${tempSession}'...`);
+    const cmd = `antigravity --dangerously-skip-permissions -p "${safePrompt}" > ${outPath} 2>&1`;
+    await execAsync(`tmux new-session -d -s ${tempSession} -c /config "bash -c '${cmd.replace(/'/g, "'\\''")}'"`);
 
-    child.on("close", (code) => {
-      const combinedOutput = stripAnsiCodes(stdout || stderr);
-      if (combinedOutput) {
-        resolve(combinedOutput);
-      } else {
-        resolve(`[Antigravity completed with code ${code}]`);
+    // Poll until tmux session terminates (command finishes)
+    for (let i = 0; i < 90; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const { stdout: check } = await execAsync(`tmux has-session -t ${tempSession} 2>/dev/null && echo "RUNNING" || echo "DONE"`);
+      if (check.trim() === "DONE") {
+        break;
       }
-    });
+    }
 
-    child.on("error", (err) => {
-      resolve(`[Failed to launch Antigravity: ${err.message}]`);
-    });
-  });
+    if (existsSync(outPath)) {
+      const rawOutput = readFileSync(outPath, "utf8");
+      try { unlinkSync(outPath); } catch (_) {}
+      const clean = stripAnsiCodes(rawOutput);
+      if (clean) return clean;
+    }
+  } catch (err) {
+    console.error(`[Telegram Bridge] Execution error:`, err.message);
+    try { unlinkSync(outPath); } catch (_) {}
+    return `[Antigravity Execution Error: ${err.message}]`;
+  }
+
+  return "Antigravity AI가 답변을 완료했습니다.";
 }
 
 async function main() {
