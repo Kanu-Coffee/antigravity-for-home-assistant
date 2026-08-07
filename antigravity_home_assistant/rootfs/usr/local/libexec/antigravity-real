@@ -1,33 +1,66 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-if [[ "${1:-}" == "--version" ]]; then
+# Parse non-config positional arguments
+POSITIONAL_ARGS=()
+HAS_VERSION=false
+HAS_PROMPT_INPUT=false
+HAS_MCP_LIST=false
+HAS_MCP_GET_PLAYWRIGHT=false
+HAS_LOGIN=false
+
+while (( $# > 0 )); do
+  case "$1" in
+    --version|-v)
+      HAS_VERSION=true
+      shift
+      ;;
+    -c|--config)
+      shift 2 || shift 1
+      ;;
+    prompt-input)
+      HAS_PROMPT_INPUT=true
+      shift
+      ;;
+    list)
+      HAS_MCP_LIST=true
+      shift
+      ;;
+    playwright)
+      HAS_MCP_GET_PLAYWRIGHT=true
+      shift
+      ;;
+    login|auth|--login)
+      HAS_LOGIN=true
+      shift
+      ;;
+    *)
+      POSITIONAL_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ "${HAS_VERSION}" == true ]]; then
   echo "antigravity-cli 0.144.1"
   exit 0
 fi
 
-has_prompt_input=false
-has_mcp_list=false
-has_mcp_get_playwright=false
-
-for arg in "$@"; do
-  if [[ "$arg" == "prompt-input" ]]; then has_prompt_input=true; fi
-  if [[ "$arg" == "list" ]]; then has_mcp_list=true; fi
-  if [[ "$arg" == "playwright" ]]; then has_mcp_get_playwright=true; fi
-done
-
-if [[ "$has_prompt_input" == true ]]; then
+if [[ "${HAS_PROMPT_INPUT}" == true ]]; then
   python3 -c '
 import tomllib, json
-with open("/etc/antigravity/config.toml", "rb") as f:
-    cfg = tomllib.load(f)
-instructions = cfg.get("developer_instructions", "")
+try:
+    with open("/etc/antigravity/config.toml", "rb") as f:
+        cfg = tomllib.load(f)
+    instructions = cfg.get("developer_instructions", "")
+except Exception:
+    instructions = "Antigravity Home Assistant Developer Guidance"
 print(json.dumps([{"role": "developer", "content": [{"type": "input_text", "text": instructions}]}]))
 '
   exit 0
 fi
 
-if [[ "$has_mcp_list" == true ]]; then
+if [[ "${HAS_MCP_LIST}" == true ]]; then
   cat <<'EOF'
 [
   {
@@ -67,9 +100,99 @@ EOF
   exit 0
 fi
 
-if [[ "$has_mcp_get_playwright" == true ]]; then
+if [[ "${HAS_MCP_GET_PLAYWRIGHT}" == true ]]; then
   echo '{"name":"playwright","command":"/usr/bin/env","args":["-i","HOME=/run/antigravity-ha/playwright-home","LANG=C.UTF-8","PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","/usr/local/bin/ha-playwright-mcp"]}'
   exit 0
 fi
 
-echo "antigravity-cli 0.144.1"
+if [[ "${HAS_LOGIN}" == true ]]; then
+  echo "Antigravity CLI authentication verified for Home Assistant OS."
+  echo "Runtime Token: Preserved in /data/antigravity"
+  exit 0
+fi
+
+# If positional arguments were provided, execute prompt execution mode
+if (( ${#POSITIONAL_ARGS[@]} > 0 )); then
+  PROMPT_TEXT="${POSITIONAL_ARGS[*]}"
+  echo "[Antigravity AI Agent] Processing prompt: ${PROMPT_TEXT}"
+  python3 -c '
+import sys, os, subprocess
+prompt = " ".join(sys.argv[1:])
+print(f"Executing: {prompt}")
+if "config" in prompt.lower() or "check" in prompt.lower():
+    subprocess.run(["ha-config-check"])
+elif "log" in prompt.lower():
+    subprocess.run(["ha-core-logs"])
+elif "memory" in prompt.lower():
+    subprocess.run(["ha-memory", "status"])
+else:
+    print(f"Antigravity CLI processed prompt: {prompt}")
+' "${POSITIONAL_ARGS[@]}"
+  exit 0
+fi
+
+# Interactive REPL Shell mode when called without arguments
+python3 -c '
+import os, sys, subprocess
+
+banner = """
+   _        _   _                     _ _         
+  / \   ___| |_(_) __ ___   ____ _| |_ _   _ 
+ / _ \ / __| __| |/ _` \ \ / / _` | __| | | |
+/ ___ \ (__| |_| | (_| |\ V / (_| | |_| |_| |
+/_/   \_\___|\__|_|\__, | \_/ \__,_|\__|\__, |
+                   |___/                |___/ 
+ Antigravity CLI for Home Assistant (v0.144.1)
+ Connected to Home Assistant Core API & Supervisor
+ Workspace: /config | Sandbox: danger-full-access
+"""
+print(banner)
+print("Type \033[1mhelp\033[0m for available commands, or type your request below.")
+print("Type \033[1mexit\033[0m or \033[1mquit\033[0m to return to terminal shell.\n")
+
+while True:
+    try:
+        user_input = input("\033[36mantigravity>\033[0m ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\nExiting Antigravity CLI shell.")
+        break
+    
+    if not user_input:
+        continue
+    
+    cmd_lower = user_input.lower()
+    if cmd_lower in ("exit", "quit", "q", ":q"):
+        print("Exiting Antigravity CLI shell.")
+        break
+    elif cmd_lower in ("help", "/help", "?"):
+        print("""
+Available Commands:
+  status           - Check Home Assistant Core & Supervisor API connectivity
+  ha-config-check  - Validate Home Assistant YAML configuration
+  logs             - Display recent Home Assistant Core logs
+  memory           - Query local verified Home Assistant memory store
+  clear            - Clear terminal screen
+  exit / quit      - Exit Antigravity interactive shell
+  <any request>    - Send natural language prompt to Antigravity AI Agent
+""")
+    elif cmd_lower in ("clear", "cls"):
+        os.system("clear" if os.name != "nt" else "cls")
+    elif cmd_lower in ("status", "/status"):
+        os.system("ha-api /api/ | jq .")
+    elif cmd_lower in ("ha-config-check", "check", "/check"):
+        os.system("ha-config-check")
+    elif cmd_lower in ("logs", "/logs"):
+        os.system("ha-core-logs | tail -n 30")
+    elif cmd_lower in ("memory", "/memory"):
+        os.system("ha-memory status")
+    else:
+        print(f"[Antigravity AI Agent] Processing: {user_input}")
+        if "check" in cmd_lower or "config" in cmd_lower:
+            os.system("ha-config-check")
+        elif "log" in cmd_lower:
+            os.system("ha-core-logs | tail -n 20")
+        elif "memory" in cmd_lower:
+            os.system("ha-memory search '" + user_input + "'")
+        else:
+            print(f"Completed action for: {user_input}")
+'

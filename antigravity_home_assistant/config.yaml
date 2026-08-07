@@ -1,6 +1,6 @@
 ---
 name: Antigravity for Home Assistant
-version: "0.7.1"
+version: "0.7.2"
 slug: antigravity_home_assistant
 description: Antigravity CLI with verified feedback, browser, terminal, and SSH for Home Assistant
 url: https://github.com/Kanu-Coffee/antigravity-for-home-assistant
