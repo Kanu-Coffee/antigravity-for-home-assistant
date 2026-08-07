@@ -179,6 +179,45 @@ if [[ -e "${ANTIGRAVITY_DATA}/auth.json" ]]; then
   chmod 0600 "${ANTIGRAVITY_DATA}/auth.json"
 fi
 
+# Provision Antigravity CLI global config and MCP server definitions
+mkdir -p /data/home/.gemini/config /root/.gemini/config
+if [[ -f /etc/antigravity/config.toml ]]; then
+  cp -f /etc/antigravity/config.toml /data/home/.gemini/config/config.toml
+  cp -f /etc/antigravity/config.toml /root/.gemini/config/config.toml
+  chmod 0600 /data/home/.gemini/config/config.toml /root/.gemini/config/config.toml
+fi
+
+if [[ -f /data/antigravity/AGENTS.md ]]; then
+  cp -f /data/antigravity/AGENTS.md /data/home/.gemini/config/AGENTS.md
+  cp -f /data/antigravity/AGENTS.md /root/.gemini/config/AGENTS.md
+  chmod 0644 /data/home/.gemini/config/AGENTS.md /root/.gemini/config/AGENTS.md
+fi
+
+cat <<'EOF' > /data/home/.gemini/mcp_config.json
+{
+  "mcpServers": {
+    "ha_memory": {
+      "command": "/usr/bin/env",
+      "args": ["-i", "HOME=/data/home", "LANG=C.UTF-8", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "/usr/local/bin/ha-memory-mcp"],
+      "cwd": "/config"
+    },
+    "playwright": {
+      "command": "/usr/bin/env",
+      "args": ["-i", "HOME=/run/antigravity-ha/playwright-home", "LANG=C.UTF-8", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "/usr/local/bin/ha-playwright-mcp"],
+      "cwd": "/config"
+    }
+  }
+}
+EOF
+cp -f /data/home/.gemini/mcp_config.json /root/.gemini/mcp_config.json
+chmod 0600 /data/home/.gemini/mcp_config.json /root/.gemini/mcp_config.json
+
+if [[ ! -f /config/AGENTS.md && -f /data/antigravity/AGENTS.md ]]; then
+  cp /data/antigravity/AGENTS.md /config/AGENTS.md
+  chmod 0644 /config/AGENTS.md
+  bashio::log.info 'Provisioned Home Assistant AGENTS.md operating guidance in /config'
+fi
+
 runtime_tmp=$(mktemp "${RUNTIME_DIR}/.runtime.env.XXXXXX")
 {
   printf 'export HOME=%q\n' "${DATA_HOME}"

@@ -18,6 +18,17 @@ if antigravity_ha_config_validate; then
   unset _antigravity_token
 fi
 
+# Ensure user .gemini configuration directory, config.toml, and AGENTS.md exist
+if [[ ! -d "${HOME:-/data/home}/.gemini/config" ]]; then
+  mkdir -p "${HOME:-/data/home}/.gemini/config"
+fi
+if [[ ! -f "${HOME:-/data/home}/.gemini/config/config.toml" && -f /etc/antigravity/config.toml ]]; then
+  cp -f /etc/antigravity/config.toml "${HOME:-/data/home}/.gemini/config/config.toml" 2>/dev/null || true
+fi
+if [[ ! -f "${HOME:-/data/home}/.gemini/config/AGENTS.md" && -f /data/antigravity/AGENTS.md ]]; then
+  cp -f /data/antigravity/AGENTS.md "${HOME:-/data/home}/.gemini/config/AGENTS.md" 2>/dev/null || true
+fi
+
 approval_policy=on-request
 sandbox_mode=danger-full-access
 browser_approval_policy=safe
