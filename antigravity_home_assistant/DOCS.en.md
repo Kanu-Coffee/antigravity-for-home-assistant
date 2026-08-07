@@ -30,8 +30,29 @@ The app is currently `stage: experimental` and `boot: manual`. aarch64 devices a
 - Public-key-only SSH for direct ChatGPT mobile Remote access to the bundled antigravity environment
 - Playwright tools that inspect dashboards and web interfaces in real Headless Chromium
 - This project's own `ha_memory` for verified HA structure and durable information explicitly provided by the user
+- Telegram Bot Messenger integration to chat with Antigravity AI remotely from mobile or desktop
 
 The Web UI is a terminal built with `ttyd` and a shared `tmux` session, not a dedicated chat interface. Dashboard and automation creation are not separate wizards; antigravity performs the work by combining `/config`, APIs, and browser validation.
+
+## Telegram Bot Integration (Mobile Remote Control)
+
+Chat with Antigravity AI remotely from your phone or desktop via Telegram:
+
+### Step 1: Obtain a Telegram Bot Token (Takes 10 Seconds)
+1. In Telegram, search for **[@BotFather](https://t.me/botfather)** and start a chat (`/start`).
+2. Type `/newbot` and choose a display name and username (ending in `bot`).
+3. Copy the generated **HTTP API Token** (e.g. `123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ`).
+
+### Step 2: Configure Add-on Settings
+1. Open Home Assistant ➔ **Settings ➔ Add-ons ➔ Antigravity for Home Assistant**.
+2. Click the **Configuration** tab.
+3. Set `telegram_enabled` to **`true`**.
+4. Paste your token into `telegram_bot_token` ➔ **Save** and **Restart Add-on**.
+
+### Step 3: Pair Instantly via 3 Flexible Methods
+- **Method 1 (1-Click Deep Link, Recommended)**: Click the `🔗 https://t.me/YourBot?start=PAIR_xxxx` link printed in add-on logs to pair automatically in 1 second.
+- **Method 2 (6-Digit PIN Code)**: Send the 6-digit PIN (e.g. `702-215`) displayed in add-on logs as a message to your Telegram bot.
+- **Method 3 (Manual Chat ID Whitelist)**: Enter your numerical Telegram Chat ID in the `telegram_allowed_chat_ids` field in configuration.
 
 ## Installation
 
