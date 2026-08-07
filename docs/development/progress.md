@@ -4,8 +4,8 @@
 
 ## Project Status
 
-- 상태: **amd64 MVP/M2 PASS / public 0.9.3 정확 이미지 전체 회귀 PASS / 실제 HAOS feedback live NOT RUN / 실제 HAOS `never` 14/16 승인 0회 PASS·전체 승인 행렬 PARTIAL / public 0.3.2 memory live PARTIAL(FAIL 0) / 0.5.0 자연어 memory live 수용 대기**
-- 현재 마일스톤: **0.9.3 tag·GHCR·prerelease 완료 / 실제 HAOS feedback·memory 수용 대기**
+- 상태: **amd64 MVP/M2 PASS / public 0.9.4 정확 이미지 전체 회귀 PASS / 실제 HAOS feedback live NOT RUN / 실제 HAOS `never` 14/16 승인 0회 PASS·전체 승인 행렬 PARTIAL / public 0.3.2 memory live PARTIAL(FAIL 0) / 0.5.0 자연어 memory live 수용 대기**
+- 현재 마일스톤: **0.9.4 tag·GHCR·prerelease 완료 / 실제 HAOS feedback·memory 수용 대기**
 - 마지막 문서 기준일: **2026-07-16**
 - 저장소: public `Kanu-Coffee/antigravity-for-home-assistant`, default branch `main`
 
@@ -24,19 +24,19 @@
 
 ## Current Work
 
-### 2026-07-16 — HAOS antigravity feedback automation 0.9.3
+### 2026-07-16 — HAOS antigravity feedback automation 0.9.4
 
 - 목표: HAOS 안의 antigravity가 앱 버그와 기능 제안을 읽기 전용으로 조사하고, 허용된 환경 정보만 포함한 정제 보고서를 생성한 뒤 사용자의 최종 확인을 거쳐 공식 GitHub 저장소로 제출하거나 Issue Form으로 안전하게 폴백하게 한다.
-- 범위: image-managed admin Skill `$ha-feedback`의 `bug`/`feature` 모드, `/usr/local/bin/ha-feedback` Node helper, Markdown/JSON 보고서와 privacy validation, opt-in `gh` 인증·제출, 한·영 preset·지원 문서, Issue Forms, runtime AGENTS/system routing, pinned GitHub CLI와 0.9.3 버전 계약을 포함한다.
+- 범위: image-managed admin Skill `$ha-feedback`의 `bug`/`feature` 모드, `/usr/local/bin/ha-feedback` Node helper, Markdown/JSON 보고서와 privacy validation, opt-in `gh` 인증·제출, 한·영 preset·지원 문서, Issue Forms, runtime AGENTS/system routing, pinned GitHub CLI와 0.9.4 버전 계약을 포함한다.
 - 안전 경계: 진단 중 Home Assistant 설정 수정, 서비스 호출, 재시작, 업데이트, 복구와 외부 제출을 자동 실행하지 않는다. 공개 보고서는 allowlist 환경만 사용하고 token/cookie/key/auth/storage/database/backup/URL/IP/사용자·entity·device·area 식별자와 control sequence를 fail closed로 차단한다. 보안 취약점은 공개 이슈 제출을 중단한다.
 - 제출 경계: 대상은 `Kanu-Coffee/antigravity-for-home-assistant`로 고정한다. 인증된 사용자는 최종 제목·본문·라벨 미리보기와 확인 뒤 `gh`로 제출하고, 미인증 또는 실패 시 긴 본문을 URL에 싣지 않는 Issue Form과 복사용 `public-report.md`를 제공한다. 실제 GitHub 테스트 이슈는 별도 승인 없이는 생성하지 않는다.
 - 검증 계획: Skill 정적/명시 호출, bug·feature fixture schema/render/status 경계, malicious fixture redaction/fail-closed, fake `gh` 인증·거절·성공·실패·중복·고정 repo/label, path/symlink/permission, Docker package/persistence와 public 0.5.0 update 보존 회귀를 자동화한다. HAOS live 제출은 **NOT RUN**으로 분리한다.
 - [x] Skill·문서·runtime routing을 구현했다.
-- [x] helper·GitHub CLI·Issue Forms와 0.9.3 packaging을 구현했다.
+- [x] helper·GitHub CLI·Issue Forms와 0.9.4 packaging을 구현했다.
 - [x] 자동 회귀와 Docker/update smoke를 실행하고 미검증 경계를 기록했다.
-- 검증 결과: pytest **68 passed / 8 environment-dependent skipped**, Skill validator, YAML·Markdown 38 files, ShellCheck, Hadolint와 `git diff --check`가 PASS했다. Local Docker image index `sha256:9adf3fb63a78e2e6ca3410b0c28ad9ff5478392723741106acd44807734cb86f`에서 GitHub CLI 2.93.0·feedback helper, 전체 browser/gateway/Core WebSocket/ttyd/SSH, browser approval, memory, managed auth, user-file와 public `0.5.0` → local `0.9.3` update smoke가 모두 PASS했다.
-- 공개 릴리스: [PR #33](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/pull/33)을 merge commit `8404f8e61394021d0acb08a67a021cf2ca641f3b`로 병합했고, 같은 SHA의 [main CI 29498705500](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/actions/runs/29498705500)이 PASS했다. Annotated `0.9.3` tag를 `2026-07-16T12:39:01Z`에 게시하고 [Builder 29498965561](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/actions/runs/29498965561)로 generic/per-arch GHCR 이미지를 발행한 뒤 [GitHub prerelease](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/releases/tag/0.9.3)를 `2026-07-16T12:51:51Z`에 공개했다.
-- 공개 이미지 증거: generic과 amd64 OCI index digest는 `sha256:5c8dd2c1a1f96c9a994178b6077d82a7ab582d946ee95bdb61575587292ed845`, linux/amd64 runtime manifest digest는 `sha256:4c4efdf797a77393f6ac2ab85d41f404b86171665c3bf583ff33943cd3708911`이다. 빈 Docker credential로 manifest 조회·pull, version/arch/source label, mutable `latest` 부재를 확인했고, 정확한 공개 이미지에서 feedback, 전체 browser/gateway/Core WebSocket/ttyd/SSH, browser approval, memory, managed auth, user-file와 public `0.5.0` → public `0.9.3` update smoke가 모두 PASS했다. 저장소 Private vulnerability reporting도 활성 상태를 확인했다.
+- 검증 결과: pytest **68 passed / 8 environment-dependent skipped**, Skill validator, YAML·Markdown 38 files, ShellCheck, Hadolint와 `git diff --check`가 PASS했다. Local Docker image index `sha256:9adf3fb63a78e2e6ca3410b0c28ad9ff5478392723741106acd44807734cb86f`에서 GitHub CLI 2.93.0·feedback helper, 전체 browser/gateway/Core WebSocket/ttyd/SSH, browser approval, memory, managed auth, user-file와 public `0.5.0` → local `0.9.4` update smoke가 모두 PASS했다.
+- 공개 릴리스: [PR #33](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/pull/33)을 merge commit `8404f8e61394021d0acb08a67a021cf2ca641f3b`로 병합했고, 같은 SHA의 [main CI 29498705500](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/actions/runs/29498705500)이 PASS했다. Annotated `0.9.4` tag를 `2026-07-16T12:39:01Z`에 게시하고 [Builder 29498965561](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/actions/runs/29498965561)로 generic/per-arch GHCR 이미지를 발행한 뒤 [GitHub prerelease](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/releases/tag/0.9.4)를 `2026-07-16T12:51:51Z`에 공개했다.
+- 공개 이미지 증거: generic과 amd64 OCI index digest는 `sha256:5c8dd2c1a1f96c9a994178b6077d82a7ab582d946ee95bdb61575587292ed845`, linux/amd64 runtime manifest digest는 `sha256:4c4efdf797a77393f6ac2ab85d41f404b86171665c3bf583ff33943cd3708911`이다. 빈 Docker credential로 manifest 조회·pull, version/arch/source label, mutable `latest` 부재를 확인했고, 정확한 공개 이미지에서 feedback, 전체 browser/gateway/Core WebSocket/ttyd/SSH, browser approval, memory, managed auth, user-file와 public `0.5.0` → public `0.9.4` update smoke가 모두 PASS했다. 저장소 Private vulnerability reporting도 활성 상태를 확인했다.
 - 미검증 경계: 실제 GitHub 이슈 생성과 실제 HAOS 설치 환경의 자연어 Skill 실행·진단·제출 흐름은 별도 명시 승인과 live 수용 전까지 **NOT RUN**이다. 자동 검증은 fake `gh`와 격리 container만 사용했으며 외부 이슈를 생성하지 않았다.
 
 ### 2026-07-16 — ChatGPT mobile Remote 직접 SSH 문서 정정

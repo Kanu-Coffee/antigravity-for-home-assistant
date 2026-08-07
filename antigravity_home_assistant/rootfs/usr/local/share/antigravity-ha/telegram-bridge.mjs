@@ -6,6 +6,7 @@ import { join } from "node:path";
 const OPTIONS_PATH = "/data/options.json";
 const DATA_DIR = "/data/antigravity";
 const AUTHORIZED_CHATS_PATH = join(DATA_DIR, "telegram_authorized_chats.json");
+const PAIR_INFO_DATA_PATH = join(DATA_DIR, "telegram_pair_info.json");
 const PAIR_INFO_PATH = "/run/antigravity-ha/telegram_pair_info.json";
 
 function loadOptions() {
@@ -41,13 +42,29 @@ function saveAuthorizedChats(authorizedSet) {
   }
 }
 
-function generatePinCode() {
-  const num = Math.floor(100000 + Math.random() * 900000);
-  return String(num);
-}
+function loadOrGeneratePairingSecrets() {
+  try {
+    if (existsSync(PAIR_INFO_DATA_PATH)) {
+      const saved = JSON.parse(readFileSync(PAIR_INFO_DATA_PATH, "utf8"));
+      if (saved.pair_token && saved.pin_code) {
+        return { pairToken: saved.pair_token, pinCode: saved.pin_code };
+      }
+    }
+  } catch (e) {
+    // Fallback to new generation
+  }
 
-function generatePairToken() {
-  return "PAIR_" + randomBytes(4).toString("hex");
+  const num = Math.floor(100000 + Math.random() * 900000);
+  const secrets = {
+    pairToken: "PAIR_" + randomBytes(4).toString("hex"),
+    pinCode: String(num),
+  };
+  try {
+    writeFileSync(PAIR_INFO_DATA_PATH, JSON.stringify({ pair_token: secrets.pairToken, pin_code: secrets.pinCode }, null, 2), "utf8");
+  } catch (e) {
+    // Ignore data write errors
+  }
+  return secrets;
 }
 
 async function telegramApi(botToken, method, body = {}, timeoutMs = 30000) {
@@ -87,7 +104,6 @@ async function sendTelegramMessage(botToken, chatId, text) {
     return;
   }
 
-  // Split long messages by paragraphs or length
   for (let i = 0; i < text.length; i += maxLen) {
     const chunk = text.slice(i, i + maxLen);
     await telegramApi(botToken, "sendMessage", {
@@ -148,6 +164,13 @@ async function main() {
   const staticAllowed = options.telegram_allowed_chat_ids || [];
   const authorizedChats = loadAuthorizedChats(staticAllowed);
 
+  // Clear any existing Webhook to ensure getUpdates Long Polling works
+  try {
+    await telegramApi(botToken, "deleteWebhook", { drop_pending_updates: false }, 15000);
+  } catch (err) {
+    console.warn("[Telegram Bridge] Webhook clear notice:", err.message);
+  }
+
   let botInfo;
   try {
     botInfo = await telegramApi(botToken, "getMe", {}, 15000);
@@ -157,8 +180,7 @@ async function main() {
     process.exit(1);
   }
 
-  const pairToken = generatePairToken();
-  const pinCode = generatePinCode();
+  const { pairToken, pinCode } = loadOrGeneratePairingSecrets();
   const deepLinkUrl = `https://t.me/${botInfo.username}?start=${pairToken}`;
 
   console.log("==========================================================");
@@ -211,10 +233,13 @@ async function main() {
         const text = update.message.text.trim();
         const isAuthorized = authorizedChats.has(chatId);
 
+        console.log(`[Telegram Bridge] Message from Chat ID ${chatId}: "${text}"`);
+
         // Method 1: 1-Click Deep Link token match (/start PAIR_xxxx)
-        if (text === `/start ${pairToken}` || text.startsWith(`/start ${pairToken}`)) {
+        if (text === `/start ${pairToken}` || text.includes(pairToken)) {
           authorizedChats.add(chatId);
           saveAuthorizedChats(authorizedChats);
+          console.log(`[Telegram Bridge] 🎉 Authorized new user Chat ID ${chatId} via Deep Link!`);
           await sendTelegramMessage(
             botToken,
             chatId,
@@ -225,9 +250,11 @@ async function main() {
 
         // Method 2: 6-Digit PIN Code match
         const cleanText = text.replace(/[^0-9]/g, "");
-        if (cleanText === pinCode || text === `/pair ${pinCode}`) {
+        const cleanPin = pinCode.replace(/[^0-9]/g, "");
+        if (cleanText === cleanPin || text.includes(pinCode) || text.includes(`${pinCode.slice(0, 3)}-${pinCode.slice(3)}`)) {
           authorizedChats.add(chatId);
           saveAuthorizedChats(authorizedChats);
+          console.log(`[Telegram Bridge] 🎉 Authorized new user Chat ID ${chatId} via PIN code!`);
           await sendTelegramMessage(
             botToken,
             chatId,
@@ -238,13 +265,14 @@ async function main() {
 
         // Method 3: Un-authorized user check
         if (!isAuthorized) {
+          console.log(`[Telegram Bridge] Unauthorized attempt from Chat ID ${chatId}`);
           await sendTelegramMessage(
             botToken,
             chatId,
             `🔒 Antigravity HA 인증이 필요합니다.\n\n` +
               `아래 3가지 방법 중 하나로 연동하실 수 있습니다:\n\n` +
               `1️⃣ 1-Click 딥링크 클릭:\n${deepLinkUrl}\n\n` +
-              `2️⃣ 핀 코드 입력:\n하단의 핀 번호를 이 차트에 입력하세요: ${pinCode.slice(0, 3)}-${pinCode.slice(3)}\n\n` +
+              `2️⃣ 핀 코드 입력:\n이 대화창에 핀 번호를 전송하세요: ${pinCode.slice(0, 3)}-${pinCode.slice(3)}\n\n` +
               `3️⃣ HA 애드온 설정에서 Chat ID 등록:\nChat ID: ${chatId}`
           );
           continue;
@@ -274,22 +302,24 @@ async function main() {
         if (text === "/unpair") {
           authorizedChats.delete(chatId);
           saveAuthorizedChats(authorizedChats);
+          console.log(`[Telegram Bridge] Unpaired Chat ID ${chatId}`);
           await sendTelegramMessage(botToken, chatId, "👋 Antigravity HA 연동이 해제되었습니다.");
           continue;
         }
 
-        // Process AI prompt
-        try {
-          await telegramApi(botToken, "sendChatAction", { chat_id: chatId, action: "typing" });
-          const aiResponse = await runAntigravityPrompt(text);
-          await sendTelegramMessage(botToken, chatId, aiResponse);
-        } catch (err) {
-          await sendTelegramMessage(botToken, chatId, `⚠️ 처리 중 오류가 발생했습니다: ${err.message}`);
-        }
+        // Process AI prompt asynchronously
+        (async () => {
+          try {
+            await telegramApi(botToken, "sendChatAction", { chat_id: chatId, action: "typing" });
+            const aiResponse = await runAntigravityPrompt(text);
+            await sendTelegramMessage(botToken, chatId, aiResponse);
+          } catch (err) {
+            await sendTelegramMessage(botToken, chatId, `⚠️ 처리 중 오류가 발생했습니다: ${err.message}`);
+          }
+        })();
       }
     } catch (err) {
       if (err.name === "AbortError" || (err.message && err.message.includes("fetch failed"))) {
-        // Quietly handle routine network idle/timeout during long-polling and retry after 1s
         await new Promise((r) => setTimeout(r, 1000));
       } else {
         console.error("[Telegram Bridge] Polling notice:", err.message);
