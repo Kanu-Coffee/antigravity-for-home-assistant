@@ -1,6 +1,6 @@
 # test_plan.md — 검증 전략
 
-> 기존 browser/AppArmor 실기 대상은 public `0.2.3`이고 `0.2.4`는 그 결과를 기록한 validation/evidence release다. 검증형 HA 메모리는 public `0.3.0` 자동 회귀를 통과했지만 실제 HAOS read-only 감사의 catalog refresh는 FAIL했다. Public `0.3.1` 수정·공개 이미지 자동 회귀도 PASS했지만 후속 실제 HAOS/Core `2026.7.2` 재시험에서 automation-related 30건 중 2건이 `unknown_error`를 반환해 catalog는 다시 FAIL했다. Public `0.3.2`의 자동·공개 이미지 검증은 PASS했고 후속 실제 HAOS 재시험은 동일 2/30 오류 격리와 핵심 memory 경로를 PASS했지만 runtime digest와 순간 LKG 관측 증거가 없어 최종 PARTIAL(FAIL 0)이다. Public `0.4.0` 승인 정책의 정확한 공개 이미지 자동 검증과 실제 HAOS `never` mode 14/16 도구·승인 0회는 PASS지만 전체 UI/AppArmor 행렬은 PARTIAL이다. `0.8.1` 검증형 App 피드백은 local privacy/fake-`gh`/container/update 회귀와 실제 HAOS·GitHub 외부 write를 분리하며 live issue creation은 별도 승인 전까지 **NOT RUN**이다.
+> 기존 browser/AppArmor 실기 대상은 public `0.2.3`이고 `0.2.4`는 그 결과를 기록한 validation/evidence release다. 검증형 HA 메모리는 public `0.3.0` 자동 회귀를 통과했지만 실제 HAOS read-only 감사의 catalog refresh는 FAIL했다. Public `0.3.1` 수정·공개 이미지 자동 회귀도 PASS했지만 후속 실제 HAOS/Core `2026.7.2` 재시험에서 automation-related 30건 중 2건이 `unknown_error`를 반환해 catalog는 다시 FAIL했다. Public `0.3.2`의 자동·공개 이미지 검증은 PASS했고 후속 실제 HAOS 재시험은 동일 2/30 오류 격리와 핵심 memory 경로를 PASS했지만 runtime digest와 순간 LKG 관측 증거가 없어 최종 PARTIAL(FAIL 0)이다. Public `0.4.0` 승인 정책의 정확한 공개 이미지 자동 검증과 실제 HAOS `never` mode 14/16 도구·승인 0회는 PASS지만 전체 UI/AppArmor 행렬은 PARTIAL이다. `0.9.0` 검증형 App 피드백은 local privacy/fake-`gh`/container/update 회귀와 실제 HAOS·GitHub 외부 write를 분리하며 live issue creation은 별도 승인 전까지 **NOT RUN**이다.
 
 ## 1. 테스트 계층
 
@@ -163,7 +163,7 @@ Supervisor가 없어도 검증 가능한 항목:
 | AT-060 | GitHub CLI pin·auth·환경 격리 | Dockerfile이 official `gh` `2.93.0` amd64 archive와 SHA-256 `02d1290eba130e0b896f3709ffff22e1c75a51475ddb70476a85abc6b5807af0`을 strict verify. Fake `gh` status/login/logout은 `GH_CONFIG_DIR=/data/github-cli`만 사용하고 backup plaintext-risk 거부/수락을 구분하며 `GH_TOKEN`, `GITHUB_TOKEN`, `SUPERVISOR_TOKEN`, `NODE_OPTIONS`, `BASH_ENV`, `ENV`를 child에서 제거 |
 | AT-061 | Candidate·preview·confirmation·duplicate | Fixed repository title search가 sanitized query로 최대 5개 candidate만 반환하고 hostile title을 report/prompt로 승격하지 않음. Candidate 검색 실패·malformed 결과는 token/create 없이 폴백. 무확인 submit은 preview-only이며 exact repo/title/label/body에 bind된 서로 다른 random token을 private runtime state에 저장. 10분 만료·single-use, 이전 turn/ambiguous confirmation, payload change, wrong/expired/used token, wrong repo/label/URL과 duplicate report/receipt를 거부하고 current-turn explicit confirmation만 허용. Confirmed submit 직전 remote exact report ID 검색도 unavailable이면 create 없이 fresh preview가 필요한 폴백을 반환 |
 | AT-062 | 직접 제출·Issue Form fallback | Fake success는 `Kanu-Coffee/antigravity-for-home-assistant`, `bug`/`enhancement`, `--body-file -`를 사용하고 검증한 exact Markdown이 stdin으로 전달되는지, fixed issue URL과 `0600` receipt를 검증. 같은 report/token의 concurrent submit은 exclusive claim으로 create 1회만 허용. `gh` nonzero, 예상 밖 URL 또는 receipt write 실패는 hidden `.submission.lock`을 보존해 direct retry를 차단하고, 미인증/검색 불가/실패는 자동 retry/token 요청 없이 report와 긴 body/secret 없는 짧은 Issue Form URL·exact copy path를 제공 |
-| AT-063 | Docker packaging·0.5.0 update 보존 | Image version `0.8.1`에 Skill/helper/`gh`가 지정 mode로 포함되고 Node syntax/help/fixture smoke 성공. Public `0.5.0` volume update에서 antigravity auth/config/AGENTS, SSH host key, browser identity, memory와 Home Assistant marker가 byte/fingerprint 수준으로 보존되며 `/data/github-cli`는 새 설치에 private 생성되고 기존 safe login state는 보존 |
+| AT-063 | Docker packaging·0.5.0 update 보존 | Image version `0.9.0`에 Skill/helper/`gh`가 지정 mode로 포함되고 Node syntax/help/fixture smoke 성공. Public `0.5.0` volume update에서 antigravity auth/config/AGENTS, SSH host key, browser identity, memory와 Home Assistant marker가 byte/fingerprint 수준으로 보존되며 `/data/github-cli`는 새 설치에 private 생성되고 기존 safe login state는 보존 |
 
 ## 3. HAOS 수동/E2E 시나리오
 
@@ -431,7 +431,7 @@ ha-api GET /states
 
 비민감 synthetic bug/feature만 사용하고 실제 Home Assistant entity/device/area/user ID, URL/IP, log, screenshot, credential을 보고서에 넣지 않는다.
 
-1. 기존 사용자 antigravity auth/config/AGENTS, SSH/browser identity, memory와 `/config` marker가 있는 public `0.5.0` 설치를 `0.8.1`으로 일반 update하고 모두 보존되는지 확인한다.
+1. 기존 사용자 antigravity auth/config/AGENTS, SSH/browser identity, memory와 `/config` marker가 있는 public `0.5.0` 설치를 `0.9.0`으로 일반 update하고 모두 보존되는지 확인한다.
 2. 새 antigravity session에서 `$ha-feedback bug <synthetic symptom>`과 자연어 feature 요청을 각각 실행해 image-managed Skill route, read-only 범위와 check status 설명을 확인한다.
 3. Report bundle의 directory `0700`, `report.json`/`public-report.md` `0600`, schema/render parity, allowlisted version/options와 정확한 `PASS`/`FAIL`/`NOT_TESTED`/`NOT_RUN` reason을 확인한다.
 4. 조사 전후 Home Assistant config/registry/dashboard/automation/device, App/project marker, service history와 process lifecycle을 비교해 mutation, service call, reload/restart/update/recovery/restore가 없음을 확인한다.

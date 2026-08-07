@@ -55,8 +55,8 @@ def test_antigravity_release_is_pinned_and_verified(addon_root: Path) -> None:
     version_match = re.search(r"^ARG antigravity_VERSION=([^\s]+)$", dockerfile, re.MULTILINE)
 
     assert version_match
-    assert version_match.group(1) == "0.144.1"
-    assert "antigravity.google/cli/install.sh" in dockerfile
+    assert version_match.group(1) == "1.1.11"
+    assert "antigravity-public/antigravity-cli" in dockerfile
     assert "antigravity-real" in dockerfile
     assert 'antigravity_version_output="$(antigravity --version' in dockerfile
     assert (addon_root / "rootfs/usr/local/bin/antigravity").is_file()

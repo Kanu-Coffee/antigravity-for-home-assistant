@@ -1,13 +1,14 @@
 # syntax=docker/dockerfile:1.7
-ARG BUILD_FROM=ghcr.io/home-assistant/base:3.24
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-debian:bookworm
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH=amd64
-ARG BUILD_VERSION=0.8.1
+ARG BUILD_VERSION=0.9.0
 ARG TARGETARCH
-ARG antigravity_VERSION=0.144.1
+ARG antigravity_VERSION=1.1.11
 ARG GH_VERSION=2.93.0
 ARG GH_SHA256=02d1290eba130e0b896f3709ffff22e1c75a51475ddb70476a85abc6b5807af0
+ARG TTYD_VERSION=1.7.7
 ARG PLAYWRIGHT_MCP_VERSION=0.0.78
 ARG WS_VERSION=8.18.3
 
@@ -15,51 +16,47 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 COPY playwright/package.json playwright/package-lock.json /usr/local/lib/antigravity-ha/playwright/
 
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y --no-install-recommends \
       bash \
       ca-certificates \
-      chromium-headless-shell \
+      chromium \
       coreutils \
       curl \
-      font-noto-cjk \
-      font-noto-emoji \
+      fonts-noto-cjk \
+      fonts-noto-color-emoji \
       git \
+      gnupg \
       jq \
       less \
       nano \
       nginx \
-      nodejs \
-      openssh \
+      openssh-server \
       ripgrep \
-      shadow \
-      sqlite \
+      sqlite3 \
       tmux \
-      ttyd \
       yamllint \
-      yq \
-    && apk add --no-cache --virtual .playwright-build npm \
-    && apk add --no-cache gcompat libstdc++ \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
     && resolved_arch="${TARGETARCH:-${BUILD_ARCH}}" \
     && if [[ "${resolved_arch}" != "amd64" ]]; then \
       echo "Unsupported architecture: ${resolved_arch}; amd64 supported" >&2; \
       exit 1; \
     fi \
+    && curl -fsSL --output /usr/local/bin/ttyd \
+      "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" \
+    && chmod 0755 /usr/local/bin/ttyd \
     && install -d -m 0755 /usr/local/libexec \
-    && ( \
-      npm install -g @google/gemini-cli \
-      && ln -sf "$(which gemini)" /usr/local/libexec/antigravity-real \
-    ) || ( \
-      curl --fail --show-error --silent --location \
-        --output /tmp/antigravity-install.sh \
-        "https://antigravity.google/cli/install.sh" \
-      && ANTIGRAVITY_INSTALL_DIR=/tmp/agy-install bash /tmp/antigravity-install.sh \
-      && install -m 0755 /tmp/agy-install/agy /usr/local/libexec/antigravity-real \
-      && rm -rf /tmp/antigravity-install.sh /tmp/agy-install \
-    ) || ( \
-      printf '#!/bin/bash\necho "antigravity-cli %s"\n' "${antigravity_VERSION}" > /usr/local/libexec/antigravity-real \
-    ) \
+    && curl -fsSL --output /tmp/antigravity.tar.gz \
+      "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.11-4956531888881664/linux-x64/cli_linux_x64.tar.gz" \
+    && tar -xzf /tmp/antigravity.tar.gz -C /tmp \
+    && install -m 0755 /tmp/antigravity /usr/local/libexec/antigravity-real \
+    && rm -rf /tmp/antigravity.tar.gz /tmp/antigravity \
     && chmod 0755 /usr/local/libexec/antigravity-real \
     && antigravity_version_output="$(/usr/local/libexec/antigravity-real --version)" \
+    && [[ "${antigravity_version_output}" == "${antigravity_VERSION}" ]] \
     && gh_archive="gh_${GH_VERSION}_linux_amd64.tar.gz" \
     && curl --fail --show-error --silent --location \
       --output "/tmp/${gh_archive}" \
@@ -79,9 +76,8 @@ RUN apk add --no-cache \
     && node -e "require('/usr/local/lib/antigravity-ha/playwright/node_modules/playwright-core')" \
     && node --input-type=module -e "const ws = await import('/usr/local/lib/antigravity-ha/playwright/node_modules/ws/wrapper.mjs'); if (typeof ws.default !== 'function') process.exit(1)" \
     && node -e "const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync(':memory:'); db.exec('CREATE VIRTUAL TABLE smoke USING fts5(value)'); db.close()" \
-    && chromium-headless-shell --version \
-    && rm -rf /tmp/npm-cache \
-    && apk del .playwright-build
+    && chromium --version \
+    && rm -rf /tmp/npm-cache
 
 COPY rootfs /
 
@@ -118,8 +114,8 @@ RUN printf '%s\n' "${BUILD_VERSION}" > /usr/local/share/antigravity-ha/app-versi
       /usr/local/share/antigravity-ha/app-version
 
 RUN install -d -m 0700 /data/home /data/antigravity /data/github-cli \
-    && antigravity_version_output="$(antigravity --version 2>&1 || true)" \
-    && [[ -n "${antigravity_version_output}" ]] \
+    && antigravity_version_output="$(antigravity --version)" \
+    && [[ "${antigravity_version_output}" == "${antigravity_VERSION}" ]] \
     && gh_version_output="$(gh --version | head -n 1)" \
     && [[ "${gh_version_output}" == "gh version ${GH_VERSION} "* ]] \
     && node --check /usr/local/share/antigravity-ha/ha-feedback.mjs \

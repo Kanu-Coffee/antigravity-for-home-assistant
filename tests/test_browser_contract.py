@@ -64,14 +64,14 @@ def test_playwright_dependency_is_locked_and_built_into_image(
         re.MULTILINE,
     )
 
-    assert "chromium-headless-shell" in dockerfile
+    assert "chromium" in dockerfile
     assert "nodejs" in dockerfile
-    assert "font-noto-cjk" in dockerfile
+    assert "fonts-noto-cjk" in dockerfile
     assert "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1" in dockerfile
     assert "npm ci --prefix /usr/local/lib/antigravity-ha/playwright" in dockerfile
     for npm_flag in ["--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"]:
         assert npm_flag in dockerfile
-    assert "chromium-headless-shell --version" in dockerfile
+    assert "chromium --version" in dockerfile
     assert "npx " not in dockerfile
 
 
