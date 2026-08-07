@@ -6,7 +6,7 @@
 
 This guide explains how Home Assistant OS users can install the app, use antigravity through the Web UI, SSH, or mobile Remote, and safely work on dashboards, automations, entities, and configuration errors.
 
-This guide applies to app version `0.7.0`.
+This guide applies to app version `0.7.1`.
 
 > [!WARNING]
 > This app can read and write all of `/config` and use the Home Assistant Core and Supervisor `manager` APIs. Allow only trusted administrators to use it, and review a backup and diff before making changes. Never port-forward TCP `2224` directly to the internet.
@@ -328,11 +328,11 @@ ha-memory conflicts --status open
 
 Do not delete the memory database when its state is `empty`, `degraded`, or `stale`. It may still be learning the initial structure or recovering from a temporary Core connection failure, and it preserves the last successful snapshot.
 
-This feature does not mean the model trains itself or operates your home without approval. Version `0.7.0` remains experimental, and the complete natural-language memory-to-recall flow has not yet been publicly validated on real HAOS hardware.
+This feature does not mean the model trains itself or operates your home without approval. Version `0.7.1` remains experimental, and the complete natural-language memory-to-recall flow has not yet been publicly validated on real HAOS hardware.
 
 ## App bug and feature reports
 
-Starting with `0.7.0`, the image-managed `$ha-feedback` Skill investigates app bugs and feature ideas in read-only mode and creates a sanitized report.
+Starting with `0.7.1`, the image-managed `$ha-feedback` Skill investigates app bugs and feature ideas in read-only mode and creates a sanitized report.
 
 ```text
 $ha-feedback bug <observed symptom>
@@ -521,7 +521,7 @@ Before uninstalling, decide how to handle any antigravity configuration and auth
 - It does not bundle or automatically install Bubble Card or other custom cards.
 - The Web UI is a terminal, not a dedicated chat interface.
 - Automation and dashboard results vary by environment and prompt and require human review.
-- Public validation of the complete `0.7.0` natural-language memory loop on real HAOS hardware is still incomplete.
+- Public validation of the complete `0.7.1` natural-language memory loop on real HAOS hardware is still incomplete.
 - Automated validation does not create a real GitHub issue without separate explicit approval.
 - Supervisor endpoints and OpenAI Remote availability can vary with Home Assistant/OpenAI versions and policies.
 

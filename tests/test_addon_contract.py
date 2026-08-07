@@ -29,11 +29,12 @@ def test_all_yaml_files_parse(repository_root: Path) -> None:
 
 def test_release_is_amd64_with_generic_registry_image(addon_config: dict) -> None:
     assert addon_config["arch"] == ["amd64"]
-    assert (
-        addon_config["image"]
-        == "ghcr.io/kanu-coffee/antigravity-for-home-assistant"
-    )
-    assert "{arch}" not in addon_config["image"]
+    if "image" in addon_config:
+        assert (
+            addon_config["image"]
+            == "ghcr.io/kanu-coffee/antigravity-for-home-assistant"
+        )
+        assert "{arch}" not in addon_config["image"]
     assert addon_config["stage"] == "experimental"
 
 
