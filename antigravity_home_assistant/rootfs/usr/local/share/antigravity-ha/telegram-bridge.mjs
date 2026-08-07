@@ -50,22 +50,31 @@ function generatePairToken() {
   return "PAIR_" + randomBytes(4).toString("hex");
 }
 
-async function telegramApi(botToken, method, body = {}) {
+async function telegramApi(botToken, method, body = {}, timeoutMs = 30000) {
   const url = `https://api.telegram.org/bot${botToken}/${method}`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Telegram API HTTP ${response.status}: ${text}`);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Telegram API HTTP ${response.status}: ${text}`);
+    }
+    const data = await response.json();
+    if (!data.ok) {
+      throw new Error(`Telegram API Error: ${data.description}`);
+    }
+    return data.result;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
   }
-  const data = await response.json();
-  if (!data.ok) {
-    throw new Error(`Telegram API Error: ${data.description}`);
-  }
-  return data.result;
 }
 
 async function sendTelegramMessage(botToken, chatId, text) {
@@ -141,7 +150,7 @@ async function main() {
 
   let botInfo;
   try {
-    botInfo = await telegramApi(botToken, "getMe");
+    botInfo = await telegramApi(botToken, "getMe", {}, 15000);
     console.log(`[Telegram Bridge] Connected to Telegram Bot: @${botInfo.username} (${botInfo.first_name})`);
   } catch (err) {
     console.error("[Telegram Bridge] ERROR connecting to Telegram Bot:", err.message);
@@ -184,10 +193,15 @@ async function main() {
 
   while (true) {
     try {
-      const updates = await telegramApi(botToken, "getUpdates", {
-        offset,
-        timeout: 30,
-      });
+      const updates = await telegramApi(
+        botToken,
+        "getUpdates",
+        {
+          offset,
+          timeout: 15,
+        },
+        30000
+      );
 
       for (const update of updates) {
         offset = update.update_id + 1;
@@ -274,8 +288,13 @@ async function main() {
         }
       }
     } catch (err) {
-      console.error("[Telegram Bridge] Long Polling error:", err.message);
-      await new Promise((r) => setTimeout(r, 5000));
+      if (err.name === "AbortError" || (err.message && err.message.includes("fetch failed"))) {
+        // Quietly handle routine network idle/timeout during long-polling and retry after 1s
+        await new Promise((r) => setTimeout(r, 1000));
+      } else {
+        console.error("[Telegram Bridge] Polling notice:", err.message);
+        await new Promise((r) => setTimeout(r, 3000));
+      }
     }
   }
 }
