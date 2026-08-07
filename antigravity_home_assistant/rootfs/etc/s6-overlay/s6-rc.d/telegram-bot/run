@@ -1,0 +1,11 @@
+#!/command/with-contenv bashio
+# shellcheck source=/dev/null
+. /usr/local/lib/antigravity-ha/environment.sh
+
+if ! bashio::config.true 'telegram_enabled'; then
+  bashio::log.debug 'Telegram Bot integration is disabled in options'
+  exec s6-pause
+fi
+
+bashio::log.info 'Starting Antigravity Telegram Bot Bridge...'
+exec node /usr/local/share/antigravity-ha/telegram-bridge.mjs

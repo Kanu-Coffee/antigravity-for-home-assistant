@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 S6_ROOT = Path("etc/s6-overlay/s6-rc.d")
-S6_SERVICES = ("antigravity-ha-init", "ha-memoryd", "ttyd", "ingress", "sshd")
+S6_SERVICES = ("antigravity-ha-init", "ha-memoryd", "ttyd", "ingress", "sshd", "telegram-bot")
 EXECUTABLE_ROOTFS_PATHS = (
     "etc/s6-overlay/s6-rc.d/antigravity-ha-init/run",
     "etc/s6-overlay/s6-rc.d/ha-memoryd/run",
@@ -13,6 +13,7 @@ EXECUTABLE_ROOTFS_PATHS = (
     "etc/s6-overlay/s6-rc.d/ingress/run",
     "etc/s6-overlay/s6-rc.d/sshd/finish",
     "etc/s6-overlay/s6-rc.d/sshd/run",
+    "etc/s6-overlay/s6-rc.d/telegram-bot/run",
     "etc/s6-overlay/s6-rc.d/ttyd/finish",
     "etc/s6-overlay/s6-rc.d/ttyd/run",
 )

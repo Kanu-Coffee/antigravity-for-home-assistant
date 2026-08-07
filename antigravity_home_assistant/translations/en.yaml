@@ -1,5 +1,14 @@
 ---
 configuration:
+  telegram_enabled:
+    name: Enable Telegram Bot Bridge
+    description: Enable Telegram Messenger integration to chat with Antigravity AI Agent remotely.
+  telegram_bot_token:
+    name: Telegram Bot Token
+    description: "Telegram Bot Token issued by @BotFather."
+  telegram_allowed_chat_ids:
+    name: Manual Allowed Telegram Chat IDs
+    description: "(Optional) List of numerical Telegram Chat IDs. If omitted, you can pair automatically via 1-Click Deep Link or 6-digit PIN code."
   authorized_keys:
     name: Authorized SSH keys
     description: OpenSSH public keys allowed to sign in as root. Password login is always disabled.

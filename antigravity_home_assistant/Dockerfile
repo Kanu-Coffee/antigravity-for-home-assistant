@@ -3,7 +3,7 @@ ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-debian:bookworm
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH=amd64
-ARG BUILD_VERSION=0.9.1
+ARG BUILD_VERSION=0.9.2
 ARG TARGETARCH
 ARG antigravity_VERSION=1.1.11
 ARG GH_VERSION=2.93.0
@@ -91,6 +91,7 @@ RUN printf '%s\n' "${BUILD_VERSION}" > /usr/local/share/antigravity-ha/app-versi
       /etc/s6-overlay/s6-rc.d/ingress/run \
       /etc/s6-overlay/s6-rc.d/sshd/finish \
       /etc/s6-overlay/s6-rc.d/sshd/run \
+      /etc/s6-overlay/s6-rc.d/telegram-bot/run \
       /etc/s6-overlay/s6-rc.d/ttyd/finish \
       /etc/s6-overlay/s6-rc.d/ttyd/run \
       /usr/local/bin/* \
@@ -110,6 +111,7 @@ RUN printf '%s\n' "${BUILD_VERSION}" > /usr/local/share/antigravity-ha/app-versi
       /usr/local/share/antigravity-ha/playwright-init-page.ts \
       /usr/local/share/antigravity-ha/playwright-mcp-proxy.mjs \
       /usr/local/share/antigravity-ha/playwright-mcp.json \
+      /usr/local/share/antigravity-ha/telegram-bridge.mjs \
       /usr/local/share/antigravity-ha/user-files-update.mjs \
       /usr/local/share/antigravity-ha/app-version
 

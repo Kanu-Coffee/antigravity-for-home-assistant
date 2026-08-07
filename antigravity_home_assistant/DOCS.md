@@ -6,7 +6,7 @@
 
 이 문서는 Home Assistant OS 사용자가 앱을 설치하고, Web UI·SSH·모바일 Remote에서 antigravity를 사용하며, 안전하게 대시보드·자동화·엔티티와 설정 오류를 다루는 방법을 설명합니다.
 
-현재 문서는 앱 버전 `0.9.1`을 기준으로 합니다.
+현재 문서는 앱 버전 `0.9.2`을 기준으로 합니다.
 
 > [!WARNING]
 > 이 앱은 `/config` 전체를 읽고 쓸 수 있고 Home Assistant Core 및 Supervisor `manager` API를 사용할 수 있습니다. 신뢰하는 관리자만 사용하고, 변경 전 backup과 diff를 확인하세요. TCP `2224`을 인터넷에 직접 port-forward하지 마세요.
@@ -30,8 +30,28 @@
 - ChatGPT 모바일 Remote가 앱 내장 antigravity에 직접 연결할 수 있는 공개키 전용 SSH
 - 대시보드·웹 UI를 실제 Headless Chromium으로 확인하는 Playwright 도구
 - HA 구조와 사용자가 명시한 지속 정보를 보존하는 프로젝트 자체 `ha_memory`
+- 텔레그램 메신저를 통해 모바일/원격에서 Antigravity 에이전트와 대화하는 Telegram Bot 연동
 
 Web UI는 별도 채팅형 화면이 아니라 `ttyd`와 공유 `tmux` 세션으로 구성된 터미널입니다. 대시보드·자동화 생성도 전용 마법사가 아니라 antigravity가 `/config`, API와 브라우저 검증을 조합해 수행합니다.
+
+## Telegram Bot 연동 (모바일 원격 제어)
+
+텔레그램 메신저를 통해 모바일이나 원격지에서 Antigravity AI 에이전트와 대화하고 명령을 내릴 수 있습니다.
+
+### 1단계: Telegram 봇 토큰 발급 (10초 소요)
+1. 텔레그램 앱에서 **[@BotFather](https://t.me/botfather)** 검색 후 대화 시작
+2. `/newbot` 입력 후 봇 이름 및 사용자 이름(Username) 지정
+3. 생성 완료 후 제공되는 **HTTP API Bot Token** 복사
+
+### 2단계: 애드온 설정 등록
+1. Home Assistant **Antigravity 애드온 ➔ 구성(Configuration) 탭** 이동
+2. `telegram_enabled`: `true` 설정
+3. `telegram_bot_token`: 발급받은 토큰 붙여넣기 후 저장 ➔ 애드온 재시작
+
+### 3단계: 3가지 중 원하는 방식으로 원클릭 연동
+- **방법 1 (1-Click Deep Link, 추천)**: 애드온 로그에 출력된 `🔗 https://t.me/YourBot?start=PAIR_xxxx` 링크 클릭 ➔ 텔레그램 앱 자동 열림 ➔ 즉시 연동 완료!
+- **방법 2 (6자리 PIN 코드)**: 텔레그램 봇에게 로그에 뜬 6자리 핀 번호(예: `482-195`)를 메시지로 전송
+- **방법 3 (수동 Chat ID)**: 설정 탭 `telegram_allowed_chat_ids`에 자신의 숫자 Chat ID 직접 등록
 
 ## 설치
 
@@ -325,11 +345,11 @@ ha-memory conflicts --status open
 
 `empty`, `degraded`, `stale`이면 memory DB를 삭제하지 마세요. 처음 학습 중이거나 Core 연결이 일시적으로 실패한 상태일 수 있으며 마지막 성공 snapshot을 보존합니다.
 
-이 기능은 모델 자체가 스스로 학습하거나 승인 없이 집을 운영한다는 뜻이 아닙니다. 현재 `0.9.1`은 experimental이며 실제 HAOS의 자연어 기억→새 작업 회상 전체 흐름에는 아직 공개 검증 공백이 있습니다.
+이 기능은 모델 자체가 스스로 학습하거나 승인 없이 집을 운영한다는 뜻이 아닙니다. 현재 `0.9.2`은 experimental이며 실제 HAOS의 자연어 기억→새 작업 회상 전체 흐름에는 아직 공개 검증 공백이 있습니다.
 
 ## 앱 버그·기능 제안 보고서
 
-`0.9.1`부터 image-managed `$ha-feedback` Skill이 앱 자체의 버그와 기능 제안을 읽기 전용으로 조사하고 정제된 보고서를 만듭니다.
+`0.9.2`부터 image-managed `$ha-feedback` Skill이 앱 자체의 버그와 기능 제안을 읽기 전용으로 조사하고 정제된 보고서를 만듭니다.
 
 ```text
 $ha-feedback bug <관찰한 증상>
@@ -518,7 +538,7 @@ Core가 준비될 시간을 두고 다시 확인합니다. DB/WAL을 직접 삭�
 - Bubble Card와 다른 custom card를 포함하거나 자동 설치하지 않습니다.
 - 별도 채팅형 Web UI가 아닌 터미널 UI입니다.
 - 자동화·dashboard 결과는 환경과 요청에 따라 달라지며 사람의 검토가 필요합니다.
-- 실제 HAOS의 `0.9.1` 자연어 memory 폐루프에는 공개 검증 공백이 있습니다.
+- 실제 HAOS의 `0.9.2` 자연어 memory 폐루프에는 공개 검증 공백이 있습니다.
 - 실제 GitHub 이슈 직접 생성은 별도 명시 승인 없이는 자동 검증에서 실행하지 않습니다.
 - Supervisor endpoint와 OpenAI Remote 제공 여부는 Home Assistant/OpenAI 버전·정책에 따라 달라질 수 있습니다.
 
