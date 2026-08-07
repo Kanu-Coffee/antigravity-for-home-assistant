@@ -18,7 +18,7 @@ panel_icon: mdi:rocket-launch
 panel_title: Antigravity
 
 ports:
-  22/tcp: 2223
+  22/tcp: 2224
 ports_description:
   22/tcp: SSH and Antigravity Remote SSH (public key only)
 

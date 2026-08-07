@@ -92,7 +92,7 @@ web_terminal_auto_start_antigravity: false
 
 - OpenSSH server를 제공한다.
 - 공개키 인증만 허용한다.
-- 컨테이너 포트 `22/tcp`, 기본 host port `2223`을 사용한다.
+- 컨테이너 포트 `22/tcp`, 기본 host port `2224`을 사용한다.
 - host port는 Home Assistant App의 Network 설정에서 변경 가능하다.
 - SSH host keys는 `/data`에 영속화한다.
 
@@ -350,7 +350,7 @@ MVP에서는 다음을 만들지 않는다.
 3. auto-start 옵션이 false/true 모두 정확히 동작한다.
 4. 웹 연결을 끊었다 다시 열어도 tmux 세션이 복구된다.
 5. `antigravity login --device-auth` 후 인증이 App 재시작 뒤에도 남는다.
-6. 공개키 SSH가 기본 host port 2223에서 동작한다.
+6. 공개키 SSH가 기본 host port 2224에서 동작한다.
 7. ChatGPT mobile Remote의 직접 SSH 연결이 App 내장 antigravity app-server로 `/config` 프로젝트를 연다.
 8. antigravity가 `/config` 테스트 파일을 생성·수정·삭제할 수 있다.
 9. Core API로 상태 조회와 안전한 서비스 호출을 성공한다.

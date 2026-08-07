@@ -9,7 +9,7 @@ This guide explains how Home Assistant OS users can install the app, use antigra
 This guide applies to app version `0.6.0`.
 
 > [!WARNING]
-> This app can read and write all of `/config` and use the Home Assistant Core and Supervisor `manager` APIs. Allow only trusted administrators to use it, and review a backup and diff before making changes. Never port-forward TCP `2223` directly to the internet.
+> This app can read and write all of `/config` and use the Home Assistant Core and Supervisor `manager` APIs. Allow only trusted administrators to use it, and review a backup and diff before making changes. Never port-forward TCP `2224` directly to the internet.
 
 ## Before you begin
 
@@ -110,7 +110,7 @@ Keep the defaults when getting started. After changing settings, restart the app
 | `home_assistant_browser_auto_auth` | `true` | Automatically manage a dedicated local-only, read-only HA user for the Headless browser | Restart the app and browser session after turning it off or on. |
 | `home_assistant_browser_token` | None | Optional manual long-lived token override | Advanced recovery only. It overrides the managed token only while automatic authentication is on; the user must be local-only, non-admin, and in only the `system-read-only` group. |
 | `log_level` | `info` | `trace`, `debug`, `info`, `notice`, `warning`, `error`, or `fatal` | Use `trace` or `debug` only for diagnostics, and review logs before sharing. |
-| Network `22/tcp` | `2223` | External SSH host port | This is not an `ssh_port` JSON option. Disable it if you do not want to expose the SSH listener. |
+| Network `22/tcp` | `2224` | External SSH host port | This is not an `ssh_port` JSON option. Disable it if you do not want to expose the SSH listener. |
 
 Recommended starting settings:
 
@@ -170,14 +170,14 @@ SSH is optional. If you do not use it, leave `authorized_keys` empty and disable
    ```
 
 2. Add the single output line beginning with `ssh-ed25519` to `authorized_keys`, then restart the app. Keep the private key only on the client that connects; never paste it into documentation, logs, or issues.
-3. In the app's **Network** settings, check the host port for `22/tcp`. The default is `2223`.
+3. In the app's **Network** settings, check the host port for `22/tcp`. The default is `2224`.
 4. Add a specific host alias to `~/.ssh/config` on your PC:
 
    ```sshconfig
    Host antigravity-ha
      HostName homeassistant.local
      User root
-     Port 2223
+     Port 2224
      IdentityFile ~/.ssh/id_ed25519
      IdentitiesOnly yes
    ```
@@ -196,20 +196,20 @@ ChatGPT mobile Remote connects directly to the HA app's public-key SSH endpoint.
 
 ```text
 ChatGPT mobile Remote
-  → public-key SSH (HA host:2223, root)
+  → public-key SSH (HA host:2224, root)
   → antigravity app server bundled in the HA app
   → /config remote project
 ```
 
 1. In the Web UI, complete `ha-antigravity-login` and confirm that `antigravity login status` reports a signed-in session.
 2. Add only the **public key** paired with the key used by mobile Remote to `authorized_keys`, then restart the app.
-3. Check the host port for `22/tcp` in the app's **Network** settings. The default is `2223`.
+3. Check the host port for `22/tcp` in the app's **Network** settings. The default is `2224`.
 4. When adding an SSH connection in ChatGPT mobile Remote, use these values:
 
    | Field | Value |
    | --- | --- |
    | Host | HA hostname or IP reachable from the phone |
-   | Port | Host port shown in App Network, default `2223` |
+   | Port | Host port shown in App Network, default `2224` |
    | User | `root` |
    | Authentication | Private key matching the public key in `authorized_keys` |
    | Project path | `/config` |

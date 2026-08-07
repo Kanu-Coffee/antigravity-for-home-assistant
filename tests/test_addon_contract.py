@@ -112,7 +112,7 @@ def test_ingress_and_network_contract(addon_config: dict) -> None:
     assert addon_config["ingress_stream"] is True
     assert addon_config["ingress_port"] == 7681
     assert addon_config.get("panel_admin", True) is True
-    assert addon_config["ports"] == {"22/tcp": 2223}
+    assert addon_config["ports"] == {"22/tcp": 2224}
     assert "ssh_port" not in addon_config["options"]
     assert "ssh_port" not in addon_config["schema"]
 

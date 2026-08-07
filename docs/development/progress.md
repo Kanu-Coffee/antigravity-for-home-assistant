@@ -42,7 +42,7 @@
 ### 2026-07-16 — ChatGPT mobile Remote 직접 SSH 문서 정정
 
 - 원인: 일반적인 desktop-host Remote 안내를 이 HA App의 실제 경로에 잘못 적용해 Mac/Windows desktop app이 SSH 중계에 필요하다고 문서화했다.
-- 런타임 재확인: App 이미지가 OpenSSH와 Antigravity CLI를 함께 제공하고, mobile Remote가 `HA host:2223`에 공개키 SSH로 직접 연결해 login shell의 내장 `antigravity` app-server를 bootstrap한 뒤 `/config`를 연다.
+- 런타임 재확인: App 이미지가 OpenSSH와 Antigravity CLI를 함께 제공하고, mobile Remote가 `HA host:2224`에 공개키 SSH로 직접 연결해 login shell의 내장 `antigravity` app-server를 bootstrap한 뒤 `/config`를 연다.
 - 정정 범위: 한·영 root/App README와 DOCS, architecture/product/security/test/reference 문서, 과거 운영 가이드와 검증 기록의 desktop 중개 전제를 제거한다.
 - 경계: 일반 SSH client는 `/config` Bash를 열어 `ha-antigravity` 또는 `antigravity`를 수동 실행한다. Web UI의 공유 tmux와 mobile Remote app-server 세션은 기본적으로 별개다.
 - 검증: 중개형 문구 전체 검색 결과 0건, local Markdown link/anchor, markdownlint 33 files/0 errors, pytest **57 passed / 8 jq-dependent skipped**, yamllint와 `git diff --check` PASS.
@@ -327,7 +327,7 @@
 - [x] 실제 ttyd WebSocket shell 회귀 테스트를 Docker smoke에 추가했다.
 - [x] `0.1.1-dev` amd64 build, 25 unit/policy tests, full smoke, Chrome 렌더·명령 입력을 검증했다.
 - [x] changelog, 사용 설명서, 아키텍처, 테스트 계획을 실제 결과에 맞췄다.
-- [x] PR [#3](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/pull/3)의 CI를 통과하고 merge commit `b9e2808`로 public `main`에 병합했다. main CI run `29222324024`도 통과했다.
+- [x] PR [#3](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/pull/3)의 CI를 통과하고 merge commit `b9e2808`로 public `main`에 병합했다. main CI run `29222424024`도 통과했다.
 - 후속 실기: 사용자가 `0.1.1-dev` Web UI와 인증된 antigravity 실행을 확인했다. resize와 브라우저 종료 후 tmux reattach는 계속 미검증이다.
 
 ### 2026-07-13 — public App Store 설치 전달
@@ -366,7 +366,7 @@
 - [x] Public repository/main delivery: PASS — visibility PUBLIC, PR #1 MERGED, anonymous repository/App source reads, final main CI.
 - [x] Local Ingress terminal regression: PASS — actual ttyd WebSocket handshake and command returned `/config`, `TERM=tmux-256color`; Chrome rendered the shell with no console warning/error.
 - [x] HAOS App repository install/start: PASS — public 저장소 설치와 App/S6 서비스 시작 로그 확인.
-- [x] Ingress TERM fix delivery: PASS — PR #3 merge commit `b9e2808`, final public `main` CI run `29222324024`의 3개 job 통과.
+- [x] Ingress TERM fix delivery: PASS — PR #3 merge commit `b9e2808`, final public `main` CI run `29222424024`의 3개 job 통과.
 - [x] Persistent safety guidance delivery: PASS — PR #5 merge commit `7105bcd`, final public `main` CI run `29225737374`의 lint/unit, App config, amd64 build/smoke 통과.
 - [x] 실제 Ingress/WebSocket shell과 인증된 antigravity 실행: PASS — 사용자 `0.1.1-dev` Web UI 실기 확인.
 - [x] 실제 HAOS UI resize/browser tmux reattach: PASS — 다른 브라우저/환경에서 이전 터미널·대화 복구와 resize를 사용자 확인했고 detached `antigravity-ha` session을 사후 확인했다. 동일 ID 기계 비교는 로컬 실제 WebSocket smoke가 보완한다.
@@ -427,7 +427,7 @@
 - [x] SSH host key를 `/data/ssh`에 영속화
 - [x] `authorized_keys` 옵션 반영 및 권한 검증
 - [x] 키가 없을 때 안전한 degraded 동작
-- [x] 기본 host port `2223` 노출
+- [x] 기본 host port `2224` 노출
 - [x] login shell에서 `antigravity`, `antigravity_HOME`, `/config` 확인
 - [x] Windows OpenSSH 접속 검증 (local Docker port; HA Network는 M2)
 - [x] mobile Remote 직접 SSH app-server bootstrap 검증 — 사용자 E2E
@@ -526,7 +526,7 @@
 - 원인: ttyd의 연결별 `TERM=xterm-256color`가 S6 `with-contenv`에서 제거됐다.
 - 수정: web entrypoint의 외부 TERM 복원, tmux pane TERM 보존, App `0.1.1-dev` version bump, rootfs LF 강제.
 - 로컬 검증: 실패 재현 후 actual WebSocket shell `/config:tmux-256color`, Chrome 입력·출력, amd64 build/full smoke PASS.
-- 배포: PR [#3](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/pull/3)을 merge commit `b9e2808`로 public `main`에 병합했고, final main CI run `29222324024`가 통과했다.
+- 배포: PR [#3](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/pull/3)을 merge commit `b9e2808`로 public `main`에 병합했고, final main CI run `29222424024`가 통과했다.
 - 후속: 사용자가 `0.1.1-dev` Web UI와 인증된 antigravity 실행을 확인했다. resize/tmux reattach는 미검증이다.
 
 ### 2026-07-13 — public App repository main 배포
@@ -541,7 +541,7 @@
 
 - 결과: 설치 가능한 Local App source, Antigravity CLI, Ingress terminal runtime, 공개키 SSH, API helper, CI와 운영 문서를 구현했다.
 - 로컬 검증: amd64 build, 24 unit/policy tests, full Docker smoke, App/shell/YAML/Markdown/Docker lint와 secret scan 통과.
-- 미검증: 실제 HAOS Ingress, device auth/update persistence, Home Assistant Network 2223, ChatGPT mobile Remote 직접 SSH, 실제 Core/Supervisor manager API.
+- 미검증: 실제 HAOS Ingress, device auth/update persistence, Home Assistant Network 2224, ChatGPT mobile Remote 직접 SSH, 실제 Core/Supervisor manager API.
 - 전달: 구현 커밋 `95bc564`, 전달 기록 `29c67b5`, CI 수정 `a09301a`를 private origin에 push하고 draft PR #1을 생성했다. `a09301a`의 원격 CI 6 jobs는 모두 PASS했다.
 - 다음: HAOS amd64에서 M2 E2E를 수행하고 검증된 결과만 PR에 반영한다.
 

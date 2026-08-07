@@ -113,7 +113,7 @@ panel_title: antigravity
 panel_admin: true
 
 ports:
-  22/tcp: 2223
+  22/tcp: 2224
 ports_description:
   22/tcp: SSH and antigravity Remote SSH port
 
@@ -172,7 +172,7 @@ Settings → Apps → Antigravity for Home Assistant → Configuration/Network
 22/tcp → 원하는 host port
 ```
 
-- 기본값: `2223`
+- 기본값: `2224`
 - 빈 값/null: 포트 매핑 비활성화 가능
 - sshd 내부 포트는 22로 고정
 - `ssh_port` JSON 옵션은 만들지 않음

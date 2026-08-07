@@ -84,7 +84,7 @@
 완화:
 
 - 공개키 전용
-- 기본 LAN port 2223
+- 기본 LAN port 2224
 - 인터넷 port forwarding 금지 문서화
 - 외부 접근은 VPN/mesh network 권장
 - host key 영속화

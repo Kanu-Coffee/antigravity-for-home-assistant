@@ -482,7 +482,7 @@ Ingress connection
 
 ```text
 ChatGPT mobile Remote (선택)
-  → App host:2223
+  → App host:2224
   → public key auth
   → login shell loads runtime env
   → command -v antigravity

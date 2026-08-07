@@ -508,7 +508,7 @@ Get-Content "$HOME\.ssh\id_ed25519.pub"
 
 App의 **Configuration → Network**에서 컨테이너 `22/tcp`의 호스트 포트를 설정합니다.
 
-- 기본 호스트 포트: `2223`
+- 기본 호스트 포트: `2224`
 - 비어 있음/비활성: 외부 SSH mapping 없음
 - 내부 sshd 포트: 항상 `22`
 
@@ -522,7 +522,7 @@ Windows 파일 위치는 보통 `C:\Users\<사용자>\.ssh\config`입니다. 일
 Host antigravity-ha
   HostName homeassistant.local
   User root
-  Port 2223
+  Port 2224
   IdentityFile ~/.ssh/id_ed25519
   IdentitiesOnly yes
 ```
@@ -549,7 +549,7 @@ printf '%s\n' "$antigravity_HOME"
 이 App에서 검증된 경로는 **ChatGPT mobile Remote → 공개키 SSH → HAOS App의 내장 antigravity app-server → `/config`**입니다. HA App 이미지가 SSH server와 antigravity를 함께 제공하므로 별도의 Mac/Windows desktop app 또는 중계 host는 필요하지 않습니다.
 
 1. mobile Remote가 사용할 공개키를 App `authorized_keys`에 등록하고 App을 재시작합니다.
-2. mobile Remote의 SSH 연결에 HA hostname/IP, App Network port(기본 `2223`), 사용자 `root`와 대응 개인키를 등록합니다.
+2. mobile Remote의 SSH 연결에 HA hostname/IP, App Network port(기본 `2224`), 사용자 `root`와 대응 개인키를 등록합니다.
 3. App Web UI에서 antigravity 인증을 완료하고 remote login shell PATH에서 `antigravity`를 찾을 수 있는지 확인합니다.
 4. 원격 프로젝트 폴더로 `/config`를 사용합니다.
 
@@ -692,7 +692,7 @@ esac
 
 ## 외부 접속 보안
 
-**공유기에서 TCP 2223을 인터넷으로 port-forward하지 마세요.** 공개키 인증만으로도 이 App의 `/config`와 runtime API token이 인터넷 공격면에 놓입니다.
+**공유기에서 TCP 2224을 인터넷으로 port-forward하지 마세요.** 공개키 인증만으로도 이 App의 `/config`와 runtime API token이 인터넷 공격면에 놓입니다.
 
 - SSH는 신뢰하는 LAN에서만 사용합니다.
 - 외부에서는 검증된 VPN 또는 신뢰하는 mesh VPN으로 먼저 내부망에 접속합니다.
@@ -769,7 +769,7 @@ ssh-keygen -lf /data/ssh/ssh_host_ed25519_key.pub
 App 재설치 등으로 key가 정말 바뀐 것을 확인한 경우에만 Windows의 이전 항목을 제거하고 다시 연결합니다.
 
 ```powershell
-ssh-keygen -R "[homeassistant.local]:2223"
+ssh-keygen -R "[homeassistant.local]:2224"
 ssh antigravity-ha
 ```
 

@@ -28,7 +28,7 @@ Antigravity for Home Assistant brings Google Antigravity CLI (`agy`) inside Home
 ## Key Features
 
 - **Ingress Web Terminal**: `ttyd` + `tmux` session accessible directly inside Home Assistant UI.
-- **Public-Key SSH**: Remote shell access via port 2223 for SSH client sessions.
+- **Public-Key SSH**: Remote shell access via port 2224 for SSH client sessions.
 - **Headless Browser Verification**: Embedded Playwright / Headless Chromium tool set for UI & dashboard testing.
 - **Local HA Memory**: Bounded local SQLite/MCP memory engine (`ha_memory`) for context preservation without state leaks.
 - **Diagnostic Feedback**: `$ha-feedback` tool for generating sanitized bug and feature reports.

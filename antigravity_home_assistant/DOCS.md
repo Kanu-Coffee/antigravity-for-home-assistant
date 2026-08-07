@@ -9,7 +9,7 @@
 현재 문서는 앱 버전 `0.6.0`을 기준으로 합니다.
 
 > [!WARNING]
-> 이 앱은 `/config` 전체를 읽고 쓸 수 있고 Home Assistant Core 및 Supervisor `manager` API를 사용할 수 있습니다. 신뢰하는 관리자만 사용하고, 변경 전 backup과 diff를 확인하세요. TCP `2223`을 인터넷에 직접 port-forward하지 마세요.
+> 이 앱은 `/config` 전체를 읽고 쓸 수 있고 Home Assistant Core 및 Supervisor `manager` API를 사용할 수 있습니다. 신뢰하는 관리자만 사용하고, 변경 전 backup과 diff를 확인하세요. TCP `2224`을 인터넷에 직접 port-forward하지 마세요.
 
 ## 시작하기 전에
 
@@ -109,7 +109,7 @@ ha-antigravity
 | `home_assistant_browser_auto_auth` | `true` | Headless browser용 전용 local-only read-only HA 사용자 자동 관리 | 끄거나 켠 뒤 앱과 browser 세션을 다시 시작하세요. |
 | `home_assistant_browser_token` | 없음 | 선택형 수동 long-lived token override | 고급 복구용입니다. 자동 인증이 ON일 때만 관리형 token보다 우선하며, local-only, non-admin, `system-read-only` 단일 그룹 사용자만 허용됩니다. |
 | `log_level` | `info` | `trace`, `debug`, `info`, `notice`, `warning`, `error`, `fatal` | `trace`/`debug`는 진단 때만 사용하고 공유 전 로그를 검토하세요. |
-| Network `22/tcp` | `2223` | 외부 SSH host port | JSON의 `ssh_port` 옵션이 아닙니다. 비활성화하면 SSH listener를 노출하지 않습니다. |
+| Network `22/tcp` | `2224` | 외부 SSH host port | JSON의 `ssh_port` 옵션이 아닙니다. 비활성화하면 SSH listener를 노출하지 않습니다. |
 
 권장 시작 설정은 다음과 같습니다.
 
@@ -169,14 +169,14 @@ SSH는 선택 사항입니다. 사용하지 않으면 `authorized_keys`를 비�
    ```
 
 2. 출력된 `ssh-ed25519 ...` **공개키 한 줄**을 `authorized_keys`에 추가하고 앱을 재시작합니다. 개인키는 실제 접속 client에만 보관하고 문서, 로그, 이슈에 붙여 넣지 마세요.
-3. App **Network**에서 `22/tcp`의 host port를 확인합니다. 기본값은 `2223`입니다.
+3. App **Network**에서 `22/tcp`의 host port를 확인합니다. 기본값은 `2224`입니다.
 4. PC의 `~/.ssh/config`에 구체적인 host alias를 추가합니다.
 
    ```sshconfig
    Host antigravity-ha
      HostName homeassistant.local
      User root
-     Port 2223
+     Port 2224
      IdentityFile ~/.ssh/id_ed25519
      IdentitiesOnly yes
    ```
@@ -195,20 +195,20 @@ ChatGPT 모바일 Remote는 HA 앱의 공개키 SSH endpoint에 직접 연결합
 
 ```text
 ChatGPT 모바일 Remote
-  → 공개키 SSH (HA host:2223, root)
+  → 공개키 SSH (HA host:2224, root)
   → HA 앱의 내장 antigravity app-server
   → /config 원격 프로젝트
 ```
 
 1. Web UI에서 `ha-antigravity-login`을 완료하고 `antigravity login status`가 로그인 상태를 표시하는지 확인합니다.
 2. 모바일 Remote가 사용할 키의 **공개키만** `authorized_keys`에 추가한 뒤 앱을 재시작합니다.
-3. App **Network**에서 `22/tcp`의 host port를 확인합니다. 기본값은 `2223`입니다.
+3. App **Network**에서 `22/tcp`의 host port를 확인합니다. 기본값은 `2224`입니다.
 4. ChatGPT 모바일 Remote에서 SSH 연결을 추가할 때 다음 값을 사용합니다.
 
    | 항목 | 값 |
    | --- | --- |
    | Host | 휴대폰에서 도달 가능한 HA hostname 또는 IP |
-   | Port | App Network에 표시된 host port, 기본 `2223` |
+   | Port | App Network에 표시된 host port, 기본 `2224` |
    | User | `root` |
    | Authentication | `authorized_keys`의 공개키와 짝이 맞는 개인키 |
    | Project path | `/config` |

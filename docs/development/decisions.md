@@ -55,7 +55,7 @@ hassio_role: manager
 ## ADR-008 SSH port는 Network 설정
 
 - 상태: Accepted
-- 결정: 내부 port 22, 기본 host port 2223. 사용자는 App Network 설정에서 바꾼다.
+- 결정: 내부 port 22, 기본 host port 2224. 사용자는 App Network 설정에서 바꾼다.
 - 이유: Supervisor의 `ports` mapping이 외부 포트 설정의 공식 위치다. JSON에 `ssh_port`를 중복 생성하지 않는다.
 
 ## ADR-009 SSH 공개키 전용

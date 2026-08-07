@@ -236,11 +236,11 @@ App 업데이트·재시작은 컨테이너 프로세스를 종료하므로 이 
 ### E2E-006 SSH
 
 1. authorized_keys 설정
-2. Network port 2223 확인
+2. Network port 2224 확인
 3. Windows에서 접속
 
 ```powershell
-ssh -p 2223 root@<ha-host>
+ssh -p 2224 root@<ha-host>
 ```
 
 성공 기준:

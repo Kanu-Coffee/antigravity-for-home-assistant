@@ -62,7 +62,7 @@ apparmor: false
 
 ### R-105 SSH 외부 포트는 Network 설정을 사용한다
 
-컨테이너 포트는 `22/tcp`, 기본 호스트 포트는 `2223`으로 노출한다. 사용자는 Home Assistant App의 Network 설정에서 외부 포트를 바꾼다. 동일 목적의 `ssh_port` JSON 옵션을 중복 구현하지 않는다.
+컨테이너 포트는 `22/tcp`, 기본 호스트 포트는 `2224`으로 노출한다. 사용자는 Home Assistant App의 Network 설정에서 외부 포트를 바꾼다. 동일 목적의 `ssh_port` JSON 옵션을 중복 구현하지 않는다.
 
 ## 3. 보안 및 비밀정보
 
