@@ -51,7 +51,7 @@ function loadOrGeneratePairingSecrets() {
       }
     }
   } catch (e) {
-    // Fallback to new generation
+    // Fallback
   }
 
   const num = Math.floor(100000 + Math.random() * 900000);
@@ -113,12 +113,25 @@ async function sendTelegramMessage(botToken, chatId, text) {
   }
 }
 
+function stripAnsiCodes(text) {
+  return text
+    .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "")
+    .replace(/\r\n/g, "\n")
+    .trim();
+}
+
 async function runAntigravityPrompt(promptText) {
   return new Promise((resolve) => {
-    const child = spawn("antigravity", ["-p", promptText], {
-      cwd: "/config",
-      env: { ...process.env, HOME: "/data/home" },
-    });
+    const safePrompt = promptText.replace(/'/g, "'\\''");
+    // Run via pseudo-TTY using script command to satisfy bubbletea TTY requirement
+    const child = spawn(
+      "script",
+      ["-q", "-c", `antigravity --dangerously-skip-permissions -p '${safePrompt}'`, "/dev/null"],
+      {
+        cwd: "/config",
+        env: { ...process.env, HOME: "/data/home" },
+      }
+    );
 
     let stdout = "";
     let stderr = "";
@@ -131,12 +144,9 @@ async function runAntigravityPrompt(promptText) {
     });
 
     child.on("close", (code) => {
-      if (code === 0 && stdout.trim()) {
-        resolve(stdout.trim());
-      } else if (stdout.trim()) {
-        resolve(stdout.trim());
-      } else if (stderr.trim()) {
-        resolve(`[Error exit code ${code}]: ${stderr.trim()}`);
+      const combinedOutput = stripAnsiCodes(stdout || stderr);
+      if (combinedOutput) {
+        resolve(combinedOutput);
       } else {
         resolve(`[Antigravity completed with code ${code}]`);
       }
@@ -293,9 +303,16 @@ async function main() {
         }
 
         if (text === "/status") {
-          await telegramApi(botToken, "sendChatAction", { chat_id: chatId, action: "typing" });
-          const statusOutput = await runAntigravityPrompt("ha-config-check 결과를 확인하고 Home Assistant 시스템 상태를 간략히 요약해줘.");
-          await sendTelegramMessage(botToken, chatId, statusOutput);
+          console.log(`[Telegram Bridge] Processing /status check for Chat ID ${chatId}...`);
+          (async () => {
+            try {
+              await telegramApi(botToken, "sendChatAction", { chat_id: chatId, action: "typing" });
+              const statusOutput = await runAntigravityPrompt("ha-config-check 결과를 확인하고 Home Assistant 시스템 상태를 간략히 요약해줘.");
+              await sendTelegramMessage(botToken, chatId, statusOutput);
+            } catch (err) {
+              await sendTelegramMessage(botToken, chatId, `⚠️ 상태 검사 실패: ${err.message}`);
+            }
+          })();
           continue;
         }
 
@@ -308,12 +325,15 @@ async function main() {
         }
 
         // Process AI prompt asynchronously
+        console.log(`[Telegram Bridge] Processing AI prompt for Chat ID ${chatId}: "${text}"`);
         (async () => {
           try {
             await telegramApi(botToken, "sendChatAction", { chat_id: chatId, action: "typing" });
             const aiResponse = await runAntigravityPrompt(text);
+            console.log(`[Telegram Bridge] AI response generated (${aiResponse.length} chars), sending to Telegram...`);
             await sendTelegramMessage(botToken, chatId, aiResponse);
           } catch (err) {
+            console.error(`[Telegram Bridge] AI execution error:`, err.message);
             await sendTelegramMessage(botToken, chatId, `⚠️ 처리 중 오류가 발생했습니다: ${err.message}`);
           }
         })();
