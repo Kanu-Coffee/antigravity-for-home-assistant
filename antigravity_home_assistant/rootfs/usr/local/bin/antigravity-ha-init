@@ -195,6 +195,7 @@ runtime_tmp=$(mktemp "${RUNTIME_DIR}/.runtime.env.XXXXXX")
   antigravity_token=$(antigravity_ha_config_string 'antigravity_token' '')
   if [[ -n "${antigravity_token}" ]]; then
     printf 'export ANTIGRAVITY_TOKEN=%q\n' "${antigravity_token}"
+    printf 'export GEMINI_API_KEY=%q\n' "${antigravity_token}"
     bashio::log.info 'Antigravity CLI authentication token configured from App options'
   fi
   unset antigravity_token
@@ -220,6 +221,7 @@ ssh_environment_tmp=$(mktemp /root/.ssh/.environment.XXXXXX)
   antigravity_token=$(antigravity_ha_config_string 'antigravity_token' '')
   if [[ -n "${antigravity_token}" ]]; then
     printf 'ANTIGRAVITY_TOKEN=%s\n' "${antigravity_token}"
+    printf 'GEMINI_API_KEY=%s\n' "${antigravity_token}"
   fi
   unset antigravity_token
 } > "${ssh_environment_tmp}"

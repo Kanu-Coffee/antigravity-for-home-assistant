@@ -189,12 +189,12 @@ def test_feedback_helper_is_pinned_and_image_managed(
     repository_root: Path,
     rootfs: Path,
 ) -> None:
-    assert addon_config["version"] == "0.8.0"
+    assert addon_config["version"] == "0.8.1"
     assert "/feedback/" in (repository_root / ".gitignore").read_text(
         encoding="utf-8"
     )
     dockerfile = (addon_root / "Dockerfile").read_text(encoding="utf-8")
-    assert "ARG BUILD_VERSION=0.8.0" in dockerfile
+    assert "ARG BUILD_VERSION=0.8.1" in dockerfile
     assert "ARG GH_VERSION=2.93.0" in dockerfile
     assert (
         "ARG GH_SHA256="

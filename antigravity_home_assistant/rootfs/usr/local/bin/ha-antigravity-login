@@ -3,6 +3,42 @@ set -Eeuo pipefail
 
 # shellcheck source=/dev/null
 . /usr/local/lib/antigravity-ha/environment.sh
-install -d -m 0700 "${ANTIGRAVITY_HOME}"
-cd /config
-exec antigravity auth login --no-browser "$@"
+
+echo "=========================================================="
+echo " Antigravity / Gemini CLI Authentication Helper"
+echo "=========================================================="
+echo ""
+
+if [[ -n "${GEMINI_API_KEY:-}" || -n "${ANTIGRAVITY_TOKEN:-}" ]]; then
+  echo "✓ Gemini API Key is configured and active!"
+  echo "✓ Antigravity CLI is ready."
+  echo ""
+  echo "Launching Antigravity AI Agent..."
+  exec /usr/local/libexec/antigravity-real --skip-trust "$@"
+fi
+
+echo "No Gemini API Key detected in runtime environment."
+echo ""
+echo "How to authenticate:"
+echo "----------------------------------------------------------"
+echo "1. Get a Gemini API Key from Google AI Studio:"
+echo "   https://aistudio.google.com/app/apikey"
+echo ""
+echo "2. Open Home Assistant UI:"
+echo "   Go to Settings -> Add-ons -> Antigravity for Home Assistant"
+echo "   Paste your key into the 'antigravity_token' option field and click Save."
+echo ""
+echo "3. Or paste your Gemini API Key below for this session:"
+read -rsp "Gemini API Key: " user_key
+echo ""
+
+if [[ -n "${user_key}" ]]; then
+  export GEMINI_API_KEY="${user_key}"
+  export ANTIGRAVITY_TOKEN="${user_key}"
+  echo "✓ API Key set for current session."
+  echo "Launching Antigravity AI Agent..."
+  exec /usr/local/libexec/antigravity-real --skip-trust "$@"
+else
+  echo "No key entered. Exiting."
+  exit 1
+fi

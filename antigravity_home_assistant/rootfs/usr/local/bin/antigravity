@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Keep config.json user-owned while applying the current App options to every
-# CLI/app-server invocation, including commands launched by Remote SSH.
+# Keep config.json user-owned while applying current App options
 # shellcheck source=/dev/null
 . /usr/local/lib/antigravity-ha/environment.sh
 # shellcheck source=/dev/null
@@ -10,11 +9,12 @@ set -Eeuo pipefail
 # shellcheck source=/dev/null
 . /usr/local/lib/antigravity-ha/browser-approval.sh
 
-# Inject ANTIGRAVITY_TOKEN from add-on options for headless authentication
+# Inject GEMINI_API_KEY and ANTIGRAVITY_TOKEN from add-on options
 if antigravity_ha_config_validate; then
   _antigravity_token=$(antigravity_ha_config_string 'antigravity_token' '')
   if [[ -n "${_antigravity_token}" ]]; then
     export ANTIGRAVITY_TOKEN="${_antigravity_token}"
+    export GEMINI_API_KEY="${_antigravity_token}"
   fi
   unset _antigravity_token
 fi
@@ -55,7 +55,6 @@ if ! antigravity_ha_browser_build_approval_args "${browser_approval_policy}"; th
 fi
 
 exec /usr/local/libexec/antigravity-real \
-  -c "approval_policy=\"${approval_policy}\"" \
-  -c "sandbox_mode=\"${sandbox_mode}\"" \
+  --skip-trust \
   "${antigravity_HA_BROWSER_APPROVAL_ARGS[@]}" \
   "$@"

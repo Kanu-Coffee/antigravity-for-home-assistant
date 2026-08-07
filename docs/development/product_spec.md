@@ -257,7 +257,7 @@ SSH 외부 포트는 JSON 옵션이 아니라 Network 설정이다.
 
 ### FR-020 검증형 App 피드백 자동화
 
-- `0.8.0` image는 image-managed `$ha-feedback` Skill과 `/usr/local/bin/ha-feedback` helper를 제공한다. 명시적 `bug`/`feature` 호출과 App 버그·기능 제안으로 해석되는 자연어 요청은 이 흐름으로 라우팅하되 Skill을 사용할 수 없는 환경에는 같은 필드와 안전 경계를 가진 수동 Issue Form 경로를 제공한다.
+- `0.8.1` image는 image-managed `$ha-feedback` Skill과 `/usr/local/bin/ha-feedback` helper를 제공한다. 명시적 `bug`/`feature` 호출과 App 버그·기능 제안으로 해석되는 자연어 요청은 이 흐름으로 라우팅하되 Skill을 사용할 수 없는 환경에는 같은 필드와 안전 경계를 가진 수동 Issue Form 경로를 제공한다.
 - 피드백 조사는 관찰·진단만 수행한다. Home Assistant 설정·registry·dashboard·automation·device·App·프로젝트를 변경하지 않고, 서비스 호출·reload·restart·update·recovery·restore·install·remove를 실행하지 않는다. 조사 중 허용되는 로컬 write는 보고서 bundle뿐이며, 제출 단계는 private runtime preview state와 bundle 내부 claim/receipt만 추가로 쓸 수 있다. GitHub 제출은 별도의 외부 write다.
 - 입력은 command line 본문이 아니라 `0600`, regular, single-link private JSON 파일로 전달한다. Helper는 `collect bug|feature`, `validate`, `render`를 제공하고 결과를 `/config/antigravity-workspace/feedback/<UTC>-<kind>-<report-id>/` 아래 `0700` 디렉터리와 `0600` `report.json`, `public-report.md`로 원자 저장한다. Rendered Markdown은 검증된 JSON에서만 재생성하며 손으로 수정하지 않는다.
 - Bug report는 재현 단계와 관측 사실에서 분리한 비확정 원인 후보를, feature report는 문제 정의·사용자 시나리오·현재 우회법·기존 기능·대안·수용 기준·호환성/보안 영향·검증 계획을 필수 구조로 가진다. 알 수 없는 값은 누락하거나 추측하지 않고 이유와 함께 `Unknown`으로 명시한다.
@@ -400,5 +400,5 @@ MVP에서는 다음을 만들지 않는다.
 6. 유사 이슈 후보는 최대 5개이며 candidate title을 외부의 신뢰하지 않는 입력으로 정제한다. 후보 또는 remote report ID 중복 검색이 불가능하면 이슈를 만들지 않고 폴백하며, 취약점 후보는 공개 검색·preview·submit 대신 private route로 전환한다.
 7. 미인증 또는 실패 시 긴 report를 URL에 넣지 않는 Issue Form과 exact `public-report.md` 복사 경로를 제공하며 자동 재시도하지 않는다. 외부 write 결과가 불확실한 실패는 `.submission.lock`을 보존해 직접 재시도를 차단한다.
 8. `/config/antigravity-workspace/feedback`은 `0700`/`0600`, `/data/github-cli`는 `0700`/`0600`을 유지한다. Input과 managed path의 symlink, hardlink, non-regular type와 root escape를 거부하고, non-root-owned GitHub config는 소유권을 바꾸지 않은 채 direct login/submit을 비활성화한다.
-9. App image에 checksum 검증된 GitHub CLI `2.93.0`, Skill, helper와 routing instruction이 포함되고 일반 `0.5.0` → `0.8.0` update에서 antigravity 인증/config/AGENTS, SSH/browser identity, memory와 Home Assistant 파일이 보존된다.
+9. App image에 checksum 검증된 GitHub CLI `2.93.0`, Skill, helper와 routing instruction이 포함되고 일반 `0.5.0` → `0.8.1` update에서 antigravity 인증/config/AGENTS, SSH/browser identity, memory와 Home Assistant 파일이 보존된다.
 10. 실제 HAOS의 report 생성·restart persistence·Issue Form 폴백은 별도 실기하며, 실제 GitHub 이슈 생성은 저장소에 외부 변경을 남기므로 명시적 승인 전까지 **NOT RUN**으로 기록한다.
