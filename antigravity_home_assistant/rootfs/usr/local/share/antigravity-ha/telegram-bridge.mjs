@@ -107,32 +107,87 @@ async function telegramApi(botToken, method, body = {}, timeoutMs = 30000, retri
 }
 
 async function sendTelegramMessage(botToken, chatId, text) {
-  const maxLen = 4000;
+  const maxLen = 3900;
   if (!text || !text.trim()) {
     text = "*(답변 없음)*";
   }
-  if (text.length <= maxLen) {
+  const cleanText = text.trim();
+  if (cleanText.length <= maxLen) {
     await telegramApi(botToken, "sendMessage", {
       chat_id: chatId,
-      text,
+      text: cleanText,
     });
     return;
   }
 
-  for (let i = 0; i < text.length; i += maxLen) {
-    const chunk = text.slice(i, i + maxLen);
-    await telegramApi(botToken, "sendMessage", {
-      chat_id: chatId,
-      text: chunk,
-    });
+  // Split into clean chunks by newline or sentence boundaries
+  const lines = cleanText.split("\n");
+  let currentChunk = "";
+
+  for (const line of lines) {
+    if ((currentChunk + "\n" + line).length > maxLen) {
+      if (currentChunk.trim()) {
+        await telegramApi(botToken, "sendMessage", {
+          chat_id: chatId,
+          text: currentChunk.trim(),
+        });
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      currentChunk = line;
+    } else {
+      currentChunk = currentChunk ? currentChunk + "\n" + line : line;
+    }
+  }
+
+  if (currentChunk.trim()) {
+    // If a single line still exceeds maxLen, split hard
+    while (currentChunk.length > maxLen) {
+      const sub = currentChunk.slice(0, maxLen);
+      currentChunk = currentChunk.slice(maxLen);
+      await telegramApi(botToken, "sendMessage", {
+        chat_id: chatId,
+        text: sub,
+      });
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    if (currentChunk.trim()) {
+      await telegramApi(botToken, "sendMessage", {
+        chat_id: chatId,
+        text: currentChunk.trim(),
+      });
+    }
   }
 }
 
 function stripAnsiCodes(text) {
+  if (!text) return "";
   return text
     .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "")
     .replace(/\r\n/g, "\n")
     .trim();
+}
+
+function cleanAiOutput(rawOutput, promptText) {
+  if (!rawOutput) return "";
+  let text = stripAnsiCodes(rawOutput);
+
+  // Filter out system warning banners
+  text = text
+    .replace(/⚠\s*Conversation already open[\s\S]*?separately\./gi, "")
+    .replace(/\[\d+m/g, "")
+    .replace(/antigravity>\s*/g, "")
+    .replace(/\? for shortcuts[\s\S]*?$/gm, "")
+    .replace(/^\[antigravi\d+:.*\]\s*$/gm, "");
+
+  // If prompt was echoed, isolate text strictly after the prompt
+  if (promptText && text.includes(promptText)) {
+    const idx = text.lastIndexOf(promptText);
+    text = text.slice(idx + promptText.length).trim();
+  }
+
+  // Remove leading prompts or artifacts
+  text = text.replace(/^[>\s:-]+/, "").trim();
+  return text;
 }
 
 async function runAntigravityPrompt(promptText) {
@@ -152,16 +207,22 @@ async function runAntigravityPrompt(promptText) {
       await execAsync(`tmux send-keys -t ${sessionName} -l "${safePrompt}"`);
       await execAsync(`tmux send-keys -t ${sessionName} Enter`);
 
-      // Wait up to 60s for new output in tmux
+      // Wait up to 60s for new output in tmux with auto-approval check
       for (let i = 0; i < 60; i++) {
         await new Promise((r) => setTimeout(r, 1000));
         const { stdout: currentPane } = await execAsync(`tmux capture-pane -p -t ${sessionName} -S -200 2>/dev/null || true`);
         const cleanCurrent = stripAnsiCodes(currentPane);
-        if (cleanCurrent.length > beforeLen + 10) {
-          // If response looks finished (contains Antigravity prompt or idle)
-          const newText = cleanCurrent.slice(Math.max(0, cleanCurrent.lastIndexOf(promptText) + promptText.length)).trim();
-          if (newText.length > 5 && (i >= 5 || newText.includes("\n") || cleanCurrent.includes("antigravity>"))) {
-            return newText;
+
+        // Auto-approve if confirmation prompt is encountered
+        if (cleanCurrent.match(/\[Y\/n\]|\[y\/N\]|approve\?|Do you want to continue/i)) {
+          await execAsync(`tmux send-keys -t ${sessionName} "Y" Enter`);
+          continue;
+        }
+
+        if (cleanCurrent.length > beforeLen + 5) {
+          const delta = cleanAiOutput(cleanCurrent.slice(Math.max(0, beforeLen)), promptText);
+          if (delta.length > 5 && (i >= 5 || delta.includes("\n") || cleanCurrent.includes("antigravity>"))) {
+            return delta;
           }
         }
       }
@@ -176,7 +237,7 @@ async function runAntigravityPrompt(promptText) {
 
   try {
     console.log(`[Telegram Bridge] Executing prompt in dedicated PTY session '${tempSession}'...`);
-    const cmd = `antigravity --dangerously-skip-permissions -p "${safePrompt}" > ${outPath} 2>&1`;
+    const cmd = `antigravity -c 'approval_policy="never"' -c 'sandbox_mode="danger-full-access"' -p "${safePrompt}" > ${outPath} 2>&1`;
     await execAsync(`tmux new-session -d -s ${tempSession} -c /config "bash -c '${cmd.replace(/'/g, "'\\''")}'"`);
 
     // Poll until tmux session terminates (command finishes)
@@ -191,7 +252,7 @@ async function runAntigravityPrompt(promptText) {
     if (existsSync(outPath)) {
       const rawOutput = readFileSync(outPath, "utf8");
       try { unlinkSync(outPath); } catch (_) {}
-      const clean = stripAnsiCodes(rawOutput);
+      const clean = cleanAiOutput(rawOutput, promptText);
       if (clean) return clean;
     }
   } catch (err) {

@@ -65,5 +65,7 @@ if ! antigravity_ha_browser_build_approval_args "${browser_approval_policy}"; th
 fi
 
 exec /usr/local/libexec/antigravity-real \
+  -c "approval_policy=\"${approval_policy}\"" \
+  -c "sandbox_mode=\"${sandbox_mode}\"" \
   "${antigravity_HA_BROWSER_APPROVAL_ARGS[@]}" \
   "$@"

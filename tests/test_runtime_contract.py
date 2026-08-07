@@ -158,3 +158,16 @@ def test_web_terminal_uses_tmux_and_returns_to_shell(rootfs: Path) -> None:
     assert "web_terminal_auto_start_antigravity" in session_shell
     assert "if ha-antigravity; then" in session_shell
     assert "exec /bin/bash -l" in session_shell
+
+
+def test_antigravity_cli_passes_approval_and_sandbox_policies(rootfs: Path) -> None:
+    wrapper = (rootfs / "usr/local/bin/antigravity").read_text(encoding="utf-8")
+    assert '-c "approval_policy=\\"${approval_policy}\\""' in wrapper
+    assert '-c "sandbox_mode=\\"${sandbox_mode}\\""' in wrapper
+
+
+def test_init_starts_background_tmux(rootfs: Path) -> None:
+    init_script = (rootfs / "usr/local/bin/antigravity-ha-init").read_text(
+        encoding="utf-8"
+    )
+    assert 'tmux -u new-session -d -s "${session_name}"' in init_script

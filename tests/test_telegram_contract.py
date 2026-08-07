@@ -48,3 +48,14 @@ def test_telegram_s6_service_structure(addon_root: Path) -> None:
 
     user_contents = addon_root / "rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/telegram-bot"
     assert user_contents.is_file()
+
+
+def test_telegram_bridge_script_content(addon_root: Path) -> None:
+    """Verify telegram-bridge.mjs uses approval_policy=never and cleans response."""
+    script_path = addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
+    content = script_path.read_text(encoding="utf-8")
+
+    assert 'approval_policy="never"' in content
+    assert "cleanAiOutput" in content
+    assert "stripAnsiCodes" in content
+    assert "sendMessage" in content

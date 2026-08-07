@@ -437,3 +437,11 @@ sshd -t -f /etc/ssh/sshd_config
 nginx -t -c /etc/nginx/nginx.conf
 
 bashio::log.info "antigravity runtime ready: $(antigravity --version)"
+
+session_name=$(antigravity_ha_config_string 'tmux_session_name' 'antigravity-ha')
+if [[ "${session_name}" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then
+  if ! tmux has-session -t "${session_name}" 2>/dev/null; then
+    bashio::log.info "Initializing background tmux session '${session_name}'"
+    tmux -u new-session -d -s "${session_name}" -c /config /usr/local/bin/tmux-session-shell || true
+  fi
+fi
