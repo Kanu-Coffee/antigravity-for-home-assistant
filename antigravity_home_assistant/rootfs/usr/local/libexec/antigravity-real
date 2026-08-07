@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ "${1:-}" == "--version" ]]; then
+  echo "antigravity-cli 0.144.1"
+  exit 0
+fi
+
+has_prompt_input=false
+has_mcp_list=false
+has_mcp_get_playwright=false
+
+for arg in "$@"; do
+  if [[ "$arg" == "prompt-input" ]]; then has_prompt_input=true; fi
+  if [[ "$arg" == "list" ]]; then has_mcp_list=true; fi
+  if [[ "$arg" == "playwright" ]]; then has_mcp_get_playwright=true; fi
+done
+
+if [[ "$has_prompt_input" == true ]]; then
+  python3 -c '
+import tomllib, json
+with open("/etc/antigravity/config.toml", "rb") as f:
+    cfg = tomllib.load(f)
+instructions = cfg.get("developer_instructions", "")
+print(json.dumps([{"role": "developer", "content": [{"type": "input_text", "text": instructions}]}]))
+'
+  exit 0
+fi
+
+if [[ "$has_mcp_list" == true ]]; then
+  cat <<'EOF'
+[
+  {
+    "name": "ha_memory",
+    "enabled": true,
+    "transport": {
+      "type": "stdio",
+      "command": "/usr/bin/env",
+      "cwd": "/config",
+      "args": [
+        "-i",
+        "HOME=/data/home",
+        "LANG=C.UTF-8",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "/usr/local/bin/ha-memory-mcp"
+      ]
+    }
+  },
+  {
+    "name": "playwright",
+    "enabled": true,
+    "transport": {
+      "type": "stdio",
+      "command": "/usr/bin/env",
+      "cwd": "/config",
+      "args": [
+        "-i",
+        "HOME=/run/antigravity-ha/playwright-home",
+        "LANG=C.UTF-8",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "/usr/local/bin/ha-playwright-mcp"
+      ]
+    }
+  }
+]
+EOF
+  exit 0
+fi
+
+if [[ "$has_mcp_get_playwright" == true ]]; then
+  echo '{"name":"playwright","command":"/usr/bin/env","args":["-i","HOME=/run/antigravity-ha/playwright-home","LANG=C.UTF-8","PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","/usr/local/bin/ha-playwright-mcp"]}'
+  exit 0
+fi
+
+echo "antigravity-cli 0.144.1"

@@ -1,0 +1,432 @@
+# Changelog
+
+All notable changes to this App are documented in this file.
+
+## [0.6.0] - 2026-07-16
+
+### Added
+
+- Add the image-managed `$ha-feedback` Skill with explicit `bug` and `feature` modes. It guides antigravity through read-only investigation, honest `PASS`/`FAIL`/`NOT_TESTED`/`NOT_RUN` boundaries, structured privacy review, and bilingual report preparation.
+- Add the Node-based `ha-feedback` helper for allowlisted environment collection, schema validation, Markdown rendering, private report storage, GitHub authentication status/login/logout, random short-lived single-use submission previews, confirmed issue creation, and a short prefilled Issue Form fallback.
+- Add bilingual bug and feature Issue Forms, copyable Korean/English presets, and a manual reporting route for failures where antigravity or the Skill cannot start.
+- Bundle the official GitHub CLI `2.93.0` linux amd64 archive with pinned SHA-256 verification.
+
+### Changed
+
+- Add feedback routing to both the new-installation base `AGENTS.md` and image-managed system developer instructions, so normal updates gain the route without replacing preserved user antigravity files.
+- Store reports under `/config/antigravity-workspace/feedback` with private directory/file permissions. Store optional GitHub CLI credentials under `/data/github-cli`; this location can be included in Home Assistant App backups.
+
+### Security
+
+- Keep feedback investigation read-only: it never authorizes Home Assistant changes, service calls, reloads, restarts, updates, recovery, or restoration. Possible vulnerabilities stop before public issue search or submission and use GitHub private vulnerability reporting.
+- Collect only allowlisted version, architecture, and non-secret App option fields. Reject control/ANSI sequences, token and key patterns, cookies, long base64 blobs, URLs/IPs, and identifying Home Assistant values before public rendering or `gh` execution; logs and screenshots remain opt-in and are never uploaded automatically.
+- Remove `GH_TOKEN` and `GITHUB_TOKEN` from the GitHub CLI child environment, fix the destination repository and labels in code, and reject unsafe report/config links. Require a cryptographically random, payload-bound, 10-minute, single-use preview token after the user reviews the exact repository, title, label, and body.
+- Fail closed when candidate or remote report-ID duplicate search is unavailable. Pass the already validated Markdown to `gh issue create --body-file -` over stdin, serialize concurrent submissions with an exclusive claim, and retain a hidden `.submission.lock` after an uncertain external result so direct submission cannot retry automatically.
+
+### Upgrade notes
+
+- Normal update from `0.5.0` preserves antigravity authentication/configuration/AGENTS, SSH identity, browser identity, memory, and Home Assistant files. Start a new antigravity session to discover `$ha-feedback` and the new image-managed routing.
+- GitHub sign-in is optional. Before `ha-feedback github login`, review that `/data/github-cli` credentials may be present in App backups; use `ha-feedback github logout` to remove the persisted login.
+
+### Testing
+
+- Add schema/render/privacy fixtures, Skill and Issue Form contracts, fake-GitHub-CLI submission boundaries, and packaging/update persistence checks. A real GitHub test issue is intentionally **NOT RUN** without separate explicit approval.
+- Merge [PR #33](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/pull/33) as `8404f8e61394021d0acb08a67a021cf2ca641f3b`; [main CI 29498705500](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/actions/runs/29498705500) passed before publication.
+- Verify the exact public image with feedback, browser-policy, full browser/gateway/Core WebSocket/ttyd/SSH, memory lifecycle/privacy/MCP/persistence, managed-auth, user-file, and public `0.5.0` to public `0.6.0` update smokes; all passed without creating an external issue.
+- Keep actual installed-HAOS natural-language Skill discovery, report generation, preview, fallback, and confirmed live submission explicitly **NOT RUN** until operating-environment acceptance.
+
+### Release evidence
+
+- Publish the annotated `0.6.0` tag at `2026-07-16T12:39:01Z`; [Builder 29498965561](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/actions/runs/29498965561) published the GHCR images, and the verified [GitHub prerelease](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/releases/tag/0.6.0) was published at `2026-07-16T12:51:51Z`.
+- The generic and per-architecture tags share OCI index digest `sha256:5c8dd2c1a1f96c9a994178b6077d82a7ab582d946ee95bdb61575587292ed845`; the linux/amd64 runtime manifest digest is `sha256:4c4efdf797a77393f6ac2ab85d41f404b86171665c3bf583ff33943cd3708911`.
+- Confirm anonymous generic/per-architecture manifest access and pull, the expected version/architecture/source labels, the absence of a mutable `latest` tag, and enabled private vulnerability reporting for security findings.
+
+## [0.5.0] - 2026-07-16
+
+### Added
+
+- Add `memory_remember_explicit` and the matching `ha-memory remember` fallback. One unambiguous durable fact stated directly by the user now runs the existing audited pending→verified→applied transitions in a single tool call, fixes provenance to `user_explicit`, rejects transient values, obvious temporal/uncertainty wording, noncanonical home subjects, and canonical HA relationships, resumes an existing pending/verified duplicate, and returns applied/already-applied/conflict explicitly.
+- Add bounded `memory_list_candidates` and `memory_reject_candidate` MCP tools, including exact-subject filtering, so a pending or conflicted candidate can be followed up or withdrawn in a later request without dumping the store.
+- Make repeated unresolved corrections return the existing candidate/conflict without adding duplicate rows, and normalize lower-authority provenance upgrades to the compound tool's stable `applied` result while retaining the detailed application result.
+- Add an installed-image smoke that launches the image-managed `ha-memoryd` run contract against an empty store and waits for the first catalog without a manual refresh.
+
+### Changed
+
+- Require model-visible memory guidance to search a small relevant subset first, disclose empty/degraded/stale status, finish direct explicit-user learning in the same request, keep entity data out of all AGENTS files, and report applied/conflict outcomes. Add a bounded `ha-memory remember` fallback when the optional MCP is unavailable and forbid weak existence/name checks as proof of unsupported automation logic changes.
+- Require supported pre-change expectations and post-reload fresh API verification for persistent Home Assistant configuration, registry, and automation mutations. Reads, diagnostics, catalog refreshes, and transient device-service tests remain outside that ledger; unsupported or unavailable verification leaves semantic memory unchanged and is disclosed before mutation.
+- Advance the released-image update regression to public `0.4.0` so the new memory tools are verified without losing the existing catalog/applied memory, user antigravity files, authentication, SSH, browser identity, or browser approval policy.
+
+### Fixed
+
+- Wait up to five seconds for transient SQLite `BUSY`/`LOCKED` contention, retry only `search_fts`-scoped FTS5 diagnostics when `data_version` proves another connection committed during the check, serialize new schema initialization in one immediate transaction, and tolerate only normal WAL/SHM/journal disappearance during auxiliary-file inspection. Concurrent first catalog bootstrap and `ha-memory status` no longer report a healthy WAL/FTS5 store as `database_corrupt` or fail with `ENOENT`; malformed, unsafe, or stable integrity failures remain fail-closed.
+
+### Security
+
+- Keep the compound explicit-memory path on the same transient-value, source authority, canonical-relationship, conflict, audit, and rollback validators as the separate candidate tools. It does not add a listener, permission, raw transcript field, or path for state/API/config payload persistence.
+
+### Upgrade notes
+
+- This is a MINOR user-flow release. Normal App update preserves `/data/antigravity-ha-memory`, user antigravity configuration, AGENTS files, authentication, SSH, and browser identity. Restart the App and start a new antigravity session so the image-managed MCP tool list and developer guidance include the new memory workflow.
+- A retained `refresh_agents` or `refresh_all` selection applies its selected target once for `0.5.0`; choose `preserve` before update if that reset is not wanted.
+
+### Testing
+
+- Merge [PR #29](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/pull/29) as `110edf3aba42c5f33c011d75e9d05e4dd05b50f1`; [main CI 29465342591](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/actions/runs/29465342591) passed before publication.
+- Pass ten Node/SQLite memory tests covering writer-lock wait, concurrent FTS5 commits, deterministic and stressed auxiliary-file cleanup, malformed databases, and stable FTS5 corruption; pass the full Python, App, YAML, Markdown, ShellCheck, Hadolint, manifest, and diff checks.
+- Verify the exact public image with browser-policy, full browser/gateway/Core WebSocket/ttyd/SSH, memory bootstrap/lifecycle/privacy/MCP/persistence, managed-auth, user-file, and public `0.4.0` to public `0.5.0` update smokes; all passed.
+- Keep actual HAOS natural-language same-request learning, new-task recall, and safe persistent-change fresh verification explicitly **NOT RUN** until the installed App is retested. Automation logic-only changes remain outside the supported expectation schema.
+
+### Release evidence
+
+- Publish the annotated `0.5.0` tag at `2026-07-16T01:59:38Z`; [Builder 29465483772](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/actions/runs/29465483772) then published the GHCR images, and the verified [GitHub prerelease](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/releases/tag/0.5.0) was published at `2026-07-16T02:13:17Z`.
+- The generic and per-architecture tags share OCI index digest `sha256:193cfc7a7b678660b99f7017b6ac0f4261af59ba57832f8bdd82356ee982956a`; the linux/amd64 runtime manifest digest is `sha256:d360419231ad1aa9140821dd95dda6c4ce74122439726c503c5f30083e682fd5`.
+- Confirm anonymous generic/per-architecture tag access and pulls, the expected version/architecture/source labels, and the absence of a mutable `latest` tag.
+
+## [0.4.0] - 2026-07-15
+
+### Added
+
+- Add the `browser_approval_policy` Home Assistant App option with `safe` (default), `never`, and `always` modes. `safe` automatically approves browser navigation and inspection while retaining prompts for clicks, form input, key presses, selections, and typing; `never` suppresses MCP prompts for the current restricted Playwright allowlist; `always` requests approval for each allowed browser tool.
+
+### Changed
+
+- Apply the selected browser policy on every antigravity CLI and app-server launch through image-managed CLI overrides without rewriting the user's `config.toml` or `AGENTS.md`.
+- Change the Playwright server fallback from annotation-dependent `writes` behavior to an explicit `prompt` default plus reviewed per-tool modes. Future tools therefore prompt until they are deliberately added to the image allowlist and policy helper.
+- Advance the released-image update regression from public `0.3.1` to public `0.3.2` and preserve an older `options.json` without inserting the new key; its missing value resolves to `safe` at runtime.
+
+### Security
+
+- Keep the existing 16-tool Playwright proxy allowlist unchanged. The new full-auto choice does not enable code evaluation, arbitrary file upload, PDF/file output paths, unrestricted network tools, or any additional Home Assistant permission.
+- Keep `antigravity_approval_policy` as the umbrella command policy. When it is `never` under a full-write permission profile, antigravity may automatically approve MCP prompts globally, so `safe` or `always` cannot force a browser popup in that combination. Home Assistant device mutations still require authorization from the user's current request and remain subject to the App operating guidance.
+
+### Upgrade notes
+
+- New and existing installations that do not yet have `browser_approval_policy` use `safe`. Save a different mode in the App Configuration UI, restart the App, and start a new antigravity session to apply it.
+- The existing per-target App-version behavior applies to `0.4.0`: a retained `refresh_agents` or `refresh_all` selection refreshes its selected target once after the update. Select `preserve` before updating if that is not wanted.
+
+### Testing
+
+- Add exact static parity checks across the system MCP configuration, runtime policy helper, and proxy allowlist, including the 11 safe and 5 interactive tools.
+- Add a disposable-container wrapper smoke covering missing, `safe`, `never`, `always`, invalid enum, invalid type, CLI argument pass-through, and pinned antigravity TOML parsing, plus public `0.3.2` update preservation.
+- Merge [PR #26](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/pull/26) as `bca612661692e3d66d239c06b57b52921ea56af6`; [main CI 29408206017](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/actions/runs/29408206017) passed before publication.
+- Verify the exact public image with browser-policy, full browser/gateway/Core WebSocket/ttyd/SSH, memory, managed-auth, user-file, and public `0.3.2` to public `0.4.0` update smokes; all passed.
+- In the subsequent actual HAOS `never`-mode acceptance run, 14 allowed Playwright tools completed with zero MCP approval prompts, including desktop/mobile rendering, automatic dashboard authentication, console/network inspection, and non-mutating click/input paths. `select_option` had no safe target and `close` was not reported, so both remain **NOT TESTED** and the overall approval matrix remains **PARTIAL**.
+- Keep `safe`, `always`, top-level global-never precedence, blocked-tool rejection, Configuration UI/default behavior, confirmed AppArmor status, user-file/identity preservation, and live update detection explicitly **NOT RUN**. A legacy Bubble Card module YAML returned one 404 warning/error pair without preventing either viewport from rendering.
+
+### Release evidence
+
+- Publish the annotated `0.4.0` tag at `2026-07-15T10:32:08Z`; [Builder 29408467932](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/actions/runs/29408467932) then published the GHCR images, and the verified [GitHub prerelease](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/releases/tag/0.4.0) was published at `2026-07-15T10:42:35Z`.
+- The generic and per-architecture tags share OCI index digest `sha256:758837276c4247a304c58791bddab5912977d3445801dcd832a638f9a2af9342`; the linux/amd64 runtime manifest digest is `sha256:b586727e9a2ca724f32f8255f692cd32104aeed45bc0e65b8c12cb3cc151373b`.
+- Confirm anonymous generic/per-architecture tag access and pulls, the expected version/architecture/source labels, and the absence of a mutable `latest` tag.
+
+## [0.3.2] - 2026-07-15
+
+### Fixed
+
+- Keep Home Assistant's official `search/related` automation request shape while isolating only the observed Core result envelope `success: false`, `error.code: unknown_error` for the affected automation. Its successful `automation/config` remains indexable, direct area/device/entity references are extracted locally, and the missing related enrichment becomes a bounded `automation_related_unavailable` warning instead of aborting every catalog bootstrap.
+- Distinguish the observed Core `unknown_error` from server `timeout`, `unauthorized`, `invalid_format`, `home_assistant_error`, client timeout, transport, WebSocket close, protocol, malformed envelope, and malformed successful-result failures. Only the exact observed related error is degradable; all other incomplete-snapshot paths remain fail closed and preserve the last-known-good catalog.
+- Record each normalized automation relationship with its actual `search_related` or `automation_config` provenance instead of treating an empty related object as the source of config-derived references.
+- Surface only the persisted warning count through `ha-memory status` and daemon success logging so operators can distinguish a complete base catalog with missing optional enrichment without logging automation identifiers.
+
+### Security
+
+- Do not persist or return the Core error message/body when related enrichment is unavailable. The warning contains only a fixed prefix and the already allowlisted automation entity identifier, and the snapshot warning list is capped at 100 entries.
+
+### Upgrade notes
+
+- Public `0.3.1` was verified byte-for-byte on a real HAOS/Core `2026.7.2` installation, but catalog refresh failed because 2 of 30 automation-related searches returned Core `unknown_error`. Core restart reconnection and privacy checks passed or partially passed as documented; candidate/change/App restart/update tests were not run.
+- The existing per-target App-version behavior applies to `0.3.2`: a retained `refresh_agents` or `refresh_all` selection refreshes its selected target once after the update. Select `preserve` before updating if that is not wanted.
+- At release time, the published `0.3.2` image passed anonymous pull, exact-image memory/full/managed-auth/user-file and public `0.3.1` update regression; actual HAOS retesting remained separate.
+
+### Testing
+
+- Reproduce the live `unknown_error` boundary with source and installed-image WebSocket tests, assert the exact official automation payload, and verify combined null-config/related warnings without retaining the remote response.
+- Add negative coverage proving server `timeout`/`unauthorized`/`invalid_format`/`home_assistant_error`, client timeout, malformed result envelopes, and array results still reject the snapshot, plus normalization coverage for config fallback references and exact provenance.
+- In the subsequent public `0.3.2` HAOS/Core `2026.7.2` self-audit, the same related `unknown_error` appeared for 2 of 30 automations and was isolated as designed. Catalog/DB/CLI/MCP/privacy/candidate lifecycle, the post-restart forced fresh sync, and App restart persistence passed. The overall audit remained **PARTIAL with zero FAIL items** because the actual runtime OCI digest was unavailable and no Core disconnect/failed refresh was observed, so reconnect and the transient LKG stale/degraded state were not observed; null config was also not observed and fault injection/version-tagged update were not run.
+
+## [0.3.1] - 2026-07-15
+
+### Fixed
+
+- Accept Home Assistant's successful `automation/config` response with `config: null` for an unavailable automation. The automation entity and its `search/related` graph remain indexable with an empty config and a bounded warning instead of aborting the entire catalog snapshot.
+- Use the image-pinned `ws` runtime for the memory client with a handshake timeout, 32 MiB payload cap, disabled compression, and normal TLS verification, matching the App's other privileged WebSocket helpers.
+- Preserve closed, machine-readable token, DNS, transport, timeout, authentication, protocol, command, and snapshot failure reasons in sync status and change verification. The daemon logs only an allowlisted reason code and never the captured command output.
+- Reject valid JSON frames that are not protocol objects without crashing, and clear all pending parallel command timers before the transport closes after a partial failure.
+
+### Security
+
+- Remove the `HA_WS_URL` environment override so a caller cannot redirect the runtime Supervisor credential to an arbitrary WebSocket endpoint. Programmatic test endpoints require an explicit test credential and the production path remains fixed at the documented Supervisor proxy.
+- Keep Supervisor authentication in the first WebSocket `auth` frame; do not add the credential to the HTTP Upgrade headers or send it to a direct-Core fallback.
+
+### Upgrade notes
+
+- The existing per-target App-version behavior applies to `0.3.1`: a retained `refresh_agents` or `refresh_all` selection refreshes its selected target once after the update. Select `preserve` before updating if that is not wanted.
+- The supplied 0.3.0 read-only HAOS audit established the failure boundary but discarded the original WebSocket error. Automated tests cover the legal null-config response and diagnostic stages; actual HAOS catalog/restart/candidate verification remains separate until the published image is re-tested.
+
+### Testing
+
+- Add unit coverage for unavailable automation config, token/auth/DNS/protocol/timeout/command diagnostics, non-object frames, pending-request cleanup, remote-message and credential suppression, and rejection of environment endpoint redirection.
+- Add an installed-image Supervisor-style WebSocket handshake/snapshot test using the actual pinned `ws` package, plus container checks for failed-refresh diagnosis, last-known-good preservation, and recovery.
+
+## [0.3.0] - 2026-07-15
+
+### Added
+
+- Add a persistent, root-only SQLite/FTS5 Home Assistant memory store with a normalized index of areas, devices, entities, automations, and their registry/automation relationships.
+- Add the non-blocking `ha-memoryd` S6 refresh service, the `ha-memory` administration CLI, and an optional image-managed `ha_memory` MCP server with bounded search and exact-subject tools.
+- Add provenance-aware semantic memory candidates for aliases, purposes, preferences, relationships, and notes. Candidates must move through separate pending, verified, and applied states; repeated observations, explicit user evidence, fresh HA structure, and verified antigravity changes have distinct verification rules.
+- Add pre-change subject and expectation-digest records, fresh post-change Home Assistant API verification against the same contract, conflict tracking, bounded audit history, and dependency-safe compensating rollback for semantic-memory events.
+
+### Security
+
+- Store only allowlisted registry and automation metadata plus typed semantic values and structured provenance labels. Raw current/history state values, timestamps, automation actions/templates, conversations, API responses, and credentials are excluded from durable memory; state may be compared during fresh verification, but only expectation/predicate digests, checked field names, and match booleans are retained. A verified change can validate a relationship candidate only through the exact source/relation/target existence predicate.
+- Protect `/data/antigravity-ha-memory` as root-only storage, reject unsafe links/ownership/schema, use atomic WAL transactions and integrity checks, preserve the last-known-good catalog on refresh failure, and cap every normal search by query length, result count, relationships, applied memories, conflicts, and serialized bytes.
+- Keep Home Assistant structural facts under fresh Core API authority and explicit user explanations above observations or model inference. Conflicts remain visible instead of silently replacing equal/higher-authority memory.
+
+### Upgrade notes
+
+- The new memory database is created automatically and survives normal App replacement through `/data`. Unsafe memory links/files fail closed without being followed or blocking the main App init. Initial Core indexing runs in a separate retrying service, so an unavailable Core or memory database does not block Web UI, SSH, antigravity, or browser startup.
+- Existing user `config.toml` and `AGENTS.md` remain subject to `antigravity_user_files_update_mode`. The image-managed system config still supplies the optional memory MCP and its operating rules; start a new antigravity session after updating to discover it.
+- A retained `refresh_agents` or `refresh_all` selection runs once again for its selected targets at version `0.3.0`. Select `preserve` before updating if that reset is not wanted.
+
+### Testing
+
+- Add fixture-driven Node/SQLite lifecycle coverage for bootstrap, state/entity-registry automation union including disabled registry-only entries, normalized relationships, raw/transient byte exclusion, candidate verification/application, exact change-predicate binding, stronger-provenance deduplication, source precedence, conflicts, precommitted fresh change success/mismatch, bounded search, dependency-safe history/rollback, and concurrent atomic refresh failure.
+- Add static packaging/S6/MCP/schema contracts and a container smoke covering unsafe and broken init/SQLite auxiliary links, root-only permissions, CLI and real MCP tool calls, active-automation detail failure, persistence across replacement, and raw sentinel exclusion.
+
+## [0.2.4] - 2026-07-14
+
+### Changed
+
+- Publish a validation/evidence patch with no runtime feature or security-policy changes relative to public `0.2.3`.
+- Record the user's successful Home Assistant Configuration UI/Supervisor normal update on public `0.2.3`.
+- Record the user's successful authenticated `http://127.0.0.1:8099` dashboard verification on real HAOS with AppArmor enabled, covering desktop/mobile rendering, console, network/static resources, and the Core WebSocket path.
+
+### Upgrade notes
+
+- The existing per-target App-version behavior still applies even though this is an evidence-only patch. Installations that leave `antigravity_user_files_update_mode` set to `refresh_agents` or `refresh_all` will refresh the selected target once again when the App version changes to `0.2.4`.
+- To avoid that reapplication, save `antigravity_user_files_update_mode: preserve` in the Home Assistant Configuration UI **before** updating to `0.2.4`.
+
+### Testing
+
+- Keep the public `0.2.3` HAOS user confirmation separate from the automated `0.2.4` candidate regression and release checks.
+- Do not infer or publish an HAOS version, screenshots, or detailed execution logs that the user did not provide. Existing automated negative tests continue to cover token redaction, hostile environment handling, managed-auth lifecycle, and unsafe user-file targets; those checks are not claimed as part of the new HAOS user confirmation.
+
+## [0.2.3] - 2026-07-14
+
+### Added
+
+- Add the `home_assistant_browser_auto_auth` App setting, enabled by default, to create or reuse the dedicated local-only `system-read-only` browser identity without a terminal setup step.
+- Add `ha-browser-auth-ensure` so App initialization and each new Playwright MCP process converge on the configured managed or manual authentication source.
+- Add `antigravity_user_files_update_mode` with `preserve` (default), `refresh_agents`, and `refresh_all` choices so Home Assistant Web UI updates can optionally reset the image-managed base guidance or both guidance and the current App-option-based default antigravity configuration.
+- Add root-only pre-refresh backups, crash-recovery metadata, and per-target App-version state for selected user-file updates.
+
+### Changed
+
+- Treat a missing automatic-auth option as enabled so existing installations gain the new default after a normal update; disabling it takes effect for the next App/MCP browser session and preserves the managed identity for later reactivation.
+- Inject an image-managed antigravity developer instruction and Playwright navigation-tool guidance that direct Home Assistant dashboard checks immediately to `http://127.0.0.1:8099/` instead of first searching for another browser skill or probing Core/external URLs.
+- Keep the manual `home_assistant_browser_token` as an explicit override only while automatic authentication is enabled; OFF suppresses all automatic token injection.
+- Treat a missing user-file update option as `preserve`, so a normal public `0.2.2` to `0.2.3` update changes no existing `config.toml` or `AGENTS.md`. Users may choose a refresh after the new Configuration field appears and restart the App.
+- Apply each selected target at most once per App version. Keeping a refresh mode selected applies it once again on the next version; returning to `preserve` makes the selection one-off.
+- Preserve `AGENTS.override.md` at its higher precedence and exclude antigravity authentication/sessions, SSH and browser identities, App options, and the entire Home Assistant `/config` tree from user-file refreshes.
+
+### Security
+
+- Continue to validate the exact local-only/read-only user and single managed LLAT before browser injection; automatic provisioning does not add trusted networks, change authentication providers, edit `.storage`, or expose the Supervisor credential to Chromium.
+- Do not delete the Home Assistant user or persistent recovery material when the setting is turned off. Complete identity deletion remains an explicit `ha-browser-auth-remove` operation.
+- Require automatic authentication to be OFF before `ha-browser-auth-remove` can delete the identity, preventing the next automatic ensure from silently recreating what the user intended to remove permanently.
+- Warn that `refresh_all` resets user MCP, model, provider, trust, endpoint, and other antigravity settings; preserve the original bytes in `0700`/`0600` backup storage that must itself be treated as a credential.
+- Preflight every selected target and fail closed without following symbolic links, overwriting multiply linked files, or mutating non-regular/unsafe paths. Commit replacements atomically only after all targets and backups verify.
+
+### Testing
+
+- Cover default-ON fresh/update behavior, automatic creation, restart reuse, OFF/ON preservation and reactivation, ON-state removal refusal, OFF-state removal, manual override suppression, and OFF-state setup refusal in the managed authentication smoke suite.
+- Verify the 8099 route in model-visible `antigravity debug prompt-input` output and in the filtered Playwright `browser_navigate` tool description, alongside the existing desktop/mobile, console, network, update, and credential-redaction checks.
+- Cover the default/missing preserve path, agents-only and all-target refreshes, per-version/per-target one-shot behavior, private byte-exact backups, restart idempotency, crash recovery, and unsafe symlink/hardlink/non-regular rejection without changing protected identities or `/config`.
+- Keep the actual Home Assistant Configuration UI/Supervisor update and HAOS/AppArmor dashboard path explicitly **NOT RUN** until verified on a real installation.
+
+## [0.2.2] - 2026-07-14
+
+### Added
+
+- Add `ha-browser-auth-setup` to create a dedicated active, local-only `system-read-only` Home Assistant browser user, complete the official local login flow, mint its long-lived token, and activate it without asking the user to copy a token.
+- Add `ha-browser-auth-remove` for policy-checked identity cleanup and `ha-browser-auth-refresh` for automatic revalidation and reuse after App restart or update.
+
+### Changed
+
+- Prefer a validated manual `home_assistant_browser_token` when explicitly configured; otherwise reuse the App-managed credential stored privately under `/data/browser-auth`.
+- Revalidate the managed identity, exact single-token invariant, and credential-free user at App initialization and before every Playwright MCP launch.
+- Verify the internal Home Assistant HTTPS upstream against the image CA bundle and the `homeassistant` hostname; certificate, DNS, TLS, or Core outages now disable runtime auto-login without destroying recovery state.
+
+### Security
+
+- Use only official Home Assistant admin/user WebSocket commands and login/token/revoke HTTP endpoints; do not edit `configuration.yaml`, `.storage`, auth-provider order, `trusted_networks`, or `trusted_proxies`.
+- Journal setup state and the managed LLAT in root-only `0700`/`0600` storage, remove the temporary password credential and OAuth refresh token automatically, and keep non-ready state unavailable to Chromium.
+- Serialize setup/removal with a kernel `flock`, verify self-revocation by reconnecting, preserve ambiguous `local_only` rejections, and fail closed on policy, credential, ownership, TLS, or transport mismatches.
+
+### Testing
+
+- Add a Home Assistant 2026.7.1-compatible auth fixture covering setup, reuse, App replacement, token rotation, exact token cleanup, ambiguous source rejection, concurrent operations, Core/provider failures, policy mutation, removal, and rollback without logging credentials.
+- Run managed-auth smoke in CI alongside the existing real Chromium desktop/mobile screenshot, console, network, Core REST/WebSocket, loopback isolation, SSH, ttyd, and persistence smoke suite.
+- Verify update replacement from public `0.2.1` to the `0.2.2` candidate while preserving `/data`, `/config`, antigravity credentials/configuration, App options, operating guidance, and SSH identity.
+
+## [0.2.1] - 2026-07-14
+
+### Added
+
+- Add `ha-browser-network-info` to report the current App socket source, Home Assistant peer and Supervisor-reported App address without exposing credentials or changing Home Assistant configuration.
+- Add a masked optional browser token setting, exact read-only/local-only user validation, and runtime authentication status diagnostics.
+- Add supported WebSocket-based helpers for creating a dedicated `system-read-only` user and removing its temporary password credential after a long-lived token is configured.
+
+### Changed
+
+- Send frontend, authentication, REST and WebSocket traffic through the same direct Core upstream so the dedicated user's permissions apply to the whole dashboard session.
+- Disable Home Assistant dashboard auto-login when the dedicated credential is absent, invalid, inactive, over-privileged, not local-only, or belongs to more than the read-only group.
+
+### Security
+
+- Do not add the dynamic App `/32`, the Docker App pool, or a synthetic forwarded address to `trusted_networks` or `trusted_proxies`; a released App address can be reassigned to another App after recreation.
+- Keep the existing `homeassistant` authentication provider untouched, never edit `configuration.yaml` or `.storage`, and fail closed instead of falling back to the Supervisor/system credential.
+- Exclude the Supervisor token from antigravity MCP `env_vars`; use it only in the launcher to revalidate the dedicated user at App initialization and each MCP launch, then remove it before the Node proxy and browser child start.
+- Reject inherited browser token, WebSocket endpoint, `BASH_ENV`, and `ENV` values; hard-code policy checks to the internal Supervisor Core WebSocket, inject only the revalidated dedicated-user token at the two loopback browser origins, and clear forwarded-client identity headers on the Core gateway.
+- Do not enable Playwright `--secrets`, whose form-input substitution could disclose the browser token to a page; redact exact token text in the managed proxy instead and test the path with a reflection fixture.
+- Start the system MCP through a clean `env -i` boundary, remove inherited `PLAYWRIGHT_MCP_*`, `NODE_OPTIONS` and `NODE_PATH` before validation, and give the Playwright child only a fixed environment allowlist.
+
+### Testing
+
+- Cross-check Docker's App address, the browser gateway socket source, Supervisor self report and the Chromium/Core fixture's observed peer, and reproduce reuse of a released container address by another container.
+- Exercise direct Core REST/WebSocket authentication with a dedicated read-only token, reject broader user policies and inherited environment tokens, and capture the internal gateway itself at desktop/mobile sizes with console, network, loopback isolation and secret-redaction coverage.
+- Verify a public `0.2.0` to candidate update preserves `/data`, `/config`, SSH identity and the masked browser token option.
+- Keep live HAOS `8099` dashboard rendering explicitly unverified until the candidate is updated on the user's App and tested inside that container namespace.
+
+## [0.2.0] - 2026-07-14
+
+### Added
+
+- Add an image-pinned Microsoft Playwright MCP runtime and headless Chromium so antigravity can navigate, inspect, interact with, and capture real Web UIs without a runtime browser download.
+- Register Playwright as an image-managed antigravity system MCP with desktop/mobile viewport resizing, screenshots, DOM snapshots, console messages, and network/resource status tools.
+- Add a loopback-only Home Assistant browser gateway at `http://127.0.0.1:8099/` that combines frontend assets with the supported Core REST and WebSocket proxy paths.
+
+### Changed
+
+- Extend the default Home Assistant operating guidance with a rendered UI validation loop and browser-specific safety boundaries.
+- Keep browser sessions isolated, force generated files under `/run`, and cap managed browser output with a 50 MiB eviction limit.
+
+### Security
+
+- Preserve the existing `/data/antigravity/config.toml` and install the browser server in lower-precedence `/etc/antigravity/config.toml`, so a normal update neither overwrites user settings nor requires a new antigravity login.
+- Reuse the protected runtime environment to pass the Supervisor token to the MCP process, register a root-only ephemeral secrets file for exact-value redaction, and inject the token only for the loopback Home Assistant origin.
+- Expose a browser tool allowlist that omits arbitrary page-code execution, unrestricted file access, file upload, persistent profiles, and externally listening browser ports.
+
+### Testing
+
+- Add policy coverage for the pinned MCP lockfile, system antigravity configuration, browser tool allowlist, loopback gateway, ephemeral secret handling, and forbidden privilege regression.
+- Add a real stdio MCP smoke flow covering desktop and mobile screenshots, console errors, successful and failed resource requests, and token redaction.
+- Exercise the loopback Home Assistant gateway against mock Supervisor/Core services, including authenticated REST, frontend rendering, WebSocket upgrade, external reachability denial, and runtime-output cleanup.
+- Replace the public `0.1.3` container with the candidate on the same named `/data` and `/config` volumes, preserving antigravity settings, an authentication marker, operating guidance, Home Assistant configuration, and SSH identity while enabling the new MCP.
+- Keep actual HAOS/AppArmor execution and authenticated live dashboard rendering as explicit post-update E2E checks rather than claiming them from a standalone Docker test.
+
+## [0.1.3] - 2026-07-13
+
+### Added
+
+- Publish an amd64 image and preferred generic manifest at `ghcr.io/kanu-coffee/antigravity-for-home-assistant:0.1.3` with the official Home Assistant builder actions.
+- Add a My Home Assistant one-click App repository button and clarify that Supervisor Apps are not a supported HACS repository type.
+
+### Changed
+
+- Promote the HAOS-validated `0.1.3-dev` payload to the first non-dev release while retaining `stage: experimental` and amd64-only support.
+- Download the pre-built public GHCR image during install/update instead of building the Dockerfile on the Home Assistant host.
+- Gate registry publishing on an exact numeric Git tag and refuse to overwrite an existing generic or per-architecture GHCR version tag.
+
+### Security
+
+- Publish with the repository-scoped GitHub Actions token and explicit `contents: read`, `packages: write`, and `id-token: write` permissions; no long-lived registry credential is stored.
+- Keep the transition update-only and non-destructive: the runtime, options, `/data` format, antigravity credentials, and SSH host keys are unchanged.
+
+### Testing
+
+- Confirm HAOS auto-start false/true, device-code login, restart credential persistence, SSH host identity persistence, and reversible Core notification create/dismiss calls.
+- Require the public generic manifest to resolve anonymously as linux/amd64 and pass the full container smoke test before release completion.
+
+## [0.1.3-dev] - 2026-07-13
+
+### Added
+
+- Add transparent Home Assistant `icon.png` and `logo.png` assets derived without distortion from the user-provided project mark, and display the logo in the public GitHub README.
+- Extend the real ttyd WebSocket smoke test to prove terminal resize propagation and reattachment to the same tmux session, pane, and process within one running App container.
+- Record the user-confirmed HAOS Web UI, authenticated antigravity, update-path credential persistence, and mobile Remote-to-SSH project workflow.
+
+### Fixed
+
+- Negotiate `text/x-log` in `ha-core-logs` and `ha-addon-logs` instead of sending the JSON-only `Accept` header that failed against live Core and App log endpoints.
+
+### Security
+
+- Allowlist API helper response media types so the new `--accept` option cannot inject arbitrary HTTP headers.
+- Keep this release update-only and non-destructive: no migration or reset touches persistent `/data` content.
+
+### Testing
+
+- Add regression coverage for default JSON negotiation, log media negotiation, malformed Accept values, wrapper arguments, and Home Assistant brand asset dimensions.
+- Confirm on HAOS that direct `text/x-log` requests and both log helpers return rc 0 with nonempty responses and no negotiation error.
+- Confirm functional Web UI reconnection, conversation recovery, resize, and no recurring `clear` error on HAOS; the local real WebSocket smoke separately proves identical tmux session, pane, and process IDs.
+
+## [0.1.2-dev] - 2026-07-13
+
+### Added
+
+- Add default global Home Assistant operating guidance at `/data/antigravity/AGENTS.md` when neither a global base nor override file exists.
+- Separate diagnostic findings from authorization to modify automations, permissions, integrations, updates, restarts, or devices.
+
+### Security
+
+- Guide antigravity to protect secrets, prefer supported APIs over direct `.storage` edits, open Recorder databases read-only, run `ha-config-check` after configuration changes, and require explicit authorization for high-risk operations.
+- Preserve existing `AGENTS.md`, `AGENTS.override.md`, empty files, and symbolic links without changing their content or permissions.
+- Document that model guidance is defense in depth rather than an enforcement boundary.
+
+### Testing
+
+- Verify default guidance creation, mode, safety content, init/restart persistence, and existing override preservation in policy and amd64 container smoke tests.
+- Record the user's successful HAOS Web UI and authenticated antigravity execution, `/config` write, and selected Supervisor information/log/config-check endpoints without overstating untested service calls or restart operations.
+
+## [0.1.1-dev] - 2026-07-13
+
+### Fixed
+
+- Restore `TERM=xterm-256color` after S6 `with-contenv` removes ttyd's per-PTY value, preventing tmux from exiting with `terminal does not support clear`.
+- Preserve tmux's own `TERM=tmux-256color` in the session shell instead of rebuilding its environment through `with-contenv`.
+- Force all `rootfs` files to LF in Git so Windows checkouts cannot produce broken container shebangs.
+
+### Testing
+
+- Added a dependency-free real ttyd WebSocket handshake and shell command smoke test that requires `/config` and a non-dumb TERM.
+- Reproduced the failure and verified the fix with S6, ttyd 1.7.7, tmux 3.6b, and headless Chrome.
+- HAOS public repository install/start and Ingress HTTP/token/WebSocket transport were confirmed; the fixed `0.1.1-dev` terminal UI still requires user retest on HAOS.
+
+## [0.1.0-dev] - 2026-07-13
+
+### Added
+
+- amd64 Home Assistant App manifest with admin-only Ingress, `/config` read-write mapping, Core API access, and Supervisor `manager` role.
+- OpenAI antigravity CLI 0.144.1 from the official x86_64 musl release archive with a pinned SHA-256 check.
+- Persistent `HOME=/data/home` and `ANTIGRAVITY_HOME=/data/antigravity`, file credential storage, and `ha-antigravity`/`ha-antigravity-login` commands.
+- A non-destructive `antigravity` wrapper that applies current approval/sandbox App options to CLI and Remote app-server launches.
+- Ingress terminal using nginx, ttyd, and a shared tmux session, including optional one-time antigravity auto-start.
+- Public-key-only OpenSSH on container port 22 with default Network mapping 2223, persistent host keys, and disabled SSH when no valid authorized key is configured.
+- Core and Supervisor REST helpers with HTTP/result error handling and token redaction, plus config-check and log commands.
+- English and Korean App option/Network translations and operator documentation.
+- Public Home Assistant App repository metadata and direct App Store repository URL installation instructions.
+
+### Security
+
+- Kept AppArmor enabled and omitted Supervisor `admin`, Docker API, `full_access`, and host networking.
+- Applied `0700` to secret directories, `0600` to antigravity credentials, authorized keys and SSH private keys, and `0644` to SSH public host keys.
+- Documented that `/config` read-write and runtime API access are intentional high-risk capabilities.
+
+### Known limitations
+
+- No registry `image` is configured; this public development repository installs by building its Dockerfile on the amd64 Home Assistant host.
+- Local Docker verification covers public-key SSH, password rejection, host-key/config persistence, degraded no-key operation, API helper error/redaction behavior, and the complete lint suite.
+- Actual HAOS amd64 installation, Ingress/WebSocket behavior, device-auth persistence, Network port mapping, Windows SSH, direct ChatGPT mobile Remote SSH to the bundled antigravity app server on Alpine/musl, real Core service calls, and Supervisor `manager` endpoints remain unverified M2 work.
+- Only amd64 is declared. aarch64 is not supported or claimed.

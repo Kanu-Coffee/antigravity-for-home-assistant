@@ -1,0 +1,84 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+set -Eeuo pipefail
+
+readonly REFRESH_SECONDS=900
+readonly MAX_RETRY_SECONDS=300
+retry_seconds=30
+
+trap 'exit 0' TERM INT
+
+while true; do
+  refresh_output=
+  if refresh_output=$(/usr/local/bin/ha-memory refresh --if-stale 300 2>&1); then
+    refresh_warning_count=0
+    if parsed_warning_count=$(printf '%s' "${refresh_output}" \
+      | jq --exit-status --raw-output \
+        'if type == "object" and (.warnings | type) == "array" then (.warnings | length) else 0 end' \
+        2>/dev/null) \
+      && [[ "${parsed_warning_count}" =~ ^[0-9]+$ ]] \
+      && (( parsed_warning_count <= 100 )); then
+      refresh_warning_count=${parsed_warning_count}
+    fi
+    unset parsed_warning_count
+    unset refresh_output
+    if (( refresh_warning_count > 0 )); then
+      bashio::log.warning "Home Assistant memory catalog refresh completed with ${refresh_warning_count} bounded warning(s)"
+    else
+      bashio::log.info 'Home Assistant memory catalog refresh completed'
+    fi
+    unset refresh_warning_count
+    retry_seconds=30
+    sleep "${REFRESH_SECONDS}" &
+  else
+    refresh_reason=
+    if parsed_reason=$(printf '%s' "${refresh_output}" \
+      | jq --exit-status --raw-output \
+        'if type == "object" and (.reason | type) == "string" then .reason
+         elif type == "object" and (.error | type) == "string" then .error
+         else empty end' \
+        2>/dev/null); then
+      refresh_reason=${parsed_reason}
+    fi
+    unset parsed_reason refresh_output
+    case "${refresh_reason}" in
+      ha_token_unavailable|\
+      ha_ws_runtime_unavailable|\
+      ha_dns_failed|\
+      ha_transport_failed|\
+      ha_timeout|\
+      ha_auth_rejected|\
+      ha_protocol_error|\
+      ha_ws_closed|\
+      ha_command_areas_failed|\
+      ha_command_devices_failed|\
+      ha_command_entities_failed|\
+      ha_command_states_failed|\
+      ha_command_automation_config_failed|\
+      ha_command_related_failed|\
+      ha_command_failed|\
+      ha_snapshot_incomplete|\
+      database_busy|\
+      database_corrupt|\
+      invalid_schema|\
+      unsupported_schema|\
+      migration_required|\
+      unsafe_storage|\
+      ha_unavailable)
+        ;;
+      *)
+        refresh_reason=ha_unavailable
+        ;;
+    esac
+    bashio::log.warning "Home Assistant memory refresh is unavailable (${refresh_reason}); leaving the existing store unchanged and retrying in ${retry_seconds}s"
+    unset refresh_reason
+    sleep "${retry_seconds}" &
+    if (( retry_seconds < MAX_RETRY_SECONDS )); then
+      retry_seconds=$((retry_seconds * 2))
+      if (( retry_seconds > MAX_RETRY_SECONDS )); then
+        retry_seconds=${MAX_RETRY_SECONDS}
+      fi
+    fi
+  fi
+  wait $!
+done

@@ -1,0 +1,55 @@
+---
+configuration:
+  authorized_keys:
+    name: Authorized SSH keys
+    description: OpenSSH public keys allowed to sign in as root. Password login is always disabled.
+  web_terminal_auto_start_antigravity:
+    name: Start Antigravity in the web terminal
+    description: Run Antigravity once when a new tmux session is created, then return to a normal shell.
+  tmux_session_name:
+    name: tmux session name
+    description: Shared session used to restore the terminal after a browser reconnect.
+  antigravity_approval_policy:
+    name: Antigravity approval policy
+    description: Controls when interactive Antigravity asks before running commands.
+  antigravity_sandbox_mode:
+    name: Antigravity sandbox mode
+    description: danger-full-access applies only inside this App container, not to the HAOS host.
+  browser_approval_policy:
+    name: Headless browser approval policy
+    description: >-
+      safe automatically approves dashboard navigation and inspection but asks
+      before clicks or input. never suppresses approval prompts for the current
+      restricted Playwright tool set. always asks for every Playwright tool.
+      Antigravity approval_policy never is an umbrella full-auto policy and may
+      override safe or always prompts. Restart the App and start a new Antigravity
+      session after changing this option.
+  antigravity_user_files_update_mode:
+    name: Antigravity user-file update mode
+    description: >-
+      preserve keeps the existing config.json and base AGENTS.md.
+      refresh_agents replaces only the base AGENTS.md; refresh_all also resets
+      config.json to the current App-option defaults. Each selected file is
+      replaced at most once per App version and its previous copy is stored in
+      a root-only sensitive backup. Choose preserve again after a one-time
+      refresh, or the selected refresh will run once on the next App version.
+  home_assistant_browser_auto_auth:
+    name: Headless browser automatic authentication
+    description: >-
+      Automatically create or reuse a dedicated local-only, read-only Home
+      Assistant identity for the internal headless browser. Restart the App
+      after changing this option. Disabling it shows the normal login page on
+      the next browser session; the managed identity is preserved until you
+      explicitly remove it.
+  home_assistant_browser_token:
+    name: Manual Home Assistant browser token override
+    description: >-
+      Optional manual long-lived token for one active, local-only user whose only
+      group is system-read-only. It is used only while automatic authentication
+      is enabled and overrides the managed identity. Invalid or over-privileged
+      tokens are rejected.
+  log_level:
+    name: Web terminal log level
+    description: Enables detailed ttyd logs for trace or debug. Secrets and authorization headers are never logged.
+network:
+  22/tcp: Public-key SSH and Antigravity Remote SSH port. Change or disable the host mapping here.

@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly RUNTIME_DIR=/run/antigravity-ha
+readonly PLAYWRIGHT_PROXY=/usr/local/share/antigravity-ha/playwright-mcp-proxy.mjs
+readonly PLAYWRIGHT_HOME=/run/antigravity-ha/playwright-home
+readonly BROWSER_TOKEN_FILE=/run/antigravity-ha/home-assistant-browser.token
+readonly BROWSER_AUTH_CHECK=/usr/local/share/antigravity-ha/browser-auth-check.mjs
+readonly RUNTIME_ENV=/run/antigravity-ha/runtime.env
+readonly NODE_BINARY=/usr/bin/node
+
+umask 077
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+install -d -m 0700 "${RUNTIME_DIR}/playwright-output" "${PLAYWRIGHT_HOME}"
+
+if (( $# != 0 )); then
+  printf 'ha-playwright-mcp does not accept command-line arguments\n' >&2
+  exit 64
+fi
+
+unset \
+  BASH_ENV \
+  antigravity_HA_BROWSER_TOKEN_VALIDATED \
+  ENV \
+  HA_BROWSER_AUTH_WEBSOCKET_URL \
+  HA_BROWSER_EXPECTED_CLIENT_NAME \
+  HA_BROWSER_EXPECTED_DISPLAY_NAME \
+  HA_BROWSER_EXPECTED_USER_ID \
+  NODE_OPTIONS \
+  NODE_PATH
+for variable in "${!PLAYWRIGHT_MCP_@}"; do
+  unset "${variable}"
+done
+/usr/local/bin/ha-browser-auth-ensure --quiet || true
+if [[ -r "${BROWSER_TOKEN_FILE}" ]]; then
+  browser_token=$(< "${BROWSER_TOKEN_FILE}")
+  if [[ -z "${SUPERVISOR_TOKEN:-}" && -r "${RUNTIME_ENV}" ]]; then
+    # shellcheck source=/dev/null
+    . "${RUNTIME_ENV}"
+  fi
+  if [[ -n "${SUPERVISOR_TOKEN:-}" ]] \
+    && HA_BROWSER_TOKEN="${browser_token}" \
+      "${NODE_BINARY}" "${BROWSER_AUTH_CHECK}" >/dev/null 2>&1; then
+    export antigravity_HA_BROWSER_TOKEN_VALIDATED=1
+  else
+    printf '%s\n' \
+      'Playwright dashboard auto-login is disabled because the browser user policy could not be revalidated' \
+      >&2
+  fi
+  unset browser_token
+fi
+
+unset \
+  SUPERVISOR_TOKEN \
+  HA_BROWSER_TOKEN \
+  HA_BROWSER_AUTH_WEBSOCKET_URL \
+  HA_BROWSER_EXPECTED_CLIENT_NAME \
+  HA_BROWSER_EXPECTED_DISPLAY_NAME \
+  HA_BROWSER_EXPECTED_USER_ID \
+  BASH_ENV \
+  ENV \
+  NODE_OPTIONS \
+  NODE_PATH
+exec "${NODE_BINARY}" "${PLAYWRIGHT_PROXY}"

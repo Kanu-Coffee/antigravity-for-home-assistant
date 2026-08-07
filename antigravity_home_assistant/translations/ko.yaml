@@ -1,0 +1,52 @@
+---
+configuration:
+  authorized_keys:
+    name: SSH 허용 공개키
+    description: root 로그인을 허용할 OpenSSH 공개키입니다. 비밀번호 로그인은 항상 차단됩니다.
+  web_terminal_auto_start_antigravity:
+    name: 웹 터미널에서 Antigravity 자동 시작
+    description: 새 tmux 세션을 만들 때 Antigravity를 한 번 실행하고, 종료되면 일반 셸로 돌아갑니다.
+  tmux_session_name:
+    name: tmux 세션 이름
+    description: 브라우저 재접속 후 터미널을 복원하는 공유 세션 이름입니다.
+  antigravity_approval_policy:
+    name: Antigravity 승인 정책
+    description: 대화형 Antigravity가 명령 실행 전에 승인을 요청하는 시점을 정합니다.
+  antigravity_sandbox_mode:
+    name: Antigravity 샌드박스 모드
+    description: danger-full-access는 이 App 컨테이너 내부에만 적용되며 HAOS 호스트 권한이 아닙니다.
+  browser_approval_policy:
+    name: 헤드리스 브라우저 승인 정책
+    description: >-
+      safe는 대시보드 탐색·점검을 자동 승인하고 클릭·입력 전에 확인합니다.
+      never는 현재 제한된 Playwright 도구의 승인창을 모두 생략하며, always는
+      모든 Playwright 도구마다 확인합니다. Antigravity approval_policy never는 전역
+      full-auto라 safe/always의 확인보다 우선할 수 있습니다. 변경 후 App을
+      재시작하고 새 Antigravity 세션을 시작하세요.
+  antigravity_user_files_update_mode:
+    name: Antigravity 사용자 파일 업데이트 방식
+    description: >-
+      preserve는 기존 config.json과 base AGENTS.md를 보존합니다.
+      refresh_agents는 base AGENTS.md만 교체하고, refresh_all은 config.json도
+      현재 App 옵션 기반 기본값으로 초기화합니다. 선택한 파일은 App 버전마다
+      최대 한 번만 교체되며 이전 파일은 root 전용 민감 백업으로 저장됩니다.
+      한 번만 갱신하려면 완료 후 preserve로 되돌리세요. 그대로 두면 다음 App
+      버전에서 선택한 갱신이 다시 한 번 실행됩니다.
+  home_assistant_browser_auto_auth:
+    name: 헤드리스 브라우저 자동 인증
+    description: >-
+      내부 헤드리스 브라우저용 로컬 전용·읽기 전용 Home Assistant 사용자를
+      자동으로 만들거나 재사용합니다. 옵션 변경 뒤 App을 재시작하세요.
+      끄면 다음 브라우저 세션부터 일반 로그인 화면을 표시하며, 관리형
+      사용자는 명시적으로 삭제할 때까지 보존됩니다.
+  home_assistant_browser_token:
+    name: Home Assistant 수동 브라우저 토큰 재정의
+    description: >-
+      system-read-only 그룹만 가진 활성·로컬 전용 사용자의 장기 토큰을
+      수동으로 재정의할 때만 입력합니다. 자동 인증이 켜진 동안 관리형
+      사용자보다 우선하며, 유효하지 않거나 권한이 큰 토큰은 거부됩니다.
+  log_level:
+    name: 웹 터미널 로그 수준
+    description: trace 또는 debug에서 ttyd 상세 로그를 켭니다. 비밀값과 Authorization 헤더는 기록하지 않습니다.
+network:
+  22/tcp: 공개키 SSH 및 Antigravity Remote SSH 포트입니다. 여기서 호스트 포트를 변경하거나 비활성화합니다.

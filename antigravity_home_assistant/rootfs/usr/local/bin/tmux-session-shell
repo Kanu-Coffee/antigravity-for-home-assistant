@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# shellcheck source=/dev/null
+. /usr/local/lib/antigravity-ha/environment.sh
+# shellcheck source=/dev/null
+. /usr/local/lib/antigravity-ha/config.sh
+cd /config
+
+if antigravity_ha_config_true 'web_terminal_auto_start_antigravity'; then
+  printf '\nStarting antigravity in /config. Exit antigravity to return to this shell.\n\n'
+  if ha-antigravity; then
+    :
+  else
+    exit_code=$?
+    printf '\nantigravity exited with status %d; returning to the shell.\n' "${exit_code}" >&2
+  fi
+fi
+
+exec /bin/bash -l

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ -r /run/antigravity-ha/runtime.env ]]; then
+  # shellcheck disable=SC1091
+  . /run/antigravity-ha/runtime.env
+fi
+
+exec /usr/bin/node /usr/local/share/antigravity-ha/ha-memory.mjs "$@"

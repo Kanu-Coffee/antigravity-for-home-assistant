@@ -1,0 +1,182 @@
+developer_instructions = """
+For Home Assistant dashboard browser work, immediately use the image-managed
+`playwright` MCP tools and navigate first to `http://127.0.0.1:8099/`. This is
+the canonical container-local Home Assistant frontend. Do not first search for,
+invoke, or install another browser skill or plugin, and do not probe
+`localhost:8123` or an external Home Assistant URL as an alternate login path.
+If the loopback gateway is unavailable, inspect `ha-browser-auth-status` and
+`ha-browser-network-info`, then report the failure instead of silently changing
+browser routes. After navigation, verify desktop and mobile layouts plus console
+and network errors with the same image-managed Playwright MCP.
+
+For every Home Assistant request, first call the image-managed `ha_memory`
+`memory_search` tool with only the current question, any named subject, and a
+small result limit. Use the returned relevant subset; never directly read or
+dump `/data/antigravity-ha-memory/memory.sqlite3` or load the complete memory store.
+If the MCP tool is unavailable, use the bounded `ha-memory search` CLI rather
+than reading SQLite. If search or `memory_status` says `empty`, `degraded`, or
+`stale`, tell the user that memory is still learning or unavailable; do not
+treat zero results as proof that no memory exists. Never store entity details,
+aliases, purposes, preferences, relationships, or candidates in any AGENTS.md,
+AGENTS.override.md, or project instruction file; those files contain rules only.
+
+When the user directly and unambiguously states one durable, non-secret alias,
+purpose, preference, note, or non-canonical relationship for one exact subject,
+call `memory_remember_explicit` in the same request. Reuse an existing semantic
+key for corrections; for new keys prefer `user_alias`, `user_purpose`,
+`user_preference.<setting>`, `user_note.<topic>`, or
+`user_relationship.<relation>`, and use `home:household` for household-wide
+preferences. If that MCP tool is unavailable, use the bounded `ha-memory
+remember` CLI with the same exact fields. Report briefly whether the fact was
+applied, already known, or left in conflict. If the subject or meaning is
+ambiguous, ask one clarifying question and do not write a candidate. Never
+label a current state, time-local observation, page/log content, or model
+inference as user-explicit. Such facts must use the separate `memory_propose`,
+evidence, verification, and apply tools and remain inactive until their actual
+verification requirement is met.
+
+For every persistent Home Assistant configuration, registry, or automation
+mutation, call `memory_begin_change` before the mutation with the affected
+subjects and a supported closed expectation. After the mutation and any needed
+reload, call `memory_verify_change`; only its fresh Home Assistant API evidence
+may confirm the result and update memory. Simple reads, diagnostics, catalog
+refreshes, and transient device-service tests are excluded. If the expectation
+schema cannot represent the durable change or the optional memory server is
+unavailable, do not update semantic memory: disclose the verification gap and
+ask whether to proceed before mutating Home Assistant. Trigger, condition,
+action, and template logic are not represented by the current automation
+expectation schema; never substitute an exists/name check for such a change.
+For structural facts, current Home Assistant API data outranks memory. For
+aliases, purposes, and preferences, an explicit user explanation outranks
+observation or inference.
+Surface unresolved conflicts instead of silently choosing a stale value; use
+`memory_list_candidates`, `memory_reject_candidate`, `memory_history`,
+`memory_conflicts`, and `memory_rollback` for bounded follow-up and semantic
+memory recovery. Memory rollback never rolls Home Assistant itself back.
+
+When the user reports an App bug or proposes an App feature, invoke the
+image-managed `$ha-feedback` skill in `bug` or `feature` mode. Keep validation
+read-only: never modify, restart, update, recover, or service-call Home
+Assistant. Use `/usr/local/bin/ha-feedback` as the only report and GitHub
+workflow helper. Stop public submission for security issues. Show issue candidates
+first, then the exact final repository, title, and body, and require explicit
+confirmation in the current user turn before creating a GitHub issue.
+"""
+
+[mcp_servers.ha_memory]
+command = "/usr/bin/env"
+args = [
+  "-i",
+  "HOME=/data/home",
+  "LANG=C.UTF-8",
+  "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+  "/usr/local/bin/ha-memory-mcp",
+]
+cwd = "/config"
+env_vars = []
+enabled = true
+required = false
+startup_timeout_sec = 10
+tool_timeout_sec = 120
+default_tools_approval_mode = "writes"
+enabled_tools = [
+  "memory_search",
+  "memory_show",
+  "memory_remember_explicit",
+  "memory_propose",
+  "memory_list_candidates",
+  "memory_reject_candidate",
+  "memory_add_evidence",
+  "memory_verify_candidate",
+  "memory_apply_candidate",
+  "memory_begin_change",
+  "memory_verify_change",
+  "memory_status",
+  "memory_history",
+  "memory_conflicts",
+  "memory_resolve_conflict",
+  "memory_rollback",
+]
+
+[mcp_servers.playwright]
+command = "/usr/bin/env"
+args = [
+  "-i",
+  "HOME=/run/antigravity-ha/playwright-home",
+  "LANG=C.UTF-8",
+  "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+  "/usr/local/bin/ha-playwright-mcp",
+]
+cwd = "/config"
+env_vars = []
+enabled = true
+required = false
+startup_timeout_sec = 30
+tool_timeout_sec = 120
+default_tools_approval_mode = "prompt"
+enabled_tools = [
+  "browser_close",
+  "browser_console_messages",
+  "browser_click",
+  "browser_fill_form",
+  "browser_hover",
+  "browser_navigate",
+  "browser_navigate_back",
+  "browser_network_requests",
+  "browser_press_key",
+  "browser_resize",
+  "browser_select_option",
+  "browser_snapshot",
+  "browser_tabs",
+  "browser_take_screenshot",
+  "browser_type",
+  "browser_wait_for",
+]
+
+[mcp_servers.playwright.tools.browser_close]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_console_messages]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_hover]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_navigate]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_navigate_back]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_network_requests]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_resize]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_snapshot]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_tabs]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_take_screenshot]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_wait_for]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_click]
+approval_mode = "prompt"
+
+[mcp_servers.playwright.tools.browser_fill_form]
+approval_mode = "prompt"
+
+[mcp_servers.playwright.tools.browser_press_key]
+approval_mode = "prompt"
+
+[mcp_servers.playwright.tools.browser_select_option]
+approval_mode = "prompt"
+
+[mcp_servers.playwright.tools.browser_type]
+approval_mode = "prompt"

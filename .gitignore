@@ -1,0 +1,13 @@
+# Temporary & scratch directories
+scratch_codex/
+scratch_ref/
+scratch/
+/feedback/
+*.pyc
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+node_modules/
+.DS_Store
+Thumbs.db
