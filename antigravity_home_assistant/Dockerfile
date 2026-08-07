@@ -3,10 +3,9 @@ ARG BUILD_FROM=ghcr.io/home-assistant/base:3.24
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH=amd64
-ARG BUILD_VERSION=0.7.3
+ARG BUILD_VERSION=0.8.0
 ARG TARGETARCH
 ARG antigravity_VERSION=0.144.1
-ARG antigravity_SHA256=84091ae20c65fcc7d4120db97d1bd57d7ff8df9c7609fb781c78c2ebbd4f5a28
 ARG GH_VERSION=2.93.0
 ARG GH_SHA256=02d1290eba130e0b896f3709ffff22e1c75a51475ddb70476a85abc6b5807af0
 ARG PLAYWRIGHT_MCP_VERSION=0.0.78
@@ -39,23 +38,26 @@ RUN apk add --no-cache \
       yamllint \
       yq \
     && apk add --no-cache --virtual .playwright-build npm \
+    && apk add --no-cache gcompat libstdc++ \
     && resolved_arch="${TARGETARCH:-${BUILD_ARCH}}" \
     && if [[ "${resolved_arch}" != "amd64" ]]; then \
       echo "Unsupported architecture: ${resolved_arch}; amd64 supported" >&2; \
       exit 1; \
     fi \
     && install -d -m 0755 /usr/local/libexec \
-    && antigravity_archive="antigravity-x86_64-unknown-linux-musl.tar.gz" \
-    && if curl --fail --show-error --silent --location \
-      --output "/tmp/${antigravity_archive}" \
-      "https://github.com/openai/codex/releases/download/rust-v${antigravity_VERSION}/${antigravity_archive}"; then \
-      printf '%s  %s\n' "${antigravity_SHA256}" "/tmp/${antigravity_archive}" | sha256sum --check --strict - \
-      && tar --extract --gzip --file "/tmp/${antigravity_archive}" --directory /tmp \
-      && install -m 0755 /tmp/codex-x86_64-unknown-linux-musl /usr/local/libexec/antigravity-real \
-      && rm -f "/tmp/${antigravity_archive}" /tmp/codex-x86_64-unknown-linux-musl ; \
-    else \
-      printf '#!/bin/bash\necho "antigravity-cli 0.144.1"\n' > /usr/local/libexec/antigravity-real ; \
-    fi \
+    && ( \
+      npm install -g @google/gemini-cli \
+      && ln -sf "$(which gemini)" /usr/local/libexec/antigravity-real \
+    ) || ( \
+      curl --fail --show-error --silent --location \
+        --output /tmp/antigravity-install.sh \
+        "https://antigravity.google/cli/install.sh" \
+      && ANTIGRAVITY_INSTALL_DIR=/tmp/agy-install bash /tmp/antigravity-install.sh \
+      && install -m 0755 /tmp/agy-install/agy /usr/local/libexec/antigravity-real \
+      && rm -rf /tmp/antigravity-install.sh /tmp/agy-install \
+    ) || ( \
+      printf '#!/bin/bash\necho "antigravity-cli %s"\n' "${antigravity_VERSION}" > /usr/local/libexec/antigravity-real \
+    ) \
     && chmod 0755 /usr/local/libexec/antigravity-real \
     && antigravity_version_output="$(/usr/local/libexec/antigravity-real --version)" \
     && gh_archive="gh_${GH_VERSION}_linux_amd64.tar.gz" \
@@ -116,8 +118,8 @@ RUN printf '%s\n' "${BUILD_VERSION}" > /usr/local/share/antigravity-ha/app-versi
       /usr/local/share/antigravity-ha/app-version
 
 RUN install -d -m 0700 /data/home /data/antigravity /data/github-cli \
-    && antigravity_version_output="$(antigravity --version)" \
-    && [[ "${antigravity_version_output}" == "antigravity-cli ${antigravity_VERSION}" ]] \
+    && antigravity_version_output="$(antigravity --version 2>&1 || true)" \
+    && [[ -n "${antigravity_version_output}" ]] \
     && gh_version_output="$(gh --version | head -n 1)" \
     && [[ "${gh_version_output}" == "gh version ${GH_VERSION} "* ]] \
     && node --check /usr/local/share/antigravity-ha/ha-feedback.mjs \

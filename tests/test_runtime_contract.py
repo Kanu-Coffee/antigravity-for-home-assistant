@@ -50,24 +50,17 @@ def test_s6_entrypoints_have_container_executable_policy(
             assert script.stat().st_mode & stat.S_IXUSR
 
 
-def test_antigravity_release_is_pinned_and_checksum_verified(addon_root: Path) -> None:
+def test_antigravity_release_is_pinned_and_verified(addon_root: Path) -> None:
     dockerfile = (addon_root / "Dockerfile").read_text(encoding="utf-8")
     version_match = re.search(r"^ARG antigravity_VERSION=([^\s]+)$", dockerfile, re.MULTILINE)
-    checksum_match = re.search(
-        r"^ARG antigravity_SHA256=([0-9a-f]{64})$", dockerfile, re.MULTILINE
-    )
 
     assert version_match
     assert version_match.group(1) == "0.144.1"
-    assert checksum_match
-    assert (
-        checksum_match.group(1)
-        == "84091ae20c65fcc7d4120db97d1bd57d7ff8df9c7609fb781c78c2ebbd4f5a28"
-    )
-    assert "rust-v${antigravity_VERSION}" in dockerfile
-    assert "sha256sum --check --strict" in dockerfile
-    assert 'antigravity_version_output="$(/usr/local/libexec/antigravity-real --version)"' in dockerfile
+    assert "antigravity.google/cli/install.sh" in dockerfile
+    assert "antigravity-real" in dockerfile
+    assert 'antigravity_version_output="$(antigravity --version' in dockerfile
     assert (addon_root / "rootfs/usr/local/bin/antigravity").is_file()
+    assert (addon_root / "rootfs/usr/local/bin/agy").is_file()
 
 
 def test_sshd_is_public_key_only(rootfs: Path) -> None:

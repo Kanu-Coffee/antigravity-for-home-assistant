@@ -10,6 +10,15 @@ set -Eeuo pipefail
 # shellcheck source=/dev/null
 . /usr/local/lib/antigravity-ha/browser-approval.sh
 
+# Inject ANTIGRAVITY_TOKEN from add-on options for headless authentication
+if antigravity_ha_config_validate; then
+  _antigravity_token=$(antigravity_ha_config_string 'antigravity_token' '')
+  if [[ -n "${_antigravity_token}" ]]; then
+    export ANTIGRAVITY_TOKEN="${_antigravity_token}"
+  fi
+  unset _antigravity_token
+fi
+
 approval_policy=on-request
 sandbox_mode=danger-full-access
 browser_approval_policy=safe

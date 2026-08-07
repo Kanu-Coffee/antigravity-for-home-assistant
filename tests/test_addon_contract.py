@@ -160,6 +160,8 @@ def test_security_sensitive_defaults(addon_config: dict) -> None:
     assert addon_config["schema"]["home_assistant_browser_auto_auth"] == "bool"
     assert "home_assistant_browser_token" not in addon_config["options"]
     assert addon_config["schema"]["home_assistant_browser_token"] == "password?"
+    assert addon_config["options"]["antigravity_token"] == ""
+    assert addon_config["schema"]["antigravity_token"] == "password?"
 
 
 def test_browser_approval_policy_is_translated(addon_root: Path) -> None:

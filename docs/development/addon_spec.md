@@ -93,7 +93,7 @@ M1에서 실제 검증 전에는 amd64만 표시한다.
 
 ```yaml
 name: Antigravity for Home Assistant
-version: "0.7.3"
+version: "0.8.0"
 slug: antigravity_home_assistant
 description: Antigravity CLI, verified feedback, Playwright browser, Ingress terminal, and SSH for Home Assistant
 url: https://github.com/<owner>/antigravity-for-home-assistant
@@ -541,4 +541,4 @@ Playwright MCP child는 Supervisor token을 받지 않는다. 검증된 dedicate
 
 ## 14. Release image
 
-로컬 개발 단계에서는 `image`를 주석 처리한 local build를 허용한다. `0.1.3`부터 공식 Home Assistant builder actions `2026.06.0`으로 amd64 image와 generic manifest를 미리 빌드하고 `config.yaml`의 `image`에 `ghcr.io/kanu-coffee/antigravity-for-home-assistant`를 사용한다. Playwright renderer는 `0.2.0`, 최소권한 browser 경로는 `0.2.1`, 관리형 인증은 `0.2.2`, 기본 ON 자동 인증·antigravity `8099` 라우팅과 선택형 user-file refresh는 `0.2.3`, 검증형 memory 사용자 폐루프는 `0.5.0`, 검증형 App 피드백 자동화는 `0.7.3`이다. `0.2.3`의 사용자 기능 포함은 이미 고정된 후보의 검증·배포 연속성을 위한 ADR-030의 1회 SemVer 예외이며, 이후 사용자 기능은 다시 MINOR 규칙을 따른다. 숫자 Git tag와 App version이 정확히 같을 때만 게시하고 기존 tag는 덮어쓰지 않는다. HAOS browser/AppArmor 실기는 public `0.2.3`에서 사용자 확인 PASS지만, Home Assistant `stage`는 별도 M3 평가 전까지 `experimental`을 유지한다. `0.7.3` live GitHub issue creation은 명시적 외부-write 승인 전까지 `NOT RUN`으로 유지한다.
+로컬 개발 단계에서는 `image`를 주석 처리한 local build를 허용한다. `0.1.3`부터 공식 Home Assistant builder actions `2026.06.0`으로 amd64 image와 generic manifest를 미리 빌드하고 `config.yaml`의 `image`에 `ghcr.io/kanu-coffee/antigravity-for-home-assistant`를 사용한다. Playwright renderer는 `0.2.0`, 최소권한 browser 경로는 `0.2.1`, 관리형 인증은 `0.2.2`, 기본 ON 자동 인증·antigravity `8099` 라우팅과 선택형 user-file refresh는 `0.2.3`, 검증형 memory 사용자 폐루프는 `0.5.0`, 검증형 App 피드백 자동화는 `0.8.0`이다. `0.2.3`의 사용자 기능 포함은 이미 고정된 후보의 검증·배포 연속성을 위한 ADR-030의 1회 SemVer 예외이며, 이후 사용자 기능은 다시 MINOR 규칙을 따른다. 숫자 Git tag와 App version이 정확히 같을 때만 게시하고 기존 tag는 덮어쓰지 않는다. HAOS browser/AppArmor 실기는 public `0.2.3`에서 사용자 확인 PASS지만, Home Assistant `stage`는 별도 M3 평가 전까지 `experimental`을 유지한다. `0.8.0` live GitHub issue creation은 명시적 외부-write 승인 전까지 `NOT RUN`으로 유지한다.

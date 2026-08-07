@@ -46,7 +46,7 @@
   ],
   "security_issue": false,
   "environment": {
-    "app_version": "0.7.3",
+    "app_version": "0.8.0",
     "antigravity_version": "0.144.1",
     "core_version": "2026.7.2",
     "supervisor_version": "2026.07.3",

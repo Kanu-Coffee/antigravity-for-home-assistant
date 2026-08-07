@@ -192,6 +192,12 @@ runtime_tmp=$(mktemp "${RUNTIME_DIR}/.runtime.env.XXXXXX")
     fi
     printf 'export SUPERVISOR_TOKEN=%q\n' "${SUPERVISOR_TOKEN}"
   fi
+  antigravity_token=$(antigravity_ha_config_string 'antigravity_token' '')
+  if [[ -n "${antigravity_token}" ]]; then
+    printf 'export ANTIGRAVITY_TOKEN=%q\n' "${antigravity_token}"
+    bashio::log.info 'Antigravity CLI authentication token configured from App options'
+  fi
+  unset antigravity_token
 } > "${runtime_tmp}"
 chmod 0600 "${runtime_tmp}"
 mv -f "${runtime_tmp}" "${RUNTIME_DIR}/runtime.env"
@@ -211,6 +217,11 @@ ssh_environment_tmp=$(mktemp /root/.ssh/.environment.XXXXXX)
   if [[ -n "${SUPERVISOR_TOKEN:-}" ]]; then
     printf 'SUPERVISOR_TOKEN=%s\n' "${SUPERVISOR_TOKEN}"
   fi
+  antigravity_token=$(antigravity_ha_config_string 'antigravity_token' '')
+  if [[ -n "${antigravity_token}" ]]; then
+    printf 'ANTIGRAVITY_TOKEN=%s\n' "${antigravity_token}"
+  fi
+  unset antigravity_token
 } > "${ssh_environment_tmp}"
 chmod 0600 "${ssh_environment_tmp}"
 mv -f "${ssh_environment_tmp}" /root/.ssh/environment
