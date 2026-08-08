@@ -11,3 +11,5 @@ htmlcov/
 node_modules/
 .DS_Store
 Thumbs.db
+app_log.txt
+telegram_msg.txt

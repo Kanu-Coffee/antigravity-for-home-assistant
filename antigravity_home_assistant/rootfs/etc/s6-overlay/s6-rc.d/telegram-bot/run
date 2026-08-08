@@ -7,5 +7,8 @@ if ! bashio::config.true 'telegram_enabled'; then
   exec s6-pause
 fi
 
+# Wait for core initialization to be ready before starting bridge
+s6-svwait -U /run/service/antigravity-ha-init 2>/dev/null || true
+
 bashio::log.info 'Starting Antigravity Telegram Bot Bridge...'
 exec node /usr/local/share/antigravity-ha/telegram-bridge.mjs

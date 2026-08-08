@@ -67,3 +67,52 @@ def test_telegram_bridge_script_content(addon_root: Path) -> None:
     assert "pendingApprovals" in content
     assert "tmux new-session" in content
     assert "runAntigravityPrompt" in content
+
+
+def test_telegram_clean_ai_output_unit(addon_root: Path) -> None:
+    """Verify cleanAiOutput strips CLI banners, thoughts, tools, and prompts properly."""
+    script_path = addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
+    test_node_code = f"""
+    const fs = require('fs');
+    const content = fs.readFileSync('{script_path.as_posix()}', 'utf8');
+    // Extract cleanAiOutput function and stripAnsiCodes
+    const stripAnsiCodes = (text) => text.replace(/\\x1B\\[[0-?]*[ -/]*[@-~]/g, "").replace(/\\r\\n/g, "\\n").trim();
+    eval(content.match(/function cleanAiOutput[\\s\\S]*?\\n\\}}/)[0]);
+
+    const sample = `
+▄▀▀▄        Antigravity CLI 1.1.11
+     ▀▀▀▀▀▀       kor59lee@gmail.com
+    ▀▀▀▀▀▀▀▀      /config
+   ▄▀▀    ▀▀▄
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────
+> 수신체크
+
+● Bash(ha-config-check)
+▸ Thought for 3s, 500 tokens
+  Inspecting Home Assistant State
+● Read(/config/configuration.yaml) (ctrl+o to expand)
+
+네, 정상적으로 수신되었습니다! Home Assistant 시스템이 원활하게 동작 중입니다.
+`;
+
+    const cleaned = cleanAiOutput(sample, "수신체크");
+    if (!cleaned.includes("정상적으로 수신되었습니다!")) {{
+      console.error("Cleaned text mismatch:", cleaned);
+      process.exit(1);
+    }}
+    if (cleaned.includes("Antigravity CLI") || cleaned.includes("Bash(") || cleaned.includes("Thought")) {{
+      console.error("Failed to strip artifacts:", cleaned);
+      process.exit(2);
+    }}
+    process.exit(0);
+    """
+
+    result = subprocess.run(
+        ["node", "-e", test_node_code],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"cleanAiOutput unit test failed: {result.stderr}"
+

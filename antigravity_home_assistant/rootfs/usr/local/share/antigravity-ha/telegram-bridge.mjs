@@ -206,67 +206,88 @@ async function sendTelegramMessage(botToken, chatId, text, options = {}) {
 }
 
 /**
- * Filters out thoughts, tool call telemetry, CLI headers, and echoes.
- * Extracts strictly the assistant's final response content.
+ * Filters out thoughts, tool call telemetry, CLI headers, banners, and echoes.
+ * Extracts strictly the assistant's final response content for the current prompt.
  */
 function cleanAiOutput(rawOutput, promptText = "") {
   if (!rawOutput) return "";
   let text = stripAnsiCodes(rawOutput);
 
-  // 1. Filter out known system banners, status logs, and warnings
+  // If there are turn separator lines (────────────────────────────────────────────),
+  // split into turns and inspect the last non-empty turn
+  const turnSeparatorRegex = /^[─━\-_]{10,}$/m;
+  if (turnSeparatorRegex.test(text)) {
+    const turns = text.split(/^[─━\-_]{10,}$/m);
+    for (let i = turns.length - 1; i >= 0; i--) {
+      const turnContent = turns[i].trim();
+      if (turnContent.length > 0) {
+        text = turnContent;
+        break;
+      }
+    }
+  }
+
+  // 1. Remove ASCII art logos and banners (e.g. lines with ▄, ▀)
+  text = text.replace(/^[▄▀\s]{5,}.*$/gm, "");
+
+  // 2. Remove Antigravity CLI version banners and headers
   text = text
-    .replace(/⚠\s*Conversation already open[\s\S]*?separately\./gi, "")
-    .replace(/antigravity>\s*/g, "")
-    .replace(/\? for shortcuts[\s\S]*?$/gm, "")
-    .replace(/^\[antigravi\d+:.*\]\s*$/gm, "")
+    .replace(/^.*Antigravity CLI\s+[\d.]+/gim, "")
+    .replace(/^.*[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}.*$/gm, "")
+    .replace(/^.*\/config\s*$/gm, "")
     .replace(/Loaded configuration[\s\S]*?(\n|$)/gi, "")
     .replace(/Starting Antigravity CLI[\s\S]*?(\n|$)/gi, "")
     .replace(/Session initialized:[\s\S]*?(\n|$)/gi, "")
-    .replace(/Google Antigravity CLI[\s\S]*?(\n|$)/gi, "");
+    .replace(/Google Antigravity CLI[\s\S]*?(\n|$)/gi, "")
+    .replace(/⚠\s*Conversation already open[\s\S]*?separately\./gi, "")
+    .replace(/\? for shortcuts[\s\S]*?$/gm, "")
+    .replace(/^\[antigravi\d+:.*\]\s*$/gm, "");
 
-  // 2. Filter out thought blocks (<thought>...</thought>)
+  // 3. Remove thought blocks: both <thought>...</thought> and ▸ Thought for ...
   text = text.replace(/<thought>[\s\S]*?<\/thought>/gi, "");
+  text = text.replace(/^▸\s*Thought for\s+\d+s.*$/gim, "");
 
-  // 3. Filter out tool execution progress lines
+  // 4. Remove tool progress lines (● ToolName(...), Running ..., Calling ...)
   text = text
     .split("\n")
     .filter((line) => {
       const trimmed = line.trim();
+      if (!trimmed) return true;
+      if (/^[●•]\s*(Bash|Read|Write|ListDir|Search|Create|ManageTask|Edit|View|Tool|Playwright|Memory)\b/i.test(trimmed)) {
+        return false;
+      }
       if (/^(Running|Executing|Calling|Reading|Writing|Editing|Searching|Tool)\s+[a-zA-Z0-9_\-./]+\b/i.test(trimmed)) {
         return false;
       }
       if (/^\[(Tool|Bash|Command|File|Memory|Playwright)\].*$/i.test(trimmed)) {
         return false;
       }
-      if (/^> (antigravity|ha-|bash|node|python)/i.test(trimmed)) {
+      if (/^\(ctrl\+o to expand\)/i.test(trimmed)) {
+        return false;
+      }
+      if (/^\s*(Inspecting|Checking|Analyzing|Confirming|Clarifying|Identifying|Exploring|Verifying|Investigating)\s+[A-Za-z0-9\s"_-]+$/i.test(trimmed)) {
         return false;
       }
       return true;
     })
     .join("\n");
 
-  // 4. If prompt was echoed at the beginning, strip it
-  if (promptText) {
-    const cleanPrompt = promptText.trim();
-    if (text.startsWith(cleanPrompt)) {
-      text = text.slice(cleanPrompt.length).trim();
-    } else if (text.includes(cleanPrompt)) {
-      const idx = text.lastIndexOf(cleanPrompt);
-      if (idx !== -1 && idx < text.length / 2) {
-        text = text.slice(idx + cleanPrompt.length).trim();
-      }
-    }
-  }
+  // 5. If prompt was echoed at the beginning (> prompt), strip it
+  text = text.replace(/^\s*>\s*.*\n?/gm, "");
 
-  // 5. Remove leading prompt symbols or empty artifacts
+  // 6. Clean up expand hints
+  text = text.replace(/\(ctrl\+o to expand\)/gi, "");
+
+  // 7. Strip leading prompt symbols, empty artifacts, and multiple blank lines
   text = text.replace(/^[>\s:-]+/, "").trim();
+  text = text.replace(/\n{3,}/g, "\n\n");
 
   return text || "요청하신 작업을 완료했습니다.";
 }
 
 /**
  * Hermes-style Heartbeat & Typing Manager.
- * Sends 'typing' chat action every 4 seconds and periodic progress updates.
+ * Sends 'typing' chat action every 4 seconds and periodic progress updates (first after 10s).
  */
 class HeartbeatManager {
   constructor(botToken, chatId) {
@@ -289,18 +310,23 @@ class HeartbeatManager {
       }
     }, 4000);
 
-    // Periodic check signal every 30s to keep user informed of long tasks
-    this.progressTimer = setInterval(async () => {
-      if (!this.paused) {
-        const elapsedSec = Math.round((Date.now() - this.startTime) / 1000);
-        try {
-          await telegramApi(this.botToken, "sendMessage", {
-            chat_id: this.chatId,
-            text: `⏳ AI 에이전트가 작업 중입니다... (${elapsedSec}초 경과)`,
-          });
-        } catch (_) {}
-      }
-    }, 30000);
+    // Initial progress notice after 10s, then every 30s thereafter
+    const scheduleProgress = (delayMs) => {
+      this.progressTimer = setTimeout(async () => {
+        if (!this.paused) {
+          const elapsedSec = Math.round((Date.now() - this.startTime) / 1000);
+          try {
+            await telegramApi(this.botToken, "sendMessage", {
+              chat_id: this.chatId,
+              text: `⏳ AI 에이전트가 답변을 생성 중입니다... (${elapsedSec}초 경과)`,
+            });
+          } catch (_) {}
+          scheduleProgress(30000);
+        }
+      }, delayMs);
+    };
+
+    scheduleProgress(10000);
   }
 
   async sendTyping() {
@@ -327,7 +353,7 @@ class HeartbeatManager {
       this.typingTimer = null;
     }
     if (this.progressTimer) {
-      clearInterval(this.progressTimer);
+      clearTimeout(this.progressTimer);
       this.progressTimer = null;
     }
   }
@@ -349,8 +375,8 @@ async function runAntigravityPrompt(botToken, chatId, promptText) {
   const outPath = `/tmp/${tempSession}.out`;
   const safePrompt = promptText.replace(/'/g, "'\\''");
 
-  // Execute antigravity with full environment sourcing inside a dedicated tmux PTY session
-  const cmd = `. /usr/local/lib/antigravity-ha/environment.sh && cd /config && antigravity -p '${safePrompt}' > ${outPath} 2>&1`;
+  // Execute antigravity with full environment sourcing and auto approval flags
+  const cmd = `. /usr/local/lib/antigravity-ha/environment.sh && cd /config && antigravity -c approval_policy="never" -c sandbox_mode="danger-full-access" -p '${safePrompt}' > ${outPath} 2>&1`;
 
   try {
     console.log(`[Telegram Bridge] Spawning detached PTY session '${tempSession}'...`);
@@ -358,8 +384,8 @@ async function runAntigravityPrompt(botToken, chatId, promptText) {
 
     let activeApprovalId = null;
 
-    // Poll until tmux session finishes or confirmation prompt is detected (up to 180s)
-    for (let i = 0; i < 180; i++) {
+    // Poll until tmux session finishes or confirmation prompt is detected (up to 120s)
+    for (let i = 0; i < 120; i++) {
       await new Promise((r) => setTimeout(r, 1000));
 
       const { stdout: check } = await execAsync(
@@ -428,11 +454,26 @@ async function runAntigravityPrompt(botToken, chatId, promptText) {
 
     heartbeat.stop();
 
+    // Capture output from file or tmux pane
+    let rawOutput = "";
     if (existsSync(outPath)) {
-      const rawOutput = readFileSync(outPath, "utf8");
+      rawOutput = readFileSync(outPath, "utf8");
       try {
         unlinkSync(outPath);
       } catch (_) {}
+    } else {
+      try {
+        const { stdout: pane } = await execAsync(`tmux capture-pane -p -t ${tempSession} -S -500 2>/dev/null || true`);
+        rawOutput = pane;
+      } catch (_) {}
+    }
+
+    // Clean up temporary session
+    try {
+      await execAsync(`tmux kill-session -t ${tempSession} 2>/dev/null || true`);
+    } catch (_) {}
+
+    if (rawOutput) {
       const cleanResponse = cleanAiOutput(rawOutput, promptText);
       if (cleanResponse) return cleanResponse;
     }
@@ -442,6 +483,9 @@ async function runAntigravityPrompt(botToken, chatId, promptText) {
     try {
       unlinkSync(outPath);
     } catch (_) {}
+    try {
+      await execAsync(`tmux kill-session -t ${tempSession} 2>/dev/null || true`);
+    } catch (_) {}
     return `[Antigravity Execution Error: ${err.message}]`;
   }
 
@@ -449,7 +493,7 @@ async function runAntigravityPrompt(botToken, chatId, promptText) {
 }
 
 /**
- * Handles Telegram Inline Keyboard button clicks for approvals.
+ * Handles Telegram Inline Keyboard button clicks for approvals via tmux send-keys.
  */
 async function handleCallbackQuery(botToken, callbackQuery) {
   const queryId = callbackQuery.id;
@@ -467,18 +511,19 @@ async function handleCallbackQuery(botToken, callbackQuery) {
     return;
   }
 
-  const { child, expireTimer, onApproved } = pendingApprovals.get(approvalId);
+  const { sessionName, expireTimer, onDecision } = pendingApprovals.get(approvalId);
   clearTimeout(expireTimer);
   pendingApprovals.delete(approvalId);
 
   const isApproved = action === "appr";
+  const key = isApproved ? "Y" : "N";
   try {
-    child.stdin.write(isApproved ? "Y\n" : "N\n");
+    await execAsync(`tmux send-keys -t ${sessionName} "${key}" Enter 2>/dev/null || true`);
   } catch (err) {
-    console.error("[Telegram Bridge] Error writing to child stdin:", err.message);
+    console.error("[Telegram Bridge] Error sending decision key to tmux:", err.message);
   }
 
-  if (onApproved) onApproved();
+  if (onDecision) onDecision();
 
   await telegramApi(botToken, "answerCallbackQuery", {
     callback_query_id: queryId,
@@ -499,6 +544,7 @@ async function handleCallbackQuery(botToken, callbackQuery) {
     } catch (_) {}
   }
 }
+
 
 async function main() {
   const options = loadOptions();
