@@ -1,7 +1,10 @@
-import { spawn } from "node:child_process";
+import { exec } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { promisify } from "node:util";
+
+const execAsync = promisify(exec);
 
 const OPTIONS_PATH = "/data/options.json";
 const DATA_DIR = "/data/antigravity";
@@ -9,7 +12,7 @@ const AUTHORIZED_CHATS_PATH = join(DATA_DIR, "telegram_authorized_chats.json");
 const PAIR_INFO_DATA_PATH = join(DATA_DIR, "telegram_pair_info.json");
 const PAIR_INFO_PATH = "/run/antigravity-ha/telegram_pair_info.json";
 
-// Map to hold pending interactive approval requests: approvalId -> { child, chatId, timer }
+// Map to hold pending interactive approval requests: approvalId -> { sessionName, chatId, expireTimer }
 const pendingApprovals = new Map();
 
 function loadOptions() {
@@ -97,7 +100,7 @@ async function telegramApi(botToken, method, body = {}, timeoutMs = 30000, retri
       clearTimeout(timer);
       lastErr = err;
       if (attempt < retries && (err.name === "AbortError" || (err.message && err.message.includes("fetch failed")))) {
-        await new Promise((r) => setTimeout(r, 500 * attempt));
+        await new Promise((r) => setTimeout(r, 1000 * attempt));
         continue;
       }
       throw err;
@@ -107,12 +110,14 @@ async function telegramApi(botToken, method, body = {}, timeoutMs = 30000, retri
 }
 
 /**
- * Strips ANSI terminal escape sequences and normalizes line endings.
+ * Strips ANSI terminal escape sequences, cursor movements, and line resets.
  */
 function stripAnsiCodes(text) {
   if (!text) return "";
   return text
-    .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "")
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1B\][^\x07\x1B]*[\x07\x1B]/g, "")
+    .replace(/\x1B[@-Z\\-_]/g, "")
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .trim();
@@ -139,7 +144,6 @@ function chunkMarkdownSafe(text, maxLen = 3900) {
     }
 
     let splitIndex = maxLen;
-    // Prefer splitting at paragraph breaks or line breaks
     const lastDoubleNewline = remaining.lastIndexOf("\n\n", maxLen);
     const lastSingleNewline = remaining.lastIndexOf("\n", maxLen);
 
@@ -152,13 +156,11 @@ function chunkMarkdownSafe(text, maxLen = 3900) {
     let currentChunk = remaining.slice(0, splitIndex);
     remaining = remaining.slice(splitIndex);
 
-    // If previous chunk left a code block open, prepend opening backticks
     if (openCodeLang) {
       currentChunk = "```" + openCodeLang + "\n" + currentChunk;
       openCodeLang = null;
     }
 
-    // Inspect code blocks in current chunk to detect if one remains open
     const codeBlockMatches = [...currentChunk.matchAll(/```(\w*)/g)];
     let isBlockOpen = false;
     let currentBlockLang = "";
@@ -204,7 +206,7 @@ async function sendTelegramMessage(botToken, chatId, text, options = {}) {
 }
 
 /**
- * Filters out thoughts, tool call telemetry, CLI headers, and prompts.
+ * Filters out thoughts, tool call telemetry, CLI headers, and echoes.
  * Extracts strictly the assistant's final response content.
  */
 function cleanAiOutput(rawOutput, promptText = "") {
@@ -217,9 +219,10 @@ function cleanAiOutput(rawOutput, promptText = "") {
     .replace(/antigravity>\s*/g, "")
     .replace(/\? for shortcuts[\s\S]*?$/gm, "")
     .replace(/^\[antigravi\d+:.*\]\s*$/gm, "")
-    .replace(/\[\d+m/g, "")
     .replace(/Loaded configuration[\s\S]*?(\n|$)/gi, "")
-    .replace(/Starting Antigravity CLI[\s\S]*?(\n|$)/gi, "");
+    .replace(/Starting Antigravity CLI[\s\S]*?(\n|$)/gi, "")
+    .replace(/Session initialized:[\s\S]*?(\n|$)/gi, "")
+    .replace(/Google Antigravity CLI[\s\S]*?(\n|$)/gi, "");
 
   // 2. Filter out thought blocks (<thought>...</thought>)
   text = text.replace(/<thought>[\s\S]*?<\/thought>/gi, "");
@@ -331,128 +334,118 @@ class HeartbeatManager {
 }
 
 /**
- * Executes a prompt via isolated Antigravity CLI subprocess.
- * Handles stdout streaming, thought stripping, typing heartbeat, and interactive inline approvals.
+ * Executes a prompt in a dedicated detached tmux PTY session with full environment sourcing.
+ * Handles stdout capture, thought stripping, typing heartbeat, and interactive inline approvals.
  */
 async function runAntigravityPrompt(botToken, chatId, promptText) {
   const options = loadOptions();
   const approvalPolicy = (options.antigravity_approval_policy || "on-request").trim();
-  const sandboxMode = (options.antigravity_sandbox_mode || "danger-full-access").trim();
   const isFullAuto = approvalPolicy === "never";
 
   const heartbeat = new HeartbeatManager(botToken, chatId);
   heartbeat.start();
 
-  return new Promise((resolve) => {
-    const args = [
-      "-c",
-      `approval_policy="${approvalPolicy}"`,
-      "-c",
-      `sandbox_mode="${sandboxMode}"`,
-      "-p",
-      promptText,
-    ];
+  const tempSession = `agy-tg-${randomBytes(3).toString("hex")}`;
+  const outPath = `/tmp/${tempSession}.out`;
+  const safePrompt = promptText.replace(/'/g, "'\\''");
 
-    console.log(`[Telegram Bridge] Spawning isolated antigravity process: antigravity ${args.join(" ")}`);
+  // Execute antigravity with full environment sourcing inside a dedicated tmux PTY session
+  const cmd = `. /usr/local/lib/antigravity-ha/environment.sh && cd /config && antigravity -p '${safePrompt}' > ${outPath} 2>&1`;
 
-    const child = spawn("antigravity", args, {
-      cwd: "/config",
-      env: {
-        ...process.env,
-        LANG: "C.UTF-8",
-        LC_ALL: "C.UTF-8",
-      },
-    });
+  try {
+    console.log(`[Telegram Bridge] Spawning detached PTY session '${tempSession}'...`);
+    await execAsync(`tmux new-session -d -s ${tempSession} -c /config "bash -c '${cmd.replace(/'/g, "'\\''")}'"`);
 
-    let stdoutData = "";
-    let stderrData = "";
     let activeApprovalId = null;
 
-    child.stdout.on("data", (chunk) => {
-      const chunkStr = chunk.toString();
-      stdoutData += chunkStr;
+    // Poll until tmux session finishes or confirmation prompt is detected (up to 180s)
+    for (let i = 0; i < 180; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
 
-      // Detect interactive confirmation prompts if not in full-auto mode
+      const { stdout: check } = await execAsync(
+        `tmux has-session -t ${tempSession} 2>/dev/null && echo "RUNNING" || echo "DONE"`
+      );
+
+      if (check.trim() === "DONE") {
+        break;
+      }
+
+      // Check for interactive approval prompt if not in full-auto mode
       if (!isFullAuto && !activeApprovalId) {
-        const cleanChunk = stripAnsiCodes(chunkStr);
-        if (/\[Y\/n\]|\[y\/N\]|approve\?|allow this action\?|Do you want to continue/i.test(cleanChunk)) {
-          heartbeat.pause();
-          const approvalId = randomBytes(4).toString("hex");
-          activeApprovalId = approvalId;
+        try {
+          const { stdout: paneContent } = await execAsync(
+            `tmux capture-pane -p -t ${tempSession} -S -20 2>/dev/null || true`
+          );
+          const cleanPane = stripAnsiCodes(paneContent);
 
-          // Set 3-minute timeout for approval
-          const expireTimer = setTimeout(() => {
-            if (pendingApprovals.has(approvalId)) {
-              try {
-                child.stdin.write("N\n");
-              } catch (_) {}
-              pendingApprovals.delete(approvalId);
-              activeApprovalId = null;
-              heartbeat.resume();
-            }
-          }, 180000);
+          if (/\[Y\/n\]|\[y\/N\]|approve\?|allow this action\?|Do you want to continue/i.test(cleanPane)) {
+            heartbeat.pause();
+            const approvalId = randomBytes(4).toString("hex");
+            activeApprovalId = approvalId;
 
-          pendingApprovals.set(approvalId, {
-            child,
-            chatId,
-            expireTimer,
-            heartbeat,
-            onApproved: () => {
-              activeApprovalId = null;
-              heartbeat.resume();
-            },
-          });
+            const expireTimer = setTimeout(async () => {
+              if (pendingApprovals.has(approvalId)) {
+                try {
+                  await execAsync(`tmux send-keys -t ${tempSession} "N" Enter 2>/dev/null || true`);
+                } catch (_) {}
+                pendingApprovals.delete(approvalId);
+                activeApprovalId = null;
+                heartbeat.resume();
+              }
+            }, 180000);
 
-          const promptSnippet = cleanChunk.split("\n").filter((l) => l.trim()).slice(-3).join("\n");
+            pendingApprovals.set(approvalId, {
+              sessionName: tempSession,
+              chatId,
+              expireTimer,
+              onDecision: () => {
+                activeApprovalId = null;
+                heartbeat.resume();
+              },
+            });
 
-          telegramApi(botToken, "sendMessage", {
-            chat_id: chatId,
-            text: `🔐 *AI 에이전트 승인 요청*\n\n\`\`\`\n${promptSnippet}\n\`\`\`\n이 작업을 승인하시겠습니까?`,
-            parse_mode: "Markdown",
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: "✅ 승인 (Approve)", callback_data: `appr:${approvalId}` },
-                  { text: "❌ 거부 (Deny)", callback_data: `deny:${approvalId}` },
+            const promptSnippet = cleanPane.split("\n").filter((l) => l.trim()).slice(-3).join("\n");
+
+            telegramApi(botToken, "sendMessage", {
+              chat_id: chatId,
+              text: `🔐 *AI 에이전트 승인 요청*\n\n\`\`\`\n${promptSnippet}\n\`\`\`\n이 작업을 승인하시겠습니까?`,
+              parse_mode: "Markdown",
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: "✅ 승인 (Approve)", callback_data: `appr:${approvalId}` },
+                    { text: "❌ 거부 (Deny)", callback_data: `deny:${approvalId}` },
+                  ],
                 ],
-              ],
-            },
-          }).catch((err) => {
-            console.error("[Telegram Bridge] Error sending approval prompt:", err.message);
-          });
-        }
+              },
+            }).catch((err) => {
+              console.error("[Telegram Bridge] Error sending approval prompt:", err.message);
+            });
+          }
+        } catch (_) {}
       }
-    });
+    }
 
-    child.stderr.on("data", (chunk) => {
-      stderrData += chunk.toString();
-    });
+    heartbeat.stop();
 
-    child.on("error", (err) => {
-      heartbeat.stop();
-      console.error("[Telegram Bridge] Process spawn error:", err.message);
-      resolve(`⚠️ Antigravity CLI 실행 실패: ${err.message}`);
-    });
+    if (existsSync(outPath)) {
+      const rawOutput = readFileSync(outPath, "utf8");
+      try {
+        unlinkSync(outPath);
+      } catch (_) {}
+      const cleanResponse = cleanAiOutput(rawOutput, promptText);
+      if (cleanResponse) return cleanResponse;
+    }
+  } catch (err) {
+    heartbeat.stop();
+    console.error(`[Telegram Bridge] Execution error:`, err.message);
+    try {
+      unlinkSync(outPath);
+    } catch (_) {}
+    return `[Antigravity Execution Error: ${err.message}]`;
+  }
 
-    child.on("close", (code) => {
-      heartbeat.stop();
-      if (activeApprovalId && pendingApprovals.has(activeApprovalId)) {
-        clearTimeout(pendingApprovals.get(activeApprovalId).expireTimer);
-        pendingApprovals.delete(activeApprovalId);
-      }
-
-      console.log(`[Telegram Bridge] Process finished with exit code ${code} (stdout: ${stdoutData.length} chars, stderr: ${stderrData.length} chars)`);
-
-      const cleanResponse = cleanAiOutput(stdoutData, promptText);
-      if (cleanResponse) {
-        resolve(cleanResponse);
-      } else if (code !== 0 && stderrData.trim()) {
-        resolve(`⚠️ 실행 에러 (종료 코드 ${code}):\n${stripAnsiCodes(stderrData).slice(-1000)}`);
-      } else {
-        resolve("Antigravity AI 에이전트가 작업을 완료했습니다.");
-      }
-    });
-  });
+  return "Antigravity AI 에이전트가 작업을 완료했습니다.";
 }
 
 /**

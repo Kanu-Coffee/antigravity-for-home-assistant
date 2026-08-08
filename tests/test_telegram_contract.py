@@ -65,4 +65,5 @@ def test_telegram_bridge_script_content(addon_root: Path) -> None:
     assert "stripAnsiCodes" in content
     assert "sendMessage" in content
     assert "pendingApprovals" in content
-    assert "spawn(" in content
+    assert "tmux new-session" in content
+    assert "runAntigravityPrompt" in content
