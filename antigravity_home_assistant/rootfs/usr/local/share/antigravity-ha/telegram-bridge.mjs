@@ -526,14 +526,28 @@ echo '${endMarker}'
       await execAsync(`tmux kill-session -t ${tempSession} 2>/dev/null || true`);
     } catch (_) {}
 
+    console.log(`[Telegram Bridge] PTY Pane raw output captured: ${rawOutput.length} chars`);
+    if (rawOutput.length > 0) {
+      console.log(`[Telegram Bridge] [Debug Snippet] First 200 chars: ${JSON.stringify(rawOutput.slice(0, 200))}`);
+      console.log(`[Telegram Bridge] [Debug Snippet] Last 200 chars: ${JSON.stringify(rawOutput.slice(-200))}`);
+    }
+
     if (rawOutput) {
       // 1. Try marker-based extraction first
       const markerResult = extractResponseByMarker(rawOutput, marker);
-      if (markerResult && markerResult.length > 0) return markerResult;
+      if (markerResult && markerResult.length > 0) {
+        console.log(`[Telegram Bridge] Marker extraction succeeded: ${markerResult.length} chars`);
+        return markerResult;
+      }
 
       // 2. Fall back to cleanAiOutput parser
       const cleanResponse = cleanAiOutput(rawOutput, promptText);
-      if (cleanResponse && cleanResponse.length > 0) return cleanResponse;
+      if (cleanResponse && cleanResponse.length > 0) {
+        console.log(`[Telegram Bridge] cleanAiOutput extraction succeeded: ${cleanResponse.length} chars`);
+        return cleanResponse;
+      }
+    } else {
+      console.warn(`[Telegram Bridge] Warning: PTY output was completely empty for session '${tempSession}'`);
     }
   } catch (err) {
     heartbeat.stop();
