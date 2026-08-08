@@ -206,18 +206,17 @@ async function sendTelegramMessage(botToken, chatId, text, options = {}) {
 }
 
 /**
- * Filters out thoughts, tool call telemetry, CLI headers, banners, and echoes.
+ * Filters out thoughts, tool call telemetry, CLI headers, banners, prompt echoes, and turn history.
  * Extracts strictly the assistant's final response content for the current prompt.
  */
 function cleanAiOutput(rawOutput, promptText = "") {
   if (!rawOutput) return "";
   let text = stripAnsiCodes(rawOutput);
 
-  // If there are turn separator lines (────────────────────────────────────────────),
-  // split into turns and inspect the last non-empty turn
-  const turnSeparatorRegex = /^[─━\-_]{10,}$/m;
+  // 1. If turn separators exist (──────────), extract the last meaningful turn
+  const turnSeparatorRegex = /^[─━\-_=]{10,}$/m;
   if (turnSeparatorRegex.test(text)) {
-    const turns = text.split(/^[─━\-_]{10,}$/m);
+    const turns = text.split(/^[─━\-_=]{10,}$/m);
     for (let i = turns.length - 1; i >= 0; i--) {
       const turnContent = turns[i].trim();
       if (turnContent.length > 0) {
@@ -227,58 +226,81 @@ function cleanAiOutput(rawOutput, promptText = "") {
     }
   }
 
-  // 1. Remove ASCII art logos and banners (e.g. lines with ▄, ▀)
-  text = text.replace(/^[▄▀\s]{5,}.*$/gm, "");
-
-  // 2. Remove Antigravity CLI version banners and headers
-  text = text
-    .replace(/^.*Antigravity CLI\s+[\d.]+/gim, "")
-    .replace(/^.*[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}.*$/gm, "")
-    .replace(/^.*\/config\s*$/gm, "")
-    .replace(/Loaded configuration[\s\S]*?(\n|$)/gi, "")
-    .replace(/Starting Antigravity CLI[\s\S]*?(\n|$)/gi, "")
-    .replace(/Session initialized:[\s\S]*?(\n|$)/gi, "")
-    .replace(/Google Antigravity CLI[\s\S]*?(\n|$)/gi, "")
-    .replace(/⚠\s*Conversation already open[\s\S]*?separately\./gi, "")
-    .replace(/\? for shortcuts[\s\S]*?$/gm, "")
-    .replace(/^\[antigravi\d+:.*\]\s*$/gm, "");
-
-  // 3. Remove thought blocks: both <thought>...</thought> and ▸ Thought for ...
+  // 2. Remove thought blocks
   text = text.replace(/<thought>[\s\S]*?<\/thought>/gi, "");
   text = text.replace(/^▸\s*Thought for\s+\d+s.*$/gim, "");
 
-  // 4. Remove tool progress lines (● ToolName(...), Running ..., Calling ...)
-  text = text
-    .split("\n")
-    .filter((line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return true;
-      if (/^[●•]\s*(Bash|Read|Write|ListDir|Search|Create|ManageTask|Edit|View|Tool|Playwright|Memory)\b/i.test(trimmed)) {
-        return false;
-      }
-      if (/^(Running|Executing|Calling|Reading|Writing|Editing|Searching|Tool)\s+[a-zA-Z0-9_\-./]+\b/i.test(trimmed)) {
-        return false;
-      }
-      if (/^\[(Tool|Bash|Command|File|Memory|Playwright)\].*$/i.test(trimmed)) {
-        return false;
-      }
-      if (/^\(ctrl\+o to expand\)/i.test(trimmed)) {
-        return false;
-      }
-      if (/^\s*(Inspecting|Checking|Analyzing|Confirming|Clarifying|Identifying|Exploring|Verifying|Investigating)\s+[A-Za-z0-9\s"_-]+$/i.test(trimmed)) {
-        return false;
-      }
-      return true;
-    })
-    .join("\n");
+  // 3. Line-by-line filtering of tools, banners, prompt echo, thoughts, and expand hints
+  const lines = text.split("\n");
+  const filtered = [];
+  let inPrompt = false;
 
-  // 5. If prompt was echoed at the beginning (> prompt), strip it
-  text = text.replace(/^\s*>\s*.*\n?/gm, "");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
 
-  // 6. Clean up expand hints
-  text = text.replace(/\(ctrl\+o to expand\)/gi, "");
+    if (!trimmed) {
+      if (!inPrompt) filtered.push("");
+      continue;
+    }
 
-  // 7. Strip leading prompt symbols, empty artifacts, and multiple blank lines
+    // Skip prompt echo (starts with >)
+    if (trimmed.startsWith(">")) {
+      inPrompt = true;
+      continue;
+    }
+
+    if (inPrompt) {
+      // If we encounter a tool call, thought, or clear assistant response start, exit prompt echo mode
+      if (
+        trimmed.startsWith("●") ||
+        trimmed.startsWith("•") ||
+        trimmed.startsWith("▸") ||
+        trimmed.startsWith("<thought>") ||
+        trimmed.startsWith("###") ||
+        /^(네|안녕하세요|Home Assistant|확인|시스템|요청하신|죄송|결과|감사|어떤|Hello|Yes|Sure|Here)/i.test(trimmed)
+      ) {
+        inPrompt = false;
+      } else {
+        // Still inside multi-line prompt echo
+        continue;
+      }
+    }
+
+    // Filter banners and CLI headers
+    if (
+      /^[▄▀\s]{4,}$/.test(trimmed) ||
+      /Antigravity CLI\s+[\d.]+/i.test(trimmed) ||
+      /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(trimmed) ||
+      /^\/config\s*$/.test(trimmed) ||
+      /^(Loaded configuration|Starting Antigravity|Session initialized|Google Antigravity|\? for shortcuts)/i.test(trimmed) ||
+      /^\[antigravi\d+:.*\]\s*$/i.test(trimmed)
+    ) {
+      continue;
+    }
+
+    // Filter tool invocations
+    if (
+      /^[●•]\s*(Bash|Read|Write|ListDir|Search|Create|ManageTask|Edit|View|Tool|Playwright|Memory)\b/i.test(trimmed) ||
+      /^(Running|Executing|Calling|Reading|Writing|Editing|Searching|Tool)\s+[a-zA-Z0-9_\-./]+\b/i.test(trimmed) ||
+      /^\[(Tool|Bash|Command|File|Memory|Playwright)\].*$/i.test(trimmed)
+    ) {
+      continue;
+    }
+
+    // Filter thought status lines
+    if (/^\s*(Inspecting|Checking|Analyzing|Confirming|Clarifying|Identifying|Exploring|Verifying|Investigating|Searching)\s+[A-Za-z0-9\s"_-]+$/i.test(trimmed)) {
+      continue;
+    }
+
+    // Skip lone expand hints or tool argument tails
+    if (trimmed === "(ctrl+o to expand)") continue;
+    if (/^[\/~a-zA-Z0-9_.-]+\.\.\.\)?$/.test(trimmed)) continue;
+
+    filtered.push(line.replace(/\(ctrl\+o to expand\)/gi, "").trimEnd());
+  }
+
+  text = filtered.join("\n");
   text = text.replace(/^[>\s:-]+/, "").trim();
   text = text.replace(/\n{3,}/g, "\n\n");
 
@@ -382,7 +404,8 @@ class HeartbeatManager {
 
 /**
  * Executes a prompt in a dedicated detached tmux PTY session with full environment sourcing.
- * Handles stdout capture, thought stripping, typing heartbeat, and interactive inline approvals.
+ * Uses a temporary runner script to eliminate shell string-escaping issues,
+ * handles stdout capture, thought stripping, typing heartbeat, and interactive inline approvals.
  */
 async function runAntigravityPrompt(botToken, chatId, promptText) {
   const options = loadOptions();
@@ -396,15 +419,24 @@ async function runAntigravityPrompt(botToken, chatId, promptText) {
   const marker = randomBytes(4).toString("hex");
   const startMarker = `<<<AGY_OUT_START_${marker}>>>`;
   const endMarker = `<<<AGY_OUT_END_${marker}>>>`;
-  const outPath = `/tmp/${tempSession}.out`;
-  const safePrompt = promptText.replace(/'/g, "'\\''");
+  const scriptPath = `/tmp/${tempSession}.sh`;
 
-  // Execute antigravity with full environment sourcing, boundary markers, and auto approval flags
-  const cmd = `. /usr/local/lib/antigravity-ha/environment.sh && cd /config && echo '${startMarker}' && antigravity -c approval_policy="never" -c sandbox_mode="danger-full-access" -p '${safePrompt}' > ${outPath} 2>&1 && echo '${endMarker}' >> ${outPath}`;
+  // Create clean runner script to avoid shell escaping / quote mangling issues
+  const scriptContent = `#!/usr/bin/env bash
+set -e
+. /usr/local/lib/antigravity-ha/environment.sh
+cd /config
+echo '${startMarker}'
+antigravity -c approval_policy="never" -c sandbox_mode="danger-full-access" -p ${JSON.stringify(promptText)} || true
+echo '${endMarker}'
+`;
 
   try {
+    writeFileSync(scriptPath, scriptContent, { mode: 0o755 });
+
     console.log(`[Telegram Bridge] Spawning detached PTY session '${tempSession}'...`);
-    await execAsync(`tmux new-session -d -s ${tempSession} -c /config "bash -c '${cmd.replace(/'/g, "'\\''")}'"`);
+    await execAsync(`tmux new-session -d -s ${tempSession} -c /config "${scriptPath}"`);
+    await execAsync(`tmux set-option -t ${tempSession} remain-on-exit on 2>/dev/null || true`);
 
     let activeApprovalId = null;
 
@@ -412,11 +444,11 @@ async function runAntigravityPrompt(botToken, chatId, promptText) {
     for (let i = 0; i < 120; i++) {
       await new Promise((r) => setTimeout(r, 1000));
 
-      const { stdout: check } = await execAsync(
-        `tmux has-session -t ${tempSession} 2>/dev/null && echo "RUNNING" || echo "DONE"`
+      const { stdout: deadCheck } = await execAsync(
+        `tmux display-message -p -t ${tempSession} "#{pane_dead}" 2>/dev/null || echo "1"`
       );
 
-      if (check.trim() === "DONE") {
+      if (deadCheck.trim() === "1") {
         break;
       }
 
@@ -478,19 +510,16 @@ async function runAntigravityPrompt(botToken, chatId, promptText) {
 
     heartbeat.stop();
 
-    // Capture output from file or tmux pane
+    // Capture complete output from tmux pane scrollback buffer
     let rawOutput = "";
-    if (existsSync(outPath)) {
-      rawOutput = readFileSync(outPath, "utf8");
-      try {
-        unlinkSync(outPath);
-      } catch (_) {}
-    } else {
-      try {
-        const { stdout: pane } = await execAsync(`tmux capture-pane -p -t ${tempSession} -S -500 2>/dev/null || true`);
-        rawOutput = pane;
-      } catch (_) {}
-    }
+    try {
+      const { stdout: pane } = await execAsync(`tmux capture-pane -p -t ${tempSession} -S -3000 2>/dev/null || true`);
+      rawOutput = pane;
+    } catch (_) {}
+
+    try {
+      if (existsSync(scriptPath)) unlinkSync(scriptPath);
+    } catch (_) {}
 
     // Clean up temporary session
     try {
@@ -500,17 +529,17 @@ async function runAntigravityPrompt(botToken, chatId, promptText) {
     if (rawOutput) {
       // 1. Try marker-based extraction first
       const markerResult = extractResponseByMarker(rawOutput, marker);
-      if (markerResult) return markerResult;
+      if (markerResult && markerResult.length > 0) return markerResult;
 
       // 2. Fall back to cleanAiOutput parser
       const cleanResponse = cleanAiOutput(rawOutput, promptText);
-      if (cleanResponse) return cleanResponse;
+      if (cleanResponse && cleanResponse.length > 0) return cleanResponse;
     }
   } catch (err) {
     heartbeat.stop();
     console.error(`[Telegram Bridge] Execution error:`, err.message);
     try {
-      unlinkSync(outPath);
+      if (existsSync(scriptPath)) unlinkSync(scriptPath);
     } catch (_) {}
     try {
       await execAsync(`tmux kill-session -t ${tempSession} 2>/dev/null || true`);
