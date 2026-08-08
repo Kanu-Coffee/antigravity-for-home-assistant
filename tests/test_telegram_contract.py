@@ -51,11 +51,18 @@ def test_telegram_s6_service_structure(addon_root: Path) -> None:
 
 
 def test_telegram_bridge_script_content(addon_root: Path) -> None:
-    """Verify telegram-bridge.mjs uses approval_policy=never and cleans response."""
+    """Verify telegram-bridge.mjs uses isolated execution, Hermes heartbeats, and inline approvals."""
     script_path = addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
     content = script_path.read_text(encoding="utf-8")
 
-    assert 'approval_policy="never"' in content
+    assert "HeartbeatManager" in content
+    assert "sendChatAction" in content
+    assert "typing" in content
+    assert "handleCallbackQuery" in content
+    assert "inline_keyboard" in content
+    assert "chunkMarkdownSafe" in content
     assert "cleanAiOutput" in content
     assert "stripAnsiCodes" in content
     assert "sendMessage" in content
+    assert "pendingApprovals" in content
+    assert "spawn(" in content
