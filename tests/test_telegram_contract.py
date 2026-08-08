@@ -116,3 +116,76 @@ def test_telegram_clean_ai_output_unit(addon_root: Path) -> None:
     )
     assert result.returncode == 0, f"cleanAiOutput unit test failed: {result.stderr}"
 
+
+def test_telegram_extract_response_by_marker(addon_root: Path) -> None:
+    """Verify extractResponseByMarker extracts clean content between start and end tags."""
+    script_path = addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
+    test_node_code = f"""
+    const fs = require('fs');
+    const content = fs.readFileSync('{script_path.as_posix()}', 'utf8');
+    const stripAnsiCodes = (text) => text.replace(/\\x1B\\[[0-?]*[ -/]*[@-~]/g, "").replace(/\\r\\n/g, "\\n").trim();
+    eval(content.match(/function cleanAiOutput[\\s\\S]*?\\n\\}}/)[0]);
+    eval(content.match(/function extractResponseByMarker[\\s\\S]*?\\n\\}}/)[0]);
+
+    const marker = "abcd1234";
+    const sample = `
+Some pre-banner output...
+<<<AGY_OUT_START_${{marker}}>>>
+Antigravity CLI 1.1.11
+● Bash(ls)
+시스템 점검 결과 모든 서비스가 정상 작동 중입니다.
+<<<AGY_OUT_END_${{marker}}>>>
+Extra trailing log...
+`;
+
+    const extracted = extractResponseByMarker(sample, marker);
+    if (!extracted || !extracted.includes("시스템 점검 결과")) {{
+      console.error("Marker extraction failed:", extracted);
+      process.exit(1);
+    }}
+    if (extracted.includes("Antigravity CLI") || extracted.includes("Bash(ls)")) {{
+      console.error("Failed to clean inside markers:", extracted);
+      process.exit(2);
+    }}
+    process.exit(0);
+    """
+
+    result = subprocess.run(
+        ["node", "-e", test_node_code],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"extractResponseByMarker test failed: {result.stderr}"
+
+
+def test_telegram_chunk_markdown_safe(addon_root: Path) -> None:
+    """Verify chunkMarkdownSafe properly splits text while preserving code fences."""
+    script_path = addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
+    test_node_code = f"""
+    const fs = require('fs');
+    const content = fs.readFileSync('{script_path.as_posix()}', 'utf8');
+    eval(content.match(/function chunkMarkdownSafe[\\s\\S]*?\\n\\}}/)[0]);
+
+    const longText = "안녕하세요! " + "A".repeat(5000) + "\\n```python\\nprint('Hello World')\\n```";
+    const chunks = chunkMarkdownSafe(longText, 3900);
+    if (chunks.length < 2) {{
+      console.error("Failed to chunk large text:", chunks.length);
+      process.exit(1);
+    }}
+    for (const chunk of chunks) {{
+      if (chunk.length > 3950) {{
+        console.error("Chunk exceeded safe limit:", chunk.length);
+        process.exit(2);
+      }}
+    }}
+    process.exit(0);
+    """
+
+    result = subprocess.run(
+        ["node", "-e", test_node_code],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"chunkMarkdownSafe test failed: {result.stderr}"
+
+

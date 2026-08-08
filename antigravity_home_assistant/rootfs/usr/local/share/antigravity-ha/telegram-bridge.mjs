@@ -286,6 +286,27 @@ function cleanAiOutput(rawOutput, promptText = "") {
 }
 
 /**
+ * Extracts content surrounded by explicit start and end boundary markers.
+ */
+function extractResponseByMarker(text, marker) {
+  if (!text || !marker) return null;
+  const startTag = `<<<AGY_OUT_START_${marker}>>>`;
+  const endTag = `<<<AGY_OUT_END_${marker}>>>`;
+  const startIdx = text.indexOf(startTag);
+  if (startIdx === -1) return null;
+  const afterStart = text.slice(startIdx + startTag.length);
+  const endIdx = afterStart.indexOf(endTag);
+  if (endIdx !== -1) {
+    const extracted = afterStart.slice(0, endIdx).trim();
+    if (extracted) return cleanAiOutput(extracted);
+  } else {
+    const extracted = afterStart.trim();
+    if (extracted) return cleanAiOutput(extracted);
+  }
+  return null;
+}
+
+/**
  * Hermes-style Heartbeat & Typing Manager.
  * Sends 'typing' chat action every 4 seconds and periodic progress updates (first after 10s).
  */
@@ -372,11 +393,14 @@ async function runAntigravityPrompt(botToken, chatId, promptText) {
   heartbeat.start();
 
   const tempSession = `agy-tg-${randomBytes(3).toString("hex")}`;
+  const marker = randomBytes(4).toString("hex");
+  const startMarker = `<<<AGY_OUT_START_${marker}>>>`;
+  const endMarker = `<<<AGY_OUT_END_${marker}>>>`;
   const outPath = `/tmp/${tempSession}.out`;
   const safePrompt = promptText.replace(/'/g, "'\\''");
 
-  // Execute antigravity with full environment sourcing and auto approval flags
-  const cmd = `. /usr/local/lib/antigravity-ha/environment.sh && cd /config && antigravity -c approval_policy="never" -c sandbox_mode="danger-full-access" -p '${safePrompt}' > ${outPath} 2>&1`;
+  // Execute antigravity with full environment sourcing, boundary markers, and auto approval flags
+  const cmd = `. /usr/local/lib/antigravity-ha/environment.sh && cd /config && echo '${startMarker}' && antigravity -c approval_policy="never" -c sandbox_mode="danger-full-access" -p '${safePrompt}' > ${outPath} 2>&1 && echo '${endMarker}' >> ${outPath}`;
 
   try {
     console.log(`[Telegram Bridge] Spawning detached PTY session '${tempSession}'...`);
@@ -474,6 +498,11 @@ async function runAntigravityPrompt(botToken, chatId, promptText) {
     } catch (_) {}
 
     if (rawOutput) {
+      // 1. Try marker-based extraction first
+      const markerResult = extractResponseByMarker(rawOutput, marker);
+      if (markerResult) return markerResult;
+
+      // 2. Fall back to cleanAiOutput parser
       const cleanResponse = cleanAiOutput(rawOutput, promptText);
       if (cleanResponse) return cleanResponse;
     }

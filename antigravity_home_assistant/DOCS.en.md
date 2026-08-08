@@ -54,6 +54,12 @@ Chat with Antigravity AI remotely from your phone or desktop via Telegram:
 - **Method 2 (6-Digit PIN Code)**: Send the 6-digit PIN (e.g. `702-215`) displayed in add-on logs as a message to your Telegram bot.
 - **Method 3 (Manual Chat ID Whitelist)**: Enter your numerical Telegram Chat ID in the `telegram_allowed_chat_ids` field in configuration.
 
+### ⏱️ Telegram Response Times & Approvals
+- **Simple Questions / Status Checks**: ~10–25 seconds (initial progress notice sent at 10s alongside typing indicator).
+- **Automations / Multi-step Diagnostics**: ~30–90 seconds (tool calls and verification checks).
+- **Interactive Inline Approvals**: When action approval is requested, Telegram displays `[✅ Approve]` and `[❌ Deny]` inline keyboard buttons for immediate one-click authorization.
+
+
 ## Installation
 
 ### Add the app repository
