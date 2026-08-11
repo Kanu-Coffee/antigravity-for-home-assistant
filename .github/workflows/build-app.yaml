@@ -1,4 +1,8 @@
 ---
+# Candidate evidence is an atomic set for one GITHUB_RUN_ATTEMPT.
+# After any Candidate failure, operators must use "Re-run all jobs".
+# "Re-run failed jobs" is unsupported and intentionally fails closed; artifacts
+# from different attempts must never be mixed.
 name: Build app candidate
 
 "on":
@@ -202,6 +206,8 @@ jobs:
       amd64_runtime_digest: ${{ steps.amd64.outputs.amd64 }}
       aarch64_stage_digest: ${{ steps.records.outputs.aarch64_stage_digest }}
       aarch64_runtime_digest: ${{ steps.aarch64.outputs.aarch64 }}
+      rehearsal_version: ${{ steps.rehearsal.outputs.version }}
+      rehearsal_digest: ${{ steps.rehearsal.outputs.digest }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -334,6 +340,31 @@ jobs:
           [[ $(jq --raw-output .aarch64 <<< "$result") == \
             "$AARCH64_RUNTIME_DIGEST" ]]
 
+      - name: Create exact HAOS rehearsal tag without rebuilding
+        id: rehearsal
+        env:
+          CANDIDATE_DIGEST: ${{ steps.index.outputs.index_digest }}
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -Eeuo pipefail
+          rehearsal_version="${VERSION}-candidate.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+          docker buildx imagetools create \
+            --metadata-file rehearsal-metadata.json \
+            --tag "${IMAGE}:${rehearsal_version}" \
+            "${IMAGE}@${CANDIDATE_DIGEST}"
+          rehearsal_digest=$(jq --raw-output \
+            '."containerimage.descriptor".digest' rehearsal-metadata.json)
+          [[ $rehearsal_digest == "$CANDIDATE_DIGEST" ]]
+          docker buildx imagetools inspect --raw \
+            "${IMAGE}:${rehearsal_version}" > rehearsal-index.json
+          [[ sha256:$(sha256sum rehearsal-index.json | cut -d ' ' -f 1) == \
+            "$CANDIDATE_DIGEST" ]]
+          {
+            printf 'version=%s\n' "$rehearsal_version"
+            printf 'digest=%s\n' "$rehearsal_digest"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Upload exact candidate manifest evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
@@ -341,6 +372,8 @@ jobs:
           path: |
             candidate-index.json
             candidate-metadata.json
+            rehearsal-index.json
+            rehearsal-metadata.json
           if-no-files-found: error
           retention-days: 14
 
@@ -365,6 +398,7 @@ jobs:
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: managed-auth}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: managed-plugin}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: memory}
+          - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: public-v1}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: telegram-isolation}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: update}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: user-files}
@@ -417,11 +451,43 @@ jobs:
             managed-auth) exec bash tests/managed-auth-smoke.sh "$image" ;;
             managed-plugin) exec bash tests/managed-plugin-update-smoke.sh "$image" ;;
             memory) exec bash tests/memory-smoke.sh "$image" ;;
+            public-v1) exec bash tests/public-v1-upgrade-smoke.sh "$image" ;;
             telegram-isolation) exec bash tests/telegram-isolation-smoke.sh "$image" ;;
             update) exec bash tests/update-smoke.sh "$image" ;;
             user-files) exec bash tests/user-files-update-smoke.sh "$image" ;;
             *) exit 64 ;;
           esac
+
+  candidate-public-preflight:
+    name: Require anonymous HAOS rehearsal image access
+    if: inputs.candidate
+    needs:
+      - prepare
+      - assemble-candidate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
+        with:
+          version: v0.32.1
+
+      - name: Verify anonymous rehearsal tag and exact digest
+        env:
+          CANDIDATE_DIGEST: ${{ needs.assemble-candidate.outputs.generic_digest }}
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          REHEARSAL_VERSION: ${{ needs.assemble-candidate.outputs.rehearsal_version }}
+        run: |
+          set -Eeuo pipefail
+          anonymous_config=$(mktemp -d)
+          trap 'rm -rf -- "$anonymous_config"' EXIT
+          DOCKER_CONFIG=$anonymous_config docker buildx imagetools inspect --raw \
+            "${IMAGE}:${REHEARSAL_VERSION}" > anonymous-rehearsal-index.json
+          [[ sha256:$(sha256sum anonymous-rehearsal-index.json | cut -d ' ' -f 1) == \
+            "$CANDIDATE_DIGEST" ]]
+          DOCKER_CONFIG=$anonymous_config docker buildx imagetools inspect \
+            "${IMAGE}@${CANDIDATE_DIGEST}" >/dev/null
 
   candidate-sbom:
     name: Generate exact leaf SPDX SBOMs
@@ -550,6 +616,7 @@ jobs:
       - prepare
       - assemble-candidate
       - exact-digest-smoke
+      - candidate-public-preflight
       - candidate-sbom
       - gap007-release
     runs-on: ubuntu-24.04
@@ -557,7 +624,7 @@ jobs:
       contents: read
     outputs:
       artifact_name: ${{ steps.names.outputs.artifact_name }}
-      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      artifact_digest: ${{ steps.artifact.outputs.digest }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -584,6 +651,19 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -Eeuo pipefail
+          python3 .github/scripts/candidate_repository.py create \
+            --app-directory antigravity_home_assistant \
+            --repository-yaml repository.yaml \
+            --source-sha "$GITHUB_SHA" \
+            --version "${VERSION}-candidate.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" \
+            --image "$IMAGE" \
+            --digest "$CANDIDATE_DIGEST" \
+            --output candidate-repository \
+            --manifest candidate-repository-manifest.json
+          python3 .github/scripts/candidate_repository.py archive \
+            --repository candidate-repository \
+            --manifest candidate-repository-manifest.json \
+            --output haos-candidate-repository.zip
           python3 .github/scripts/release_contract.py candidate \
             --version "$VERSION" \
             --source-sha "$GITHUB_SHA" \
@@ -598,6 +678,10 @@ jobs:
             --aarch64-image "$AARCH64_IMAGE" \
             --aarch64-stage-digest "$AARCH64_STAGE_DIGEST" \
             --aarch64-runtime-digest "$AARCH64_RUNTIME_DIGEST" \
+            --rehearsal-version "${VERSION}-candidate.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" \
+            --rehearsal-digest "$CANDIDATE_DIGEST" \
+            --rehearsal-repository-manifest candidate-repository-manifest.json \
+            --rehearsal-repository-archive haos-candidate-repository.zip \
             --manifest candidate-index.json \
             --gap007-evidence gap007-release.json \
             --output candidate.json
@@ -623,12 +707,25 @@ jobs:
             gap007-release.json
             antigravity-for-home-assistant-amd64.spdx.json
             antigravity-for-home-assistant-arm64.spdx.json
+            candidate-repository/
+            candidate-repository-manifest.json
+            haos-candidate-repository.zip
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
+
+      - name: Normalize candidate artifact digest
+        id: artifact
+        env:
+          RAW_ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: |
+          set -Eeuo pipefail
+          [[ $RAW_ARTIFACT_DIGEST =~ ^[0-9a-f]{64}$ ]]
+          printf 'digest=sha256:%s\n' "$RAW_ARTIFACT_DIGEST" \
+            >> "$GITHUB_OUTPUT"
 
       - name: Publish candidate binding summary
         env:
-          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+          ARTIFACT_DIGEST: ${{ steps.artifact.outputs.digest }}
           ARTIFACT_NAME: ${{ steps.names.outputs.artifact_name }}
         run: |
           {
@@ -637,6 +734,9 @@ jobs:
             printf -- "- Artifact: \`%s\`\n" "$ARTIFACT_NAME"
             printf -- "- Artifact digest: \`%s\`\n" "$ARTIFACT_DIGEST"
             printf -- "- Source: \`%s\`\n" "$GITHUB_SHA"
+            printf -- "- HAOS rehearsal version: \`%s-candidate.%s.%s\`\n" \
+              "${{ needs.prepare.outputs.version }}" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf -- "- HAOS repository bundle: \`candidate-repository/\`\n"
             echo
             echo 'Run Candidate / finalize only after the exact digest HAOS evidence is available.'
           } >> "$GITHUB_STEP_SUMMARY"

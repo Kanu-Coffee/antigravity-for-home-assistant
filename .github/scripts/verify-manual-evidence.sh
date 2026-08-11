@@ -1,14 +1,28 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-if [[ $# -ne 1 || ! -f $1 ]]; then
-  echo "usage: verify-manual-evidence.sh MANUAL_EVIDENCE_JSON" >&2
+if [[ $# -ne 3 || ! -f $1 || ! -f $2 ]]; then
+  echo "usage: verify-manual-evidence.sh MANUAL_EVIDENCE_JSON CANDIDATE_JSON OUTPUT_DIRECTORY" >&2
   exit 64
 fi
 manual_evidence=$1
-temporary_directory=$(mktemp -d)
-trap 'rm -rf -- "$temporary_directory"' EXIT
+candidate=$2
+output_directory=$3
 index=0
+script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+
+python3 "${script_directory}/release_contract.py" manual \
+  --candidate "$candidate" \
+  --manual "$manual_evidence"
+
+if [[ -e $output_directory || -L $output_directory ]]; then
+  echo "HAOS evidence output directory must not already exist" >&2
+  exit 1
+fi
+temporary_directory=$(mktemp -d -- "${output_directory}.tmp.XXXXXX")
+trap 'rm -rf -- "$temporary_directory"' EXIT
+canonical_directory="${temporary_directory}/canonical"
+install -d -m 0700 -- "$canonical_directory"
 
 while IFS=$'\t' read -r gate uri expected_digest; do
   [[ $gate =~ ^[a-z0-9_]+$ ]]
@@ -49,6 +63,13 @@ while IFS=$'\t' read -r gate uri expected_digest; do
     echo "downloaded evidence digest mismatch: ${gate}" >&2
     exit 1
   fi
+  python3 "${script_directory}/release_contract.py" manual-report \
+    --candidate "$candidate" \
+    --manual "$manual_evidence" \
+    --gate "$gate" \
+    --evidence "$output" \
+    --output "${canonical_directory}/${gate}.json"
+  chmod 0600 -- "${canonical_directory}/${gate}.json"
   index=$((index + 1))
 done < <(jq --raw-output '
   .gates
@@ -63,3 +84,8 @@ done < <(jq --raw-output '
   echo "exactly eight downloaded manual evidence objects are required" >&2
   exit 1
 }
+[[ $(find -P "$canonical_directory" -mindepth 1 -maxdepth 1 -type f -links 1 | wc -l) -eq 8 ]] || {
+  echo "exactly eight canonical HAOS gate reports are required" >&2
+  exit 1
+}
+mv -- "$canonical_directory" "$output_directory"

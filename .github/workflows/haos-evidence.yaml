@@ -1,0 +1,159 @@
+---
+name: HAOS evidence
+
+"on":
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful Candidate build run ID
+        required: true
+        type: string
+      candidate_run_attempt:
+        description: Successful Candidate build run attempt
+        required: true
+        type: string
+      gate:
+        description: Exact HAOS gate represented by this sanitized report
+        required: true
+        type: choice
+        options:
+          - apparmor_enforce
+          - haos_aarch64_install_persistence
+          - haos_amd64_local_migration
+          - local_migration_rollback
+          - migration_modes
+          - oauth_isolation_persistence
+          - native_updater_canary
+          - telegram_modes
+      report_json:
+        description: Sanitized antigravity-ha-haos-gate-evidence/v1 JSON
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: haos-evidence-${{ inputs.candidate_run_id }}-${{ inputs.gate }}
+  cancel-in-progress: false
+
+jobs:
+  validate-upload:
+    name: Validate and preserve candidate-bound HAOS gate report
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Resolve exact successful Candidate artifact
+        id: candidate
+        env:
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          [[ $CANDIDATE_RUN_ID =~ ^[1-9][0-9]*$ ]]
+          [[ $CANDIDATE_RUN_ATTEMPT =~ ^[1-9][0-9]*$ ]]
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${CANDIDATE_RUN_ID}" \
+            > candidate-run.json
+          jq --exit-status \
+            --argjson attempt "$CANDIDATE_RUN_ATTEMPT" '
+              .path == ".github/workflows/candidate.yaml"
+              and .event == "workflow_dispatch"
+              and .status == "completed"
+              and .conclusion == "success"
+              and .run_attempt == $attempt
+              and (.head_sha | test("^[0-9a-f]{40}$"))
+            ' candidate-run.json >/dev/null
+          source_sha=$(jq --raw-output .head_sha candidate-run.json)
+          [[ $GITHUB_SHA == "$source_sha" ]] || {
+            echo "HAOS evidence upload must run at the exact candidate source" >&2
+            exit 1
+          }
+          artifact_name="release-candidate-${source_sha}-${CANDIDATE_RUN_ID}-${CANDIDATE_RUN_ATTEMPT}"
+          gh api \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${CANDIDATE_RUN_ID}/artifacts?name=${artifact_name}" \
+            > candidate-artifacts.json
+          jq --exit-status \
+            --arg artifact_name "$artifact_name" '
+              .total_count == 1
+              and (.artifacts | length == 1)
+              and .artifacts[0].name == $artifact_name
+              and .artifacts[0].expired == false
+              and (.artifacts[0].digest | test("^sha256:[0-9a-f]{64}$"))
+            ' candidate-artifacts.json >/dev/null
+          {
+            printf 'artifact_name=%s\n' "$artifact_name"
+            printf 'source_sha=%s\n' "$source_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out exact candidate verifier
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          ref: ${{ steps.candidate.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Download exact candidate record
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: ${{ steps.candidate.outputs.artifact_name }}
+          path: candidate-evidence
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.candidate_run_id }}
+
+      - name: Validate sanitized report before upload
+        env:
+          GATE: ${{ inputs.gate }}
+          SOURCE_SHA: ${{ steps.candidate.outputs.source_sha }}
+        run: |
+          set -Eeuo pipefail
+          jq --raw-output '.inputs.report_json' "$GITHUB_EVENT_PATH" \
+            > submitted-report.json
+          python3 .github/scripts/release_contract.py haos-report \
+            --candidate candidate-evidence/candidate.json \
+            --gate "$GATE" \
+            --evidence submitted-report.json \
+            --output manual-gate-evidence.json
+          test "$(jq --raw-output .source_sha manual-gate-evidence.json)" = \
+            "$SOURCE_SHA"
+          test "$(jq --raw-output .gate manual-gate-evidence.json)" = "$GATE"
+          chmod 0600 manual-gate-evidence.json
+
+      - name: Upload immutable gate-specific evidence
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: haos-gate-${{ inputs.gate }}-${{ steps.candidate.outputs.source_sha }}-${{ inputs.candidate_run_id }}-${{ inputs.candidate_run_attempt }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: manual-gate-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish finalizer record
+        env:
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          GATE: ${{ inputs.gate }}
+          RAW_ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: |
+          set -Eeuo pipefail
+          [[ $RAW_ARTIFACT_DIGEST =~ ^[0-9a-f]{64}$ ]]
+          artifact_digest="sha256:${RAW_ARTIFACT_DIGEST}"
+          {
+            echo '## Candidate-bound HAOS gate evidence'
+            echo
+            echo 'Copy this exact gate record into the Candidate finalize input:'
+            echo
+            echo '```json'
+            jq --null-input \
+              --arg gate "$GATE" \
+              --arg uri "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" \
+              --arg digest "$artifact_digest" '
+                {($gate): {
+                  status: "PASS",
+                  evidence_uri: $uri,
+                  sha256: $digest,
+                  format: "github_actions_zip"
+                }}
+              '
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

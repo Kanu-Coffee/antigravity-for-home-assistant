@@ -137,8 +137,21 @@ jobs:
             --candidate candidate.json \
             --manual manual-haos-evidence.json
           bash ../.github/scripts/verify-manual-evidence.sh \
-            manual-haos-evidence.json
+            manual-haos-evidence.json \
+            candidate.json \
+            haos-gates
           test "$(jq --raw-output .source_sha candidate.json)" = "$SOURCE_SHA"
+          python3 ../.github/scripts/candidate_repository.py verify \
+            --repository candidate-repository \
+            --manifest candidate-repository-manifest.json >/dev/null
+          python3 ../.github/scripts/candidate_repository.py verify-archive \
+            --repository candidate-repository \
+            --manifest candidate-repository-manifest.json \
+            --archive haos-candidate-repository.zip
+          test "sha256:$(sha256sum candidate-repository-manifest.json | cut -d ' ' -f 1)" = \
+            "$(jq --raw-output .haos_rehearsal.repository_manifest_sha256 candidate.json)"
+          test "sha256:$(sha256sum haos-candidate-repository.zip | cut -d ' ' -f 1)" = \
+            "$(jq --raw-output .haos_rehearsal.repository_archive_sha256 candidate.json)"
           for sbom in antigravity-for-home-assistant-*.spdx.json; do
             (( $(stat --format '%s' "$sbom") < 16777216 ))
           done
@@ -146,6 +159,7 @@ jobs:
             --candidate candidate.json \
             --manual manual-haos-evidence.json \
             --gap007-evidence gap007-release.json \
+            --haos-gates-dir haos-gates \
             --candidate-artifact-digest "$ARTIFACT_DIGEST" \
             --actor "$GITHUB_ACTOR" \
             --run-id "$GITHUB_RUN_ID" \
@@ -178,6 +192,10 @@ jobs:
             release-evidence/candidate-index.json
             release-evidence/gap007-release.json
             release-evidence/manual-haos-evidence.json
+            release-evidence/haos-gates/*.json
+            release-evidence/candidate-repository/
+            release-evidence/candidate-repository-manifest.json
+            release-evidence/haos-candidate-repository.zip
             release-evidence/antigravity-for-home-assistant-amd64.spdx.json
             release-evidence/antigravity-for-home-assistant-arm64.spdx.json
           if-no-files-found: error
@@ -185,11 +203,14 @@ jobs:
 
       - name: Publish exact annotated-tag trailers
         env:
-          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
           ARTIFACT_NAME: ${{ steps.evidence.outputs.artifact_name }}
           CANDIDATE_RUN_ATTEMPT: ${{ steps.candidate.outputs.candidate_run_attempt }}
           CANDIDATE_RUN_ID: ${{ steps.candidate.outputs.candidate_run_id }}
+          RAW_ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
         run: |
+          set -Eeuo pipefail
+          [[ $RAW_ARTIFACT_DIGEST =~ ^[0-9a-f]{64}$ ]]
+          artifact_digest="sha256:${RAW_ARTIFACT_DIGEST}"
           {
             echo '## Final release evidence is ready'
             echo
@@ -201,6 +222,6 @@ jobs:
             printf 'Release-Evidence-Run-ID: %s\n' "$GITHUB_RUN_ID"
             printf 'Release-Evidence-Run-Attempt: %s\n' "$GITHUB_RUN_ATTEMPT"
             printf 'Release-Evidence-Artifact: %s\n' "$ARTIFACT_NAME"
-            printf 'Release-Evidence-SHA256: %s\n' "$ARTIFACT_DIGEST"
+            printf 'Release-Evidence-SHA256: %s\n' "$artifact_digest"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

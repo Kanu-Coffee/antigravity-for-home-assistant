@@ -370,7 +370,7 @@ def test_duration_override_is_rejected_before_contract_execution() -> None:
     assert "overrides are forbidden" in result.stderr
 
 
-def test_short_ci_contract_does_not_replace_closed_release_run_evidence() -> None:
+def test_short_ci_contract_does_not_replace_current_candidate_release_evidence() -> None:
     workflow = read(WORKFLOW)
     assert "tests/performance-durability-soak.sh" in workflow
     assert "--mode contract" in workflow
@@ -385,11 +385,13 @@ def test_short_ci_contract_does_not_replace_closed_release_run_evidence() -> Non
     gap_row = next(
         line for line in gap_register.splitlines() if line.startswith("| GAP-007 |")
     )
-    assert "`CLOSED`" in gap_row
-    assert "candidate rapid restart 20회" in gap_row
+    assert "`IN_PROGRESS`" in gap_row
+    assert "current exact Candidate" in gap_row
     assert "contract 결과이므로 해제 증거가 아니다" in gap_register
     assert (
         "2c2b3fe0cb0aa2522722e192323bdb0e0a291f5d99193df603eace003dc7f8f9"
         in gap_register
     )
+    assert "immutable URI가 보존돼 있지 않고" in gap_register
+    assert "공식 candidate/release workflow" in gap_register
     assert "실제 HAOS와 live Bot API 게이트를 대신하지 않는다" in gap_register

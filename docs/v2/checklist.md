@@ -120,7 +120,7 @@
 | ID | 상태 | 과제 | 완료 증거 |
 | --- | --- | --- | --- |
 | M0-01 | `VERIFIED` | `docs/v2/` 제품·아키텍처·보안 계약 작성 | 12개 문서, markdownlint 0, internal-link/contract check PASS |
-| M0-02 | `VERIFIED` | FR/SEC/TG/MIG/test traceability 검사 추가 | ST-010; `python3 tests/test_v2_docs_contract.py` 12/12 PASS |
+| M0-02 | `VERIFIED` | FR/SEC/TG/MIG/test traceability 검사 추가 | ST-010; `python3 tests/test_v2_docs_contract.py` 13/13 PASS |
 | M0-03 | `VERIFIED` | 현재 결함과 제거 대상을 issue 단위로 고정 | [gap register](gap-register.md) GAP/LEGACY IDs |
 | M0-04 | `VERIFIED` | v2 target version과 migration support window 확정 | [ADR-001](decisions.md#adr-001--v2-target과-직접-migration-창) |
 
@@ -133,7 +133,7 @@
 | M1-03 | `VERIFIED` | memory JSON/stdout/stderr 분리 | memory smoke PASS |
 | M1-04 | `VERIFIED` | stale `debug prompt-input` smoke 제거 | actual 1.1.11 image smoke PASS |
 | M1-05 | `VERIFIED` | Markdown와 secret scan 범위 정리 | ST-004, ST-007 PASS |
-| M1-06 | `PARTIAL` | CI job을 독립시켜 실패 증거 보존 | local actionlint/contract PASS; remote workflow run TODO |
+| M1-06 | `VERIFIED` | CI job을 독립시켜 실패 증거 보존 | source `38c58f1`; remote CI run 31530524036의 23 jobs PASS |
 
 ### M2 — Antigravity native 기반
 
@@ -185,7 +185,7 @@
 | M5-02 | `PARTIAL` | long polling, static user/chat allowlist와 bounded metrics | Bot API/metric component tests PASS; live Bot API TODO |
 | M5-03 | `PARTIAL` | local-only pairing create/list/revoke | pairing security suite PASS; HAOS operator flow TODO |
 | M5-04 | `PARTIAL` | input normalization과 shell-free print worker | injection/argv/stdin suite PASS; live conversation TODO |
-| M5-05 | `PARTIAL` | per-chat queue, session, cancel와 timeout | concurrency + exact-candidate 30분 soak/15분 outage/20회 restart PASS; live HAOS Telegram TODO |
+| M5-05 | `PARTIAL` | per-chat queue, session, cancel와 timeout | component PASS; historical local 30분 soak baseline, current Candidate artifact/live HAOS Telegram TODO |
 | M5-06 | `PARTIAL` | stream-json parser와 Telegram chunking | parser/output suite PASS; live Telegram formatting TODO |
 | M5-07 | `PARTIAL` | typed proposal와 broker-generated human-reviewable confirmation preview | local secret-safe diff + replay/cross-chat PASS; HAOS Telegram E2E TODO |
 | M5-08 | `PARTIAL` | 세 access mode와 high-risk matrix | local full policy suite PASS; HAOS E2E TODO |
@@ -197,16 +197,16 @@
 
 | ID | 상태 | 과제 | 완료 증거 |
 | --- | --- | --- | --- |
-| M6-01 | `PARTIAL` | v1 option conservative mapping | migration unit fixtures PASS; real v1 data TODO |
+| M6-01 | `PARTIAL` | v1 option conservative mapping | exact public-v1 source container rehearsal PASS; HA-007 local HAOS/HA-005 public update TODO |
 | M6-02 | `PARTIAL` | preserve mode와 ownership conflict | local preflight/preserve/full update PASS; HAOS TODO |
 | M6-03 | `PARTIAL` | refresh_managed owned settings merge와 plugin mode-independent refresh의 one-shot/idempotency | local native merge/plugin transaction/full update PASS; HAOS restart/update TODO |
 | M6-04 | `PARTIAL` | reset_v2 strict ownership conflict, backup과 recovery | local state/target journal + SIGKILL rollback PASS; HAOS rollback TODO |
-| M6-05 | `PARTIAL` | memory/browser/SSH/OAuth preservation | amd64와 QEMU arm64 local update persistence PASS; two-arch HAOS update TODO |
+| M6-05 | `PARTIAL` | memory/browser/SSH/OAuth preservation | amd64 public-v1 fixture와 QEMU arm64 restart persistence PASS; HA-005/HA-006/HA-007 TODO |
 | M6-06 | `PARTIAL` | amd64와 aarch64 Docker build/runtime | amd64 full + arm64 QEMU packaging/Telegram isolation PASS; native HAOS both arch TODO |
 | M6-07 | `PARTIAL` | `image`, AppArmor와 breaking metadata | local schema/parser/App linter PASS; HAOS install TODO |
-| M6-08 | `PARTIAL` | staged candidate exact-digest smoke와 rebuild 없는 idempotent promotion | local workflow/contract tests; remote candidate/Builder run TODO |
+| M6-08 | `PARTIAL` | staged candidate exact-digest smoke, HAOS rehearsal bundle와 rebuild 없는 idempotent promotion | remote PR Builder PASS; Candidate workflow/actual bundle run TODO |
 | M6-09 | `PARTIAL` | leaf SBOM, provenance, exact Cosign identity와 anonymous preflight | local workflow contract; public registry retrieval TODO |
-| M6-10 | `PARTIAL` | evidence-bound public update와 rollback rehearsal | fail-closed template/finalizer implemented; HAOS report NOT RUN |
+| M6-10 | `PARTIAL` | candidate-bound local HAOS rehearsal과 post-publish public acceptance | pre-finalize finalizer·post-publish HA-005 validator/uploader implemented; HA-006/HA-007/HA-005 NOT RUN |
 
 ### M7 — 사용자 문서와 최종 감사
 
@@ -216,7 +216,7 @@
 | M7-02 | `PARTIAL` | App options, migration와 security warning 번역 | schema/translation parity PASS; HAOS UI review TODO |
 | M7-03 | `PARTIAL` | troubleshooting과 recovery runbook | local failure rehearsal PASS; HAOS rehearsal TODO |
 | M7-04 | `IN_PROGRESS` | requirement-by-requirement completion audit | local audit/static evidence PASS; HAOS/release evidence pending |
-| M7-05 | `PARTIAL` | v2 release와 post-publish install 검증 | idempotent release gate implemented; external release/install NOT RUN |
+| M7-05 | `PARTIAL` | v2 release와 post-publish install/update 검증 | idempotent release/HA-005 acceptance gate implemented; public HA-005/install NOT RUN |
 
 ## 4. 요구사항 추적표
 
@@ -236,7 +236,7 @@
 | FR-008 | M3, M4, M5, M6 | AG-013, ST-007, IM-007, IM-009, IM-010, IM-011, AA-001 |
 | SEC-001 | M3 | AG-013, ST-007, IM-007, IM-010, IM-011, AA-001 |
 | SEC-002 | M3, M4, M5, M6 | AG-013, ST-007, IM-007, IM-008, IM-009, IM-010, IM-011, AA-001 |
-| SEC-003 | M2, M3, M4, M5, M6 | AG-009, AG-012, AG-013, IM-007, IM-010, IM-011, IM-012, AA-001, HA-004, HA-005 |
+| SEC-003 | M2, M3, M4, M5, M6 | AG-009, AG-012, AG-013, IM-007, IM-010, IM-011, IM-012, AA-001, HA-004, HA-005, HA-006, HA-007 |
 | SEC-004 | M3, M6 | ST-002, IM-011, AA-001 |
 | SEC-005 | M3, M4, M5 | AG-007, AG-013, IM-006, IM-007, IM-009, IM-010, AA-001 |
 | SEC-006 | M3, M4 | ST-007, IM-011, AA-001 |
@@ -245,7 +245,7 @@
 | SEC-009 | M4 | IM-009, IM-011, HA-003, AA-001 |
 | SEC-010 | M4 | ST-007, IM-008, HA-002 |
 | SEC-011 | M3, M4, M5 | ST-007, IM-007, IM-009, IM-010, HA-004 |
-| SEC-012 | M3, M4, M5, M6 | AG-013, ST-007, IM-007, IM-009, IM-010, IM-011, IM-012, AA-001, HA-004, HA-005 |
+| SEC-012 | M3, M4, M5, M6 | AG-013, ST-007, IM-007, IM-009, IM-010, IM-011, IM-012, AA-001, HA-004, HA-005, HA-006, HA-007 |
 | TG-001 | M5 | AG-009, AG-012, IM-010, HA-004 |
 | TG-002 | M5 | ST-002, IM-010, HA-004 |
 | TG-003 | M5 | IM-010, HA-004 |
@@ -260,15 +260,15 @@
 | TG-012 | M5 | ST-007, IM-010, HA-004 |
 | TG-013 | M5 | AG-013, IM-010, HA-004 |
 | MIG-001 | M2, M6 | AG-014, ST-002, ST-005, IM-001, IM-002, HA-001 |
-| MIG-002 | M6 | ST-007, IM-012, HA-005 |
-| MIG-003 | M6 | IM-012, HA-005 |
-| MIG-004 | M6 | IM-012, HA-005 |
-| MIG-005 | M6 | ST-001, ST-009, IM-012, HA-005 |
-| MIG-006 | M4, M6 | IM-008, IM-012, HA-002, HA-005 |
-| MIG-007 | M6 | IM-012, HA-005 |
-| MIG-008 | M2, M6 | AG-014, ST-005, IM-001, IM-002, HA-001, HA-005 |
-| MIG-009 | M1, M2, M6 | AG-014, ST-001, ST-002, ST-003, ST-004, ST-005, ST-006, ST-007, ST-008, ST-009, ST-010, IM-001, IM-002, IM-003, IM-004, IM-005, IM-006, IM-007, IM-008, IM-009, IM-010, IM-011, IM-012, AA-001 |
-| MIG-010 | M2, M6, M7 | AG-014, ST-010, IM-001, IM-002, IM-003, IM-004, IM-005, IM-006, IM-007, IM-008, IM-009, IM-010, IM-011, IM-012, HA-001, HA-002, HA-003, HA-004, HA-005, AA-001 |
+| MIG-002 | M6 | ST-007, IM-012, HA-005, HA-007 |
+| MIG-003 | M6 | IM-012, HA-005, HA-007 |
+| MIG-004 | M6 | IM-012, HA-005, HA-007 |
+| MIG-005 | M6 | ST-001, ST-009, IM-012, HA-005, HA-007 |
+| MIG-006 | M4, M6 | IM-008, IM-012, HA-002, HA-005, HA-007 |
+| MIG-007 | M6 | IM-012, HA-005, HA-007 |
+| MIG-008 | M2, M6 | AG-014, ST-005, IM-001, IM-002, HA-001, HA-006 |
+| MIG-009 | M1, M2, M6 | AG-014, ST-001, ST-002, ST-003, ST-004, ST-005, ST-006, ST-007, ST-008, ST-009, ST-010, IM-001, IM-002, IM-003, IM-004, IM-005, IM-006, IM-007, IM-008, IM-009, IM-010, IM-011, IM-012, HA-006, HA-007, AA-001 |
+| MIG-010 | M2, M6, M7 | AG-014, ST-010, IM-001, IM-002, IM-003, IM-004, IM-005, IM-006, IM-007, IM-008, IM-009, IM-010, IM-011, IM-012, HA-001, HA-002, HA-003, HA-004, HA-005, HA-006, HA-007, AA-001 |
 | MIG-011 | M0, M6, M7 | ST-010 |
 
 ## 5. 현재 제거 또는 교체 대상

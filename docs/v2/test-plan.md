@@ -269,13 +269,65 @@ descriptor를 검사하고, 다음 automated evidence가 모두 성공해야 can
 - exact amd64/arm64 leaf SPDX와 파일별 16 MiB 미만 budget
 - run ID와 attempt가 포함된 모든 intermediate/final artifact
 
+Candidate attempt는 하나의 atomic artifact set이다. Candidate job이 하나라도 실패하면
+GitHub UI에서 **Re-run all jobs**만 사용한다. **Re-run failed jobs**는 지원하지 않으며,
+consumer가 현재 run ID/attempt의 artifact만 받도록 해 이전 attempt의 성공 artifact와
+새 attempt의 artifact를 섞는 경로를 의도적으로 fail closed한다.
+
 실제 HAOS gate는 [release-evidence-template.json](release-evidence-template.json)의
 `NOT_RUN`을 `PASS`로 글자만 바꿔서는 안 된다. exact candidate/source와 연결된
 repository-scoped evidence URI와 content SHA-256이 여덟 gate 모두에 있어야 finalize가
-통과한다. finalize는 각 URI를 다운로드해 실제 byte SHA-256도 비교한다. template
-원본은 release contract 검사에서 실패해야 한다. 이 검사는 evidence integrity와
-candidate binding을 보장하지만 보고서 속 HAOS 관찰의 진실성은 maintainer review라는
-trusted-attestor 경계다.
+통과한다. pre-finalize gate는 AppArmor enforce, amd64 same-local-identity
+migration, aarch64 첫-release install/persistence, migration mode, OAuth
+isolation/persistence, updater canary, local migration rollback, Telegram mode다. amd64
+rehearsal은 공식 local testing `/addons/antigravity_home_assistant`에 exact public-v1
+source를 build한 뒤 같은 directory/slug를 candidate App directory로 교체하는
+`HA-007`이다. original custom repository의 public update/rollback `HA-005`가 아니다.
+
+`HAOS evidence` workflow는 candidate run ID/attempt, gate와 sanitized report를 gate별로
+별도 dispatch한다. exact candidate artifact/source와 report schema를 검증한 뒤
+`format: "github_actions_zip"`인 고유 Actions artifact record를 낸다. finalize는 각
+URI를 다운로드해 실제 archive byte SHA-256과 내부
+source/digest/architecture/check set을 비교한다. 검증된 report는 canonical
+`haos-gates/<gate>.json`으로 보존하고 각 JSON byte digest를
+`release-evidence.json` 안의 `haos_gate_evidence`에 결합한다. template 원본은
+release contract 검사에서 실패해야 한다. 이 검사는 evidence integrity와
+candidate binding을 보장하지만 보고서 속 HAOS 관찰의 진실성은 maintainer
+review라는 trusted-attestor 경계다.
+
+numeric release 발행 후 original public repository의 metadata/fresh install을 두
+architecture에서 확인한다. amd64에서는 같은 original repository/add-on
+identity의 public v1.0.4를 numeric v2로 update하고 rollback하는 `HA-005`를
+별도로 수행한다. 이 post-publish acceptance를 finalize 입력으로
+순환시키지 않는다. 별도 `Post-publish HA-005 acceptance`
+(`.github/workflows/postpublish-ha005.yaml`)는 exact numeric v2 tag ref에서
+`version`과 `report_json`만 받는다. tag-bound finalizer artifact와 GitHub Release의
+byte-identical `release-evidence.json`, non-draft prerelease, anonymous public GHCR digest를
+다시 검증한다. maintainer가 제출한 sanitized
+`antigravity-ha-ha005-acceptance/v1` report가 계약을 통과하면 canonical
+`ha005-acceptance.json`을
+`ha005-acceptance-<version>-<source_sha>-<run_id>-<run_attempt>` Actions artifact와
+fixed-name GitHub Release asset으로 보존한다. 기존 asset이 같은 byte면
+resume하고 다르면 덮어쓰거나 Release body/state를 바꾸지 않고 실패한다.
+이 workflow는 tag trailer가 결합한 finalizer Actions artifact를 다시
+download하고 그 `release-evidence.json`을 durable GitHub Release asset과 byte별로
+비교한다. finalizer artifact의 retention은 30일이므로 `HA-005`는 그 exact
+artifact가 만료하기 전, 보통 publish 직후 dispatch한다. 이미 만료한
+artifact를 새 report로 우회하지 않고 fail closed한다. 이 artifact
+availability 창은 report 관찰 시각의 30일 freshness 계약과 별개다.
+따라서 HA-005 dispatch의 effective deadline은
+`min(finalizer artifact expiry, oldest embedded HAOS observed_at_utc + 30 days)`다.
+post-publish `release_contract.py release` replay에서도 embedded pre-finalize HAOS
+report의 freshness를 다시 검사하며, 어느 쪽이든 만료되면 freshness를 완화하거나
+새 evidence로 우회하지 않고 의도적으로 fail closed한다.
+운영자는 [HA-005 acceptance template](ha005-acceptance-template.json)를
+`report_json`의 출발점으로 사용한다. 이 template은 exact top-level/nested key,
+check, sanitization과 attestation 이름을 모두 포함하지만 fail-closed로
+`status`/transition/check를 `NOT_RUN`, attestation을 `false`, sensitive-content
+sanitization flag를 `true`, 관찰값을 empty string으로 둔다. 실제 관찰과
+sanitization review 후 모든 placeholder를 교체한다. 변경하지 않은
+template은 `release_contract.py ha005-report`가 거부한다.
+실제 공개 release와 `HA-005` report는 없으므로 상태는 계속 `NOT RUN`이다.
 
 Builder 정적/remote 시험은 다음 failure injection을 포함한다.
 
@@ -359,18 +411,89 @@ HAOS update와 이전 image rollback은 실행하지 않았으므로 IM-012는 `
 실제 high-risk device를 작동하지 않는다. broker dry-run과 synthetic policy operation으로
 confirmation 강제를 검증한다.
 
-### HA-005 — update와 rollback
+### HA-005 — 지원되던 public v1 update와 rollback
 
-amd64와 aarch64에서 각각 다음을 실행한다.
+numeric v2와 original custom repository metadata가 공개된 뒤, public v1.0.4가
+지원한 amd64에서만 다음을 수행한다. v1.0.4는 aarch64 artifact를
+제공하지 않았으므로 존재하지 않는 이전 aarch64 image의 update/rollback을 PASS로
+기록하지 않는다.
 
-1. 최신 public v1 설치와 representative 사용자 상태 준비
-2. v2 `preserve` update
+1. original custom repository에서 public v1.0.4를 설치하고 repository ID/URL,
+   add-on slug, source SHA, source-build image ID와 representative 사용자 상태를 기록
+2. 같은 repository/add-on identity가 제공하는 numeric v2로 `preserve` update하고
+   published generic/amd64 runtime digest와 `/data` identity 유지 확인
 3. OAuth, SSH, browser identity, memory, `/config`와 사용자 settings 확인
 4. 모든 native launch의 updater 미실행과 restart 전후 binary version/digest 불변 확인
-5. `refresh_managed` 1회성과 restart idempotency
-6. 별도 fixture에서 `reset_v2`와 conflict failure
-7. migration 중 강제 종료와 recovery
-8. 이전 immutable image rollback과 필요한 managed state 복원
+5. 복원된 별도 public-v1 fixture에서 `refresh_managed`의 1회성,
+   `reset_v2`, conflict failure와 restart idempotency 확인
+6. 기록한 public v1 source/image와 matching managed backup으로 rollback한 뒤
+   repository/add-on/data identity와 recovery surface 확인
+
+업데이트 직전 Supervisor가 source-build한 v1 image ID, source
+`aba6805e8bf1f32e68976a67a46536c3ca362af8`와 설치 repository/ref를 기록한다. branch
+suffix를 붙인 URL이나 temporary repository는 다른 Home Assistant repository
+identity이므로 이 시험을 대체하지 못한다. v1 registry digest가 존재한다고
+가정하지 않는다. `HA-005`는 post-publish acceptance이며 pre-finalize
+evidence에 포함하지 않는다.
+
+sanitized report의 `previous_release` record는 original repository URL,
+`addon_slug: "antigravity_home_assistant"`,
+`installation_source: "original_custom_repository_source_build"`, repository ID hash,
+data identity hash와 local image ID를 강제한다. repository/add-on/data identity는
+previous/update/rollback에서 같아야 한다. update는 exact published generic·amd64
+digest와 numeric v2를, rollback은 public v1 source SHA, source-build image ID,
+matching managed backup과 최종 App `1.0.4`를 강제한다.
+architecture는 `amd64`만 허용하고 observation은 Release publish 시각 후여야
+하며, report 제출 시점에 관찰 시각이 30일보다 오래되지 않아야 한다.
+branch/temporary repository identity와 aarch64 `HA-005`는 validation을 통과할
+수 없다.
+
+`repository_id_sha256`는 update 전 기록한 stable Supervisor repository ID의 exact
+byte를, `data_identity_sha256`는 `/data`에 미리 둔 dedicated identity sentinel을
+SHA-256한 값이며 report에는 hash만 남긴다. `local_image_id`는 v1 registry
+digest가 아니라 Supervisor/Docker가 생성한 exact source-build image ID다. 세
+값은 모두 `sha256:<64 lowercase hex>` 형식이고 서로 달라야 하며, update와
+rollback은 기록한 repository/data digest를 동일하게 제출한다.
+
+### HA-006 — 첫 aarch64 release install과 persistence
+
+public v1이 없었던 aarch64에서는 candidate bundle의 App directory를
+공식 local testing `/addons/antigravity_home_assistant`에 배치해 다음을 실행한다.
+
+1. bundle manifest/archive hash, prerelease version과 exact candidate digest 확인
+2. clean install과 App start/stop/restart
+3. Ingress/SSH, native plugin, HA read/memory/browser와 AppArmor enforce 확인
+4. OAuth, SSH host key, browser identity, memory, `/config`와 user settings의 restart 보존
+
+첫 release에서는 이전 numeric aarch64 image rollback을 완료로 주장하지 않는다. 실제
+numeric rollback gate는 다음 aarch64 release부터 추가한다.
+
+### HA-007 — amd64 same-local-identity migration rehearsal
+
+numeric publish 전에 공식 Home Assistant local testing 경로로 candidate migration을
+연습한다.
+
+1. exact public v1.0.4 tag source를 `/addons/antigravity_home_assistant`에 배치해
+   source-build install하고 source SHA, image ID, local repository ID와 add-on slug 기록
+2. 같은 directory/slug의 content만 candidate bundle App directory로 교체하고
+   local repository를 refresh해 exact prerelease version으로 update
+3. update 전후 local repository/add-on/data identity와 observed candidate digest 확인
+4. `preserve`, `refresh_managed`, `reset_v2`, ownership conflict와 restart idempotency 확인
+5. migration 중 강제 종료/recovery와 기록한 v1 source-build image/managed backup으로
+   local migration rollback을 수행한다. rollback report의 installed App postcondition은
+   `1.0.4`다.
+6. OAuth, SSH, browser identity, memory, `/config`와 사용자 settings 보존,
+   모든 native launch의 updater 미실행 확인
+
+이 시험은 exact public-v1 source와 candidate code의 migration 호환성을 실제 HAOS에서
+검증하지만 repository identity는 `local`이다. original custom repository의 public
+update/rollback 수용인 `HA-005`로 기록하지 않는다.
+세 local migration gate의 `previous_release` record는 exact v1 source/image ID와
+`installation_source: "local_addons_source_build"`,
+`repository_identity: "same_local_repository_identity"`를 강제한다.
+HA-007의 OAuth/native-updater 보존은 `haos_amd64_local_migration` report 내
+dedicated check로 입증한다. 양 arch cross-cutting OAuth/updater report에는
+`previous_release`가 없으므로 그 report 자체가 HA-007을 claim하지 않는다.
 
 ## AA-001 — AppArmor 검증
 
@@ -487,7 +610,10 @@ release run은 source `ae8b0bc4fdd042bdb84c55a1767d619d9adc734f`, source-rootfs
 1,800초 soak, 900초 장애 주입, broker/candidate restart 20회와 고정 budget을 PASS했다.
 sanitized evidence SHA-256은
 `2c2b3fe0cb0aa2522722e192323bdb0e0a291f5d99193df603eace003dc7f8f9`이며 local
-GAP-007 해제 증거다. 실제 HAOS와 live Bot API는 여전히 별도 gate다.
+historical result로만 유지한다. 원본 evidence bytes/immutable URI가 보존돼 있지
+않고 현재 source/runtime이 다르므로 GAP-007을 닫지 않는다. current exact
+Candidate에서 다시 실행한 원본 JSON과 digest가 immutable artifact에 보존돼야
+한다. 실제 HAOS와 live Bot API는 여전히 별도 gate다.
 
 공식 Candidate build는 위 release mode를 exact amd64 staging digest에서 자동 실행하고
 runtime leaf digest, source revision, source-rootfs digest와 evidence file SHA-256을
@@ -549,7 +675,7 @@ remaining gap:
 | FR-008 | AG-013, ST-007, IM-007, IM-009, IM-010, IM-011, AA-001 |
 | SEC-001 | AG-013, ST-007, IM-007, IM-010, IM-011, AA-001 |
 | SEC-002 | AG-013, ST-007, IM-007, IM-008, IM-009, IM-010, IM-011, AA-001 |
-| SEC-003 | AG-009, AG-012, AG-013, IM-007, IM-010, IM-011, IM-012, AA-001, HA-004, HA-005 |
+| SEC-003 | AG-009, AG-012, AG-013, IM-007, IM-010, IM-011, IM-012, AA-001, HA-004, HA-005, HA-006, HA-007 |
 | SEC-004 | ST-002, IM-011, AA-001 |
 | SEC-005 | AG-007, AG-013, IM-006, IM-007, IM-009, IM-010, AA-001 |
 | SEC-006 | ST-007, IM-011, AA-001 |
@@ -558,7 +684,7 @@ remaining gap:
 | SEC-009 | IM-009, IM-011, HA-003, AA-001 |
 | SEC-010 | ST-007, IM-008, HA-002 |
 | SEC-011 | ST-007, IM-007, IM-009, IM-010, HA-004 |
-| SEC-012 | AG-013, ST-007, IM-007, IM-009, IM-010, IM-011, IM-012, AA-001, HA-004, HA-005 |
+| SEC-012 | AG-013, ST-007, IM-007, IM-009, IM-010, IM-011, IM-012, AA-001, HA-004, HA-005, HA-006, HA-007 |
 | TG-001 | AG-009, AG-012, IM-010, HA-004 |
 | TG-002 | ST-002, IM-010, HA-004 |
 | TG-003 | IM-010, HA-004 |
@@ -573,13 +699,13 @@ remaining gap:
 | TG-012 | ST-007, IM-010, HA-004 |
 | TG-013 | AG-013, IM-010, HA-004 |
 | MIG-001 | AG-014, ST-002, ST-005, IM-001, IM-002, HA-001 |
-| MIG-002 | ST-007, IM-012, HA-005 |
-| MIG-003 | IM-012, HA-005 |
-| MIG-004 | IM-012, HA-005 |
-| MIG-005 | ST-001, ST-009, IM-012, HA-005 |
-| MIG-006 | IM-008, IM-012, HA-002, HA-005 |
-| MIG-007 | IM-012, HA-005 |
-| MIG-008 | AG-014, ST-005, IM-001, IM-002, HA-001, HA-005 |
-| MIG-009 | AG-014, ST-001, ST-002, ST-003, ST-004, ST-005, ST-006, ST-007, ST-008, ST-009, ST-010, IM-001, IM-002, IM-003, IM-004, IM-005, IM-006, IM-007, IM-008, IM-009, IM-010, IM-011, IM-012, AA-001 |
-| MIG-010 | AG-014, ST-010, IM-001, IM-002, IM-003, IM-004, IM-005, IM-006, IM-007, IM-008, IM-009, IM-010, IM-011, IM-012, HA-001, HA-002, HA-003, HA-004, HA-005, AA-001 |
+| MIG-002 | ST-007, IM-012, HA-005, HA-007 |
+| MIG-003 | IM-012, HA-005, HA-007 |
+| MIG-004 | IM-012, HA-005, HA-007 |
+| MIG-005 | ST-001, ST-009, IM-012, HA-005, HA-007 |
+| MIG-006 | IM-008, IM-012, HA-002, HA-005, HA-007 |
+| MIG-007 | IM-012, HA-005, HA-007 |
+| MIG-008 | AG-014, ST-005, IM-001, IM-002, HA-001, HA-006 |
+| MIG-009 | AG-014, ST-001, ST-002, ST-003, ST-004, ST-005, ST-006, ST-007, ST-008, ST-009, ST-010, IM-001, IM-002, IM-003, IM-004, IM-005, IM-006, IM-007, IM-008, IM-009, IM-010, IM-011, IM-012, HA-006, HA-007, AA-001 |
+| MIG-010 | AG-014, ST-010, IM-001, IM-002, IM-003, IM-004, IM-005, IM-006, IM-007, IM-008, IM-009, IM-010, IM-011, IM-012, HA-001, HA-002, HA-003, HA-004, HA-005, HA-006, HA-007, AA-001 |
 | MIG-011 | ST-010 |

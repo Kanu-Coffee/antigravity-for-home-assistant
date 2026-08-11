@@ -14,11 +14,22 @@ assets=("$@")
 [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 64
 [[ $source_sha =~ ^[0-9a-f]{40}$ ]] || exit 64
 [[ -f $notes && ${#assets[@]} -gt 0 ]] || exit 64
+declare -A expected_asset_paths=()
 for asset in "${assets[@]}"; do
   [[ -f $asset ]] || {
     echo "missing release asset: ${asset}" >&2
     exit 1
   }
+  asset_name=${asset##*/}
+  [[ $asset_name =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$ ]] || {
+    echo "unsafe release asset name: ${asset_name}" >&2
+    exit 1
+  }
+  [[ ! ${expected_asset_paths[$asset_name]+present} ]] || {
+    echo "duplicate expected release asset name: ${asset_name}" >&2
+    exit 1
+  }
+  expected_asset_paths[$asset_name]=$asset
 done
 
 repository=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}
@@ -26,6 +37,116 @@ temporary_directory=$(mktemp -d)
 trap 'rm -rf -- "$temporary_directory"' EXIT
 release_json="${temporary_directory}/release.json"
 error_file="${temporary_directory}/release-error.txt"
+expected_body=$(cat "$notes")
+verified_missing_assets=()
+
+verify_release_identity() {
+  local current_release=$1
+  local existing_body
+  jq --exit-status \
+    --arg version "$version" \
+    --arg source_sha "$source_sha" '
+      .tag_name == $version
+      and .target_commitish == $source_sha
+      and .draft == false
+      and .prerelease == true
+    ' \
+    "$current_release" >/dev/null
+  existing_body=$(jq --raw-output '.body' "$current_release")
+  [[ $existing_body == "$expected_body" ]] || {
+    echo "existing GitHub Release body conflicts with the deterministic notes" >&2
+    return 1
+  }
+}
+
+verify_release_assets() {
+  local current_release=$1
+  local allow_missing=$2
+  local download_root=$3
+  local asset asset_digest asset_index asset_name asset_size count
+  local download_directory existing_name
+  local -A actual_asset_counts=()
+
+  verified_missing_assets=()
+  jq --exit-status '
+    (.assets | type == "array")
+    and all(.assets[]?;
+      (.name | type == "string")
+      and ((.name // "") | test("^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$"))
+    )
+  ' "$current_release" >/dev/null
+  while IFS= read -r existing_name; do
+    if [[ ${actual_asset_counts[$existing_name]+present} ]]; then
+      actual_asset_counts[$existing_name]=2
+    else
+      actual_asset_counts[$existing_name]=1
+    fi
+  done < <(jq --raw-output '.assets[].name' "$current_release")
+  for existing_name in "${!actual_asset_counts[@]}"; do
+    [[ ${actual_asset_counts[$existing_name]} == 1 ]] || {
+      echo "existing GitHub Release has duplicate ${existing_name}" >&2
+      return 1
+    }
+    if [[ $existing_name != ha005-acceptance.json ]] \
+      && [[ ! ${expected_asset_paths[$existing_name]+present} ]]; then
+      echo "existing GitHub Release has unexpected asset: ${existing_name}" >&2
+      return 1
+    fi
+  done
+  if [[ ${actual_asset_counts[ha005-acceptance.json]:-0} == 1 ]]; then
+    jq --exit-status '
+      [.assets[] | select(.name == "ha005-acceptance.json")] as $matches
+      | ($matches | length == 1)
+        and $matches[0].state == "uploaded"
+        and ($matches[0].digest | type == "string")
+        and ($matches[0].digest | test("^sha256:[0-9a-f]{64}$"))
+        and ($matches[0].size | type == "number" and . > 0)
+    ' "$current_release" >/dev/null || {
+      echo "existing HA-005 acceptance asset metadata is invalid" >&2
+      return 1
+    }
+  fi
+
+  asset_index=0
+  for asset in "${assets[@]}"; do
+    asset_name=${asset##*/}
+    count=${actual_asset_counts[$asset_name]:-0}
+    if [[ $count == 0 ]]; then
+      if [[ $allow_missing == true ]]; then
+        verified_missing_assets+=("$asset")
+        continue
+      fi
+      echo "GitHub Release is still missing expected asset: ${asset_name}" >&2
+      return 1
+    fi
+    asset_digest="sha256:$(sha256sum "$asset" | cut -d ' ' -f 1)"
+    asset_size=$(stat --format '%s' "$asset")
+    jq --exit-status \
+      --arg digest "$asset_digest" \
+      --arg name "$asset_name" \
+      --argjson size "$asset_size" '
+        [.assets[] | select(.name == $name)] as $matches
+        | ($matches | length == 1)
+          and $matches[0].state == "uploaded"
+          and $matches[0].digest == $digest
+          and $matches[0].size == $size
+      ' "$current_release" >/dev/null || {
+        echo "existing GitHub Release asset metadata conflicts: ${asset_name}" >&2
+        return 1
+      }
+    download_directory="${download_root}/${asset_index}"
+    mkdir -p -- "$download_directory"
+    gh release download "$version" \
+      --repo "$repository" \
+      --pattern "$asset_name" \
+      --dir "$download_directory"
+    cmp --silent "$asset" "${download_directory}/${asset_name}" || {
+      echo "existing GitHub Release asset conflicts: ${asset_name}" >&2
+      return 1
+    }
+    asset_index=$((asset_index + 1))
+  done
+}
 
 # Bind the remote annotated tag object to the same commit independently of the
 # workflow checkout and the release record.
@@ -48,43 +169,24 @@ jq --exit-status \
 
 if gh api "/repos/${repository}/releases/tags/${version}" \
   > "$release_json" 2> "$error_file"; then
-  jq --exit-status \
-    --arg version "$version" \
-    --arg source_sha "$source_sha" '
-      .tag_name == $version
-      and .target_commitish == $source_sha
-      and .draft == false
-      and .prerelease == true
-    ' \
-    "$release_json" >/dev/null
-  existing_body=$(jq --raw-output '.body' "$release_json")
-  expected_body=$(cat "$notes")
-  [[ $existing_body == "$expected_body" ]] || {
-    echo "existing GitHub Release body conflicts with the deterministic notes" >&2
-    exit 1
-  }
-  for asset in "${assets[@]}"; do
-    asset_name=${asset##*/}
-    count=$(jq --arg name "$asset_name" \
-      '[.assets[] | select(.name == $name)] | length' "$release_json")
-    if [[ $count == 0 ]]; then
-      gh release upload "$version" "$asset" --repo "$repository"
-      continue
-    fi
-    [[ $count == 1 ]] || {
-      echo "existing GitHub Release has duplicate ${asset_name}" >&2
-      exit 1
-    }
-    gh release download "$version" \
-      --repo "$repository" \
-      --pattern "$asset_name" \
-      --dir "${temporary_directory}/assets"
-    cmp --silent "$asset" "${temporary_directory}/assets/${asset_name}" || {
-      echo "existing GitHub Release asset conflicts: ${asset_name}" >&2
-      exit 1
-    }
+  verify_release_identity "$release_json"
+  verify_release_assets \
+    "$release_json" true "${temporary_directory}/preflight-assets"
+  missing_assets=("${verified_missing_assets[@]}")
+  for asset in "${missing_assets[@]}"; do
+    gh release upload "$version" "$asset" --repo "$repository"
   done
-  echo "same: GitHub Release ${version} already has the exact notes and assets"
+  if ((${#missing_assets[@]})); then
+    post_upload_release="${temporary_directory}/post-upload-release.json"
+    gh api "/repos/${repository}/releases/tags/${version}" \
+      > "$post_upload_release"
+    verify_release_identity "$post_upload_release"
+    verify_release_assets \
+      "$post_upload_release" false "${temporary_directory}/post-upload-assets"
+    echo "resumed: GitHub Release ${version} now has every expected asset"
+  else
+    echo "same: GitHub Release ${version} already has the exact notes and assets"
+  fi
   exit 0
 fi
 
@@ -165,13 +267,8 @@ gh release create "$version" \
   --prerelease \
   --notes-file "$notes" \
   "${assets[@]}"
-gh api "/repos/${repository}/releases/tags/${version}" \
-  > "${temporary_directory}/created-release.json"
-jq --exit-status \
-  --arg version "$version" \
-  --arg source_sha "$source_sha" '
-    .tag_name == $version
-    and .target_commitish == $source_sha
-    and .draft == false
-    and .prerelease == true
-  ' "${temporary_directory}/created-release.json" >/dev/null
+created_release="${temporary_directory}/created-release.json"
+gh api "/repos/${repository}/releases/tags/${version}" > "$created_release"
+verify_release_identity "$created_release"
+verify_release_assets \
+  "$created_release" false "${temporary_directory}/created-assets"

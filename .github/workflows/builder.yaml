@@ -170,6 +170,7 @@ jobs:
           python3 .github/scripts/release_contract.py release \
             --evidence release-evidence/release-evidence.json \
             --gap007-evidence release-evidence/gap007-release.json \
+            --haos-gates-dir release-evidence/haos-gates \
             --version "$APP_VERSION" \
             --source-sha "$SOURCE_SHA" \
             --candidate-run-id "$CANDIDATE_RUN_ID" \
@@ -197,6 +198,19 @@ jobs:
             ' "$sbom" >/dev/null
             (( $(stat --format '%s' "$sbom") < 16777216 ))
           done
+          python3 .github/scripts/candidate_repository.py verify \
+            --repository release-evidence/candidate-repository \
+            --manifest release-evidence/candidate-repository-manifest.json >/dev/null
+          python3 .github/scripts/candidate_repository.py verify-archive \
+            --repository release-evidence/candidate-repository \
+            --manifest release-evidence/candidate-repository-manifest.json \
+            --archive release-evidence/haos-candidate-repository.zip
+          [[ sha256:$(sha256sum release-evidence/candidate-repository-manifest.json | cut -d ' ' -f 1) == \
+            $(jq --raw-output '.candidate.haos_rehearsal.repository_manifest_sha256' \
+              release-evidence/release-evidence.json) ]]
+          [[ sha256:$(sha256sum release-evidence/haos-candidate-repository.zip | cut -d ' ' -f 1) == \
+            $(jq --raw-output '.candidate.haos_rehearsal.repository_archive_sha256' \
+              release-evidence/release-evidence.json) ]]
 
       - name: Verify original candidate run and artifact binding
         env:
@@ -549,6 +563,7 @@ jobs:
           python3 .github/scripts/release_contract.py notes \
             --evidence release-evidence/release-evidence.json \
             --gap007-evidence release-evidence/gap007-release.json \
+            --haos-gates-dir release-evidence/haos-gates \
             --output release-evidence/release-notes.md
 
       - name: Create, resume, or reject conflicting GitHub Release
@@ -565,5 +580,8 @@ jobs:
             release-evidence/candidate.json \
             release-evidence/gap007-release.json \
             release-evidence/manual-haos-evidence.json \
+            release-evidence/candidate-repository-manifest.json \
+            release-evidence/haos-candidate-repository.zip \
+            release-evidence/haos-gates/*.json \
             release-evidence/antigravity-for-home-assistant-amd64.spdx.json \
             release-evidence/antigravity-for-home-assistant-arm64.spdx.json

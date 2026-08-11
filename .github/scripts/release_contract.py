@@ -5,9 +5,13 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import re
+import stat
 import sys
+import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -39,14 +43,148 @@ EXPECTED_PLATFORMS = {
 }
 EXPECTED_MANUAL_GATES = {
     "apparmor_enforce",
-    "haos_aarch64_install_update",
-    "haos_amd64_install_update",
+    "haos_aarch64_install_persistence",
+    "haos_amd64_local_migration",
+    "local_migration_rollback",
     "migration_modes",
+    "oauth_isolation_persistence",
     "native_updater_canary",
-    "repository_install_update",
-    "rollback",
     "telegram_modes",
 }
+EXPECTED_HAOS_GATE_TEST_IDS = {
+    "apparmor_enforce": ["AA-001"],
+    "haos_aarch64_install_persistence": ["HA-001", "HA-002", "HA-003", "HA-006"],
+    "haos_amd64_local_migration": ["HA-001", "HA-002", "HA-003", "HA-007"],
+    "local_migration_rollback": ["HA-007"],
+    "migration_modes": ["HA-007"],
+    "oauth_isolation_persistence": ["HA-001", "HA-004", "HA-006", "AA-001"],
+    "native_updater_canary": ["HA-001", "HA-006"],
+    "telegram_modes": ["HA-004"],
+}
+EXPECTED_HAOS_GATE_ARCHITECTURES = {
+    "apparmor_enforce": ["amd64", "aarch64"],
+    "haos_aarch64_install_persistence": ["aarch64"],
+    "haos_amd64_local_migration": ["amd64"],
+    "local_migration_rollback": ["amd64"],
+    "migration_modes": ["amd64"],
+    "oauth_isolation_persistence": ["amd64", "aarch64"],
+    "native_updater_canary": ["amd64", "aarch64"],
+    "telegram_modes": ["amd64", "aarch64"],
+}
+EXPECTED_HAOS_GATE_CHECKS = {
+    "apparmor_enforce": {
+        "all_named_profiles_enforced",
+        "expected_denials_only",
+        "interactive_positive_paths",
+        "other_pid_proc_denied",
+        "restricted_sensitive_reads_denied",
+        "sensitive_read_only_writes_denied",
+        "ssh_sftp_ttyd_positive",
+        "telegram_browser_memory_broker_isolated",
+    },
+    "haos_aarch64_install_persistence": {
+        "clean_install_start_restart",
+        "config_memory_browser_read_tools",
+        "fresh_v2_candidate_install",
+        "ingress_desktop_mobile",
+        "native_plugin_and_cli",
+        "profile_enforce",
+        "ssh_public_key_and_host_key_persistence",
+        "restart_preserves_user_state",
+    },
+    "haos_amd64_local_migration": {
+        "clean_v1_source_build_start_restart",
+        "config_memory_browser_read_tools",
+        "exact_public_v1_source_sha",
+        "ingress_desktop_mobile",
+        "native_plugin_and_cli",
+        "native_updater_disabled_after_migration",
+        "oauth_browser_memory_persist_after_update",
+        "profile_enforce",
+        "public_v1_source_build_installed",
+        "same_local_repository_candidate_update",
+        "same_local_repository_identity",
+        "ssh_public_key_and_host_key_persistence",
+        "update_preserves_user_state",
+    },
+    "local_migration_rollback": {
+        "exact_public_v1_source_sha",
+        "managed_state_restored",
+        "previous_local_source_image_selected",
+        "rollback_postconditions",
+        "same_local_repository_identity",
+        "user_data_preserved",
+    },
+    "migration_modes": {
+        "crash_recovery",
+        "exact_public_v1_source_sha",
+        "legacy_options_conservative",
+        "preserve",
+        "refresh_managed_one_shot",
+        "reset_v2_conflict_fail_closed",
+        "same_local_repository_identity",
+        "user_data_preserved",
+    },
+    "oauth_isolation_persistence": {
+        "credential_non_disclosure",
+        "interactive_login",
+        "interactive_restart_persistence",
+        "same_process_residual_risk_recorded",
+        "telegram_separate_identity_login",
+        "telegram_reply_log_network_non_disclosure",
+        "telegram_restart_persistence",
+        "restart_persistence_both_arches",
+        "user_global_mcp_absent_before_and_after_auth",
+    },
+    "native_updater_canary": {
+        "auto_update_process_absent",
+        "binary_digest_stable_after_restart",
+        "cli_version_1_1_11",
+        "disable_environment_all_launchers",
+    },
+    "telegram_modes": {
+        "amd64_and_aarch64_sessions",
+        "autonomous_low_risk_only",
+        "bot_api_interruption_no_duplicate_mutation",
+        "cancel_expiry_and_restart",
+        "confirm_changes_high_risk_confirmation",
+        "pairing_and_static_allowlist",
+        "replay_and_cross_user_denied",
+        "safe_device_test_restored",
+        "telegram_home_customization_isolated",
+        "oauth_canary_not_disclosed",
+    },
+}
+HAOS_EVIDENCE_MAX_BYTES = 1_048_576
+PUBLIC_V1_SOURCE_SHA = "aba6805e8bf1f32e68976a67a46536c3ca362af8"
+PUBLIC_REPOSITORY_URL = (
+    "https://github.com/Kanu-Coffee/antigravity-for-home-assistant"
+)
+PUBLIC_APP_SLUG = "antigravity_home_assistant"
+PUBLIC_GENERIC_IMAGE = "ghcr.io/kanu-coffee/antigravity-for-home-assistant"
+HA005_REPORT_SCHEMA = "antigravity-ha-ha005-acceptance/v1"
+HA005_MAX_BYTES = 1_048_576
+EXPECTED_HA005_CHECKS = {
+    "data_identity_preserved",
+    "matching_managed_backup_restored",
+    "native_updater_absent_and_binary_stable",
+    "oauth_ssh_browser_memory_config_and_settings_preserved",
+    "original_custom_repository_public_v1_installed",
+    "public_v1_source_and_local_image_verified",
+    "published_amd64_runtime_digest_verified",
+    "published_generic_digest_verified",
+    "published_v2_preserve_update",
+    "refresh_managed_one_shot",
+    "reset_v2_conflict_and_restart_idempotency",
+    "rollback_prior_local_image_selected",
+    "rollback_repository_addon_data_and_recovery_verified",
+    "same_repository_and_addon_identity",
+}
+VERSION_STRING_RE = re.compile(r"[0-9]+(?:\.[0-9]+){0,2}\Z")
+UTC_TIMESTAMP_RE = re.compile(
+    r"[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])"
+    r"T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z\Z"
+)
 GAP007_BASELINE_EVIDENCE_SHA256 = (
     "sha256:b2cb64cac2c5f12c61d4a779c06a4bca1307799e485086d9512974e231d51d09"
 )
@@ -215,6 +353,7 @@ def validate_candidate(candidate: Any) -> dict[str, Any]:
             "run_attempt",
             "candidate_tag",
             "images",
+            "haos_rehearsal",
             "automated_gates",
             "gap007_release",
         },
@@ -251,6 +390,34 @@ def validate_candidate(candidate: Any) -> dict[str, Any]:
         require(record.get("platform") == platform, f"wrong platform for {arch}")
         validate_digest(record.get("stage_digest"), f"{arch} stage digest")
         validate_digest(record.get("runtime_digest"), f"{arch} runtime digest")
+    rehearsal = candidate.get("haos_rehearsal")
+    require(
+        isinstance(rehearsal, dict)
+        and set(rehearsal)
+        == {
+            "version",
+            "image",
+            "digest",
+            "repository_manifest_sha256",
+            "repository_archive_sha256",
+        },
+        "HAOS rehearsal binding is incomplete",
+    )
+    require(
+        rehearsal.get("version")
+        == f"{candidate['version']}-candidate.{run_id}.{run_attempt}",
+        "HAOS rehearsal version differs from candidate run",
+    )
+    require(rehearsal.get("image") == generic["name"], "HAOS rehearsal image differs")
+    require(rehearsal.get("digest") == generic["digest"], "HAOS rehearsal digest differs")
+    validate_digest(
+        rehearsal.get("repository_manifest_sha256"),
+        "HAOS rehearsal repository manifest digest",
+    )
+    validate_digest(
+        rehearsal.get("repository_archive_sha256"),
+        "HAOS rehearsal repository archive digest",
+    )
     gates = candidate.get("automated_gates")
     require(
         gates
@@ -508,8 +675,14 @@ def validate_manual(candidate: dict[str, Any], manual: Any) -> dict[str, Any]:
     )
     gates = manual.get("gates")
     require(isinstance(gates, dict) and set(gates) == EXPECTED_MANUAL_GATES, "manual gate set is not exact")
+    evidence_bindings: set[tuple[str, str]] = set()
+    evidence_digests: set[str] = set()
     for name, gate in gates.items():
-        require(isinstance(gate, dict) and set(gate) == {"status", "evidence_uri", "sha256"}, f"invalid gate record: {name}")
+        require(
+            isinstance(gate, dict)
+            and set(gate) == {"status", "evidence_uri", "sha256", "format"},
+            f"invalid gate record: {name}",
+        )
         require(gate.get("status") == "PASS", f"manual gate is not PASS: {name}")
         require(
             isinstance(gate.get("evidence_uri"), str)
@@ -517,7 +690,613 @@ def validate_manual(candidate: dict[str, Any], manual: Any) -> dict[str, Any]:
             f"invalid or unbound evidence URI: {name}",
         )
         validate_digest(gate.get("sha256"), f"manual evidence digest: {name}")
+        require(
+            gate.get("format") in {"github_actions_zip", "json"},
+            f"invalid manual evidence format: {name}",
+        )
+        is_actions_zip = gate["evidence_uri"].startswith("https://api.github.com/")
+        require(
+            (is_actions_zip and gate["format"] == "github_actions_zip")
+            or (
+                not is_actions_zip
+                and gate["format"] == "json"
+                and gate["evidence_uri"].endswith(".json")
+            ),
+            f"manual evidence URI/format mismatch: {name}",
+        )
+        binding = (gate["evidence_uri"], gate["sha256"])
+        require(binding not in evidence_bindings, "manual evidence archive is reused across gates")
+        require(gate["sha256"] not in evidence_digests, "manual evidence digest is reused across gates")
+        evidence_bindings.add(binding)
+        evidence_digests.add(gate["sha256"])
     return manual
+
+
+def strict_json_object(raw: bytes, name: str) -> Any:
+    require(not raw.startswith(b"\xef\xbb\xbf"), f"{name} must not contain a UTF-8 BOM")
+
+    def reject_duplicate_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            require(key not in result, f"duplicate JSON key in {name}: {key}")
+            result[key] = value
+        return result
+
+    try:
+        return json.loads(raw.decode("utf-8"), object_pairs_hook=reject_duplicate_pairs)
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise ContractError(f"{name} is not valid UTF-8 JSON: {error}") from error
+
+
+def load_haos_gate_report(path: Path, gate: str, evidence_format: str) -> Any:
+    try:
+        raw = path.read_bytes()
+    except OSError as error:
+        raise ContractError(f"cannot read downloaded HAOS evidence: {error}") from error
+    require(len(raw) <= 67_108_864, "downloaded HAOS evidence exceeds 64 MiB")
+    if evidence_format == "json":
+        require(not zipfile.is_zipfile(io.BytesIO(raw)), "JSON evidence must not be a ZIP archive")
+        require(len(raw) <= HAOS_EVIDENCE_MAX_BYTES, "HAOS gate JSON exceeds 1 MiB")
+        return strict_json_object(raw, "HAOS gate evidence")
+
+    require(evidence_format == "github_actions_zip", "unknown HAOS evidence format")
+    require(zipfile.is_zipfile(io.BytesIO(raw)), "GitHub Actions evidence must be a ZIP archive")
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            members = archive.infolist()
+            names = [member.filename for member in members]
+            require(len(names) == len(set(names)), "HAOS evidence archive has duplicate members")
+            require(names == ["manual-gate-evidence.json"], "HAOS evidence archive member set is not exact")
+            for member in members:
+                require(not member.is_dir(), "HAOS evidence archive contains a directory")
+                require(member.flag_bits & 0x1 == 0, "encrypted HAOS evidence is forbidden")
+                require(
+                    member.compress_type in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED},
+                    "unsupported HAOS evidence compression",
+                )
+                require(
+                    member.file_size <= HAOS_EVIDENCE_MAX_BYTES,
+                    "HAOS evidence archive member exceeds 1 MiB",
+                )
+                unix_mode = member.external_attr >> 16
+                require(
+                    not unix_mode or stat.S_IFMT(unix_mode) in {0, stat.S_IFREG},
+                    "HAOS evidence archive member is not a regular file",
+                )
+                require(
+                    member.compress_size == 0
+                    or member.file_size <= member.compress_size * 100,
+                    "HAOS evidence archive compression ratio exceeds 100",
+                )
+            payload = archive.read("manual-gate-evidence.json")
+    except (OSError, zipfile.BadZipFile, NotImplementedError, RuntimeError) as error:
+        raise ContractError(f"cannot read HAOS evidence archive: {error}") from error
+    return strict_json_object(payload, "HAOS gate report")
+
+
+def validate_haos_gate_report(
+    candidate: dict[str, Any],
+    gate: str,
+    report: Any,
+) -> dict[str, Any]:
+    require(gate in EXPECTED_MANUAL_GATES, "unknown HAOS evidence gate")
+    require(isinstance(report, dict), "HAOS gate report is not an object")
+    require(
+        set(report)
+        == {
+            "schema",
+            "gate",
+            "status",
+            "version",
+            "source_sha",
+            "candidate_manifest_digest",
+            "candidate_images",
+            "haos_rehearsal",
+            "test_ids",
+            "checks",
+            "environment",
+            "previous_release",
+            "observed_at_utc",
+            "sanitization",
+            "attestation",
+        },
+        "HAOS gate report keys are not exact",
+    )
+    require(
+        report.get("schema") == "antigravity-ha-haos-gate-evidence/v1",
+        "wrong HAOS gate report schema",
+    )
+    require(report.get("gate") == gate, "HAOS report gate binding differs")
+    require(report.get("status") == "PASS", "HAOS report did not pass")
+    require(report.get("version") == candidate["version"], "HAOS report version differs")
+    require(report.get("source_sha") == candidate["source_sha"], "HAOS report source differs")
+    require(
+        report.get("candidate_manifest_digest")
+        == candidate["images"]["generic"]["digest"],
+        "HAOS report candidate manifest differs",
+    )
+    require(
+        report.get("candidate_images")
+        == {
+            "generic_manifest_digest": candidate["images"]["generic"]["digest"],
+            "amd64_stage_digest": candidate["images"]["amd64"]["stage_digest"],
+            "amd64_runtime_digest": candidate["images"]["amd64"]["runtime_digest"],
+            "aarch64_stage_digest": candidate["images"]["aarch64"]["stage_digest"],
+            "aarch64_runtime_digest": candidate["images"]["aarch64"]["runtime_digest"],
+        },
+        "HAOS report image binding differs",
+    )
+    require(
+        report.get("haos_rehearsal") == candidate["haos_rehearsal"],
+        "HAOS report rehearsal repository binding differs",
+    )
+    require(
+        report.get("test_ids") == EXPECTED_HAOS_GATE_TEST_IDS[gate],
+        "HAOS report test ID set is not exact",
+    )
+    checks = report.get("checks")
+    require(
+        isinstance(checks, dict)
+        and set(checks) == EXPECTED_HAOS_GATE_CHECKS[gate]
+        and set(checks.values()) == {"PASS"},
+        "HAOS report required checks are incomplete",
+    )
+    environment = report.get("environment")
+    require(
+        isinstance(environment, dict)
+        and set(environment)
+        == {
+            "platform",
+            "architectures",
+            "haos_version",
+            "supervisor_version",
+            "core_version",
+            "app_version",
+            "apparmor_mode",
+        },
+        "HAOS report environment is not exact",
+    )
+    require(environment.get("platform") == "HAOS", "HAOS report platform is not HAOS")
+    require(
+        environment.get("architectures") == EXPECTED_HAOS_GATE_ARCHITECTURES[gate],
+        "HAOS report architecture coverage is incomplete",
+    )
+    for version_name in ("haos_version", "supervisor_version", "core_version"):
+        version_value = environment.get(version_name)
+        require(
+            isinstance(version_value, str)
+            and len(version_value) <= 32
+            and VERSION_STRING_RE.fullmatch(version_value),
+            f"HAOS report {version_name} is invalid",
+        )
+    expected_app_version = (
+        "1.0.4"
+        if gate == "local_migration_rollback"
+        else candidate["haos_rehearsal"]["version"]
+    )
+    require(
+        environment.get("app_version") == expected_app_version,
+        "HAOS report installed App version differs from gate postcondition",
+    )
+    require(environment.get("apparmor_mode") == "enforce", "HAOS report AppArmor is not enforce")
+    previous_release = report.get("previous_release")
+    requires_local_v1 = gate in {
+        "haos_amd64_local_migration",
+        "local_migration_rollback",
+        "migration_modes",
+    }
+    if requires_local_v1:
+        require(
+            isinstance(previous_release, dict)
+            and set(previous_release)
+            == {
+                "version",
+                "source_sha",
+                "image_id",
+                "installation_source",
+                "repository_identity",
+                "image_digest_verified",
+            },
+            "HAOS report previous release binding is incomplete",
+        )
+        require(previous_release.get("version") == "1.0.4", "HAOS report previous version differs")
+        require(
+            previous_release.get("source_sha") == PUBLIC_V1_SOURCE_SHA,
+            "HAOS report previous source differs",
+        )
+        validate_digest(previous_release.get("image_id"), "HAOS report previous local image ID")
+        require(
+            previous_release.get("installation_source") == "local_addons_source_build",
+            "HAOS report previous installation source differs",
+        )
+        require(
+            previous_release.get("repository_identity")
+            == "same_local_repository_identity",
+            "HAOS report local repository identity differs",
+        )
+        require(
+            previous_release.get("image_digest_verified") is True,
+            "HAOS report previous image digest was not verified",
+        )
+    else:
+        require(previous_release is None, "unexpected previous release binding")
+    require(
+        isinstance(report.get("observed_at_utc"), str)
+        and UTC_TIMESTAMP_RE.fullmatch(report["observed_at_utc"]),
+        "HAOS report timestamp is invalid",
+    )
+    try:
+        observed_at = datetime.strptime(
+            report["observed_at_utc"], "%Y-%m-%dT%H:%M:%SZ"
+        ).replace(tzinfo=timezone.utc)
+    except ValueError as error:
+        raise ContractError("HAOS report timestamp is invalid") from error
+    now = datetime.now(timezone.utc)
+    require(observed_at <= now + timedelta(minutes=5), "HAOS report timestamp is in the future")
+    require(observed_at >= now - timedelta(days=30), "HAOS report is older than 30 days")
+    require(
+        report.get("sanitization")
+        == {
+            "contains_credentials": False,
+            "contains_entity_or_chat_identifiers": False,
+            "contains_raw_logs_or_prompts": False,
+        },
+        "HAOS report sanitization contract failed",
+    )
+    require(
+        report.get("attestation")
+        == {
+            "candidate_digest_verified": True,
+            "real_haos_device": True,
+            "sanitized_by_maintainer": True,
+            "scope_reviewed": True,
+        },
+        "HAOS report trusted-attestor declaration is incomplete",
+    )
+    return report
+
+
+def command_manual_report(args: argparse.Namespace) -> None:
+    candidate = validate_candidate(load_json(args.candidate))
+    manual = validate_manual(candidate, load_json(args.manual))
+    gate = args.gate
+    require(gate in manual["gates"], "downloaded report gate is absent from manual evidence")
+    require(
+        digest_file(args.evidence) == manual["gates"][gate]["sha256"],
+        "downloaded HAOS evidence digest differs from manual record",
+    )
+    report = load_haos_gate_report(
+        args.evidence,
+        gate,
+        manual["gates"][gate]["format"],
+    )
+    validate_haos_gate_report(
+        candidate,
+        gate,
+        report,
+    )
+    if args.output:
+        write_json(args.output, report)
+
+
+def command_haos_report(args: argparse.Namespace) -> None:
+    candidate = validate_candidate(load_json(args.candidate))
+    report = load_haos_gate_report(args.evidence, args.gate, "json")
+    validate_haos_gate_report(candidate, args.gate, report)
+    if args.output:
+        write_json(args.output, report)
+
+
+def parse_utc_timestamp(value: Any, name: str) -> datetime:
+    require(
+        isinstance(value, str) and UTC_TIMESTAMP_RE.fullmatch(value),
+        f"{name} is invalid",
+    )
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError as error:
+        raise ContractError(f"{name} is invalid") from error
+
+
+def load_ha005_report(path: Path) -> Any:
+    try:
+        metadata = path.lstat()
+        raw = path.read_bytes()
+    except OSError as error:
+        raise ContractError(f"cannot read HA-005 report: {error}") from error
+    require(
+        stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1,
+        "HA-005 report path is not a single regular file",
+    )
+    require(len(raw) <= HA005_MAX_BYTES, "HA-005 report exceeds 1 MiB")
+    return strict_json_object(raw, "HA-005 report")
+
+
+def validate_ha005_report(
+    release_evidence: Any,
+    report: Any,
+    *,
+    version: str,
+    source_sha: str,
+    generic_digest: str,
+    amd64_runtime_digest: str,
+    published_at_utc: str,
+) -> dict[str, Any]:
+    evidence = validate_release_evidence(release_evidence)
+    candidate = evidence["candidate"]
+    expected_version = validate_version(version)
+    require(expected_version.split(".", 1)[0] == "2", "HA-005 requires a numeric v2 release")
+    expected_source_sha = validate_source_sha(source_sha, "HA-005 release source SHA")
+    expected_generic_digest = validate_digest(
+        generic_digest, "HA-005 public generic digest"
+    )
+    expected_amd64_digest = validate_digest(
+        amd64_runtime_digest, "HA-005 public amd64 runtime digest"
+    )
+    published_at = parse_utc_timestamp(
+        published_at_utc, "HA-005 GitHub Release published timestamp"
+    )
+    now = datetime.now(timezone.utc)
+    require(
+        published_at <= now + timedelta(minutes=5),
+        "HA-005 GitHub Release published timestamp is in the future",
+    )
+    require(candidate["version"] == expected_version, "HA-005 release version differs from evidence")
+    require(candidate["source_sha"] == expected_source_sha, "HA-005 release source differs from evidence")
+    require(
+        candidate["images"]["generic"]
+        == {"name": PUBLIC_GENERIC_IMAGE, "digest": expected_generic_digest},
+        "HA-005 generic image differs from release evidence",
+    )
+    require(
+        candidate["images"]["amd64"]["runtime_digest"]
+        == expected_amd64_digest,
+        "HA-005 amd64 runtime digest differs from release evidence",
+    )
+
+    require(isinstance(report, dict), "HA-005 report is not an object")
+    require(
+        set(report)
+        == {
+            "schema",
+            "test_id",
+            "status",
+            "release",
+            "previous_release",
+            "transitions",
+            "checks",
+            "environment",
+            "observed_at_utc",
+            "sanitization",
+            "attestation",
+        },
+        "HA-005 report keys are not exact",
+    )
+    require(report.get("schema") == HA005_REPORT_SCHEMA, "wrong HA-005 report schema")
+    require(report.get("test_id") == "HA-005", "wrong HA-005 test ID")
+    require(report.get("status") == "PASS", "HA-005 report did not pass")
+    require(
+        report.get("release")
+        == {
+            "version": expected_version,
+            "source_sha": expected_source_sha,
+            "published_at_utc": published_at_utc,
+            "generic_image": PUBLIC_GENERIC_IMAGE,
+            "generic_digest": expected_generic_digest,
+            "amd64_runtime_digest": expected_amd64_digest,
+        },
+        "HA-005 report release binding differs",
+    )
+
+    previous = report.get("previous_release")
+    require(
+        isinstance(previous, dict)
+        and set(previous)
+        == {
+            "version",
+            "source_sha",
+            "repository_url",
+            "addon_slug",
+            "installation_source",
+            "repository_id_sha256",
+            "local_image_id",
+            "data_identity_sha256",
+        },
+        "HA-005 previous release binding is incomplete",
+    )
+    require(previous.get("version") == "1.0.4", "HA-005 previous version differs")
+    require(
+        previous.get("source_sha") == PUBLIC_V1_SOURCE_SHA,
+        "HA-005 previous source differs",
+    )
+    require(
+        previous.get("repository_url") == PUBLIC_REPOSITORY_URL,
+        "HA-005 repository URL is not the original custom repository",
+    )
+    require(previous.get("addon_slug") == PUBLIC_APP_SLUG, "HA-005 App slug differs")
+    require(
+        previous.get("installation_source")
+        == "original_custom_repository_source_build",
+        "HA-005 previous installation source is not public source-build",
+    )
+    previous_identity_digests = {
+        validate_digest(
+            previous.get("repository_id_sha256"), "HA-005 repository identity digest"
+        ),
+        validate_digest(previous.get("local_image_id"), "HA-005 previous local image ID"),
+        validate_digest(
+            previous.get("data_identity_sha256"), "HA-005 data identity digest"
+        ),
+    }
+    require(
+        len(previous_identity_digests) == 3,
+        "HA-005 prior identity digests must be distinct",
+    )
+
+    transitions = report.get("transitions")
+    require(
+        isinstance(transitions, dict) and set(transitions) == {"update", "rollback"},
+        "HA-005 transition set is not exact",
+    )
+    require(
+        transitions.get("update")
+        == {
+            "status": "PASS",
+            "from_version": "1.0.4",
+            "to_version": expected_version,
+            "repository_id_sha256": previous["repository_id_sha256"],
+            "addon_slug": PUBLIC_APP_SLUG,
+            "data_identity_sha256": previous["data_identity_sha256"],
+            "observed_generic_digest": expected_generic_digest,
+            "observed_amd64_runtime_digest": expected_amd64_digest,
+        },
+        "HA-005 public update transition binding differs",
+    )
+    require(
+        transitions.get("rollback")
+        == {
+            "status": "PASS",
+            "from_version": expected_version,
+            "to_version": "1.0.4",
+            "repository_id_sha256": previous["repository_id_sha256"],
+            "addon_slug": PUBLIC_APP_SLUG,
+            "data_identity_sha256": previous["data_identity_sha256"],
+            "source_sha": PUBLIC_V1_SOURCE_SHA,
+            "selected_local_image_id": previous["local_image_id"],
+            "matching_managed_backup_restored": True,
+        },
+        "HA-005 rollback transition binding differs",
+    )
+    require(
+        transitions["rollback"]["matching_managed_backup_restored"] is True,
+        "HA-005 rollback managed-backup attestation is not boolean true",
+    )
+
+    checks = report.get("checks")
+    require(
+        isinstance(checks, dict)
+        and set(checks) == EXPECTED_HA005_CHECKS
+        and set(checks.values()) == {"PASS"},
+        "HA-005 required checks are incomplete",
+    )
+    environment = report.get("environment")
+    require(
+        isinstance(environment, dict)
+        and set(environment)
+        == {
+            "platform",
+            "architecture",
+            "haos_version",
+            "supervisor_version",
+            "core_version",
+            "final_app_version",
+        },
+        "HA-005 environment is not exact",
+    )
+    require(environment.get("platform") == "HAOS", "HA-005 platform is not HAOS")
+    require(environment.get("architecture") == "amd64", "HA-005 architecture is not amd64")
+    for version_name in ("haos_version", "supervisor_version", "core_version"):
+        version_value = environment.get(version_name)
+        require(
+            isinstance(version_value, str)
+            and len(version_value) <= 32
+            and VERSION_STRING_RE.fullmatch(version_value),
+            f"HA-005 {version_name} is invalid",
+        )
+    require(
+        environment.get("final_app_version") == "1.0.4",
+        "HA-005 final App version does not prove rollback",
+    )
+
+    observed_at = parse_utc_timestamp(
+        report.get("observed_at_utc"), "HA-005 observation timestamp"
+    )
+    require(
+        observed_at >= published_at,
+        "HA-005 observation predates the GitHub Release",
+    )
+    require(observed_at <= now + timedelta(minutes=5), "HA-005 report timestamp is in the future")
+    require(observed_at >= now - timedelta(days=30), "HA-005 report is older than 30 days")
+    sanitization = report.get("sanitization")
+    require(
+        sanitization
+        == {
+            "contains_credentials": False,
+            "contains_entity_or_chat_identifiers": False,
+            "contains_raw_logs_or_prompts": False,
+            "contains_private_host_or_user_identifiers": False,
+        },
+        "HA-005 report sanitization contract failed",
+    )
+    require(
+        all(value is False for value in sanitization.values()),
+        "HA-005 report sanitization flags are not boolean false",
+    )
+    attestation = report.get("attestation")
+    require(
+        attestation
+        == {
+            "real_haos_device": True,
+            "original_public_repository_verified": True,
+            "public_release_observed_after_publish": True,
+            "sanitized_by_maintainer": True,
+            "scope_reviewed": True,
+        },
+        "HA-005 trusted-attestor declaration is incomplete",
+    )
+    require(
+        all(value is True for value in attestation.values()),
+        "HA-005 trusted-attestor flags are not boolean true",
+    )
+    return report
+
+
+def command_ha005_report(args: argparse.Namespace) -> None:
+    release_evidence = load_json(args.release_evidence)
+    report = load_ha005_report(args.report)
+    validate_ha005_report(
+        release_evidence,
+        report,
+        version=args.version,
+        source_sha=args.source_sha,
+        generic_digest=args.generic_digest,
+        amd64_runtime_digest=args.amd64_runtime_digest,
+        published_at_utc=args.published_at_utc,
+    )
+    write_json(args.output, report)
+
+
+def validate_haos_gate_directory(
+    candidate: dict[str, Any],
+    manual: dict[str, Any],
+    directory: Path,
+) -> dict[str, str]:
+    require(directory.is_dir() and not directory.is_symlink(), "HAOS gate directory is unsafe")
+    try:
+        entries = list(directory.iterdir())
+    except OSError as error:
+        raise ContractError(f"cannot list HAOS gate directory: {error}") from error
+    expected_names = {f"{gate}.json" for gate in EXPECTED_MANUAL_GATES}
+    require({entry.name for entry in entries} == expected_names, "embedded HAOS gate file set is not exact")
+    digests: dict[str, str] = {}
+    for gate in sorted(EXPECTED_MANUAL_GATES):
+        path = directory / f"{gate}.json"
+        try:
+            metadata = path.lstat()
+            raw = path.read_bytes()
+        except OSError as error:
+            raise ContractError(f"cannot read embedded HAOS gate report {gate}: {error}") from error
+        require(stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1, f"unsafe embedded HAOS gate report: {gate}")
+        require(len(raw) <= HAOS_EVIDENCE_MAX_BYTES, f"embedded HAOS gate report is too large: {gate}")
+        validate_haos_gate_report(
+            candidate,
+            gate,
+            strict_json_object(raw, f"embedded HAOS gate report {gate}"),
+        )
+        digests[gate] = digest_bytes(raw)
+    return digests
 
 
 def command_candidate(args: argparse.Namespace) -> None:
@@ -548,6 +1327,17 @@ def command_candidate(args: argparse.Namespace) -> None:
                 "stage_digest": args.aarch64_stage_digest,
                 "runtime_digest": args.aarch64_runtime_digest,
             },
+        },
+        "haos_rehearsal": {
+            "version": args.rehearsal_version,
+            "image": args.generic_image,
+            "digest": args.rehearsal_digest,
+            "repository_manifest_sha256": digest_file(
+                args.rehearsal_repository_manifest
+            ),
+            "repository_archive_sha256": digest_file(
+                args.rehearsal_repository_archive
+            ),
         },
         "automated_gates": {
             "exact_digest_smoke": "PASS",
@@ -590,6 +1380,11 @@ def command_finalize(args: argparse.Namespace) -> None:
         digest_file(args.gap007_evidence),
     )
     manual = validate_manual(candidate, load_json(args.manual))
+    haos_gate_evidence = validate_haos_gate_directory(
+        candidate,
+        manual,
+        args.haos_gates_dir,
+    )
     evidence = {
         "schema": "antigravity-ha-release-evidence/v1",
         "candidate": candidate,
@@ -597,6 +1392,7 @@ def command_finalize(args: argparse.Namespace) -> None:
             args.candidate_artifact_digest, "candidate artifact digest"
         ),
         "manual_evidence": manual,
+        "haos_gate_evidence": haos_gate_evidence,
         "finalizer": {
             "actor": args.actor,
             "run_id": validate_run_number(args.run_id, "evidence run ID"),
@@ -610,13 +1406,29 @@ def command_finalize(args: argparse.Namespace) -> None:
 def validate_release_evidence(evidence: Any) -> dict[str, Any]:
     require(isinstance(evidence, dict), "release evidence is not an object")
     require(
-        set(evidence) == {"schema", "candidate", "candidate_artifact_digest", "manual_evidence", "finalizer"},
+        set(evidence)
+        == {
+            "schema",
+            "candidate",
+            "candidate_artifact_digest",
+            "manual_evidence",
+            "haos_gate_evidence",
+            "finalizer",
+        },
         "release evidence keys are not exact",
     )
     require(evidence.get("schema") == "antigravity-ha-release-evidence/v1", "wrong release evidence schema")
     candidate = validate_candidate(evidence.get("candidate"))
     validate_digest(evidence.get("candidate_artifact_digest"), "candidate artifact digest")
     validate_manual(candidate, evidence.get("manual_evidence"))
+    haos_gate_evidence = evidence.get("haos_gate_evidence")
+    require(
+        isinstance(haos_gate_evidence, dict)
+        and set(haos_gate_evidence) == EXPECTED_MANUAL_GATES,
+        "embedded HAOS gate digest set is not exact",
+    )
+    for gate, digest in haos_gate_evidence.items():
+        validate_digest(digest, f"embedded HAOS gate digest: {gate}")
     finalizer = evidence.get("finalizer")
     require(isinstance(finalizer, dict) and set(finalizer) == {"actor", "run_id", "run_attempt"}, "invalid finalizer record")
     require(
@@ -632,6 +1444,15 @@ def validate_release_evidence(evidence: Any) -> dict[str, Any]:
 def command_release(args: argparse.Namespace) -> None:
     evidence = validate_release_evidence(load_json(args.evidence))
     candidate = evidence["candidate"]
+    require(
+        validate_haos_gate_directory(
+            candidate,
+            evidence["manual_evidence"],
+            args.haos_gates_dir,
+        )
+        == evidence["haos_gate_evidence"],
+        "embedded HAOS gate report digest differs from release evidence",
+    )
     validate_gap007_release(
         candidate,
         load_json(args.gap007_evidence),
@@ -663,6 +1484,15 @@ def command_release(args: argparse.Namespace) -> None:
 def command_notes(args: argparse.Namespace) -> None:
     evidence = validate_release_evidence(load_json(args.evidence))
     candidate = evidence["candidate"]
+    require(
+        validate_haos_gate_directory(
+            candidate,
+            evidence["manual_evidence"],
+            args.haos_gates_dir,
+        )
+        == evidence["haos_gate_evidence"],
+        "embedded HAOS gate report digest differs from release evidence",
+    )
     validate_gap007_release(
         candidate,
         load_json(args.gap007_evidence),
@@ -705,9 +1535,11 @@ def build_parser() -> argparse.ArgumentParser:
     index.set_defaults(handler=command_index)
 
     candidate = commands.add_parser("candidate")
-    for name in ("version", "source-sha", "run-id", "run-attempt", "candidate-tag", "generic-image", "generic-digest", "amd64-image", "amd64-stage-digest", "amd64-runtime-digest", "aarch64-image", "aarch64-stage-digest", "aarch64-runtime-digest"):
+    for name in ("version", "source-sha", "run-id", "run-attempt", "candidate-tag", "generic-image", "generic-digest", "amd64-image", "amd64-stage-digest", "amd64-runtime-digest", "aarch64-image", "aarch64-stage-digest", "aarch64-runtime-digest", "rehearsal-version", "rehearsal-digest"):
         candidate.add_argument(f"--{name}", required=True)
     candidate.add_argument("--manifest", type=Path, required=True)
+    candidate.add_argument("--rehearsal-repository-manifest", type=Path, required=True)
+    candidate.add_argument("--rehearsal-repository-archive", type=Path, required=True)
     candidate.add_argument("--gap007-evidence", type=Path, required=True)
     candidate.add_argument("--output", type=Path, required=True)
     candidate.set_defaults(handler=command_candidate)
@@ -717,11 +1549,41 @@ def build_parser() -> argparse.ArgumentParser:
     manual.add_argument("--manual", type=Path, required=True)
     manual.set_defaults(handler=command_manual)
 
+    manual_report = commands.add_parser("manual-report")
+    manual_report.add_argument("--candidate", type=Path, required=True)
+    manual_report.add_argument("--manual", type=Path, required=True)
+    manual_report.add_argument("--gate", required=True, choices=sorted(EXPECTED_MANUAL_GATES))
+    manual_report.add_argument("--evidence", type=Path, required=True)
+    manual_report.add_argument("--output", type=Path)
+    manual_report.set_defaults(handler=command_manual_report)
+
+    haos_report = commands.add_parser("haos-report")
+    haos_report.add_argument("--candidate", type=Path, required=True)
+    haos_report.add_argument("--gate", required=True, choices=sorted(EXPECTED_MANUAL_GATES))
+    haos_report.add_argument("--evidence", type=Path, required=True)
+    haos_report.add_argument("--output", type=Path)
+    haos_report.set_defaults(handler=command_haos_report)
+
+    ha005_report = commands.add_parser("ha005-report")
+    ha005_report.add_argument("--release-evidence", type=Path, required=True)
+    ha005_report.add_argument("--report", type=Path, required=True)
+    for name in (
+        "version",
+        "source-sha",
+        "generic-digest",
+        "amd64-runtime-digest",
+        "published-at-utc",
+    ):
+        ha005_report.add_argument(f"--{name}", required=True)
+    ha005_report.add_argument("--output", type=Path, required=True)
+    ha005_report.set_defaults(handler=command_ha005_report)
+
     finalize = commands.add_parser("finalize")
     finalize.add_argument("--candidate", type=Path, required=True)
     finalize.add_argument("--manual", type=Path, required=True)
     finalize.add_argument("--candidate-artifact-digest", required=True)
     finalize.add_argument("--gap007-evidence", type=Path, required=True)
+    finalize.add_argument("--haos-gates-dir", type=Path, required=True)
     finalize.add_argument("--actor", required=True)
     finalize.add_argument("--run-id", required=True)
     finalize.add_argument("--run-attempt", required=True)
@@ -731,6 +1593,7 @@ def build_parser() -> argparse.ArgumentParser:
     release = commands.add_parser("release")
     release.add_argument("--evidence", type=Path, required=True)
     release.add_argument("--gap007-evidence", type=Path, required=True)
+    release.add_argument("--haos-gates-dir", type=Path, required=True)
     for name in ("version", "source-sha", "candidate-run-id", "candidate-run-attempt", "evidence-run-id", "evidence-run-attempt"):
         release.add_argument(f"--{name}", required=True)
     release.add_argument("--github-output", type=Path)
@@ -739,6 +1602,7 @@ def build_parser() -> argparse.ArgumentParser:
     notes = commands.add_parser("notes")
     notes.add_argument("--evidence", type=Path, required=True)
     notes.add_argument("--gap007-evidence", type=Path, required=True)
+    notes.add_argument("--haos-gates-dir", type=Path, required=True)
     notes.add_argument("--output", type=Path, required=True)
     notes.set_defaults(handler=command_notes)
     return parser

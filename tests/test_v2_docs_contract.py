@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import ast
+import importlib.util
+import json
 import re
 from collections import Counter
 from pathlib import Path
+from types import ModuleType
 from urllib.parse import unquote
 
 
@@ -44,6 +48,27 @@ LINK_CHECK_FILES = (
 
 def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def literal_assignment(path: Path, name: str) -> object:
+    tree = ast.parse(read(path), filename=str(path))
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if any(
+            isinstance(target, ast.Name) and target.id == name
+            for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"missing literal assignment {name} in {path.relative_to(ROOT)}")
+
+
+def load_python_module(path: Path, name: str) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def requirement_declarations() -> dict[str, Path]:
@@ -137,6 +162,14 @@ def test_traceability_uses_only_declared_tests_and_no_test_is_orphaned() -> None
     checklist_references = set(TEST_TOKEN.findall(read(V2 / "checklist.md")))
     assert checklist_references <= declared, (
         f"checklist references undeclared tests: {sorted(checklist_references - declared)}"
+    )
+
+    all_v2_references = set(
+        TEST_TOKEN.findall("\n".join(read(path) for path in sorted(V2.glob("*.md"))))
+    )
+    assert all_v2_references <= declared, (
+        "v2 documents reference undeclared tests: "
+        f"{sorted(all_v2_references - declared)}"
     )
 
 
@@ -408,6 +441,7 @@ def test_decisions_and_gap_register_are_closed_contracts() -> None:
         "source contract: 최신 공개 v1 tag `1.0.4`",
         "`1.0.4 → 2.0.0`",
         "HA-005",
+        "HA-006",
         "AppArmor는 항상 ON",
         "Telegram bridge 전면 교체",
         "Antigravity CLI는 `1.1.11`",
@@ -420,6 +454,278 @@ def test_decisions_and_gap_register_are_closed_contracts() -> None:
     assert "임의 mock 성공으로 닫지 않는다" in gaps
     assert "| M0-03 | `VERIFIED`" in checklist
     assert "| M0-04 | `VERIFIED`" in checklist
+
+
+def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> None:
+    expected_gates = {
+        "apparmor_enforce",
+        "haos_aarch64_install_persistence",
+        "haos_amd64_local_migration",
+        "local_migration_rollback",
+        "migration_modes",
+        "native_updater_canary",
+        "oauth_isolation_persistence",
+        "telegram_modes",
+    }
+    template = json.loads(read(V2 / "release-evidence-template.json"))
+    assert set(template["gates"]) == expected_gates
+    for gate in template["gates"].values():
+        assert gate == {
+            "status": "NOT_RUN",
+            "evidence_uri": "",
+            "sha256": "",
+            "format": "",
+        }
+
+    contract_path = ROOT / ".github" / "scripts" / "release_contract.py"
+    assert literal_assignment(contract_path, "EXPECTED_MANUAL_GATES") == expected_gates
+    gate_test_ids = literal_assignment(contract_path, "EXPECTED_HAOS_GATE_TEST_IDS")
+    assert isinstance(gate_test_ids, dict)
+    assert set(gate_test_ids) == expected_gates
+    assert all("HA-005" not in identifiers for identifiers in gate_test_ids.values())
+    assert gate_test_ids["haos_aarch64_install_persistence"][-1] == "HA-006"
+    assert gate_test_ids["haos_amd64_local_migration"][-1] == "HA-007"
+    assert gate_test_ids["migration_modes"] == ["HA-007"]
+    assert gate_test_ids["local_migration_rollback"] == ["HA-007"]
+    assert gate_test_ids["oauth_isolation_persistence"] == [
+        "HA-001",
+        "HA-004",
+        "HA-006",
+        "AA-001",
+    ]
+    assert gate_test_ids["native_updater_canary"] == ["HA-001", "HA-006"]
+    gate_checks = literal_assignment(contract_path, "EXPECTED_HAOS_GATE_CHECKS")
+    migration_checks = gate_checks["haos_amd64_local_migration"]
+    assert "oauth_browser_memory_persist_after_update" in migration_checks
+    assert "native_updater_disabled_after_migration" in migration_checks
+
+    workflow = read(ROOT / ".github" / "workflows" / "haos-evidence.yaml")
+    choice_block = workflow.split("      gate:", 1)[1].split("      report_json:", 1)[0]
+    workflow_gates = set(re.findall(r"^          - ([a-z0-9_]+)$", choice_block, re.MULTILINE))
+    assert workflow_gates == expected_gates
+
+    decisions = re.sub(r"\s+", " ", read(V2 / "decisions.md"))
+    assert "source contract: 최신 공개 v1 tag `1.0.4` (amd64 only)" in decisions
+    assert "amd64의 post-publish `HA-005`와 aarch64의 `HA-006`" in decisions
+    assert "amd64와 aarch64에서 `HA-005`" not in decisions
+
+    plan_text = re.sub(r"\s+", " ", read(V2 / "test-plan.md"))
+    migration = re.sub(r"\s+", " ", read(V2 / "migration-release.md"))
+    for content in (plan_text, migration):
+        assert "/addons/antigravity_home_assistant" in content
+        assert "original custom repository" in content
+        assert "post-publish" in content
+        assert "HA-005" in content
+        assert "HA-006" in content
+        assert "HA-007" in content
+        assert "haos-gates/<gate>.json" in content
+        assert "haos_gate_evidence" in content
+        assert 'format: "github_actions_zip"' in content
+    assert "`Post-publish HA-005 acceptance`" in plan_text
+    assert "`.github/workflows/postpublish-ha005.yaml`" in plan_text
+    assert "`antigravity-ha-ha005-acceptance/v1`" in plan_text
+    assert "`ha005-acceptance.json`" in plan_text
+    assert "non-draft prerelease" in plan_text
+    assert "pre-finalize evidence에 포함하지 않는다" in plan_text
+    assert 'installation_source: "local_addons_source_build"' in plan_text
+    assert 'repository_identity: "same_local_repository_identity"' in plan_text
+    assert 'installation_source: "original_custom_repository_source_build"' in plan_text
+    assert "`repository_id_sha256`" in plan_text
+    assert "`data_identity_sha256`" in plan_text
+    assert "v1 registry digest가 아니라" in plan_text
+    assert "observation은 Release publish 시각 후여야" in plan_text
+    assert "report 제출 시점에 관찰 시각이 30일보다 오래되지 않아야" in plan_text
+    assert "finalizer artifact의 retention은 30일" in plan_text
+    assert "artifact availability 창은 report 관찰 시각의 30일 freshness" in plan_text
+
+    trace = traceability_map(V2 / "test-plan.md")
+    for requirement in (
+        "SEC-003",
+        "SEC-012",
+        "MIG-002",
+        "MIG-003",
+        "MIG-004",
+        "MIG-005",
+        "MIG-006",
+        "MIG-007",
+        "MIG-009",
+        "MIG-010",
+    ):
+        assert "HA-007" in trace[requirement]
+    assert "HA-005" not in trace["MIG-008"]
+    assert {"HA-001", "HA-006"} <= trace["MIG-008"]
+    assert {"HA-006", "HA-007"} <= trace["MIG-009"]
+
+    gaps = read(V2 / "gap-register.md")
+    assert "| GAP-005 | `OPEN`" in gaps and "original repository/add-on identity" in gaps
+    assert "| GAP-007 | `IN_PROGRESS`" in gaps
+
+    assert literal_assignment(contract_path, "HA005_REPORT_SCHEMA") == (
+        "antigravity-ha-ha005-acceptance/v1"
+    )
+    ha005_template = json.loads(read(V2 / "ha005-acceptance-template.json"))
+    assert set(ha005_template) == {
+        "schema",
+        "test_id",
+        "status",
+        "release",
+        "previous_release",
+        "transitions",
+        "checks",
+        "environment",
+        "observed_at_utc",
+        "sanitization",
+        "attestation",
+    }
+    assert ha005_template["schema"] == literal_assignment(
+        contract_path, "HA005_REPORT_SCHEMA"
+    )
+    assert ha005_template["test_id"] == "HA-005"
+    assert ha005_template["status"] == "NOT_RUN"
+    assert set(ha005_template["release"]) == {
+        "version",
+        "source_sha",
+        "published_at_utc",
+        "generic_image",
+        "generic_digest",
+        "amd64_runtime_digest",
+    }
+    assert set(ha005_template["previous_release"]) == {
+        "version",
+        "source_sha",
+        "repository_url",
+        "addon_slug",
+        "installation_source",
+        "repository_id_sha256",
+        "local_image_id",
+        "data_identity_sha256",
+    }
+    assert set(ha005_template["transitions"]) == {"update", "rollback"}
+    assert set(ha005_template["transitions"]["update"]) == {
+        "status",
+        "from_version",
+        "to_version",
+        "repository_id_sha256",
+        "addon_slug",
+        "data_identity_sha256",
+        "observed_generic_digest",
+        "observed_amd64_runtime_digest",
+    }
+    assert set(ha005_template["transitions"]["rollback"]) == {
+        "status",
+        "from_version",
+        "to_version",
+        "repository_id_sha256",
+        "addon_slug",
+        "data_identity_sha256",
+        "source_sha",
+        "selected_local_image_id",
+        "matching_managed_backup_restored",
+    }
+    expected_ha005_checks = literal_assignment(contract_path, "EXPECTED_HA005_CHECKS")
+    assert set(ha005_template["checks"]) == expected_ha005_checks
+    assert set(ha005_template["checks"].values()) == {"NOT_RUN"}
+    assert set(ha005_template["environment"]) == {
+        "platform",
+        "architecture",
+        "haos_version",
+        "supervisor_version",
+        "core_version",
+        "final_app_version",
+    }
+    assert ha005_template["environment"]["platform"] == "HAOS"
+    assert ha005_template["environment"]["architecture"] == "amd64"
+    assert set(ha005_template["sanitization"]) == {
+        "contains_credentials",
+        "contains_entity_or_chat_identifiers",
+        "contains_raw_logs_or_prompts",
+        "contains_private_host_or_user_identifiers",
+    }
+    assert set(ha005_template["sanitization"].values()) == {True}
+    assert set(ha005_template["attestation"]) == {
+        "real_haos_device",
+        "original_public_repository_verified",
+        "public_release_observed_after_publish",
+        "sanitized_by_maintainer",
+        "scope_reviewed",
+    }
+    assert set(ha005_template["attestation"].values()) == {False}
+    assert ha005_template["transitions"]["update"]["status"] == "NOT_RUN"
+    assert ha005_template["transitions"]["rollback"]["status"] == "NOT_RUN"
+    assert ha005_template["release"]["generic_image"] == literal_assignment(
+        contract_path, "PUBLIC_GENERIC_IMAGE"
+    )
+    previous = ha005_template["previous_release"]
+    assert previous["source_sha"] == literal_assignment(
+        contract_path, "PUBLIC_V1_SOURCE_SHA"
+    )
+    assert previous["repository_url"] == literal_assignment(
+        contract_path, "PUBLIC_REPOSITORY_URL"
+    )
+    assert previous["addon_slug"] == literal_assignment(contract_path, "PUBLIC_APP_SLUG")
+
+    contract = load_python_module(contract_path, "v2_docs_release_contract")
+    contract.validate_release_evidence = lambda evidence: evidence
+    source_sha = "a" * 40
+    generic_digest = "sha256:" + "1" * 64
+    amd64_digest = "sha256:" + "2" * 64
+    release_evidence = {
+        "candidate": {
+            "version": "2.0.0",
+            "source_sha": source_sha,
+            "images": {
+                "generic": {
+                    "name": contract.PUBLIC_GENERIC_IMAGE,
+                    "digest": generic_digest,
+                },
+                "amd64": {"runtime_digest": amd64_digest},
+            },
+        }
+    }
+    try:
+        contract.validate_ha005_report(
+            release_evidence,
+            ha005_template,
+            version="2.0.0",
+            source_sha=source_sha,
+            generic_digest=generic_digest,
+            amd64_runtime_digest=amd64_digest,
+            published_at_utc="2020-01-01T00:00:00Z",
+        )
+    except contract.ContractError as error:
+        assert str(error) == "HA-005 report did not pass"
+    else:
+        raise AssertionError("unchanged HA-005 template unexpectedly passed validation")
+
+    postpublish = read(ROOT / ".github" / "workflows" / "postpublish-ha005.yaml")
+    for token in (
+        "Post-publish HA-005 acceptance",
+        "ha005-report",
+        "ha005-acceptance.json",
+        "release-evidence/haos-gates",
+        "anonymous public verification",
+    ):
+        assert token in postpublish
+    inputs_block = postpublish.split("    inputs:", 1)[1].split("\n\npermissions:", 1)[0]
+    assert re.findall(r"^      ([a-z0-9_]+):$", inputs_block, re.MULTILINE) == [
+        "version",
+        "report_json",
+    ]
+    assert 'refs/tags/${RELEASE_VERSION}' in postpublish
+    assert ".draft == false" in postpublish
+    assert ".prerelease == true" in postpublish
+    artifact_name = (
+        "ha005-acceptance-${{ inputs.version }}-"
+        "${{ steps.release.outputs.source_sha }}-"
+        "${{ github.run_id }}-${{ github.run_attempt }}"
+    )
+    assert artifact_name in postpublish
+    assert "Candidate / finalize" not in postpublish
+    assert "ha005-acceptance-<version>-<source_sha>-<run_id>-<run_attempt>" in plan_text
+    assert "ha005-acceptance.json" in migration
+    assert "pre-finalize gate나 Candidate evidence로 순환시키지 않는다" in migration
+    assert "tag-bound finalizer Actions artifact와 GitHub Release" in migration
+    assert "artifact가 만료하면" in migration
 
 
 def test_antigravity_contract_matches_managed_plugin_inventory() -> None:
@@ -473,6 +779,7 @@ if __name__ == "__main__":
         test_device_test_and_transport_ownership_milestones_match_local_evidence,
         test_native_auto_update_opt_out_is_required_but_not_claimed_complete,
         test_decisions_and_gap_register_are_closed_contracts,
+        test_release_evidence_docs_preserve_phase_and_architecture_boundaries,
         test_antigravity_contract_matches_managed_plugin_inventory,
     ]
     for check in checks:

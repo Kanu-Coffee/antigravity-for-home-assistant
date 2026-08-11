@@ -9,12 +9,13 @@
 
 - 상태: `Accepted`
 - target App version: `2.0.0`
-- source contract: 최신 공개 v1 tag `1.0.4`
-- 직접 update 후보: `1.0.4 → 2.0.0`
-- `1.0.4`보다 오래된 설치는 먼저 공개 `1.0.4`로 업데이트한 뒤 v2로 이동한다.
-- 직접 update를 지원한다고 공개하려면 실제 HAOS amd64와 aarch64에서 `HA-005`를
-  모두 통과해야 한다. 그 전에는 이 범위를 release candidate의 목표 창으로만
-  표현한다.
+- source contract: 최신 공개 v1 tag `1.0.4` (amd64 only)
+- 직접 update 후보: amd64 `1.0.4 → 2.0.0`
+- amd64의 `1.0.4`보다 오래된 설치는 먼저 공개 `1.0.4`로 업데이트한 뒤
+  v2로 이동한다. public v1이 없었던 aarch64는 v2를 fresh install한다.
+- 직접 update와 첫 aarch64 release를 지원한다고 공개하려면 실제 HAOS
+  amd64의 post-publish `HA-005`와 aarch64의 `HA-006`을 통과해야 한다. 그
+  전에는 이 범위를 release candidate의 목표 창으로만 표현한다.
 - v2.0.x는 [MIG-004](migration-release.md#mig-004--v1-옵션-변환)의 deprecated
   option을 migration-only로 읽는다. 제거는 실제 update evidence와 별도 breaking
   release 없이 수행하지 않는다.

@@ -312,17 +312,33 @@ Candidate와 Builder workflow 조건:
   거부한다.
 - smoke는 generic candidate의 tag가 아니라 `generic@exact-index-digest`를 pull한다.
   amd64와 native `ubuntu-24.04-arm` runner에서 parameterized `TEST_PLATFORM`과
-  `HA_ARCH`로 가능한 full image suite를 실행한다. public 이전 image가 필요한 update
-  suite의 arm64 범위는 실제 HAOS evidence로 닫는다.
+  `HA_ARCH`로 가능한 full image suite를 실행한다. exact public-v1 source
+  rehearsal은 v1.0.4가 지원한 amd64에서만 실행한다. aarch64 release
+  범위는 존재하지 않았던 v1 update가 아니라 실제 HAOS fresh
+  install/persistence `HA-006`으로 닫는다.
 - leaf별 SPDX JSON을 exact leaf digest에서 만들고 각 파일이 16 MiB 미만인지
   검사한다. 모든 artifact name에는 run ID와 run attempt가 포함된다.
-- HAOS rehearsal은 candidate 재build 없이 별도 `Candidate / finalize`에서 해당
-  candidate digest와 source SHA에 결합한다. 양 arch install/update, AppArmor enforce,
-  Telegram mode, migration, rollback, native updater와 repository install/update가 모두
-  `PASS`이고 각 sanitized evidence URI와 SHA-256이 있어야 한다. finalize는 repository
-  Actions artifact archive 또는 public release asset을 실제 다운로드해 content SHA-256을
-  비교한 뒤에만 final artifact를 만든다. finalize dispatch SHA가 candidate source와
-  같아야 하며 verifier script도 그 exact source SHA를 다시 checkout해서 실행한다.
+- Candidate는 generic exact digest를 다시 build하지 않고 고유
+  `2.0.0-candidate.<run>.<attempt>` tag로 carbon-copy하고, 그 version을 가진 source-bound
+  temporary HA repository bundle을 candidate artifact에 넣는다. tag와 exact digest는
+  credential 없는 pull이 성공해야 하며 bundle manifest/archive hash도 candidate record에
+  결합한다.
+- pre-finalize HAOS rehearsal은 공식 local testing 경로
+  `/addons/antigravity_home_assistant`를 사용한다. amd64 `HA-007`은 같은
+  directory/slug에 exact public v1.0.4 source를 source-build install한 뒤 candidate
+  bundle의 App directory로 교체해 local repository identity와 `/data`를 유지한
+  migration/recovery를 검증한다. 이는 original custom repository의 public
+  update나 numeric rollback이 아니며 post-publish `HA-005`를 대체하지 않는다.
+  public v1이 없었던 aarch64는 candidate App directory를 fresh install해
+  `HA-006`을 수행한다.
+- 이 rehearsal의 정확한 candidate runtime digest를 확인한 뒤 AppArmor enforce,
+  amd64 local migration, aarch64 fresh install/persistence, migration mode, local migration
+  rollback, Telegram mode, native updater와 OAuth isolation/persistence를 각각 `PASS`로
+  기록한다. `HAOS evidence` workflow는 gate별 sanitized report의 exact schema와
+  candidate source/digest를 검증하고 고유 Actions artifact URI/SHA-256을 낸다.
+  finalize는 각 URI를 다운로드해 byte SHA-256과 내부 source/digest/arch/check
+  set을 확인하고 canonical JSON을 final artifact에 보존한다. finalize dispatch
+  SHA와 verifier source도 exact candidate source여야 한다.
 - tag는 `^[0-9]+\.[0-9]+\.[0-9]+$`인 annotated tag다. tag commit, App version,
   candidate run/attempt와 final evidence run/attempt/name/archive digest를 고정 trailer로
   결합한다. Builder는 두 Actions run의 workflow path, source SHA, conclusion과 artifact
@@ -361,12 +377,26 @@ Candidate와 Builder workflow 조건:
 ## MIG-010 — 릴리스 단계
 
 1. 모든 자동 검사가 green인 release commit에서 `Candidate / build`를 수동 실행한다.
-2. machine candidate artifact의 generic exact digest를 실제 HAOS amd64와 aarch64에
-   설치해 upgrade rehearsal을 수행한다.
-3. `preserve`, `refresh_managed`, `reset_v2`, rollback, AppArmor enforce, Telegram 세
-   모드, browser, memory, updater canary와 repository install/update 증거를 기록한다.
-4. [release-evidence-template.json](release-evidence-template.json)을 secret과 식별자 없이
-   채우고 같은 source ref에서 `Candidate / finalize`에 JSON으로 전달한다.
+   Candidate attempt는 atomic artifact set이므로 실패 시 **Re-run all jobs**만 사용한다.
+   **Re-run failed jobs**는 지원하지 않으며 이전 attempt의 성공 artifact를 새 attempt와
+   섞어 우회하지 않는다.
+2. candidate artifact의 `haos-candidate-repository.zip`과 manifest/archive digest를
+   검증한다. 포함된 App directory를 공식 local testing `/addons` 경로에
+   사용하고, 실행 중 observed image digest가 candidate record와 같지 않으면
+   중단한다.
+3. amd64에서 exact public v1.0.4 source를
+   `/addons/antigravity_home_assistant`에 source-build install하고 image ID, source SHA와
+   local repository identity를 기록한다. 같은 directory/slug를 candidate App directory로
+   교체해 `preserve`/`refresh_managed`/`reset_v2`, crash recovery와 local migration
+   rollback `HA-007`을 수행한다. aarch64에서는 candidate를 fresh install해
+   [HA-006](test-plan.md#ha-006--첫-aarch64-release-install과-persistence)을 수행한다.
+   두 arch에서 AppArmor, browser, memory, updater를 확인하고 OAuth와 Telegram
+   gate도 별도로 기록한다.
+4. 각 sanitized gate report를 같은 source ref의 `HAOS evidence` workflow에
+   gate별로 별도 dispatch한다. workflow summary가 준 `status`, `evidence_uri`,
+   `sha256`, `format: "github_actions_zip"`을 변경하지 않고 합친 여덟 record로
+   [release-evidence-template.json](release-evidence-template.json)을 채우고
+   `Candidate / finalize`에 전달한다.
 5. finalize summary의 여섯 trailer를 그대로 사용해 candidate source commit에
    annotated numeric tag를 만든다.
 6. Builder가 artifact/source/public preflight를 통과한 뒤 exact digest를 numeric tag로
@@ -379,20 +409,46 @@ Candidate와 Builder workflow 조건:
    resume한다.
 9. numeric tag의 anonymous generic/per-arch 접근, exact platform, signature,
    provenance와 leaf SPDX retrievability를 확인한다.
-10. 새 HAOS에서 post-publish repository metadata와 App install/update를 확인한다.
+10. post-publish public repository metadata와 numeric App fresh install을 amd64/aarch64에서
+    확인한다. 별도 amd64 HAOS에서 original custom repository identity로
+    설치한 public v1.0.4를 같은 repository/slug의 numeric v2로 update하고 실제
+    public update/rollback `HA-005`를 수행한다. exact published digest와
+    original repository/add-on/data identity, public-v1 source-build image와 matching
+    backup을 결합한 sanitized `antigravity-ha-ha005-acceptance/v1` report를
+    [fail-closed template](ha005-acceptance-template.json)에서 작성해 exact
+    numeric tag의 `Post-publish HA-005 acceptance` workflow에 제출한다. workflow가
+    canonical `ha005-acceptance.json`을 Actions artifact와 GitHub Release asset으로
+    보존한 후에만 수용을 완료한다. 이 record는 pre-finalize gate나
+    Candidate evidence로 순환시키지 않는다.
 
 1~4의 외부 evidence가 하나라도 없거나 `NOT_RUN`이면 finalize와 Builder는 fail
 closed한다. 현재 이 repository에는 실제 HAOS final evidence와 public candidate package
 상태가 없으므로 v2 release gate는 `PARTIAL`이다.
+발행 전 bundle rehearsal은 local repository identity만 검증하므로 10의 `HA-005`를
+대체할 수 없다. 10이 통과하기 전에는 post-publish 수용과 v2 완료를 표시하지
+않는다. post-publish upload/validation/artifact contract는 구현됐지만 실제
+공개 release와 `HA-005` report는 없어 `NOT RUN`이다.
+10의 workflow는 tag-bound finalizer Actions artifact와 GitHub Release의
+`release-evidence.json` byte 동일성을 다시 검증한다. 해당 Actions artifact는
+30일 보존되므로 만료 전에, 보통 publish 직후 `HA-005`를 제출해야
+한다. artifact가 만료하면 예전 release의 새 report도 provenance 검증을
+우회하지 못하고 fail closed한다. 이 제출 창은 observation이 release
+publish 후이고 report 제출 시 30일보다 오래되지 않아야 한다는
+timestamp 계약과 별개다.
 
 `stage: experimental`은 최소 두 아키텍처의 실제 HAOS 릴리스 회귀와 한 번의
 성공적인 이전 public version update가 쌓일 때까지 유지한다.
 
 ## MIG-011 — 릴리스 증거 양식
 
-machine record는 source SHA, candidate run/attempt, generic/staging/leaf digest와 자동
-gate를 가진다. manual record는 template의 정확한 여덟 gate와 candidate digest를
-가진다. finalize artifact archive 자체의 SHA-256까지 annotated tag에 다음처럼 묶는다.
+machine record는 source SHA, candidate run/attempt, generic/staging/leaf digest,
+rehearsal repository manifest/archive digest와 자동 gate를 가진다. manual record는
+template의 정확한 여덟 gate와 candidate digest, download format, 원본 artifact
+byte SHA-256을 가진다. finalize는 원본을 검증한 뒤 각 report를 canonical
+`haos-gates/<gate>.json`으로 저장하고, 그 JSON byte digest의 exact map을
+`release-evidence.json` 안의 `haos_gate_evidence`에 기록한다. 이 JSON 파일과 digest
+map은 final artifact와 GitHub Release에 모두 보존한다. finalize artifact archive
+자체의 SHA-256까지 annotated tag에 다음처럼 묶는다.
 
 ```text
 Candidate-Run-ID: <positive integer>
@@ -402,6 +458,13 @@ Release-Evidence-Run-Attempt: <positive integer>
 Release-Evidence-Artifact: release-evidence-<version>-<source>-<candidate-run>-<candidate-attempt>-<evidence-run>-<evidence-attempt>
 Release-Evidence-SHA256: sha256:<64 lowercase hex>
 ```
+
+post-publish `HA-005`는 이 여덟 manual gate의 부분이 아니다. 별도
+`ha005-acceptance.json`은 final `release-evidence.json`의 numeric version/source,
+generic digest와 amd64 runtime digest를 다시 결합하고 original repository ID/URL,
+add-on/data identity의 update/rollback 동일성을 강제한다. 고유 Actions artifact와
+덮어쓰기 없는 fixed-name GitHub Release asset이 같은 canonical JSON을
+보존하며, Candidate finalize가 이 post-publish record를 입력으로 요구하지 않는다.
 
 template의 `NOT_RUN`은 의도적인 fail-closed 초기값이다. 필수 완료 조건의 실제
 sanitized evidence가 없으면 final artifact, numeric image와 GitHub Release를 만들지

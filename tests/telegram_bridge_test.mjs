@@ -59,6 +59,7 @@ assert.deepEqual(Object.keys(metricsSnapshot()).sort(), [
   "jobs_active",
   "jobs_completed_total",
   "jobs_queued",
+  "stream_events_ignored_total",
   "telegram_api_errors_total",
   "updates_denied_total",
   "updates_received_total",
@@ -148,8 +149,42 @@ assert.deepEqual(parseStreamResult(stream), {
 assert.throws(() => parseStreamResult("not json\n"), /invalid JSON/u);
 assert.throws(
   () => parseStreamResult(`${JSON.stringify({ type: "unexpected" })}\n`),
-  /unknown event type/u,
+  /before init/u,
 );
+const unknownTypeCanary = "future_SECRET_TYPE_a";
+const unknownRawCanary = "SECRET_RAW_NDJSON_CANARY";
+const ignoredMetricBefore = metricsSnapshot().stream_events_ignored_total.unknown_type;
+assert.deepEqual(parseStreamResult([
+  JSON.stringify({ type: "init", conversation_id: "conversation.future" }),
+  JSON.stringify({ type: unknownTypeCanary, raw: unknownRawCanary }),
+  JSON.stringify({ type: "future_SECRET_TYPE_b", nested: { raw: unknownRawCanary } }),
+  JSON.stringify({
+    type: "result",
+    result: JSON.stringify({ response: "future compatible", proposal_ids: [] }),
+  }),
+].join("\n")), {
+  response: "future compatible",
+  proposalIds: [],
+  conversationId: "conversation.future",
+});
+const ignoredMetric = metricsSnapshot().stream_events_ignored_total;
+assert.deepEqual(Object.keys(ignoredMetric), ["unknown_type"]);
+assert.equal(ignoredMetric.unknown_type, ignoredMetricBefore + 2);
+assert.equal(JSON.stringify(metricsSnapshot()).includes(unknownTypeCanary), false);
+assert.equal(JSON.stringify(metricsSnapshot()).includes(unknownRawCanary), false);
+for (const invalidEvent of [{}, { type: 7 }]) {
+  assert.throws(
+    () => parseStreamResult([
+      JSON.stringify({ type: "init", conversation_id: "conversation.invalid-type" }),
+      JSON.stringify(invalidEvent),
+      JSON.stringify({
+        type: "result",
+        result: JSON.stringify({ response: "invalid", proposal_ids: [] }),
+      }),
+    ].join("\n")),
+    /missing or malformed event type/u,
+  );
+}
 assert.throws(
   () => parseStreamResult(`${JSON.stringify({
     type: "result",
@@ -190,7 +225,7 @@ assert.throws(
       type: "result",
       result: JSON.stringify({ response: "done", proposal_ids: [] }),
     }),
-    JSON.stringify({ type: "step_update" }),
+    JSON.stringify({ type: "future_after_terminal" }),
   ].join("\n")),
   /after the terminal result/u,
 );

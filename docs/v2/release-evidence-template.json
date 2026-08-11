@@ -7,42 +7,50 @@
     "apparmor_enforce": {
       "status": "NOT_RUN",
       "evidence_uri": "",
-      "sha256": ""
+      "sha256": "",
+      "format": ""
     },
-    "haos_aarch64_install_update": {
+    "haos_aarch64_install_persistence": {
       "status": "NOT_RUN",
       "evidence_uri": "",
-      "sha256": ""
+      "sha256": "",
+      "format": ""
     },
-    "haos_amd64_install_update": {
+    "haos_amd64_local_migration": {
       "status": "NOT_RUN",
       "evidence_uri": "",
-      "sha256": ""
+      "sha256": "",
+      "format": ""
     },
     "migration_modes": {
       "status": "NOT_RUN",
       "evidence_uri": "",
-      "sha256": ""
+      "sha256": "",
+      "format": ""
+    },
+    "oauth_isolation_persistence": {
+      "status": "NOT_RUN",
+      "evidence_uri": "",
+      "sha256": "",
+      "format": ""
     },
     "native_updater_canary": {
       "status": "NOT_RUN",
       "evidence_uri": "",
-      "sha256": ""
+      "sha256": "",
+      "format": ""
     },
-    "repository_install_update": {
+    "local_migration_rollback": {
       "status": "NOT_RUN",
       "evidence_uri": "",
-      "sha256": ""
-    },
-    "rollback": {
-      "status": "NOT_RUN",
-      "evidence_uri": "",
-      "sha256": ""
+      "sha256": "",
+      "format": ""
     },
     "telegram_modes": {
       "status": "NOT_RUN",
       "evidence_uri": "",
-      "sha256": ""
+      "sha256": "",
+      "format": ""
     }
   }
 }

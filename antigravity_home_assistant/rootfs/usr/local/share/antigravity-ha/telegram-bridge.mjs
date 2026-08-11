@@ -70,6 +70,7 @@ const METRIC_LABELS = Object.freeze({
   ]),
   risks: Object.freeze(["high", "low"]),
   apiErrors: Object.freeze(["4xx", "5xx", "network", "other", "timeout"]),
+  streamEventsIgnored: Object.freeze(["unknown_type"]),
 });
 
 function zeroRecord(labels) {
@@ -90,6 +91,7 @@ const metricState = {
     buckets: { le_1: 0, le_5: 0, le_30: 0, le_300: 0, inf: 0 },
   },
   apiErrors: zeroRecord(METRIC_LABELS.apiErrors),
+  streamEventsIgnored: zeroRecord(METRIC_LABELS.streamEventsIgnored),
 };
 
 const PROCESS_SALT = randomBytes(32);
@@ -197,6 +199,7 @@ function metricsSnapshot() {
       buckets: { ...metricState.workerDuration.buckets },
     },
     telegram_api_errors_total: { ...metricState.apiErrors },
+    stream_events_ignored_total: { ...metricState.streamEventsIgnored },
   };
 }
 
@@ -214,6 +217,10 @@ function resetMetricsForTest() {
     buckets: { le_1: 0, le_5: 0, le_30: 0, le_300: 0, inf: 0 },
   };
   Object.assign(metricState.apiErrors, zeroRecord(METRIC_LABELS.apiErrors));
+  Object.assign(
+    metricState.streamEventsIgnored,
+    zeroRecord(METRIC_LABELS.streamEventsIgnored),
+  );
 }
 
 function resetUpdateRuntimeForTest() {
@@ -482,9 +489,17 @@ function parseStreamResult(stream) {
     if (terminalSeen) {
       throw new Error("Antigravity stream contained an event after the terminal result");
     }
-    if (typeof event?.type !== "string" ||
-        !(/^(?:init|result)$/u.test(event.type) || /^(?:step|tool)(?:_|$)/u.test(event.type))) {
-      throw new Error("Antigravity stream contained an unknown event type");
+    if (typeof event?.type !== "string" || event.type.length === 0) {
+      throw new Error("Antigravity stream contained a missing or malformed event type");
+    }
+    const knownEventType = /^(?:init|result)$/u.test(event.type) ||
+      /^(?:step|tool)(?:_|$)/u.test(event.type);
+    if (!knownEventType) {
+      if (initEvents !== 1) {
+        throw new Error("Antigravity unknown event arrived before init");
+      }
+      incrementBounded(metricState.streamEventsIgnored, "unknown_type");
+      continue;
     }
     if (event?.type === "init") {
       initEvents += 1;

@@ -165,6 +165,7 @@ def test_telegram_metrics_have_bounded_privacy_safe_labels(addon_root: Path) -> 
         "approvals_total",
         "worker_duration_seconds",
         "telegram_api_errors_total",
+        "stream_events_ignored_total",
     ):
         assert metric in bridge
     snapshot = bridge.split("function metricsSnapshot()", maxsplit=1)[1].split(
