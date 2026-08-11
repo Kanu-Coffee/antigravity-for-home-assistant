@@ -481,9 +481,13 @@ component PASS와 candidate restart PASS가 모두 있어야 `closure_eligible: 
 이는 실제 HAOS와 live Bot gate를 대신하지 않는다.
 
 위 baseline run은 candidate revision label이 없고 host source workload를 사용했으므로
-budget 수립 입력일 뿐 GAP-007 해제 증거가 아니다. source manifest, packaged workload와
-고정 budget gate가 포함된 새 candidate에서 장시간 release mode를 다시 실행하기 전까지
-GAP-007은 `IN_PROGRESS`다.
+budget 수립 입력일 뿐 GAP-007 해제 증거가 아니다. 별도의 source-bound candidate
+release run은 source `ae8b0bc4fdd042bdb84c55a1767d619d9adc734f`, source-rootfs
+`sha256:22b435eb960bf5e47ba0d888b59e6a83087e76afc2b13a557b455fad8b49e8ed`에서
+1,800초 soak, 900초 장애 주입, broker/candidate restart 20회와 고정 budget을 PASS했다.
+sanitized evidence SHA-256은
+`2c2b3fe0cb0aa2522722e192323bdb0e0a291f5d99193df603eace003dc7f8f9`이며 local
+GAP-007 해제 증거다. 실제 HAOS와 live Bot API는 여전히 별도 gate다.
 
 공식 Candidate build는 위 release mode를 exact amd64 staging digest에서 자동 실행하고
 runtime leaf digest, source revision, source-rootfs digest와 evidence file SHA-256을

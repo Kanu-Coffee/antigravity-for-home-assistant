@@ -964,6 +964,8 @@ def test_workflows_encode_exact_release_invariants() -> None:
     assert "ensure-github-release.sh" in builder
     assert "parse-release-tag.sh" in builder
     assert "${{ github.run_id }}-${{ github.run_attempt }}" in ci
+    assert "-o antigravity-for-home-assistant-amd64.tar.zst" in ci
+    assert "--output antigravity-for-home-assistant-amd64.tar.zst" not in ci
     assert "((ba|da|k|z)?sh|bashio)" in ci
     assert "git grep -Il '^#!'" not in ci
     assert "registry absence was not established" in release_oci

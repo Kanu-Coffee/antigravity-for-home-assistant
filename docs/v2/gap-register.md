@@ -14,7 +14,7 @@
 | GAP-004 | `OPEN` | live Telegram | 실제 Bot API에서 세 mode, pairing, replay, restart와 network interruption HA-004 PASS |
 | GAP-005 | `OPEN` | public v1 migration | public `1.0.4 → 2.0.0` preserve/refresh/reset/rollback HA-005 PASS |
 | GAP-006 | `OPEN` | public release supply chain | remote CI/Builder, two-arch manifest, SBOM/provenance/Cosign와 anonymous pull PASS |
-| GAP-007 | `IN_PROGRESS` | 성능·내구성 | 30분 Telegram soak, 15분 동시 장애 주입, 1,000 entity, candidate rapid restart 20회 evidence |
+| GAP-007 | `CLOSED` | 성능·내구성 | exact candidate 30분 Telegram soak, 15분 동시 장애 주입, 1,000 entity, candidate rapid restart 20회 PASS |
 | GAP-008 | `OPEN` | transient device test HAOS 증거 | 분리된 typed workflow의 local success/failure/replay suite는 PASS; 실제 safe entity restore E2E 필요 |
 | GAP-009 | `CLOSED` | transport ownership | ordinary read/memory/validate를 ha-read broker로 고정한 static + shared failure-injection PASS; privileged mutation/browser-auth 분리 사유 문서화 |
 
@@ -30,14 +30,18 @@ contract 결과이므로 해제 증거가 아니다. 첫 장시간 결과 SHA-25
 `b2cb64cac2c5f12c61d4a779c06a4bca1307799e485086d9512974e231d51d09`도 budget baseline일
 뿐이다. 그 image는 source revision label이 없었고 workload가 host source를 사용했으므로
 해제 증거가 아니다. exact revision/source-rootfs manifest, packaged Telegram
-queue/worker/backoff와 [고정 budget](performance-budget.json)이 포함된 새 candidate에서
-고정 30분/15분 wall-clock과 container restart 20회를 모두 PASS한 sanitized JSON이
-생길 때까지 `IN_PROGRESS`를 유지한다. 공식 candidate/release workflow는 이 JSON의
-SHA-256과 exact amd64 stage/leaf/source binding을 candidate artifact에 포함하고 numeric
-release 직전에 다시 검사하도록 연결했다. 또한 host `docker export` verifier가 embedded
-manifest/OCI label/current source와 각 root-owned file을 독립 대조하고 unmanifested
-rootfs context file을 build에서 거부한다. 새 candidate의 실제 장시간 PASS가 아직
-없으므로 이 wiring 자체도 GAP을 닫지 않는다.
+queue/worker/backoff와 [고정 budget](performance-budget.json)이 포함된 source-bound
+candidate에서 2026-08-12 실제 release mode를 완료했다. sanitized evidence SHA-256은
+`2c2b3fe0cb0aa2522722e192323bdb0e0a291f5d99193df603eace003dc7f8f9`다. source
+`ae8b0bc4fdd042bdb84c55a1767d619d9adc734f`, amd64 stage
+`sha256:06ce690a72a028db5d47b979514b686d36726d06b66a2c685ef0a3b647d83d06`, runtime leaf
+`sha256:782f1247a826f07bb8ab7b2f118d194e50cf30594b7c4516714d0c1080b7105c`에서 1,800초
+soak, 900초 동시 장애, broker/candidate restart 20회와 resource budget을 모두 PASS했고
+외부 호출은 0이었다. 이 증거로 local GAP-007만 `CLOSED`다. 공식 candidate/release
+workflow는 동일 검사를 exact release candidate에서 다시 실행하고 JSON SHA-256과 exact
+stage/leaf/source binding을 artifact에 포함해 numeric release 직전에 검증한다. host
+`docker export` verifier와 unmanifested rootfs context 거부도 그대로 유지한다. 이 local
+증거는 실제 HAOS와 live Bot API 게이트를 대신하지 않는다.
 
 ## 폐기한 legacy 표면
 

@@ -23,14 +23,13 @@ name: Build app candidate
         description: GitHub artifact archive SHA-256
         value: ${{ jobs.package-candidate.outputs.artifact_digest }}
 
-permissions:
-  contents: read
-
 jobs:
   prepare:
     name: Prepare immutable candidate metadata
     if: github.repository == 'Kanu-Coffee/antigravity-for-home-assistant'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     outputs:
       architectures: ${{ steps.info.outputs.architectures }}
       build_matrix: ${{ steps.matrix.outputs.matrix }}
@@ -107,9 +106,8 @@ jobs:
     name: Build ${{ matrix.arch }}${{ inputs.candidate && ' staging image' || '' }}
     needs: prepare
     runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-      packages: write
+    # Deliberately inherit the caller: PR builds receive packages:read while
+    # immutable Candidate builds receive packages:write.
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.build_matrix) }}
@@ -196,9 +194,8 @@ jobs:
       - prepare
       - build
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      packages: write
+    # Candidate assembly inherits the write-capable Candidate caller. This job
+    # is skipped for the read-only PR caller.
     outputs:
       generic_digest: ${{ steps.index.outputs.index_digest }}
       amd64_stage_digest: ${{ steps.records.outputs.amd64_stage_digest }}

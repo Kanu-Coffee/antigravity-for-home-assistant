@@ -73,6 +73,10 @@ def test_registry_release_workflow_is_tag_gated(repository_root: Path) -> None:
 
     with builder_path.open(encoding="utf-8") as stream:
         builder = yaml.safe_load(stream)
+    with build_app_path.open(encoding="utf-8") as stream:
+        build_app = yaml.safe_load(stream)
+    with candidate_path.open(encoding="utf-8") as stream:
+        candidate = yaml.safe_load(stream)
     assert builder["on"]["push"] == {
         "tags": ["[0-9]*.[0-9]*.[0-9]*"]
     }
@@ -93,6 +97,23 @@ def test_registry_release_workflow_is_tag_gated(repository_root: Path) -> None:
     assert "Release-Evidence-SHA256" in tag_parser_text
     assert "secrets: inherit" not in builder_text
     assert "packages: write" in builder_text
+    assert builder["jobs"]["pull-request-build"]["permissions"] == {
+        "contents": "read",
+        "packages": "read",
+    }
+    assert builder["jobs"]["pull-request-build"]["with"]["candidate"] is False
+    assert candidate["jobs"]["build"]["permissions"] == {
+        "contents": "read",
+        "packages": "write",
+    }
+    assert candidate["jobs"]["build"]["with"]["candidate"] is True
+    assert "permissions" not in build_app
+    assert build_app["jobs"]["prepare"]["permissions"] == {"contents": "read"}
+    assert "permissions" not in build_app["jobs"]["build"]
+    assert "permissions" not in build_app["jobs"]["assemble-candidate"]
+    assert build_app["jobs"]["build"]["steps"][2]["with"]["push"] == (
+        "${{ inputs.candidate }}"
+    )
     assert "anonymous-candidate-preflight.sh" in builder_text
     assert "release-oci.sh ensure-tag" in builder_text
     assert "Carbon-copy numeric tags without rebuilding" in builder_text
@@ -239,15 +260,18 @@ def test_apparmor_directed_transitions_resolve_to_loaded_top_level_profiles(
     ).stdout.splitlines()
     assert set(names) == loaded_profiles
 
+    parser_help = subprocess.run(
+        [parser, "--help"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    compile_command = [parser, "--skip-kernel-load", "--skip-cache"]
+    if "--zstd-compress-level" in parser_help.stdout + parser_help.stderr:
+        compile_command.append("--zstd-compress-level=none")
+    compile_command.extend(["--stdout", str(profile_path)])
     compiled = subprocess.run(
-        [
-            parser,
-            "--skip-kernel-load",
-            "--skip-cache",
-            "--zstd-compress-level=none",
-            "--stdout",
-            str(profile_path),
-        ],
+        compile_command,
         check=True,
         capture_output=True,
     ).stdout
@@ -255,6 +279,7 @@ def test_apparmor_directed_transitions_resolve_to_loaded_top_level_profiles(
         match.group().decode("ascii")
         for match in re.finditer(rb"[\x20-\x7e]{4,}", compiled)
     }
+    assert loaded_profiles <= compiled_strings
     assert not {
         value
         for value in compiled_strings
