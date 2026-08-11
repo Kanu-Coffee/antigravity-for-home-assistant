@@ -79,6 +79,8 @@ def test_public_v1_upgrade_rehearsal_is_source_and_candidate_bound(
         '(has("toolPermission") | not)',
         '$state.managed.settings.permission_rules',
         'colorScheme:"tokyo night"',
+        "settings_metadata_and_semantics_preserved: true",
+        "mcp_byte_preserved: true",
     ):
         assert required in smoke
 
@@ -95,6 +97,7 @@ def test_public_v1_upgrade_rehearsal_is_source_and_candidate_bound(
     assert smoke.count("${CANDIDATE_IMAGE}") == 1
     assert '"${V1_IMAGE}" >/dev/null' not in smoke
     assert '"${CANDIDATE_IMAGE}" >/dev/null' not in smoke
+    assert "settings_and_mcp_byte_preserved" not in smoke
 
 
 def test_public_v1_runtime_scan_only_allows_native_cli_log_links(

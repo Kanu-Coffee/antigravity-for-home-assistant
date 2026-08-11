@@ -166,6 +166,10 @@ public v1에서 그대로 보존된 target은 enclosing directory가 위 조건�
 legacy 0644도 허용한다. resolved log target은 두 mode 모두 secret canary scan에서
 제외하지 않으며 그 밖의 symlink와 hardlink는 실패한다.
 
+public v1 update evidence는 native sparse 재직렬화를 byte 보존으로 과장하지 않는다.
+settings는 file metadata와 공식 key의 semantic 보존을, global MCP는 byte 보존을 서로
+다른 machine field로 기록한다.
+
 permission precedence는 native 규칙대로 deny > ask > allow다. AppArmor deny와
 broker의 고위험 정책은 `always-proceed`로도 완화되지 않는다.
 

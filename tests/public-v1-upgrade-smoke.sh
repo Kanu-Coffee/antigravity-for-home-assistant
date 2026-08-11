@@ -1304,7 +1304,8 @@ emit_evidence() {
         },
         user_native_preservation: {
           result: "PASS",
-          settings_and_mcp_byte_preserved: true,
+          settings_metadata_and_semantics_preserved: true,
+          mcp_byte_preserved: true,
           memory_record_searchable: true,
           ssh_ed25519_rsa_and_authorized_key_preserved: true
         }
