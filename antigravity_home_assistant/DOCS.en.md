@@ -4,554 +4,551 @@
 
 # Antigravity for Home Assistant user guide
 
-This guide explains how Home Assistant OS users can install the app, use antigravity through the Web UI, SSH, or mobile Remote, and safely work on dashboards, automations, entities, and configuration errors.
-
-This guide applies to app version `0.9.7`.
+This guide explains how to install the v2 App and use native Google
+Antigravity, Telegram, Home Assistant tools, and the safety controls.
 
 > [!WARNING]
-> This app can read and write all of `/config` and use the Home Assistant Core and Supervisor `manager` APIs. Allow only trusted administrators to use it, and review a backup and diff before making changes. Never port-forward TCP `2224` directly to the internet.
+> This App has write access to all of `/config` and administrator-like Home
+> Assistant Core and Supervisor API access. Restrict it to trusted
+> administrators and review previews and backups before changes. Never expose
+> its SSH port directly to the internet.
 
-## Before you begin
+## Status and support scope
 
-### Supported environments
+### Supported environment
 
-- Home Assistant OS or another installation with Supervisor
-- An **amd64** device
-- Internet access for the app image and antigravity authentication
-- An OpenAI/ChatGPT account with access to antigravity
+- Home Assistant OS or a Supervised installation with Supervisor
+- An `amd64` or `aarch64` device
+- Internet access for the App image and Google Antigravity OAuth
+- A Google account eligible for Antigravity
 
-The app is currently `stage: experimental` and `boot: manual`. aarch64 devices and HACS installation are not supported.
+This App is not a HACS integration. It currently has `stage: experimental` and
+`boot: manual`. Releases are packaged to use the prebuilt
+`ghcr.io/kanu-coffee/antigravity-for-home-assistant:<version>` image. Before
+installing, check the release's multi-architecture manifest and recorded tests
+on real HAOS.
 
-### What the app provides
+### Runtime surfaces
 
-- A Web terminal inside Home Assistant Ingress
-- antigravity CLI running from `/config`
-- Core REST API and Supervisor `manager` API helpers
-- Public-key-only SSH for direct ChatGPT mobile Remote access to the bundled antigravity environment
-- Playwright tools that inspect dashboards and web interfaces in real Headless Chromium
-- This project's own `ha_memory` for verified HA structure and durable information explicitly provided by the user
-- Telegram Bot Messenger integration to chat with Antigravity AI remotely from mobile or desktop
+| Surface | Purpose | Change boundary |
+| --- | --- | --- |
+| Ingress Web terminal | Interactive Antigravity and local administration | Native permission + AppArmor |
+| Public-key SSH | Remote shell for trusted administrators | Native permission + AppArmor |
+| Telegram Bot | Restricted non-interactive questions and proposals | Read/proposal worker + approval broker |
 
-The Web UI is a terminal built with `ttyd` and a shared `tmux` session, not a dedicated chat interface. Dashboard and automation creation are not separate wizards; antigravity performs the work by combining `/config`, APIs, and browser validation.
-
-## Telegram Bot Integration (Mobile Remote Control)
-
-Chat with Antigravity AI remotely from your phone or desktop via Telegram:
-
-### Step 1: Obtain a Telegram Bot Token (Takes 10 Seconds)
-1. In Telegram, search for **[@BotFather](https://t.me/botfather)** and start a chat (`/start`).
-2. Type `/newbot` and choose a display name and username (ending in `bot`).
-3. Copy the generated **HTTP API Token** (e.g. `123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ`).
-
-### Step 2: Configure Add-on Settings
-1. Open Home Assistant ➔ **Settings ➔ Add-ons ➔ Antigravity for Home Assistant**.
-2. Click the **Configuration** tab.
-3. Set `telegram_enabled` to **`true`**.
-4. Paste your token into `telegram_bot_token` ➔ **Save** and **Restart Add-on**.
-
-### Step 3: Pair Instantly via 3 Flexible Methods
-- **Method 1 (1-Click Deep Link, Recommended)**: Click the `🔗 https://t.me/YourBot?start=PAIR_xxxx` link printed in add-on logs to pair automatically in 1 second.
-- **Method 2 (6-Digit PIN Code)**: Send the 6-digit PIN (e.g. `702-215`) displayed in add-on logs as a message to your Telegram bot.
-- **Method 3 (Manual Chat ID Whitelist)**: Enter your numerical Telegram Chat ID in the `telegram_allowed_chat_ids` field in configuration.
-
-### ⏱️ Telegram Response Times & Approvals
-- **Simple Questions / Status Checks**: ~10–25 seconds (initial progress notice sent at 10s alongside typing indicator).
-- **Automations / Multi-step Diagnostics**: ~30–90 seconds (tool calls and verification checks).
-- **Interactive Inline Approvals**: When action approval is requested, Telegram displays `[✅ Approve]` and `[❌ Deny]` inline keyboard buttons for immediate one-click authorization.
-
+Ingress and SSH share the same `/config` project and persistent Home. Telegram
+uses a separate `agy --print` worker and never relays input to the Web terminal's
+shell or tmux.
 
 ## Installation
 
-### Add the app repository
+### Add the App repository
 
-[![Add the app repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FKanu-Coffee%2Fantigravity-for-home-assistant)
+[![Add the App repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FKanu-Coffee%2Fantigravity-for-home-assistant)
 
-If the button does not work, copy this URL:
+If the button is unavailable, add this URL under **Settings → Apps → App store →
+Repositories**.
 
 ```text
 https://github.com/Kanu-Coffee/antigravity-for-home-assistant
 ```
 
-1. In Home Assistant, open **Settings → Apps → App store**.
-2. Open the menu in the upper-right corner and add the URL above under **Repositories**.
-3. Refresh the App store and select **Antigravity for Home Assistant**.
-4. Select **Install**. The app uses a prebuilt amd64 image from public GHCR, so your HA device does not compile the source.
-5. Start the app with its default settings for the first run.
+Select and install the App. Public releases pull the architecture-specific GHCR
+image instead of building source on the HA device. If the App is missing or the
+image pull fails, first confirm that the selected version actually publishes a
+`linux/amd64` or `linux/arm64` manifest.
 
-If the app does not appear, confirm that your device architecture is amd64. If installation fails, keep the App and Supervisor logs, but do not share tokens, internal URLs, or personal information.
+### First start
 
-## First run
+1. Start the App with the defaults.
+2. Check the log for init, discrete AppArmor execution profiles, read broker, memory, and Web
+   terminal startup results. Do not share tokens or internal response bodies.
+3. Open **OPEN WEB UI**. The shell starts in `/config`.
+4. Test the connection with a read-only request first.
 
-### 1. Open the Web UI
+```text
+Summarize the current Home Assistant structure and recent Core errors read-only.
+Do not change files, registries, or device states yet.
+```
 
-Start the app, then select **OPEN WEB UI**. The shell starts in `/config`.
+## Native Antigravity sign-in
 
-With the default `web_terminal_auto_start_antigravity: false`, Bash opens first. Closing the browser does not end the shared `tmux` session while the app remains running; the next connection returns to the same session. Multiple browser tabs share the same screen and input, so allow access only to trusted administrators.
+### Google OAuth
 
-### 2. Sign in to antigravity
-
-Run this command once:
+Run this once from a controlling TTY in the Web terminal or public-key SSH.
 
 ```bash
 ha-antigravity-login
 ```
 
-Open the displayed URL in a trusted browser and enter the one-time code. OpenAI documents device-code authentication for headless environments as beta, and your account or workspace policy may need to permit it.
-
-Check the sign-in state:
-
-```bash
-antigravity login status
-```
-
-Authentication is stored in `/data/antigravity` and normally survives app restarts and updates. `auth.json` can contain access tokens; never print it or share it in Git, issues, or chat.
-
-### 3. Start antigravity
+Complete the official Google OAuth flow displayed by the CLI. The helper runs
+native Antigravity directly; it does not use a fabricated login subcommand or an
+App-specific API token. Start a new session afterward.
 
 ```bash
-ha-antigravity
+agy
 ```
 
-Begin with a read-only request such as:
+`antigravity` and `ha-antigravity` are wrappers for the same native CLI. The CLI
+manages OAuth material under `/data/home/.gemini/**`, which persists across App
+restarts and normal updates. Never print that directory, authorization headers,
+or credential contents, or copy them into Git, Telegram, or a support issue.
 
-```text
-Inspect my current Home Assistant setup in read-only mode.
-Summarize the dashboards, automations, entities, and recent errors,
-then suggest possible improvements. Do not change files, registries,
-or device states yet.
-```
+### Native paths and plugin
 
-## App settings
+v2 uses the native JSON and plugin paths of Antigravity 1.1.11.
 
-Keep the defaults when getting started. After changing settings, restart the app. If you changed a antigravity policy or MCP tool, also exit the running antigravity process and start a new session.
+| Role | Path |
+| --- | --- |
+| CLI settings | `/data/home/.gemini/antigravity-cli/settings.json` |
+| Global MCP settings | `/data/home/.gemini/config/mcp_config.json` |
+| App-managed HA plugin | `/data/home/.gemini/config/plugins/home-assistant/` |
+| Workspace MCP | `/config/.agents/mcp_config.json` |
+| Dedicated Telegram native HOME | `/data/antigravity-ha/telegram-home/` |
 
-| Setting | Default | Accepted values and meaning | Caution |
-| --- | --- | --- | --- |
-| `authorized_keys` | `[]` | OpenSSH public keys allowed to connect | When empty, only SSH is disabled; the Web UI remains available. Never enter a private key. |
-| `web_terminal_auto_start_antigravity` | `false` | Start antigravity once in each new `tmux` session | Does not affect an existing session. Exiting antigravity returns to Bash. |
-| `tmux_session_name` | `antigravity-ha` | A 1–64 character session name using letters, numbers, `.`, `_`, or `-` | A change takes effect in a new session. |
-| `antigravity_approval_policy` | `on-request` | `untrusted`, `on-request`, or `never` | `never` grants broad automatic approval. Use it only for trusted work. |
-| `antigravity_sandbox_mode` | `danger-full-access` | `workspace-write` or `danger-full-access` | This controls the app container, but `/config` is read-write and changes can affect Home Assistant. |
-| `browser_approval_policy` | `safe` | `safe`, `never`, or `always` | `safe` auto-approves inspection and capture but confirms clicks and input. |
-| `antigravity_user_files_update_mode` | `preserve` | `preserve`, `refresh_agents`, or `refresh_all` | Return to `preserve` after a one-time refresh. `refresh_all` can reset user antigravity configuration. |
-| `home_assistant_browser_auto_auth` | `true` | Automatically manage a dedicated local-only, read-only HA user for the Headless browser | Restart the app and browser session after turning it off or on. |
-| `home_assistant_browser_token` | None | Optional manual long-lived token override | Advanced recovery only. It overrides the managed token only while automatic authentication is on; the user must be local-only, non-admin, and in only the `system-read-only` group. |
-| `log_level` | `info` | `trace`, `debug`, `info`, `notice`, `warning`, `error`, or `fatal` | Use `trace` or `debug` only for diagnostics, and review logs before sharing. |
-| Network `22/tcp` | `2224` | External SSH host port | This is not an `ssh_port` JSON option. Disable it if you do not want to expose the SSH listener. |
+The App preserves unknown user JSON keys and user plugins, merging only the keys
+it owns. It does not create or overwrite the project's `/config/AGENTS.md` as an
+HA preset. HA defaults, skills, and MCP servers live in the image-managed
+`home-assistant` plugin.
+The Telegram worker does not inherit those interactive global/workspace customizations.
 
-Recommended starting settings:
+## App configuration
+
+### Recommended starting configuration
 
 ```yaml
+telegram_enabled: false
+telegram_bot_token: ""
+telegram_allowed_user_ids: []
+telegram_allowed_chat_ids: []
+telegram_access_mode: confirm_changes
 authorized_keys: []
 web_terminal_auto_start_antigravity: false
 tmux_session_name: antigravity-ha
-antigravity_approval_policy: on-request
-antigravity_sandbox_mode: danger-full-access
-browser_approval_policy: safe
+antigravity_tool_permission: request-review
+antigravity_terminal_sandbox: true
+antigravity_sensitive_data_access: false
 antigravity_user_files_update_mode: preserve
 home_assistant_browser_auto_auth: true
 log_level: info
 ```
 
-### Browser approval policy
+### Option reference
 
-| Value | Behavior |
-| --- | --- |
-| `safe` | Automatically approves navigation, snapshots, screenshots, and console/network inspection; confirms clicks, forms, keys, selections, and typing. |
-| `never` | Skips individual approval prompts for currently allowed Playwright tools. It does not enable blocked code execution or arbitrary file uploads. |
-| `always` | Requests confirmation for every allowed Playwright tool. |
+| Option | Default | Allowed values and meaning |
+| --- | --- | --- |
+| `telegram_enabled` | `false` | Whether to start the Telegram bridge |
+| `telegram_bot_token` | `""` | Secret BotFather token; never expose it in logs or issues |
+| `telegram_allowed_user_ids` | `[]` | Allowed numeric user IDs stored as strings |
+| `telegram_allowed_chat_ids` | `[]` | Allowed numeric chat IDs stored as strings |
+| `telegram_access_mode` | `confirm_changes` | `read_only`, `confirm_changes`, `autonomous` |
+| `authorized_keys` | `[]` | One-line OpenSSH public keys allowed for SSH root login |
+| `web_terminal_auto_start_antigravity` | `false` | Start `agy` once in a new tmux session |
+| `tmux_session_name` | `antigravity-ha` | A 1–64 character session name using `[A-Za-z0-9._-]` |
+| `antigravity_tool_permission` | `request-review` | `request-review`, `proceed-in-sandbox`, `always-proceed`, `strict` |
+| `antigravity_terminal_sandbox` | `true` | Whether interactive CLI receives native `--sandbox` |
+| `antigravity_sensitive_data_access` | `false` | Diagnostic read-only access to three sensitive path classes for the interactive child while AppArmor stays on |
+| `antigravity_user_files_update_mode` | `preserve` | `preserve`, `refresh_managed`, `reset_v2`; deprecated migration-only `refresh_agents`, `refresh_all` |
+| `home_assistant_browser_auto_auth` | `true` | Manage a local-only, read-only browser identity |
+| `log_level` | `info` | `trace`, `debug`, `info`, `notice`, `warning`, `error`, `fatal` |
 
-The top-level `antigravity_approval_policy: never` is antigravity's full-auto policy and may take precedence over confirmations from `browser_approval_policy: safe` or `always`. Do not treat the browser policy as a security boundary by itself.
+The App Network setting for `22/tcp` defaults to host port `2224`. It is not a
+JSON option, and you can disable the port when SSH is unused.
 
-### Updating antigravity user files
+`always-proceed` reduces native prompts; it does not weaken AppArmor denies,
+Telegram risk reclassification, or broker confirmation. Disabling the terminal
+sandbox does not disable AppArmor.
 
-| Value | Behavior |
-| --- | --- |
-| `preserve` | Preserves the existing `/data/antigravity/config.toml` and base `AGENTS.md`. This is the default. |
-| `refresh_agents` | Replaces only the base `AGENTS.md` once with the default from the current app version. |
-| `refresh_all` | Resets the base `AGENTS.md` and user `config.toml` once to the current app defaults. |
+### After changing settings
 
-`refresh_all` can remove user-added models, providers, MCP servers, and other settings. Originals are saved in a root-only backup under `/data/antigravity/backups/user-files`, but that backup is also sensitive because it can contain credentials and internal endpoints. After confirming the refresh, return the mode to `preserve`; otherwise, the selected refresh runs once again when you install the next app version.
+Save the configuration and restart the App. If you changed native settings,
+plugin or MCP data, terminal profiles, or Telegram mode, end existing
+Antigravity processes and start a new session. If the sensitive profile cannot
+attach, interactive Antigravity must fail to start instead of falling back to
+broader permissions.
 
-## Ways to connect
+## Access methods
 
-### Home Assistant Web UI and mobile access
+### Web terminal
 
-This is the simplest option.
+**OPEN WEB UI** is a ttyd/tmux terminal behind Home Assistant Ingress
+authentication. Bash opens by default and you run `agy` yourself. tmux exists
+only to reconnect interactive terminal sessions. Multiple tabs may share a
+session, so leave it open only for trusted administrators.
 
-1. Sign in to Home Assistant through its mobile app or a mobile browser.
-2. Open **Settings → Apps → Antigravity for Home Assistant → OPEN WEB UI**.
-3. On a small screen, landscape orientation or an external keyboard may be more comfortable.
+### SSH
 
-Ingress opens inside Home Assistant authentication, so you do not need to expose a separate Web UI port on your router. Remember that this interface is a terminal, not a standalone mobile chat app.
+SSH is optional and accepts public keys only.
 
-### Public-key SSH
-
-SSH is optional. If you do not use it, leave `authorized_keys` empty and disable the Network port.
-
-1. If the SSH client does not already have an Ed25519 key, create one. This example also supports optional testing from a PC:
-
-   ```powershell
-   ssh-keygen -t ed25519
-   Get-Content "$HOME\.ssh\id_ed25519.pub"
-   ```
-
-2. Add the single output line beginning with `ssh-ed25519` to `authorized_keys`, then restart the app. Keep the private key only on the client that connects; never paste it into documentation, logs, or issues.
-3. In the app's **Network** settings, check the host port for `22/tcp`. The default is `2224`.
-4. Add a specific host alias to `~/.ssh/config` on your PC:
-
-   ```sshconfig
-   Host antigravity-ha
-     HostName homeassistant.local
-     User root
-     Port 2224
-     IdentityFile ~/.ssh/id_ed25519
-     IdentitiesOnly yes
-   ```
-
-5. Confirm that regular SSH works first:
-
-   ```powershell
-   ssh antigravity-ha
-   ```
-
-Password and keyboard-interactive authentication are blocked. For access away from home, do not publish the SSH port. Connect to your home network through a trusted VPN or mesh VPN first.
-
-### ChatGPT mobile Remote
-
-ChatGPT mobile Remote connects directly to the HA app's public-key SSH endpoint. The HA app image includes both antigravity CLI and the Remote app server, so no separate Mac/Windows desktop app or relay host is required.
-
-```text
-ChatGPT mobile Remote
-  → public-key SSH (HA host:2224, root)
-  → antigravity app server bundled in the HA app
-  → /config remote project
-```
-
-1. In the Web UI, complete `ha-antigravity-login` and confirm that `antigravity login status` reports a signed-in session.
-2. Add only the **public key** paired with the key used by mobile Remote to `authorized_keys`, then restart the app.
-3. Check the host port for `22/tcp` in the app's **Network** settings. The default is `2224`.
-4. When adding an SSH connection in ChatGPT mobile Remote, use these values:
-
-   | Field | Value |
-   | --- | --- |
-   | Host | HA hostname or IP reachable from the phone |
-   | Port | Host port shown in App Network, default `2224` |
-   | User | `root` |
-   | Authentication | Private key matching the public key in `authorized_keys` |
-   | Project path | `/config` |
-
-5. When connected, mobile Remote uses `antigravity` from the SSH login shell to start the app's bundled app server and opens the antigravity project in `/config`.
-
-A regular SSH client opens a Bash shell in `/config`; it does not automatically open the antigravity interface. Run `ha-antigravity` or `antigravity` manually in that case. Mobile Remote bootstraps the remote app server and therefore opens the antigravity task directly. The shared Web UI `tmux` session and a mobile Remote session are separate by default.
-
-From mobile, you can start a task, continue an existing task, send follow-up instructions, approve actions, and inspect diffs, tests, and terminal results. The HA app must be running and its SSH host port must be reachable from the phone. For access away from home, use a trusted VPN or mesh VPN instead of publishing the SSH port. Menu names and Remote availability can vary by ChatGPT app version, plan, region, and workspace policy.
-
-## Common use cases
-
-### Bubble Card mobile dashboard
-
-Bubble Card is not bundled with this app. Ask antigravity to check whether it is installed and how the current dashboard is stored before planning changes.
-
-```text
-Check whether Bubble Card is already installed and how my current dashboard is stored.
-Preserve the existing dashboard and draft a one-column mobile view that brings together
-my most-used lights, climate controls, and security status.
-Show me the files to change and the diff first. After I approve, apply it and check
-the screen, console, and network errors at both 1440x900 and 390x844.
-```
-
-YAML-mode and storage-mode dashboards require different update methods. Prefer supported UI or API paths over direct `.storage` edits, and never change a dashboard before confirming how it is stored.
-
-### Automation ideas based on daily routines
-
-```text
-My weekday routine is wake at 07:00, leave at 08:10, and return around 19:00.
-Inspect my current presence, light, temperature, and door sensors and automations
-in read-only mode. Suggest five new automations in priority order, including the benefit,
-trigger and conditions, false-trigger safeguards, and required entities.
-Identify overlaps with existing automations and do not apply anything yet.
-```
-
-After reviewing the suggestions, ask antigravity to implement them one at a time. After a change, check not just the YAML syntax but also the actual reload and fresh state.
-
-### Entity cleanup
-
-```text
-Find entities that are not referenced by dashboards, automations, scripts, or templates.
-Separate disabled, unavailable, duplicate-name, and stale-device-link candidates.
-Show each candidate's references and removal risk in a table, and do not change the registry.
-```
-
-“Unused” is not sufficient proof that an entity can be deleted. Integrations can use entities dynamically, and external apps can hold references. Treat deletion, disabling, and renaming as separate approvals.
-
-### Diagnose configuration errors
-
-```text
-Diagnose recent Home Assistant errors in read-only mode.
-Check ha-config-check, Core/App logs, and related YAML, then rank possible causes
-by strength of evidence. Propose the smallest change, but do not apply it yet.
-```
-
-See the [prompt collection](../docs/examples.en.md) for more examples.
-
-## Validate the interface with the Headless browser
-
-New antigravity sessions automatically receive image-managed Playwright tools. You do not need to install a separate browser package or register an MCP server.
-
-- Home Assistant dashboards use antigravity's internal `http://127.0.0.1:8099` gateway.
-- Do not open this address in an external PC browser or through Ingress.
-- The default viewport is `1440x900`; change it to `390x844` to compare the mobile layout.
-- Check screenshots, console warnings/errors, and network request status together.
-
-```text
-Open my current Home Assistant dashboard in the real browser.
-At 1440x900 and 390x844, inspect screenshots, console errors and warnings,
-failed network requests, clipped cards, and overlapping buttons.
-Do not click or enter anything that changes the interface.
-```
-
-Automatic authentication is enabled by default. The app creates or reuses a dedicated local-only, non-admin user in the `system-read-only` group. This user cannot write settings, but it can see all entity states. Screenshots, snapshots, and console/network output can reveal locations, entities, internal URLs, and user information, so review them before sharing.
-
-## Verified Home Assistant memory
-
-`ha_memory` is a local SQLite/MCP feature implemented by this project. It is separate from OpenAI antigravity Memories.
-
-### What does it remember?
-
-- Area, device, entity, and automation structure verified through the Core API
-- Durable aliases, real-world purposes, preferences, notes, and informal relationships explicitly provided by the user
-- An audit history of candidates, verification, application, conflicts, and rollback
-
-It does not store:
-
-- Raw conversations
-- Current or historical states and timestamps
-- Raw automation action or template content
-- Full API responses, logs, or web pages
-- Tokens, passwords, or Authorization headers
-
-### How does it work?
-
-1. For a new HA request, it searches only a small memory result relevant to the current question.
-2. When the user clearly states durable information about one exact target, it attempts candidate → verification → application within the same request.
-3. It asks for clarification instead of storing ambiguous information.
-4. Fresh Core API results take priority for HA structure.
-5. When new information conflicts with existing evidence, it records a conflict instead of silently overwriting the old value.
-
-```text
-We call light.kitchen_main the “prep light” in our home,
-and we use it while preparing breakfast. Remember this for future tasks.
-```
-
-Administrator commands for checking the state:
+1. Create an Ed25519 key pair on the client.
+2. Add only its one-line public key to `authorized_keys`. Never place a private
+   key in the App configuration.
+3. Restart the App and check the host port under Network.
+4. Connect from the local network or a VPN.
 
 ```bash
-ha-memory status
-ha-memory search "prep light"
-ha-memory show entity:light.kitchen_main
-ha-memory conflicts --status open
+ssh -p 2224 root@homeassistant.local
 ```
 
-Do not delete the memory database when its state is `empty`, `degraded`, or `stale`. It may still be learning the initial structure or recovering from a temporary Core connection failure, and it preserves the last successful snapshot.
+Password and keyboard-interactive login are disabled. Do not port-forward TCP
+`2224` directly from a router; use a trusted VPN or mesh VPN.
 
-This feature does not mean the model trains itself or operates your home without approval. Version `0.9.7` remains experimental, and the complete natural-language memory-to-recall flow has not yet been publicly validated on real HAOS hardware.
+## Telegram
 
-## App bug and feature reports
+> [!CAUTION]
+> An actual Antigravity 1.1.11 local canary first reproduced the shared-HOME
+> global MCP launch. In the dedicated Telegram HOME/safe-cwd worker, that marker
+> and the `/config/.agents` marker did not run, and managed customization
+> tampering failed closed. Keep `telegram_enabled: false` until actual HAOS OAuth
+> success and AppArmor enforcement are verified.
 
-Starting with `0.9.7`, the image-managed `$ha-feedback` Skill investigates app bugs and feature ideas in read-only mode and creates a sanitized report.
+Run `ha-telegram-login` from a trusted local Ingress/SSH controlling TTY to
+complete native first-run OAuth for the separate Telegram identity. Do not copy
+the interactive HOME credentials or guess undocumented credential paths.
 
-```text
-$ha-feedback bug <observed symptom>
-$ha-feedback feature <improvement request>
-```
+### Create a bot
 
-- `bug` checks the app scope, collects an allowlisted environment summary, performs safe reproduction/diagnosis, compares expected and actual behavior, and records hypotheses and unverified scope.
-- `feature` checks current behavior and documentation, existing solutions and similar issues, the user problem and alternatives, then acceptance criteria and a validation plan.
-- The workflow never changes Home Assistant configuration, calls a service, reloads/restarts, updates, recovers, or restores anything.
-- Logs and screenshots are excluded by default. Even a short sanitized log excerpt is included only after its exact text is previewed separately and approved by the user. Screenshots and other files are never uploaded automatically; attach one through the Web Form only after reviewing it yourself.
-- A possible vulnerability stops all public search, preview, and submission. Use [private vulnerability reporting](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/security/advisories/new).
+1. Run `/newbot` with [@BotFather](https://t.me/botfather) in Telegram.
+2. Save the issued HTTP API token in `telegram_bot_token`.
+3. Prepare one authorization method below, set `telegram_enabled: true`, and
+   restart the App.
 
-Reports are stored in a private bundle:
+Treat the bot token like a password. Never include it in screenshots, shell
+history, logs, or support payloads.
 
-```text
-/config/antigravity-workspace/feedback/<UTC>-<kind>-<report-id>/
-├── report.json
-├── public-report.md
-└── submission.json  # created only after a successful direct submission
-```
+### Authorize users
 
-Directories use `0700` and files use `0600`. Automated validation does not replace your final review of the entire `public-report.md` body. If the external issue-creation result is uncertain, the bundle may contain a hidden `.submission.lock` instead of a successful receipt; it blocks another direct submission of the same report.
+#### Static user and chat intersection
 
-The target is fixed to `Kanu-Coffee/antigravity-for-home-assistant`. GitHub sign-in is optional:
+Set both `telegram_allowed_user_ids` and `telegram_allowed_chat_ids`. The bridge
+processes a request only when its sender user ID and current chat ID appear in
+the corresponding lists. A user list or a chat list alone grants no access.
+Store IDs as quoted strings rather than JSON or YAML numbers.
+
+#### Local one-time pairing
+
+If you do not know the static IDs, create an expiring token in the App's Web
+terminal or SSH.
 
 ```bash
-ha-feedback github status
-ha-feedback github login
-ha-feedback github logout
+ha-telegram-pair create --ttl 5m
 ```
 
-Before signing in, review the warning that credentials under `/data/github-cli` can be included in Home Assistant App backups. The Skill shows similar issues and the exact repository, title, and body first, then uses a cryptographically random, ten-minute, single-use token and a separate confirmation of that preview in the current conversation. A wrong, expired, used, or failed confirmation requires a fresh preview. If candidate search or the final report-ID duplicate check is unavailable, it creates no issue. If authentication is unavailable or submission fails, it opens a short prefilled Issue Form without putting the long report in the URL; paste the preserved `public-report.md` manually. Confirmed direct submission sends the validated body to `gh issue create --body-file -` over stdin. Do not put PAT or token values in App settings.
+Send `/start TOKEN` to the bot before the token expires. Issuance is local-only,
+the plaintext is shown once, and it cannot be reused after consumption. TTL
+accepts seconds (`30s`) or minutes (`5m`) up to ten minutes.
 
-## Safe change procedure
-
-Use this sequence:
-
-```mermaid
-flowchart LR
-    A["Read-only inspection"] --> B["Plan, impact, and backup"]
-    B --> C["Review diff and approve"]
-    C --> D["Small change"]
-    D --> E["Syntax, reload, and fresh API validation"]
-    E --> F["Check interface and logs"]
+```bash
+ha-telegram-pair list
+ha-telegram-pair revoke AUTHORIZATION_ID
 ```
 
-1. Ask for a read-only inspection first.
-2. Prepare a Home Assistant backup or a Git checkpoint for `/config`.
-3. Review the files, entities, and services to be changed, along with the expected diff.
-4. Apply only a small scope at a time.
-5. Run `ha-config-check`, perform any necessary reload, and check fresh state.
-6. Recheck dashboards with desktop and mobile browser sizes.
+Handle list output and authorization IDs only where needed. v2 has no
+log-generated automatic deep link, six-digit PIN, or Telegram `/unpair` command.
 
-Perform the following actions only when they are explicitly included in the current request or separately approved immediately before execution:
+### Modes and change policy
 
-- Unlocking doors, opening garage doors or gates, or disarming alarms
-- Actions affecting safety or property, including heating, water, and access control
-- Shutting down or rebooting the HAOS host
-- Restoring a backup
-- Removing apps, updating the OS, or deleting databases
+| Operation | `read_only` | `confirm_changes` | `autonomous` |
+| --- | --- | --- | --- |
+| State, service, and bounded log reads | Allowed | Allowed | Allowed |
+| Dashboard observation | Allowed | Allowed | Allowed |
+| Supported `/config` change | Denied | Confirm every time | Only broker-verified low risk automatically |
+| HA `service_call` | Denied | Confirm every time | Confirm every time |
+| Restart/update/restore/delete | Denied | Unsupported and denied | Unsupported and denied |
 
-Use Home Assistant UI or API paths for `.storage` whenever possible, and never write directly to the Recorder database. Never print or share `SUPERVISOR_TOKEN`, `auth.json`, SSH private keys, `secrets.yaml`, or browser tokens.
+The minimal broker currently classifies all `service_call` operations as high
+risk because verified device safety metadata is unavailable. Prompts and modes
+cannot lower the risk of door locks, alarms, safety heating or water, host/Core
+restart, backup restore, updates, removals, or credential and permission changes.
 
-## Updating the app
+### Commands and sessions
 
-1. If possible, create a Home Assistant backup and finish any in-progress antigravity work.
-2. Refresh the App store repository and use the normal **Update** action.
-3. Do not completely remove the app or initialize `/data`.
-4. Start the app after the update, exit the existing antigravity process, and open a new session.
-5. Check `antigravity login status`, required MCP tools, and key settings.
-
-Normal updates are designed to preserve antigravity authentication and settings, SSH host keys, verified memory, and the optional `/data/github-cli` login in `/data`. `antigravity_user_files_update_mode: preserve` is the default. If you leave `refresh_agents` or `refresh_all` selected when upgrading to the next version, the selected files refresh once again for that version. Return the setting to `preserve` after a one-time refresh.
-
-It is normal for Web UI/tmux and SSH connections to drop briefly during an update.
-
-## Helper commands
-
-| Command | Purpose |
+| Command | Behavior |
 | --- | --- |
-| `ha-antigravity` | Start antigravity in `/config` |
-| `ha-antigravity-login` | Start device-code sign-in |
-| `ha-config-check` | Check the Home Assistant configuration |
-| `ha-api` | Call the Core REST API |
-| `supervisor-api` | Call the Supervisor API |
-| `ha-core-logs` | Read Core logs |
-| `ha-addon-logs SLUG` | Read logs for a named app |
-| `ha-memory status` | Check verified memory state |
-| `ha-memory search QUERY` | Search relevant HA structure and applied memory |
-| `ha-feedback collect bug\|feature --input FILE` | Create a sanitized feedback report from private JSON |
-| `ha-feedback validate REPORT` | Check schema, privacy, and rendered-body parity |
-| `ha-feedback render REPORT` | Regenerate public Markdown from validated JSON |
-| `ha-feedback github status\|login\|logout` | Manage optional GitHub CLI authentication |
-| `ha-feedback github url REPORT` | Show the short prefilled Issue Form fallback |
-| `ha-feedback github submit REPORT` | Preview candidates and the exact payload; submit only with a confirmed ten-minute, single-use token |
-| `ha-browser-auth-status` | Check Headless browser authentication |
-| `ha-browser-network-info` | Check the internal dashboard gateway connection |
+| `/start` | Authorization status and basic guidance |
+| `/help` | Available commands and current mode |
+| `/status` | Bridge and current session status |
+| `/new` | Start a new conversation for that user and chat |
+| `/cancel` | Request cancellation of the current queued task |
 
-Helpers attach tokens automatically. Do not expose runtime tokens with `env`, `printenv`, `set`, `export -p`, or `curl -v`.
+Requests for one user and chat are processed in order with a bounded queue,
+timeouts, and response size limits. `/cancel` is not a rollback command for work
+that already completed externally.
+
+### Approval security
+
+The Telegram model process receives neither the raw Supervisor token nor the
+final execution socket; it can only create typed proposals. The bridge retrieves
+the proposal from the broker again before displaying its preview. Confirmation
+is bound to proposal ID, the same user and chat, preview digest, and a short TTL.
+A one-time 256-bit capability plus an idempotency key prevents reuse and
+duplicate execution. A changed preview or precondition, or an expired approval,
+requires a new proposal.
+
+The broker-generated YAML preview shows a bounded, secret-redacted before/after
+view plus the full mutation digest. The only configuration change currently
+allowed to write and reload is the single canonical
+`input_boolean: !include <file>.yaml` target in `configuration.yaml`. It succeeds
+only after memory begin, config check, `input_boolean.reload`, and fresh-API
+memory verification; other YAML remains preview-only and is rejected at
+execution.
+
+## Home Assistant capabilities
+
+### Helpers and read MCP
+
+| Tool | Purpose |
+| --- | --- |
+| `ha-config-check` | Validate Home Assistant configuration |
+| `ha-core-logs` | Bounded Core log access |
+| `ha-addon-logs ADDON_SLUG` | Read logs for one named App |
+| `ha-api` | Core API helper |
+| `supervisor-api` | Supervisor API helper |
+| `ha-memory status` | Check memory schema, freshness, and degraded status |
+| `ha-feedback` | Prepare a secret-free bug or feature report candidate |
+
+The Antigravity plugin tools `ha_read_config`, `ha_read_state`, `ha_read_states`,
+`ha_read_services`, `ha_read_system_info`, `ha_read_registry`,
+`ha_read_history`, `ha_read_traces`, `ha_read_core_logs`, and `ha_read_app_logs`
+project fixed endpoints and bound output size. `ha_validate_config` checks the
+configuration without a reload, while `ha_verify_state` compares a fresh exact
+entity API result with an expected state and optional lower timestamp bound.
+The raw Supervisor token is not passed to the model. Trace tools omit raw
+configuration, actions/results, triggers, and context. API helpers are
+administrator surfaces; a diagnostic finding alone does not authorize a
+service call or modification.
+
+### Dashboard browser
+
+The `playwright` MCP observes dashboards at the container-local
+`http://127.0.0.1:8099/`. Review relevant pages at desktop 1440×900 and mobile
+390×844, including a visible snapshot, screenshot, console warnings and errors,
+and failed network requests.
+
+With `home_assistant_browser_auto_auth: true`, the App creates or reuses a
+local-only, non-admin user whose sole group is `system-read-only`. Check it with
+`ha-browser-auth-status`. Disabling the option shows the normal login screen in
+the next browser session and does not automatically delete the managed identity.
+Complete removal happens only when the user explicitly runs
+`ha-browser-auth-remove`.
+
+Even a read-only identity is not an absolute boundary against permission defects
+in custom integrations. Keep dashboard validation observational and never
+bypass Core TLS failures.
+
+### Validated memory
+
+Memory is stored at `/data/antigravity-ha-memory/memory.sqlite3`. It never loads
+the full database into a prompt; it searches only bounded results relevant to
+the current question and exact subject. One clear durable fact stated directly
+by the user may become explicit memory. Other learning follows candidate →
+verified → applied.
+
+Current or historical state values, timestamps, raw conversations, raw
+automation logic, credentials, and unsupported inference are not retained.
+`empty`, `degraded`, and `stale` differ from a verified no-result. Use
+`ha-memory status` and bounded `search`, `history`, and `conflicts` for health and
+audit. Memory rollback compensates only a semantic event; it never rolls back HA
+configuration or a device state.
+
+### Configuration changes
+
+Use this sequence even in interactive Antigravity when changing HA configuration.
+
+1. Inspect relevant files and the current Git state.
+2. Prepare the smallest diff and a recoverable checkpoint.
+3. Record a memory change expectation for supported persistent changes.
+4. Run `ha-config-check` after editing.
+5. If validation fails, do not reload or restart; fix or restore the scoped
+   change.
+6. After any required reload, verify with a fresh HA API result.
+
+Direct `.storage` edits and Recorder database repair are not normal workflows. A
+diagnostic finding alone does not authorize a restart, update, removal, restore,
+or service call.
+
+## AppArmor and sensitive data
+
+### Always enforce
+
+Supervisor enables AppArmor by default. The redundant metadata default is
+omitted, while the custom `apparmor.txt` in the App directory replaces the
+default profile. No user option, Telegram command, or migration mode can turn
+it off, and the App does not require disabling HA protection mode. A failed
+profile attach must not fall back to broader permissions.
+
+### Sensitive-data option
+
+`antigravity_sensitive_data_access` is not an AppArmor on/off switch. It selects
+the **discrete top-level execution profile (`Px` transition)** used by interactive
+Antigravity started from Ingress or SSH.
+
+| Path class | Default `false` | `true` |
+| --- | --- | --- |
+| `/config/secrets.yaml` | Read/write denied | Diagnostic read-only; write denied |
+| `/config/.storage/**` | Read/write denied | Diagnostic read-only; write denied |
+| Recorder database and sidecars | Read/write denied | Diagnostic read-only; write denied |
+
+Even with `true`, rename, truncate, delete, locking, database repair, and full
+dumps remain disallowed. Never copy values that were read into output, memory,
+screenshots, proposals, or artifacts. Prefer supported APIs and secret key names.
+
+### Items that stay denied
+
+Regardless of the option, Telegram workers, browser, memory, broker, and general
+shells receive no additional sensitive-read access. SSH private and host keys,
+OAuth, App, browser and bot tokens, backups, private material under `/config/ssl`,
+cloud auth, and broker capabilities remain denied outside their owning process.
+
+Interactive native OAuth uses `/data/home`; the Telegram worker uses the separate
+`/data/antigravity-ha/telegram-home`. The identities are not shared, but AppArmor
+cannot fully distinguish a legitimate authentication read from a prompt- or
+tool-induced credential read inside either owning process. Native permissions,
+the sandbox, shell-free worker, discrete execution profiles, output redaction, and the broker
+are additional defenses, not complete token isolation. Telegram is off by
+default; review the actual HAOS OAuth/AppArmor gate and documented residual risk.
+
+## Updates, migration, and rollback
+
+### Before an update
+
+1. Make a full Home Assistant backup and confirm it is restorable.
+2. Record the working App version and, when possible, immutable image digest.
+3. Inspect the Git state and uncommitted changes under `/config`.
+4. Record OAuth, Web UI/SSH, memory, browser, and Telegram authorization status
+   without secrets.
+5. Review release evidence for amd64/aarch64, AppArmor enforcement, and migration.
+
+### Migration modes
+
+| Mode | Preservation and change scope |
+| --- | --- |
+| `preserve` | Preserve OAuth and user settings/MCP/plugins; canonically security-refresh the App-owned HA plugin once per version |
+| `refresh_managed` | Keep that preservation and plugin refresh, then root-only back up and merge ownership-recorded settings keys and permission rules |
+| `reset_v2` | Perform the same managed-settings merge strictly; fail closed when ownership state is absent or ambiguous |
+
+All three modes exclude `/config`, native OAuth, SSH keys, browser identity,
+memory DB, and user-owned plugins and MCP servers from reset targets. Regardless
+of mode, the App-owned `home-assistant` plugin is refreshed from the
+canonical image copy once per App version when its ownership marker is safe. A
+new install records the current version marker. An existing marker-less plugin
+with that name is treated as a user-owned conflict and stops startup without
+being overwritten. Other replaced files first receive a root-only backup under
+`/data/antigravity-ha/backups/native-files/`.
+
+Global `mcp_config.json` receives an empty `mcpServers` default only when missing;
+an existing file is byte-preserved in every mode. HA MCP servers, rules, and
+skills live inside the App plugin. `refresh_managed` and `reset_v2` limit
+re-execution with per-App-version transaction state, but returning the option
+to `preserve` after review is recommended.
+
+### v1 migration cautions
+
+- v1 managed-file refresh values map conservatively to `refresh_managed` and are
+  never promoted automatically to `reset_v2`. The v2 schema accepts those two
+  deprecated values only so Supervisor can start the upgraded container. After
+  user-file and managed-plugin bootstrap succeeds, the App posts the full
+  current option object back to the fixed Supervisor self-options endpoint with
+  only this key changed to `refresh_managed`. An unavailable request leaves the
+  legacy value intact and retries on the next App start.
+- Previous provider credentials and App-specific tokens are not imported as
+  native authentication. Google OAuth may need to be completed again.
+- Previous non-native settings and guidance files may be preserved, but do not
+  assume Antigravity 1.1.11 loads them as native settings or plugins.
+- If the public v1 managed-file journal remains, v2 first recovers an unfinished
+  `config.toml` or `AGENTS.md` replacement from its verified legacy backup. It
+  stops before writing native files when that recovery is corrupt or ambiguous.
+- Legacy Telegram pairing and sessions are not trusted. Authorize again with
+  both static lists or a new local pairing. v2 never reuses the old
+  authorization/pairing files; it moves them into the root-only
+  `/data/antigravity-ha/quarantine/v1-telegram/` directory.
+
+### Rollback
+
+Automatic HAOS rollback is not guaranteed. Recover in this order when a problem
+occurs.
+
+1. Stop Telegram and mutation work, then invalidate pending approvals.
+2. Stop the App and inspect migration status and logs without secrets.
+3. Set the update mode to `preserve`.
+4. Reinstall a previous immutable version or image if Supervisor offers it.
+5. Restore only required App-managed files from a verified transaction backup.
+6. If memory schema changed, first verify compatibility with that version's
+   backup.
+7. Smoke-test Ingress/SSH, OAuth, read API, memory, and browser; enable Telegram
+   last.
+
+Do not delete `/config`, restore a database, or restore a Home Assistant backup
+without the user's explicit current confirmation.
 
 ## Troubleshooting
 
-### The app does not start
+### App installation or startup fails
 
-- Find the first fatal error in the App log.
-- The app intentionally refuses to start if `/config` is missing or not writable.
-- A warning that no public key is configured is normal if the Web UI works; only SSH is disabled.
+- Confirm the device is `amd64` or `aarch64`.
+- Confirm the release tag, `config.yaml` version, and GHCR manifest agree.
+- Inspect App/Supervisor logs for init and per-service errors without sharing
+  tokens or response bodies.
+- Never work around a failed AppArmor profile attach by disabling protection mode.
 
-### The Web UI stays on the reconnect screen
+### OAuth fails
 
-- Confirm that the app is running, then inspect the App log for nginx or ttyd errors.
-- Check whether multiple tabs are attached to the same tmux session.
-- Resetting the session terminates the running antigravity process and commands. Use this only when necessary:
+- Confirm the Web terminal or SSH session provides a controlling TTY.
+- Run `ha-antigravity-login` again and follow the Google flow shown by the CLI.
+- Do not use nonexistent login/status subcommands or arbitrary API-key
+  environment variables.
+- Never print or manually edit the OAuth directory.
 
-  ```bash
-  tmux kill-session -t antigravity-ha
-  ```
+### Telegram does not respond
 
-### antigravity sign-in fails
+- Check `telegram_enabled`, bot token format, and whether the App restarted.
+- For static authorization, check the intersection of both user and chat lists.
+- For pairing, check TTL, one-time consumption, and `ha-telegram-pair list`.
+- Use `/status` and App logs to inspect queue, worker, and broker health.
+- If a change preview changed or expired, submit a new request and approve again.
 
-- Run `antigravity login status`.
-- Confirm that your account or workspace allows device-code sign-in.
-- Do not print the app's `auth.json` file.
-- See [antigravity authentication](https://developers.openai.com/antigravity/auth) for the latest official procedure.
+### Browser or memory fails
 
-### SSH connection fails
+- If a login page appears, run `ha-browser-auth-status`. `disabled` can be the
+  intentional option state.
+- Restart the App and browser session after changing the browser option.
+- Use `ha-memory status` to distinguish `empty`, `degraded`, and `stale`.
+- Do not reset recovery Web UI/SSH merely because browser or memory failed.
 
-- Confirm that `authorized_keys` contains one correct public-key line.
-- Confirm that the app Network host port matches `Port` in `~/.ssh/config`.
-- Use `ssh -v antigravity-ha` first to inspect the host, port, and selected key. Redact private paths and addresses before sharing output.
-- Do not ignore or immediately delete a “host key changed” warning. Verify the fingerprint through the trusted app Web UI first.
+### Configuration change fails
 
-### The dashboard browser only shows a sign-in page
+- Inspect `ha-config-check` and the scoped diff.
+- Never reload or restart Core while validation fails.
+- Do not interpret a broker precondition mismatch, expired capability, or
+  `in_doubt` as success. Read fresh state and have a human assess the result.
 
-```bash
-ha-browser-auth-status
-ha-browser-network-info
-```
+## Verification status and known limitations
 
-- Confirm that `home_assistant_browser_auto_auth` is ON.
-- Restart the app and the existing antigravity/browser session.
-- Only if it continues to fail, run `ha-browser-auth-setup` and inspect its sanitized error.
-- Do not automatically modify `trusted_networks`, `trusted_proxies`, or `.storage` as a workaround.
+As of the repository state on 2026-08-11, static and component tests cover the
+native CLI wrapper, read/change brokers, Telegram binding and replay, memory,
+browser contracts, migration, and AppArmor policy parsing. Success in a generic
+development environment cannot mark these items `VERIFIED`:
 
-### Memory reports `empty`, `degraded`, or `stale`
+- Clean install, start, and update on real HAOS amd64 and aarch64
+- Native Antigravity OAuth and plugin discovery on both architectures
+- Discrete custom AppArmor execution profiles attached in enforce mode on HAOS
+- Actual pull of the public GHCR generic manifest and per-architecture digests
+- End-to-end dashboard, all three Telegram modes, all migration modes, and rollback
 
-```bash
-ha-memory status
-```
+The App therefore remains experimental. Check the release CI, Builder, GHCR
+manifest, and HAOS acceptance record for each item. Do not interpret plans or
+unit tests in these documents as validation on a real device.
 
-Give Core time to become ready and check again. Do not directly delete or edit the database or WAL files. Collect the app version, Core version, and the status's closed error code, but do not share raw tokens or API responses.
+## Support reports
 
-### Direct GitHub feedback submission fails
+Before reporting a problem, collect the App version, architecture, reproduction
+steps, expected and actual behavior, and checks performed. `ha-feedback` can
+prepare a secret-free report candidate, but review the final payload yourself.
+Never upload OAuth, Supervisor, bot or browser tokens, `secrets.yaml`, `.storage`,
+private keys, internal URLs, or complete raw logs to a GitHub issue.
 
-- If `ha-feedback github status` reports unauthenticated, explicitly run `ha-feedback github login` or use the Issue Form fallback.
-- The helper does not automatically retry after authentication, candidate/duplicate search, or network failure. It preserves `public-report.md` so you can review it again and paste it into the Web Form.
-- If `gh` may have created an issue but the helper cannot confirm the returned URL or write `submission.json`, it retains a hidden `.submission.lock` and blocks direct retry for that report. Do not delete the lock. Search the fixed repository for the report ID first, then use the Web Form fallback.
-- Do not bypass the dedicated configuration with `GH_TOKEN` or `GITHUB_TOKEN`, and never print or include token values in a report.
-
-### A setting was changed incorrectly
-
-1. Stop the related antigravity task and automations.
-2. Revert the change with a Git diff or backup.
-3. Run `ha-config-check`.
-4. Restore a full backup only after reviewing the impact and granting separate approval.
-
-## Remove the automatic browser user and uninstall the app
-
-If you no longer want the Headless browser identity created by the app:
-
-1. Save `home_assistant_browser_auto_auth` as OFF.
-2. Restart the app and any existing browser/antigravity sessions.
-3. Check the state, then remove it:
-
-   ```bash
-   ha-browser-auth-status
-   ha-browser-auth-remove
-   ```
-
-4. After removal completes, stop and uninstall the app if desired.
-
-Before uninstalling, decide how to handle any antigravity configuration and authentication, memory, and SSH identity in `/data` that you need to retain. Backups can contain credentials and sensitive Home Assistant context.
-
-## Limitations and support
-
-- The app is amd64-only, `stage: experimental`, and `boot: manual` by default.
-- It does not bundle or automatically install Bubble Card or other custom cards.
-- The Web UI is a terminal, not a dedicated chat interface.
-- Automation and dashboard results vary by environment and prompt and require human review.
-- Public validation of the complete `0.9.7` natural-language memory loop on real HAOS hardware is still incomplete.
-- Automated validation does not create a real GitHub issue without separate explicit approval.
-- Supervisor endpoints and OpenAI Remote availability can vary with Home Assistant/OpenAI versions and policies.
-
-Before requesting support, follow [SUPPORT.md](../SUPPORT.md) to remove tokens, internal URLs, entities, and user information. Use [GitHub Issues](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/issues) for general problems and the private process in [SECURITY.md](../.github/SECURITY.md) for vulnerabilities.
-
-This is an unofficial community project. It is not affiliated with or endorsed by OpenAI, Home Assistant, or Nabu Casa. Source is distributed under the [Apache License 2.0](../LICENSE).
+- [Repository README](../README.en.md)
+- [v2 documentation index](../docs/v2/README.md)
+- [Security contract](../docs/v2/security.md)
+- [Telegram contract](../docs/v2/telegram-spec.md)
+- [Migration and release contract](../docs/v2/migration-release.md)

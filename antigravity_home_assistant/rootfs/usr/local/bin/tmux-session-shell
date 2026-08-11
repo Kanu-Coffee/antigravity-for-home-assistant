@@ -17,4 +17,4 @@ if antigravity_ha_config_true 'web_terminal_auto_start_antigravity'; then
   fi
 fi
 
-exec /bin/bash -l
+exec /usr/local/libexec/ha-interactive-shell --login

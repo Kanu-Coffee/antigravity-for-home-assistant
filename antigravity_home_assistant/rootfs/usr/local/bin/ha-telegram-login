@@ -1,0 +1,54 @@
+#!/bin/bash -p
+set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
+unset ANTIGRAVITY_TOKEN
+
+readonly TELEGRAM_HOME=/data/antigravity-ha/telegram-home
+readonly SAFE_WORKSPACE=/usr/local/share/antigravity-ha/telegram-workspace
+readonly LOCK_PATH=/run/antigravity-ha/telegram-home.lock
+
+if (( $# != 0 )); then
+  printf 'Usage: ha-telegram-login\n' >&2
+  exit 64
+fi
+if [[ ! -t 0 || ! -t 1 ]]; then
+  printf 'ha-telegram-login: a trusted local controlling terminal is required\n' >&2
+  exit 64
+fi
+
+exec 9>"${LOCK_PATH}"
+/usr/bin/flock --exclusive 9
+
+# Login intentionally starts with no MCP server, plugin, hook, global skill, or
+# custom agent. Native first-run OAuth writes directly into this dedicated HOME;
+# no credential path is guessed, copied, or shared with the interactive HOME.
+/usr/local/libexec/ha-telegram-home-bootstrap --login --lock-held
+
+printf '%s\n' \
+  'Starting native Antigravity first-run login for the isolated Telegram identity.' \
+  'Complete authentication, then exit Antigravity to restore the managed Telegram plugin.' >&2
+
+restore_runtime_customization() {
+  /usr/local/libexec/ha-telegram-home-bootstrap --runtime --lock-held
+}
+
+restore_on_exit() {
+  local native_status=$?
+  trap - EXIT
+  if ! restore_runtime_customization; then
+    printf 'ha-telegram-login: failed to restore the managed Telegram customization\n' >&2
+    exit 1
+  fi
+  exit "${native_status}"
+}
+trap restore_on_exit EXIT
+
+cd "${SAFE_WORKSPACE}"
+/usr/bin/env -i \
+  AGY_CLI_DISABLE_AUTO_UPDATE=true \
+  HOME="${TELEGRAM_HOME}" \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  TERM=xterm-256color \
+  /usr/local/libexec/antigravity-real --sandbox --disable-slash-commands

@@ -53,7 +53,7 @@
     "os_version": "17.0",
     "arch": "amd64",
     "app_options": {
-      "antigravity_approval_policy": "on-request",
+      "antigravity_tool_permission": "request-review",
       "antigravity_user_files_update_mode": "preserve"
     }
   }

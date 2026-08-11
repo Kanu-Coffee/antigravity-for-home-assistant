@@ -1,191 +1,337 @@
-"""Contract tests for Telegram Bot Bridge integration."""
+"""Security and packaging contracts for the Telegram bridge v2."""
 
-import json
 from pathlib import Path
+import json
+import os
+import stat
 import subprocess
-
-import pytest
-import yaml
 
 
 def test_telegram_options_in_config_yaml(addon_config: dict) -> None:
-    """Verify telegram options exist in config.yaml schema."""
     options = addon_config.get("options", {})
     schema = addon_config.get("schema", {})
 
-    assert "telegram_enabled" in options
     assert options["telegram_enabled"] is False
-    assert "telegram_bot_token" in options
-    assert "telegram_allowed_chat_ids" in options
+    assert options["telegram_bot_token"] == ""
+    assert options["telegram_allowed_user_ids"] == []
+    assert options["telegram_allowed_chat_ids"] == []
+    assert options["telegram_access_mode"] == "confirm_changes"
+    assert schema["telegram_enabled"] == "bool"
+    assert schema["telegram_bot_token"] == "password?"
+    assert schema["telegram_access_mode"] == "list(read_only|confirm_changes|autonomous)"
 
-    assert schema.get("telegram_enabled") == "bool"
-    assert schema.get("telegram_bot_token") == "password?"
-    assert "telegram_allowed_chat_ids" in schema
 
+def test_telegram_bridge_syntax_and_unit_suite(repository_root: Path, addon_root: Path) -> None:
+    bridge = addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
+    assert bridge.is_file()
 
-def test_telegram_bridge_script_syntax(addon_root: Path) -> None:
-    """Verify telegram-bridge.mjs syntax via node --check."""
-    script_path = addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
-    assert script_path.is_file()
+    syntax = subprocess.run(["node", "--check", str(bridge)], capture_output=True, text=True)
+    assert syntax.returncode == 0, syntax.stderr
 
-    result = subprocess.run(
-        ["node", "--check", str(script_path)],
+    suite = subprocess.run(
+        ["node", str(repository_root / "tests/telegram_bridge_test.mjs")],
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, f"node --check failed: {result.stderr}"
+    assert suite.returncode == 0, suite.stderr
 
-
-def test_telegram_s6_service_structure(addon_root: Path) -> None:
-    """Verify s6-overlay service definition for telegram-bot."""
-    s6_dir = addon_root / "rootfs/etc/s6-overlay/s6-rc.d/telegram-bot"
-    assert (s6_dir / "type").is_file()
-    assert (s6_dir / "type").read_text(encoding="utf-8").strip() == "longrun"
-
-    run_script = s6_dir / "run"
-    assert run_script.is_file()
-    assert "telegram-bridge.mjs" in run_script.read_text(encoding="utf-8")
-
-    user_contents = addon_root / "rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/telegram-bot"
-    assert user_contents.is_file()
-
-
-def test_telegram_bridge_script_content(addon_root: Path) -> None:
-    """Verify telegram-bridge.mjs uses isolated execution, Hermes heartbeats, and inline approvals."""
-    script_path = addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
-    content = script_path.read_text(encoding="utf-8")
-
-    assert "HeartbeatManager" in content
-    assert "sendChatAction" in content
-    assert "typing" in content
-    assert "handleCallbackQuery" in content
-    assert "inline_keyboard" in content
-    assert "chunkMarkdownSafe" in content
-    assert "cleanAiOutput" in content
-    assert "stripAnsiCodes" in content
-    assert "sendMessage" in content
-    assert "pendingApprovals" in content
-    assert "tmux new-session" in content
-    assert "runAntigravityPrompt" in content
-
-
-def test_telegram_clean_ai_output_unit(addon_root: Path) -> None:
-    """Verify cleanAiOutput strips CLI banners, thoughts, tools, and prompts properly."""
-    script_path = addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
-    test_node_code = f"""
-    const fs = require('fs');
-    const content = fs.readFileSync('{script_path.as_posix()}', 'utf8');
-    // Extract cleanAiOutput function and stripAnsiCodes
-    const stripAnsiCodes = (text) => text.replace(/\\x1B\\[[0-?]*[ -/]*[@-~]/g, "").replace(/\\r\\n/g, "\\n").trim();
-    eval(content.match(/function cleanAiOutput[\\s\\S]*?\\n\\}}/)[0]);
-
-    const sample = `
-▄▀▀▄        Antigravity CLI 1.1.11
-     ▀▀▀▀▀▀       kor59lee@gmail.com
-    ▀▀▀▀▀▀▀▀      /config
-   ▄▀▀    ▀▀▄
-  ▄▀▀      ▀▀▄
-
-────────────────────────────────────────────────────────────
-> 수신체크
-
-● Bash(ha-config-check)
-▸ Thought for 3s, 500 tokens
-  Inspecting Home Assistant State
-● Read(/config/configuration.yaml) (ctrl+o to expand)
-
-네, 정상적으로 수신되었습니다! Home Assistant 시스템이 원활하게 동작 중입니다.
-`;
-
-    const cleaned = cleanAiOutput(sample, "수신체크");
-    if (!cleaned.includes("정상적으로 수신되었습니다!")) {{
-      console.error("Cleaned text mismatch:", cleaned);
-      process.exit(1);
-    }}
-    if (cleaned.includes("Antigravity CLI") || cleaned.includes("Bash(") || cleaned.includes("Thought")) {{
-      console.error("Failed to strip artifacts:", cleaned);
-      process.exit(2);
-    }}
-    process.exit(0);
-    """
-
-    result = subprocess.run(
-        ["node", "-e", test_node_code],
+    broker_suite = subprocess.run(
+        [
+            "node",
+            str(repository_root / "tests/telegram_broker_integration_test.mjs"),
+        ],
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, f"cleanAiOutput unit test failed: {result.stderr}"
+    assert broker_suite.returncode == 0, broker_suite.stderr
 
-
-def test_telegram_extract_response_by_marker(addon_root: Path) -> None:
-    """Verify extractResponseByMarker extracts clean content between start and end tags."""
-    script_path = addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
-    test_node_code = f"""
-    const fs = require('fs');
-    const content = fs.readFileSync('{script_path.as_posix()}', 'utf8');
-    const stripAnsiCodes = (text) => text.replace(/\\x1B\\[[0-?]*[ -/]*[@-~]/g, "").replace(/\\r\\n/g, "\\n").trim();
-    eval(content.match(/function cleanAiOutput[\\s\\S]*?\\n\\}}/)[0]);
-    eval(content.match(/function extractResponseByMarker[\\s\\S]*?\\n\\}}/)[0]);
-
-    const marker = "abcd1234";
-    const sample = `
-Some pre-banner output...
-<<<AGY_OUT_START_${{marker}}>>>
-Antigravity CLI 1.1.11
-● Bash(ls)
-시스템 점검 결과 모든 서비스가 정상 작동 중입니다.
-<<<AGY_OUT_END_${{marker}}>>>
-Extra trailing log...
-`;
-
-    const extracted = extractResponseByMarker(sample, marker);
-    if (!extracted || !extracted.includes("시스템 점검 결과")) {{
-      console.error("Marker extraction failed:", extracted);
-      process.exit(1);
-    }}
-    if (extracted.includes("Antigravity CLI") || extracted.includes("Bash(ls)")) {{
-      console.error("Failed to clean inside markers:", extracted);
-      process.exit(2);
-    }}
-    process.exit(0);
-    """
-
-    result = subprocess.run(
-        ["node", "-e", test_node_code],
+    pairing_suite = subprocess.run(
+        ["node", "--test", str(repository_root / "tests/telegram_pairing_test.mjs")],
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, f"extractResponseByMarker test failed: {result.stderr}"
+    assert pairing_suite.returncode == 0, pairing_suite.stderr
 
-
-def test_telegram_chunk_markdown_safe(addon_root: Path) -> None:
-    """Verify chunkMarkdownSafe properly splits text while preserving code fences."""
-    script_path = addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
-    test_node_code = f"""
-    const fs = require('fs');
-    const content = fs.readFileSync('{script_path.as_posix()}', 'utf8');
-    eval(content.match(/function chunkMarkdownSafe[\\s\\S]*?\\n\\}}/)[0]);
-
-    const longText = "안녕하세요! " + "A".repeat(5000) + "\\n```python\\nprint('Hello World')\\n```";
-    const chunks = chunkMarkdownSafe(longText, 3900);
-    if (chunks.length < 2) {{
-      console.error("Failed to chunk large text:", chunks.length);
-      process.exit(1);
-    }}
-    for (const chunk of chunks) {{
-      if (chunk.length > 3950) {{
-        console.error("Chunk exceeded safe limit:", chunk.length);
-        process.exit(2);
-      }}
-    }}
-    process.exit(0);
-    """
-
-    result = subprocess.run(
-        ["node", "-e", test_node_code],
+    state_suite = subprocess.run(
+        ["node", "--test", str(repository_root / "tests/telegram_state_test.mjs")],
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, f"chunkMarkdownSafe test failed: {result.stderr}"
+    assert state_suite.returncode == 0, state_suite.stderr
 
 
+def test_telegram_local_pairing_helper_is_packaged(addon_root: Path) -> None:
+    rootfs = addon_root / "rootfs"
+    helper = rootfs / "usr/local/bin/ha-telegram-pair"
+    pairing = rootfs / "usr/local/share/antigravity-ha/telegram-pairing.mjs"
+    state = rootfs / "usr/local/share/antigravity-ha/telegram-state.mjs"
+    assert helper.is_file()
+    assert pairing.is_file()
+    assert state.is_file()
+    if os.name != "nt":
+        assert helper.stat().st_mode & stat.S_IXUSR
+    wrapper = helper.read_text(encoding="utf-8")
+    assert wrapper.splitlines()[:3] == [
+        "#!/bin/bash -p",
+        "set -Eeuo pipefail",
+        "unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN",
+    ]
+    assert "exec /usr/bin/env -i" in wrapper
+    assert "/usr/local/share/antigravity-ha/ha-telegram-pair.mjs" in wrapper
+    command = rootfs / "usr/local/share/antigravity-ha/ha-telegram-pair.mjs"
+    assert command.is_file()
+    assert "createPairing" in command.read_text(encoding="utf-8")
+    source = pairing.read_text(encoding="utf-8")
+    assert 'randomBytes(24)' in source
+    assert 'createHash("sha256")' in source
+    assert "timingSafeEqual" in source
+    assert 'authorizations.json' in source
+
+
+def test_telegram_service_depends_on_init(addon_root: Path) -> None:
+    service = addon_root / "rootfs/etc/s6-overlay/s6-rc.d/telegram-bot"
+    assert (service / "type").read_text(encoding="utf-8").strip() == "longrun"
+    assert (service / "dependencies.d/antigravity-ha-init").is_file()
+    assert (service / "dependencies.d/ha-change-broker").is_file()
+    run = (service / "run").read_text(encoding="utf-8")
+    assert "exec /usr/local/libexec/ha-telegram-runtime" in run
+    runtime = (
+        addon_root / "rootfs/usr/local/libexec/ha-telegram-runtime"
+    ).read_text(encoding="utf-8")
+    assert runtime.splitlines()[:3] == [
+        "#!/bin/bash -p",
+        "set -Eeuo pipefail",
+        "unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN",
+    ]
+    assert "AGY_CLI_DISABLE_AUTO_UPDATE=true" in runtime
+    assert "telegram-bridge.mjs" in runtime
+    assert "s6-svwait" not in run
+
+
+def test_telegram_bridge_has_no_legacy_shell_or_pairing_surface(addon_root: Path) -> None:
+    bridge = (
+        addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
+    ).read_text(encoding="utf-8")
+
+    forbidden = (
+        "execAsync",
+        "tmux new-session",
+        "capture-pane",
+        "writeFileSync",
+        "PAIR_INFO",
+        "pin_code",
+        "pairToken",
+        'approval_policy="never"',
+        'sandbox_mode="danger-full-access"',
+    )
+    for marker in forbidden:
+        assert marker not in bridge
+
+    assert 'spawn(binary, args' in bridge
+    assert 'DEFAULT_AGY_BIN = "/usr/local/libexec/ha-telegram-worker"' in bridge
+    assert 'TELEGRAM_HOME = "/data/antigravity-ha/telegram-home"' in bridge
+    assert (
+        'TELEGRAM_WORKSPACE = "/usr/local/share/antigravity-ha/telegram-workspace"'
+        in bridge
+    )
+    assert "cwd = TELEGRAM_WORKSPACE" in bridge
+    assert "HOME: TELEGRAM_HOME" in bridge
+    assert 'AGY_CLI_DISABLE_AUTO_UPDATE: "true"' in bridge
+    assert '"--output-format"' in bridge
+    assert '"stream-json"' in bridge
+    assert '"--json-schema"' in bridge
+    assert 'child.stdin.end(`${prompt}\\n`)' in bridge
+    assert "telegram_allowed_user_ids" in bridge
+    assert "confirm_changes" in bridge
+    assert 'sendBrokerRequest("inspect"' in bridge
+    assert 'brokerRequest("authorize"' in bridge
+    assert 'brokerRequest("execute"' in bridge
+    assert 'brokerRequest("execute_status"' in bridge
+    assert "classifyPrompt" not in bridge
+    assert 'detached: true' in bridge
+
+
+def test_telegram_metrics_have_bounded_privacy_safe_labels(addon_root: Path) -> None:
+    bridge = (
+        addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
+    ).read_text(encoding="utf-8")
+
+    for metric in (
+        "updates_received_total",
+        "updates_denied_total",
+        "jobs_active",
+        "jobs_queued",
+        "jobs_completed_total",
+        "approvals_total",
+        "worker_duration_seconds",
+        "telegram_api_errors_total",
+    ):
+        assert metric in bridge
+    snapshot = bridge.split("function metricsSnapshot()", maxsplit=1)[1].split(
+        "function resetMetricsForTest()", maxsplit=1
+    )[0]
+    for forbidden in (
+        "user_id",
+        "chat_id",
+        "message_id",
+        "proposal_id",
+        "prompt",
+        "output",
+        "token",
+    ):
+        assert forbidden not in snapshot
+    assert 'setInterval(() => audit("metrics", metricsSnapshot()), 60_000)' in bridge
+
+
+def test_telegram_native_home_is_bootstrapped_and_fail_closed(
+    addon_root: Path,
+    repository_root: Path,
+) -> None:
+    rootfs = addon_root / "rootfs"
+    bootstrap_path = rootfs / "usr/local/libexec/ha-telegram-home-bootstrap"
+    worker_path = rootfs / "usr/local/libexec/ha-telegram-worker"
+    plugin_deriver_path = (
+        rootfs / "usr/local/lib/antigravity-ha/telegram-plugin.sh"
+    )
+    login_path = rootfs / "usr/local/bin/ha-telegram-login"
+    workspace = rootfs / "usr/local/share/antigravity-ha/telegram-workspace"
+    telegram_settings = rootfs / "etc/antigravity/telegram-settings.json"
+    telegram_agent = (
+        rootfs
+        / "usr/local/share/antigravity-ha/plugins/home-assistant/"
+        "agents/ha-telegram/agent.md"
+    ).read_text(encoding="utf-8")
+    init = (rootfs / "usr/local/bin/antigravity-ha-init").read_text(
+        encoding="utf-8"
+    )
+    dockerfile = (addon_root / "Dockerfile").read_text(encoding="utf-8")
+    apparmor = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
+
+    for executable in (bootstrap_path, worker_path, login_path):
+        assert executable.is_file()
+        if os.name != "nt":
+            assert executable.stat().st_mode & stat.S_IXUSR
+    assert (workspace / ".antigravity-ha-managed").is_file()
+    plugin_deriver = plugin_deriver_path.read_text(encoding="utf-8")
+    assert "antigravity_ha_render_telegram_plugin_mcp" in plugin_deriver
+    assert "antigravity_ha_stage_telegram_plugin" in plugin_deriver
+    assert (
+        '.value.cwd = "/usr/local/share/antigravity-ha/telegram-workspace"'
+        in plugin_deriver
+    )
+    for server in (
+        "ha_change",
+        "ha_memory",
+        "ha_read",
+        "ha_validate",
+        "playwright",
+    ):
+        assert f'"{server}"' in plugin_deriver
+    settings = telegram_settings.read_text(encoding="utf-8")
+    assert '"enableTerminalSandbox": true' in settings
+    assert '"allowNonWorkspaceAccess": true' not in settings
+    assert '"toolPermission": "always-proceed"' not in settings
+    telegram_settings_value = json.loads(settings)
+    assert telegram_settings_value["toolPermission"] == "request-review"
+    assert telegram_settings_value["allowNonWorkspaceAccess"] is False
+    assert "tools: []" in telegram_agent
+    assert "view_file" not in telegram_agent
+    assert "grep_search" not in telegram_agent
+    assert "`device_test`" in telegram_agent
+    assert "always-restore/fresh-verify" in telegram_agent
+    telegram_permissions = telegram_settings_value["permissions"]
+    for rule in (
+        "mcp(ha_change/ha_change_propose)",
+        "mcp(ha_read/ha_read_registry)",
+        "mcp(ha_read/ha_read_history)",
+        "mcp(ha_read/ha_read_traces)",
+        "mcp(ha_validate/ha_validate_config)",
+        "mcp(ha_validate/ha_verify_state)",
+        "mcp(playwright/browser_snapshot)",
+    ):
+        assert rule in telegram_permissions["allow"]
+    for rule in (
+        "command(*)",
+        "mcp(ha_memory/memory_begin_change)",
+        "mcp(playwright/browser_click)",
+        "mcp(playwright/browser_hover)",
+    ):
+        assert rule in telegram_permissions["deny"]
+    assert telegram_permissions["ask"] == []
+
+    bootstrap = bootstrap_path.read_text(encoding="utf-8")
+    worker = worker_path.read_text(encoding="utf-8")
+    login = login_path.read_text(encoding="utf-8")
+    assert "TELEGRAM_HOME=/data/antigravity-ha/telegram-home" in bootstrap
+    assert "SETTINGS_SOURCE=/etc/antigravity/telegram-settings.json" in bootstrap
+    assert "rm -rf --" in bootstrap
+    assert '"${CONFIG_ROOT}/agents"' in bootstrap
+    assert '"${CONFIG_ROOT}/rules"' in bootstrap
+    assert '"${CONFIG_ROOT}/mcp_config.json"' in bootstrap
+    assert "PLUGIN_TARGET=${CONFIG_ROOT}/plugins/home-assistant" in bootstrap
+    assert "--login" in bootstrap and "--runtime" in bootstrap
+    assert "native OAuth backend is not inferred" in bootstrap
+    assert 'if .toolPermission == "request-review"' in bootstrap
+    assert 'if .allowNonWorkspaceAccess == false' in bootstrap
+    assert 'if .permissions.ask == []' in bootstrap
+    assert 'install_managed_file "${SETTINGS_SOURCE}"' in bootstrap
+    assert 'antigravity_ha_stage_telegram_plugin \\' in bootstrap
+    assert '"${PLUGIN_SOURCE}" "${plugin_temporary}"' in bootstrap
+    assert 'diff -qr "${plugin_expected}" "${PLUGIN_TARGET}"' in bootstrap
+    assert "/usr/local/libexec/ha-telegram-home-bootstrap --runtime" in init
+
+    assert "TELEGRAM_HOME=/data/antigravity-ha/telegram-home" in worker
+    assert '[[ "$(pwd -P)" == "${SAFE_WORKSPACE}" ]]' in worker
+    assert '/usr/bin/flock --shared 9' in worker
+    assert 'cmp -s "${MCP_SOURCE}"' in worker
+    assert 'antigravity_ha_stage_telegram_plugin \\' in worker
+    assert 'diff -qr "${plugin_expected}" "${PLUGIN_TARGET}"' in worker
+    assert 'diff -qr "${PLUGIN_SOURCE}" "${PLUGIN_TARGET}"' not in worker
+    assert '"${CONFIG_ROOT}/rules"' in worker
+    assert 'exec /usr/local/libexec/antigravity-real "$@"' in worker
+
+    assert login.splitlines()[:3] == [
+        "#!/bin/bash -p",
+        "set -Eeuo pipefail",
+        "unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN",
+    ]
+    assert "unset ANTIGRAVITY_TOKEN" in login
+    assert "a trusted local controlling terminal is required" in login
+    assert "/usr/bin/flock --exclusive 9" in login
+    assert "--login --lock-held" in login
+    assert "--runtime --lock-held" in login
+    assert "native Antigravity first-run login" in login
+    assert "--sandbox --disable-slash-commands" in login
+    assert "/data/home" not in login
+
+    assert "chmod 0555 /usr/local/share/antigravity-ha/telegram-workspace" in dockerfile
+    assert (
+        "/usr/local/bin/ha-telegram-login Px -> "
+        "antigravity_home_assistant-telegram-login" in apparmor
+    )
+    assert (
+        "/usr/local/libexec/ha-telegram-worker Px -> "
+        "antigravity_home_assistant-telegram-worker" in apparmor
+    )
+    assert "deny /data/home/** rwklm," in apparmor
+    assert "deny /config/ rwklmx," in apparmor
+    assert "deny /config/** rwklmx," in apparmor
+    assert (
+        "deny /data/antigravity-ha/telegram-home/.gemini/config/rules/** rwklm,"
+        in apparmor
+    )
+
+    canary = repository_root / "tests/telegram-isolation-smoke.sh"
+    assert canary.is_file()
+    if os.name != "nt":
+        assert canary.stat().st_mode & stat.S_IXUSR
+    canary_source = canary.read_text(encoding="utf-8")
+    assert "/usr/local/libexec/antigravity-real --version" in canary_source
+    assert "positive control did not launch the user global MCP" in canary_source
+    assert "isolated worker launched the interactive global MCP" in canary_source
+    assert "isolated worker launched the /config workspace MCP" in canary_source
+    assert "isolated worker accepted a global rules directory" in canary_source
+    docker_smoke = (repository_root / "tests/docker-smoke.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'tests/telegram-isolation-smoke.sh "${IMAGE}"' in docker_smoke

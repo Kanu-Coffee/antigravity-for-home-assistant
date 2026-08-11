@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+TEST_PLATFORM=${TEST_PLATFORM:-linux/amd64}
+case "$TEST_PLATFORM" in
+  linux/amd64) EXPECTED_HA_ARCH=amd64 ;;
+  linux/arm64) EXPECTED_HA_ARCH=aarch64 ;;
+  *) echo "unsupported TEST_PLATFORM: ${TEST_PLATFORM}" >&2; exit 64 ;;
+esac
+HA_ARCH=${HA_ARCH:-$EXPECTED_HA_ARCH}
+[[ $HA_ARCH == "$EXPECTED_HA_ARCH" ]] || exit 64
+export TEST_PLATFORM HA_ARCH
+
 IMAGE=${1:-antigravity-for-home-assistant:test}
 TEST_ID="antigravity-ha-browser-approval-${RANDOM}-$$"
 CONTAINERS=()
@@ -26,7 +36,6 @@ INTERACTIVE_TOOLS=(
   browser_type
 )
 ALL_TOOLS=("${SAFE_TOOLS[@]}" "${INTERACTIVE_TOOLS[@]}")
-PROBE_OUTPUT=''
 
 # Git Bash rewrites Linux container paths before invoking native Windows programs.
 if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then
@@ -47,31 +56,69 @@ fail() {
   exit 1
 }
 
+seed_wrapper_options() {
+  local name=$1
+  local terminal_sandbox=$2
+
+  printf '{"antigravity_terminal_sandbox":%s,"antigravity_sensitive_data_access":false}' \
+    "${terminal_sandbox}" \
+    | docker exec --interactive "${name}" /bin/sh -c '
+      umask 077
+      snapshot=$(mktemp /run/antigravity-ha/.ha-feedback-options.XXXXXX)
+      cat > "${snapshot}"
+      chmod 0600 "${snapshot}"
+      mv -f "${snapshot}" /run/antigravity-ha/ha-feedback-options.json
+    '
+}
+
 start_probe() {
   local name=$1
   local options_json=$2
 
   docker create \
-    --platform linux/amd64 \
+    --platform "$TEST_PLATFORM" \
     --name "${name}" \
     --entrypoint /bin/sleep \
     "${IMAGE}" infinity >/dev/null
   CONTAINERS+=("${name}")
   docker start "${name}" >/dev/null
-  docker exec "${name}" mkdir -p /data/home /data/antigravity /data/tmux /config
+  docker exec "${name}" /bin/sh -c \
+    'install -d -m 0700 /run/antigravity-ha /data/home /data/antigravity; install -d -m 0755 /config'
   printf '%s' "${options_json}" \
     | docker exec --interactive "${name}" /bin/sh -c \
       'umask 077; cat > /data/options.json'
+  seed_wrapper_options "${name}" true
 }
 
-assert_config_once() {
-  local output=$1
-  local config_value=$2
-  local count
+settings_path=/data/home/.gemini/antigravity-cli/settings.json
+mcp_path=/data/home/.gemini/config/mcp_config.json
 
-  count=$(grep -Fxc "ARG=<${config_value}>" <<< "${output}" || true)
-  [[ "${count}" -eq 1 ]] \
-    || fail "expected one config override: ${config_value}; got ${count}"
+permission_is_present() {
+  local name=$1
+  local bucket=$2
+  local tool=$3
+
+  docker exec "${name}" jq --exit-status \
+    --arg bucket "${bucket}" \
+    --arg permission "mcp(playwright/${tool})" \
+    '(.permissions[$bucket] | index($permission)) != null' \
+    "${settings_path}" >/dev/null
+}
+
+assert_permission_bucket() {
+  local name=$1
+  local expected_bucket=$2
+  local tool=$3
+  local other_bucket=ask
+
+  if [[ "${expected_bucket}" == ask ]]; then
+    other_bucket=allow
+  fi
+  permission_is_present "${name}" "${expected_bucket}" "${tool}" \
+    || fail "${tool} was not in settings.permissions.${expected_bucket}"
+  if permission_is_present "${name}" "${other_bucket}" "${tool}"; then
+    fail "${tool} was unexpectedly in settings.permissions.${other_bucket}"
+  fi
 }
 
 probe_policy() {
@@ -79,10 +126,8 @@ probe_policy() {
   local effective_policy=$2
   local options_json
   local name="${TEST_ID}-${policy}"
-  local output
+  local expected_bucket
   local tool
-  local safe_tool
-  local expected_mode
 
   if [[ "${policy}" == missing ]]; then
     options_json='{}'
@@ -90,49 +135,42 @@ probe_policy() {
     options_json="{\"browser_approval_policy\":\"${policy}\"}"
   fi
   start_probe "${name}" "${options_json}"
+  docker exec "${name}" antigravity-user-files-update >/dev/null \
+    || fail "native settings generation rejected ${policy}"
 
-  docker exec --workdir /config "${name}" \
-    antigravity mcp get playwright --json >/dev/null \
-    || fail "pinned antigravity rejected ${policy} policy overrides"
-
-  docker cp tests/fake-antigravity-real.sh \
-    "${name}:/usr/local/libexec/antigravity-real" >/dev/null
-  docker exec "${name}" chmod 0755 /usr/local/libexec/antigravity-real
-  output=$(docker exec --workdir /config "${name}" \
-    antigravity __probe__ passthrough-value)
-
-  [[ $(grep -Fxc 'ARG=<-c>' <<< "${output}" || true) -eq 19 ]] \
-    || fail "${policy} did not emit exactly 19 -c arguments"
-  assert_config_once "${output}" 'approval_policy="on-request"'
-  assert_config_once "${output}" 'sandbox_mode="danger-full-access"'
-  assert_config_once "${output}" \
-    'mcp_servers.playwright.default_tools_approval_mode="prompt"'
-  [[ $(grep -Fxc 'ARG=<__probe__>' <<< "${output}" || true) -eq 1 ]]
-  [[ $(grep -Fxc 'ARG=<passthrough-value>' <<< "${output}" || true) -eq 1 ]]
+  [[ $(docker exec "${name}" stat -c '%a:%U:%G' "${settings_path}") \
+    == 600:root:root ]] \
+    || fail "${policy} settings.json mode or owner is unsafe"
+  [[ $(docker exec "${name}" stat -c '%a:%U:%G' "${mcp_path}") \
+    == 600:root:root ]] \
+    || fail "${policy} mcp_config.json mode or owner is unsafe"
+  docker exec "${name}" jq --exit-status '.mcpServers == {}' "${mcp_path}" \
+    >/dev/null || fail 'global MCP configuration was not kept empty'
+  docker exec "${name}" jq --exit-status \
+    '.permissions.deny | index("read_file(/config/secrets.yaml)") != null' \
+    "${settings_path}" >/dev/null \
+    || fail 'native settings did not protect Home Assistant secrets'
 
   for tool in "${ALL_TOOLS[@]}"; do
     case "${effective_policy}" in
       never)
-        expected_mode=approve
+        expected_bucket=allow
         ;;
       always)
-        expected_mode=prompt
+        expected_bucket=ask
         ;;
       safe)
-        expected_mode=prompt
+        expected_bucket=ask
         for safe_tool in "${SAFE_TOOLS[@]}"; do
           if [[ "${safe_tool}" == "${tool}" ]]; then
-            expected_mode=approve
+            expected_bucket=allow
             break
           fi
         done
         ;;
     esac
-    assert_config_once "${output}" \
-      "mcp_servers.playwright.tools.${tool}.approval_mode=\"${expected_mode}\""
+    assert_permission_bucket "${name}" "${expected_bucket}" "${tool}"
   done
-
-  PROBE_OUTPUT=${output}
 }
 
 assert_invalid_policy() {
@@ -143,22 +181,105 @@ assert_invalid_policy() {
 
   start_probe "${name}" "${options_json}"
   set +e
-  docker exec --workdir /config "${name}" antigravity __probe__ \
-    >/dev/null 2>&1
+  docker exec "${name}" antigravity-user-files-update >/dev/null 2>&1
   status=$?
   set -e
-  [[ "${status}" -eq 78 ]] \
-    || fail "${suffix} returned ${status}, expected 78"
+  [[ "${status}" -eq 20 ]] \
+    || fail "${suffix} returned ${status}, expected 20"
 }
 
 probe_policy missing safe
-MISSING_OUTPUT=${PROBE_OUTPUT}
+MISSING_SETTINGS=$(docker exec "${TEST_ID}-missing" sha256sum "${settings_path}" \
+  | awk '{print $1}')
 probe_policy safe safe
-SAFE_OUTPUT=${PROBE_OUTPUT}
-[[ "${MISSING_OUTPUT}" == "${SAFE_OUTPUT}" ]] \
+SAFE_SETTINGS=$(docker exec "${TEST_ID}-safe" sha256sum "${settings_path}" \
+  | awk '{print $1}')
+[[ "${MISSING_SETTINGS}" == "${SAFE_SETTINGS}" ]] \
   || fail 'missing policy did not match the explicit safe policy'
-probe_policy never never
-probe_policy always always
+probe_policy never safe
+NEVER_SETTINGS=$(docker exec "${TEST_ID}-never" sha256sum "${settings_path}" \
+  | awk '{print $1}')
+probe_policy always safe
+ALWAYS_SETTINGS=$(docker exec "${TEST_ID}-always" sha256sum "${settings_path}" \
+  | awk '{print $1}')
+[[ "${NEVER_SETTINGS}" == "${SAFE_SETTINGS}" \
+  && "${ALWAYS_SETTINGS}" == "${SAFE_SETTINGS}" ]] \
+  || fail 'legacy browser approval modes weakened the v2 safe policy'
+
+docker cp tests/fake-antigravity-real.sh \
+  "${TEST_ID}-safe:/usr/local/libexec/antigravity-real" >/dev/null
+docker exec "${TEST_ID}-safe" chmod 0755 /usr/local/libexec/antigravity-real
+WRAPPER_OUTPUT=$(docker exec --workdir /config "${TEST_ID}-safe" \
+  antigravity __probe__ passthrough-value)
+[[ $(grep -Fxc 'ARG=<__probe__>' <<< "${WRAPPER_OUTPUT}" || true) -eq 1 ]]
+[[ $(grep -Fxc 'ARG=<passthrough-value>' <<< "${WRAPPER_OUTPUT}" || true) -eq 1 ]]
+[[ $(grep -Fxc 'ARG=<--sandbox>' <<< "${WRAPPER_OUTPUT}" || true) -eq 1 ]] \
+  || fail 'wrapper did not inject the native --sandbox option exactly once'
+[[ $(grep -Fxc 'ARG=<-c>' <<< "${WRAPPER_OUTPUT}" || true) -eq 0 ]] \
+  || fail 'wrapper injected the legacy Codex -c option'
+for sandbox_argument in \
+  --sandbox \
+  -sandbox \
+  --sandbox=true \
+  -sandbox=true; do
+  SANDBOX_OUTPUT=$(docker exec --workdir /config "${TEST_ID}-safe" \
+    antigravity "${sandbox_argument}" __probe__)
+  [[ $(grep -Fxc "ARG=<${sandbox_argument}>" \
+    <<< "${SANDBOX_OUTPUT}" || true) -eq 1 ]] \
+    || fail "wrapper did not preserve the exact safe ${sandbox_argument} form"
+  [[ $(grep -Ec '^ARG=<-{1,2}sandbox(=true)?>$' \
+    <<< "${SANDBOX_OUTPUT}" || true) -eq 1 ]] \
+    || fail "wrapper duplicated the safe ${sandbox_argument} form"
+done
+unset sandbox_argument SANDBOX_OUTPUT
+for sandbox_override in \
+  --sandbox=false \
+  -sandbox=false \
+  --sandbox=TRUE \
+  -sandbox=1; do
+  if docker exec --workdir /config "${TEST_ID}-safe" \
+    antigravity "${sandbox_override}" >/dev/null 2>&1; then
+    fail "wrapper accepted unsafe or ambiguous ${sandbox_override}"
+  fi
+done
+unset sandbox_override
+for dangerous_argument in \
+  --dangerously-skip-permissions \
+  --dangerously-skip-permissions=true \
+  --dangerously-skip-permissions=false \
+  -dangerously-skip-permissions \
+  -dangerously-skip-permissions=true \
+  -dangerously-skip-permissions=false; do
+  if docker exec --workdir /config "${TEST_ID}-safe" \
+    antigravity "${dangerous_argument}" >/dev/null 2>&1; then
+    fail "wrapper accepted ${dangerous_argument}"
+  fi
+done
+unset dangerous_argument
+docker exec "${TEST_ID}-safe" /bin/sh -c '
+  jq ".antigravity_terminal_sandbox = false" /data/options.json > /tmp/options.json
+  chmod 0600 /tmp/options.json
+  mv /tmp/options.json /data/options.json
+'
+RAW_OPTIONS_OUTPUT=$(docker exec --workdir /config "${TEST_ID}-safe" \
+  antigravity __probe__)
+[[ $(grep -Fxc 'ARG=<--sandbox>' <<< "${RAW_OPTIONS_OUTPUT}" || true) -eq 1 ]] \
+  || fail 'wrapper read the raw /data/options.json instead of its safe runtime snapshot'
+seed_wrapper_options "${TEST_ID}-safe" false
+NO_SANDBOX_OUTPUT=$(docker exec --workdir /config "${TEST_ID}-safe" \
+  antigravity __probe__)
+[[ $(grep -Fxc 'ARG=<--sandbox>' <<< "${NO_SANDBOX_OUTPUT}" || true) -eq 0 ]] \
+  || fail 'wrapper ignored antigravity_terminal_sandbox=false in its safe runtime snapshot'
+docker exec "${TEST_ID}-safe" /bin/sh -c '
+  jq ".antigravity_terminal_sandbox = true" /data/options.json > /tmp/options.json
+  chmod 0600 /tmp/options.json
+  mv /tmp/options.json /data/options.json
+'
+EXPLICIT_SANDBOX_OUTPUT=$(docker exec --workdir /config "${TEST_ID}-safe" \
+  antigravity --sandbox __probe__)
+[[ $(grep -Fxc 'ARG=<--sandbox>' <<< "${EXPLICIT_SANDBOX_OUTPUT}" || true) -eq 1 ]] \
+  || fail 'wrapper duplicated an explicit --sandbox option'
+
 assert_invalid_policy invalid-enum \
   '{"browser_approval_policy":"unexpected"}'
 assert_invalid_policy invalid-type \

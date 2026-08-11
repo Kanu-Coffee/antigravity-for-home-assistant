@@ -1,0 +1,48 @@
+{
+  "schema": "antigravity-ha-manual-evidence/v1",
+  "version": "2.0.0",
+  "source_sha": "REPLACE_WITH_40_HEX_CANDIDATE_SOURCE_SHA",
+  "candidate_manifest_digest": "sha256:REPLACE_WITH_64_HEX_CANDIDATE_DIGEST",
+  "gates": {
+    "apparmor_enforce": {
+      "status": "NOT_RUN",
+      "evidence_uri": "",
+      "sha256": ""
+    },
+    "haos_aarch64_install_update": {
+      "status": "NOT_RUN",
+      "evidence_uri": "",
+      "sha256": ""
+    },
+    "haos_amd64_install_update": {
+      "status": "NOT_RUN",
+      "evidence_uri": "",
+      "sha256": ""
+    },
+    "migration_modes": {
+      "status": "NOT_RUN",
+      "evidence_uri": "",
+      "sha256": ""
+    },
+    "native_updater_canary": {
+      "status": "NOT_RUN",
+      "evidence_uri": "",
+      "sha256": ""
+    },
+    "repository_install_update": {
+      "status": "NOT_RUN",
+      "evidence_uri": "",
+      "sha256": ""
+    },
+    "rollback": {
+      "status": "NOT_RUN",
+      "evidence_uri": "",
+      "sha256": ""
+    },
+    "telegram_modes": {
+      "status": "NOT_RUN",
+      "evidence_uri": "",
+      "sha256": ""
+    }
+  }
+}

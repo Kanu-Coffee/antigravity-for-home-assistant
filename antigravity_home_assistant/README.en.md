@@ -21,14 +21,14 @@ Use antigravity inside Home Assistant to inspect your setup and improve dashboar
 - **OPEN WEB UI** in the Home Assistant mobile app or website
 - Headless Chromium checks for desktop/mobile dashboard layouts and console/network errors
 - Project-local verified memory for HA structure and user-stated aliases, purposes, and preferences
-- `$ha-feedback` for read-only app bug validation and structured feature proposals
+- `/ha-feedback` for read-only app bug validation and structured feature proposals
 
 > [!WARNING]
 > This app is a powerful administrative tool that can directly change your Home Assistant configuration. Back up important data and review the plan and diff before changes. Never expose the SSH port directly to the internet.
 
 ## Quick start
 
-1. Install and start the app. It is currently **amd64-only**, `stage: experimental`, and `boot: manual`.
+1. Install and start the app. It currently supports **amd64 and aarch64**, uses `stage: experimental`, and has `boot: manual`.
 2. Select **OPEN WEB UI**.
 3. Sign in once with `ha-antigravity-login`.
 4. Run `ha-antigravity`.
@@ -51,7 +51,7 @@ Do not edit any files yet.
 ```
 
 ```text
-$ha-feedback bug Validate an app symptom in read-only mode and prepare a public-safe report.
+/ha-feedback bug Validate an app symptom in read-only mode and prepare a public-safe report.
 ```
 
 Direct GitHub submission requires an available candidate search, a ten-minute single-use preview, and separate confirmation. Search or submission uncertainty never triggers an automatic retry; use the Issue Form fallback instead.

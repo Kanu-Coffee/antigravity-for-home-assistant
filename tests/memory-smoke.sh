@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+TEST_PLATFORM=${TEST_PLATFORM:-linux/amd64}
+case "$TEST_PLATFORM" in
+  linux/amd64) EXPECTED_HA_ARCH=amd64 ;;
+  linux/arm64) EXPECTED_HA_ARCH=aarch64 ;;
+  *) echo "unsupported TEST_PLATFORM: ${TEST_PLATFORM}" >&2; exit 64 ;;
+esac
+HA_ARCH=${HA_ARCH:-$EXPECTED_HA_ARCH}
+[[ $HA_ARCH == "$EXPECTED_HA_ARCH" ]] || exit 64
+export TEST_PLATFORM HA_ARCH
+
 IMAGE=${1:-antigravity-for-home-assistant:test}
 TEST_ID="antigravity-ha-memory-smoke-${RANDOM}-$$"
 FIRST_CONTAINER="${TEST_ID}-first"
@@ -9,6 +19,10 @@ DATA_VOLUME="${TEST_ID}-data"
 UNSAFE_DATA_VOLUME="${TEST_ID}-unsafe-data"
 UNSAFE_CONFIG_VOLUME="${TEST_ID}-unsafe-config"
 FIXTURE_PATH=/tmp/ha-memory-snapshot.json
+FIXTURE_SERVER=/tmp/ha_read_memory_fixture_server.mjs
+FIXTURE_PID=/run/antigravity-ha/ha-read-memory-fixture.pid
+FIXTURE_SOCKET=/run/antigravity-ha/ha-read.sock
+TOKEN_CANARY=memory-smoke-supervisor-token-must-not-leak
 ACTIVE_CONTAINER=
 
 # Git Bash rewrites Linux container paths before invoking native Windows programs.
@@ -35,15 +49,41 @@ fail() {
 start_container() {
   local name=$1
   docker run --detach \
-    --platform linux/amd64 \
+    --platform "$TEST_PLATFORM" \
     --name "${name}" \
-    --env HA_MEMORY_TEST_MODE=1 \
-    --env HA_MEMORY_TEST_FIXTURE="${FIXTURE_PATH}" \
     --volume "${DATA_VOLUME}:/data" \
     --entrypoint /bin/sh \
     "${IMAGE}" \
     -c 'exec sleep infinity' >/dev/null
   ACTIVE_CONTAINER=${name}
+}
+
+start_fixture_broker() {
+  docker exec --detach \
+    --env HA_MEMORY_FIXTURE_PATH="${FIXTURE_PATH}" \
+    "${ACTIVE_CONTAINER}" \
+    node "${FIXTURE_SERVER}" >/dev/null
+  for _ in $(seq 1 50); do
+    if docker exec "${ACTIVE_CONTAINER}" test -S "${FIXTURE_SOCKET}" \
+      && docker exec "${ACTIVE_CONTAINER}" test -s "${FIXTURE_PID}"; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  fail 'fixture Home Assistant read broker did not become ready'
+}
+
+stop_fixture_broker() {
+  docker exec "${ACTIVE_CONTAINER}" /bin/sh -ceu '
+    pid=$(cat "$1")
+    kill "${pid}"
+    for _ in $(seq 1 50); do
+      [ ! -e "$2" ] && exit 0
+      sleep 0.1
+    done
+    exit 1
+  ' sh "${FIXTURE_PID}" "${FIXTURE_SOCKET}" \
+    || fail 'fixture Home Assistant read broker did not stop cleanly'
 }
 
 assert_json() {
@@ -62,32 +102,32 @@ docker volume create "${DATA_VOLUME}" >/dev/null
 docker volume create "${UNSAFE_DATA_VOLUME}" >/dev/null
 docker volume create "${UNSAFE_CONFIG_VOLUME}" >/dev/null
 
-printf '%s' '{"authorized_keys":[],"web_terminal_auto_start_antigravity":false,"tmux_session_name":"memory-path-safety","antigravity_approval_policy":"on-request","antigravity_sandbox_mode":"danger-full-access","log_level":"info"}' \
+printf '%s' '{"authorized_keys":[],"web_terminal_auto_start_antigravity":false,"tmux_session_name":"memory-path-safety","antigravity_tool_permission":"request-review","antigravity_terminal_sandbox":true,"log_level":"info"}' \
   | docker run --rm --interactive \
-    --platform linux/amd64 \
+    --platform "$TEST_PLATFORM" \
     --entrypoint /bin/sh \
     --volume "${UNSAFE_DATA_VOLUME}:/data" \
     "${IMAGE}" \
     -ceu 'cat > /data/options.json; mkdir /data/memory-link-target; chmod 0755 /data/memory-link-target; ln -s /data/memory-link-target /data/antigravity-ha-memory'
 docker run --rm \
-  --platform linux/amd64 \
+  --platform "$TEST_PLATFORM" \
   --volume "${UNSAFE_DATA_VOLUME}:/data" \
   --volume "${UNSAFE_CONFIG_VOLUME}:/config" \
   --entrypoint /bin/sh \
   "${IMAGE}" -c 'mkdir -p /run/s6/container_environment; exec /usr/local/bin/antigravity-ha-init' >/dev/null \
   || fail 'unsafe memory symlink made the main App init fail'
-[[ $(docker run --rm --platform linux/amd64 --entrypoint stat \
+[[ $(docker run --rm --platform "$TEST_PLATFORM" --entrypoint stat \
   --volume "${UNSAFE_DATA_VOLUME}:/data" "${IMAGE}" \
   -c '%a' /data/memory-link-target) == 755 ]] \
   || fail 'main App init followed or chmodded an unsafe memory symlink'
 docker run --rm \
-  --platform linux/amd64 \
+  --platform "$TEST_PLATFORM" \
   --entrypoint /bin/sh \
   --volume "${UNSAFE_DATA_VOLUME}:/data" \
   "${IMAGE}" \
   -ceu 'rm /data/antigravity-ha-memory; : > /data/antigravity-ha-memory; chmod 0600 /data/antigravity-ha-memory'
 docker run --rm \
-  --platform linux/amd64 \
+  --platform "$TEST_PLATFORM" \
   --volume "${UNSAFE_DATA_VOLUME}:/data" \
   --volume "${UNSAFE_CONFIG_VOLUME}:/config" \
   --entrypoint /bin/sh \
@@ -98,10 +138,14 @@ start_container "${FIRST_CONTAINER}"
 
 docker cp tests/fixtures/ha_memory_snapshot.json \
   "${FIRST_CONTAINER}:${FIXTURE_PATH}"
+docker cp tests/ha_read_memory_fixture_server.mjs \
+  "${FIRST_CONTAINER}:${FIXTURE_SERVER}"
 docker cp tests/ha_memory_client_test.mjs \
   "${FIRST_CONTAINER}:/tmp/ha_memory_client_test.mjs"
 docker cp tests/ha_memory_test.mjs \
   "${FIRST_CONTAINER}:/tmp/ha_memory_test.mjs"
+docker cp tests/ha_change_broker_installed_test.mjs \
+  "${FIRST_CONTAINER}:/tmp/ha_change_broker_installed_test.mjs"
 docker exec \
   --env HA_MEMORY_INSTALLED_TEST=1 \
   --env HA_MEMORY_TEST_FIXTURE= \
@@ -126,6 +170,7 @@ assert_json 'ha-memory init did not create an empty, private store' \
     and .integrity == "ok"' \
   "${INIT_OUTPUT}"
 
+start_fixture_broker
 docker exec --detach --env S6_KEEP_ENV=1 "${FIRST_CONTAINER}" \
   /etc/s6-overlay/s6-rc.d/ha-memoryd/run >/dev/null \
   || fail 'first-run memory daemon did not start'
@@ -150,31 +195,69 @@ assert_json 'first-run daemon did not create the catalog without a manual refres
     and .last_successful_sync.relation_count >= 6' \
   "${BOOTSTRAP_STATUS}"
 
+stop_fixture_broker
 if FAILURE_OUTPUT=$(docker exec \
-  --env HA_MEMORY_TEST_FIXTURE= \
-  --env SUPERVISOR_TOKEN= \
+  --env SUPERVISOR_TOKEN="${TOKEN_CANARY}" \
   "${FIRST_CONTAINER}" \
   ha-memory refresh --force 2>&1); then
-  fail 'token-less installed refresh unexpectedly succeeded'
+  fail 'read-broker-less installed refresh unexpectedly succeeded'
 fi
-assert_json 'installed refresh did not expose the bounded token diagnostic' \
+if [[ "${FAILURE_OUTPUT}" == *"${TOKEN_CANARY}"* ]]; then
+  fail 'installed refresh exposed the injected Supervisor token canary'
+fi
+FAILURE_JSON=$(printf '%s\n' "${FAILURE_OUTPUT}" \
+  | sed -n '/^{/p' | tail -n 1)
+[[ -n "${FAILURE_JSON}" ]] \
+  || fail 'installed refresh did not return a bounded JSON diagnostic'
+assert_json 'installed refresh did not expose the bounded broker diagnostic' \
   '.error == "ha_unavailable"
-    and .reason == "ha_token_unavailable"
-    and (.message | contains("SUPERVISOR_TOKEN"))' \
-  "${FAILURE_OUTPUT}"
+    and .reason == "ha_transport_failed"
+    and (.message | contains("snapshot broker"))' \
+  "${FAILURE_JSON}"
+unset FAILURE_JSON
 FAILURE_STATUS=$(docker exec "${FIRST_CONTAINER}" ha-memory status) \
   || fail 'ha-memory status failed after an injected refresh failure'
 assert_json 'failed refresh did not preserve and diagnose the last-known-good catalog' \
   '.catalog_status == "stale"
     and .last_sync.status == "failed"
-    and .last_sync.error_code == "ha_token_unavailable"
+    and .last_sync.error_code == "ha_transport_failed"
     and .last_successful_sync.id > 0' \
   "${FAILURE_STATUS}"
+start_fixture_broker
 RECOVERY_OUTPUT=$(docker exec "${FIRST_CONTAINER}" ha-memory refresh --force) \
   || fail 'fixture-backed catalog did not recover after an injected failure'
 assert_json 'recovered catalog refresh was not successful' \
   '.status == "success" and .sync_id > 0' \
   "${RECOVERY_OUTPUT}"
+
+stop_fixture_broker
+docker exec "${FIRST_CONTAINER}" /bin/sh -ceu '
+  jq '\''
+    .entities += [{
+      entity_id: "input_boolean.installed_guard",
+      name: "Green Installed",
+      aliases: [],
+      device_id: null,
+      area_id: null,
+      platform: "input_boolean",
+      device_class: null,
+      labels: []
+    }]
+    | .states += [{
+      entity_id: "input_boolean.installed_guard",
+      state: "off",
+      attributes: {friendly_name: "Green Installed"},
+      last_changed: "2026-08-11T00:00:00+00:00",
+      last_updated: "2026-08-11T00:00:00+00:00"
+    }]
+  '\'' "$1" > "$1.next"
+  mv "$1.next" "$1"
+' sh "${FIXTURE_PATH}" \
+  || fail 'could not add the installed change-broker postcondition fixture'
+start_fixture_broker
+docker exec "${FIRST_CONTAINER}" \
+  node /tmp/ha_change_broker_installed_test.mjs >/dev/null \
+  || fail 'installed change broker did not cross the real memory begin/verify boundary'
 
 SEARCH_OUTPUT=$(docker exec "${FIRST_CONTAINER}" ha-memory search 'Kitchen Main') \
   || fail 'catalog search failed'

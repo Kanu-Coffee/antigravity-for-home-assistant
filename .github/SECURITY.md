@@ -8,7 +8,7 @@ Antigravity for Home Assistant는 `/config` read-write, Home Assistant Core API�
 
 ### 지원 범위
 
-보안 수정은 원칙적으로 [가장 최근 공개 릴리스](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/releases)를 대상으로 합니다. 이 프로젝트는 현재 `stage: experimental`, amd64 전용입니다. 이전 버전에서 문제가 발생했다면 최신 릴리스에서도 재현되는지 비밀정보 없이 확인해 주세요.
+보안 수정은 원칙적으로 [가장 최근 공개 릴리스](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/releases)를 대상으로 합니다. 이 프로젝트는 현재 `stage: experimental`입니다. 지원 architecture는 설치하려는 릴리스의 App metadata와 GHCR manifest를 기준으로 확인하세요. 이전 버전에서 문제가 발생했다면 최신 릴리스에서도 재현되는지 비밀정보 없이 확인해 주세요.
 
 ### 비공개 제보
 
@@ -16,7 +16,7 @@ Antigravity for Home Assistant는 `/config` read-write, Home Assistant Core API�
 
 다음을 포함하면 확인에 도움이 됩니다.
 
-- 영향을 받는 앱 버전, Home Assistant Core/OS 버전과 amd64 장치 유형
+- 영향을 받는 앱 버전, Home Assistant Core/OS 버전과 장치 architecture
 - 공격 전제조건과 영향 범위
 - 최소 재현 단계
 - 예상 동작과 실제 동작
@@ -25,33 +25,37 @@ Antigravity for Home Assistant는 `/config` read-write, Home Assistant Core API�
 
 다음을 보내지 마세요.
 
-- `SUPERVISOR_TOKEN`, antigravity `auth.json`, browser token
+- `SUPERVISOR_TOKEN`, Antigravity native OAuth/session 자료, browser 또는 Telegram token
 - SSH private key, `secrets.yaml`, `.storage` 원본
 - 실제 사용자명, 내부/외부 URL, IP, entity·device·area 이름
 - 공개 dashboard screenshot이나 Home Assistant backup
 
 ### 긴급 완화
 
-credential 노출이나 원격 접근 문제가 의심되면 먼저 앱을 중지하고 SSH port mapping을 비활성화하세요. 관련 공개키와 antigravity/ChatGPT 세션을 폐기하고, 자동 browser identity를 사용했다면 사용자 가이드의 제거 절차를 따르세요. 노출된 secret을 로그나 이슈에 다시 붙여 넣지 마세요.
+credential 노출이나 원격 접근 문제가 의심되면 먼저 앱을 중지하고 SSH port mapping과 Telegram bridge를 비활성화하세요. 관련 공개키, Bot token과 Antigravity session을 폐기하고, 자동 browser identity를 사용했다면 사용자 가이드의 제거 절차를 따르세요. 노출된 secret을 로그나 이슈에 다시 붙여 넣지 마세요.
 
 ### 보안 경계
 
-- `antigravity_sandbox_mode: danger-full-access`는 앱 컨테이너 내부 정책이지만 `/config`는 read-write입니다.
+- custom AppArmor profile은 항상 활성화되며 App option으로 끌 수 없습니다.
+- `antigravity_sensitive_data_access`는 AppArmor를 끄는 option이 아닙니다. 대화형 Antigravity child에 한해 `secrets.yaml`, `.storage`와 Recorder DB의 조건부 read-only 진단 profile을 선택하며 쓰기, Telegram, browser, memory와 credential 접근은 계속 차단합니다.
+- `/config`는 앱에 read-write로 연결되므로 대화형 Antigravity는 여전히 관리자 도구입니다. native 승인, terminal sandbox와 prompt 지침만을 완전한 경계로 간주하지 마세요.
 - 앱은 Supervisor `admin`, Docker API, Home Assistant `full_access`, host network를 사용하지 않습니다.
 - SSH는 공개키 전용이며 인터넷 직접 노출을 지원되는 배포 방식으로 간주하지 않습니다.
 - Headless browser의 관리형 HA 사용자는 local-only, non-admin, `system-read-only`이지만 모든 entity state를 볼 수 있습니다.
-- prompt 지침과 승인은 방어 심층화 수단이지 완전한 보안 경계가 아닙니다.
+- Telegram은 기본 OFF이며 전용 native HOME, user/chat 인증, read/proposal MCP와 별도 변경 broker를 사용합니다. 고위험 변경은 모드와 무관하게 사람 확인이 필요합니다.
 
-상세 threat model은 [개발 보안 문서](../docs/development/security.md)를 확인하세요.
+현재 threat model과 실제 HAOS 검증 gate는 [v2 보안 계약](../docs/v2/security.md)을 확인하세요.
 
 ## English
 
 Antigravity for Home Assistant is an administrative tool with read-write access to `/config`, the Home Assistant Core API, and the Supervisor `manager` role. Please report vulnerabilities privately and separately from ordinary bugs.
 
-Security fixes normally target the [latest public release](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/releases). The project is currently experimental and amd64-only.
+Security fixes normally target the [latest public release](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/releases). The project is experimental. Confirm supported architectures from that release's App metadata and GHCR manifest.
 
 Use [GitHub private vulnerability reporting](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/security/advisories/new) when available. If it is unavailable, do not publish exploit details or secrets in an issue; open a minimal, non-sensitive request for a private contact channel.
 
-Include affected versions, prerequisites, impact, minimal reproduction steps, expected versus actual behavior, and redacted evidence. Never send Supervisor or browser tokens, antigravity `auth.json`, SSH private keys, `secrets.yaml`, `.storage`, Home Assistant backups, private URLs, or identifying entity and user data.
+Include affected versions, architecture, prerequisites, impact, minimal reproduction steps, expected versus actual behavior, and redacted evidence. Never send Supervisor, browser, or Telegram tokens, Antigravity native OAuth/session data, SSH private keys, `secrets.yaml`, `.storage`, Home Assistant backups, private URLs, or identifying entity and user data.
 
-If credential exposure or unintended remote access is suspected, stop the app, disable the SSH port mapping, revoke affected keys and sessions, and follow the browser-identity removal procedure in the [user guide](../antigravity_home_assistant/DOCS.en.md). Do not paste the exposed secret into another report.
+If credential exposure or unintended remote access is suspected, stop the app, disable SSH and Telegram, revoke affected keys, Bot tokens, and sessions, and follow the browser-identity removal procedure in the [user guide](../antigravity_home_assistant/DOCS.en.md). Do not paste the exposed secret into another report.
+
+The custom AppArmor profile is always enabled. `antigravity_sensitive_data_access` selects only a conditional read-only diagnostic profile for interactive Antigravity; it does not disable AppArmor or grant Telegram, browser, memory, or credential access. `/config` remains read-write, so interactive Antigravity is an administrative tool. Telegram is off by default and uses a dedicated native HOME, exact user/chat authorization, read/proposal MCP servers, and a separate mutation broker; high-risk changes always require human confirmation. See the current [v2 security contract](../docs/v2/security.md) for the threat model and required HAOS enforcement evidence.

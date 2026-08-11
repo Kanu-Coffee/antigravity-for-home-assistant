@@ -1,5 +1,10 @@
 import { readFile } from "node:fs/promises";
 
+import {
+  HaReadError,
+  sendHaReadRequest,
+} from "./ha-read-client.mjs";
+
 const DEFAULT_WEBSOCKET_URL = "ws://supervisor/core/websocket";
 const DEFAULT_TIMEOUT_MS = 20_000;
 const MAX_MESSAGE_BYTES = 32 * 1024 * 1024;
@@ -22,6 +27,7 @@ const HOME_ASSISTANT_ERROR_CODES = new Set([
   "ha_command_states_failed",
   "ha_command_automation_config_failed",
   "ha_command_related_failed",
+  "ha_command_trace_failed",
   "ha_command_failed",
   "ha_snapshot_incomplete",
   "ha_fixture_invalid",
@@ -35,6 +41,16 @@ const COMMAND_ERROR_CODES = new Map([
   ["get_states", "ha_command_states_failed"],
   ["automation/config", "ha_command_automation_config_failed"],
   ["search/related", "ha_command_related_failed"],
+  ["trace/list", "ha_command_trace_failed"],
+  ["trace/get", "ha_command_trace_failed"],
+]);
+
+const BROKER_READ_COMMAND_TYPES = new Set([
+  "config/area_registry/list",
+  "config/device_registry/list",
+  "config/entity_registry/list",
+  "trace/get",
+  "trace/list",
 ]);
 
 export class HomeAssistantUnavailableError extends Error {
@@ -382,6 +398,85 @@ class HomeAssistantWebSocketClient {
   }
 }
 
+function assertBrokerReadCommand(command) {
+  if (
+    !command ||
+    typeof command !== "object" ||
+    Array.isArray(command) ||
+    typeof command.type !== "string" ||
+    !BROKER_READ_COMMAND_TYPES.has(command.type)
+  ) {
+    throw new HomeAssistantUnavailableError(
+      "ha_protocol_error",
+      "The broker requested an unsupported Home Assistant read command",
+    );
+  }
+
+  if (command.type.startsWith("config/")) {
+    if (Object.keys(command).length !== 1) {
+      throw new HomeAssistantUnavailableError(
+        "ha_protocol_error",
+        "The registry read command contains an unsupported field",
+      );
+    }
+    return;
+  }
+
+  const allowed = command.type === "trace/get"
+    ? new Set(["type", "domain", "item_id", "run_id"])
+    : new Set(["type", "domain", "item_id"]);
+  if (
+    Object.keys(command).some((key) => !allowed.has(key)) ||
+    !["automation", "script"].includes(command.domain) ||
+    (command.item_id !== undefined &&
+      (typeof command.item_id !== "string" ||
+        !/^[a-z0-9_-]{1,255}$/u.test(command.item_id))) ||
+    (command.type === "trace/get" &&
+      (typeof command.item_id !== "string" ||
+        typeof command.run_id !== "string" ||
+        !/^[A-Za-z0-9_-]{1,128}$/u.test(command.run_id))) ||
+    (command.type === "trace/list" && Object.hasOwn(command, "run_id"))
+  ) {
+    throw new HomeAssistantUnavailableError(
+      "ha_protocol_error",
+      "The trace read command is invalid",
+    );
+  }
+}
+
+// This surface is intentionally available only to the token-holding read
+// broker. It accepts a small fixed set of read-only WebSocket commands and
+// never takes a caller-selected endpoint from an environment variable.
+export async function fetchHomeAssistantBrokerRead(command, options = {}) {
+  assertBrokerReadCommand(command);
+  const timeoutMs = Number.isInteger(options.timeoutMs)
+    ? options.timeoutMs
+    : DEFAULT_TIMEOUT_MS;
+  const url = options.url ?? DEFAULT_WEBSOCKET_URL;
+  if (options.url !== undefined && options.token === undefined) {
+    throw new HomeAssistantUnavailableError(
+      "ha_token_unavailable",
+      "An explicit Home Assistant WebSocket endpoint requires an explicit credential",
+    );
+  }
+  const token = options.token ?? process.env.SUPERVISOR_TOKEN ?? "";
+  const client = await HomeAssistantWebSocketClient.connect({
+    url,
+    token,
+    timeoutMs,
+    webSocketFactory: options.webSocketFactory,
+  });
+  try {
+    return await client.request(command);
+  } finally {
+    try {
+      client.close();
+    } catch {
+      // The command result is authoritative; close failures are not.
+    }
+  }
+}
+
 function requireFixtureShape(fixture) {
   if (!fixture || typeof fixture !== "object" || Array.isArray(fixture)) {
     throw new HomeAssistantUnavailableError(
@@ -541,6 +636,45 @@ export async function fetchHomeAssistantSnapshot(options = {}) {
   const fixturePath =
     options.fixturePath ?? process.env.HA_MEMORY_TEST_FIXTURE ?? null;
   if (fixturePath) return readTestFixture(fixturePath);
+
+  const directTransportRequested =
+    options.url !== undefined ||
+    options.token !== undefined ||
+    options.webSocketFactory !== undefined;
+  if (!directTransportRequested) {
+    const brokerRequest = options.brokerRequest ?? sendHaReadRequest;
+    if (typeof brokerRequest !== "function") {
+      throw new HomeAssistantUnavailableError(
+        "ha_transport_failed",
+        "Home Assistant snapshot broker adapter is unavailable",
+      );
+    }
+    try {
+      return await brokerRequest(
+        "memory_snapshot",
+        {},
+        { timeoutMs: 30_000 },
+      );
+    } catch (error) {
+      if (error instanceof HaReadError) {
+        const code = HOME_ASSISTANT_ERROR_CODES.has(error.code)
+          ? error.code
+          : error.code === "broker_timeout"
+            ? "ha_timeout"
+            : error.code === "response_too_large" || error.code === "upstream_too_large"
+              ? "ha_snapshot_incomplete"
+              : "ha_transport_failed";
+        throw new HomeAssistantUnavailableError(
+          code,
+          `Home Assistant snapshot broker failed (${error.code})`,
+        );
+      }
+      throw new HomeAssistantUnavailableError(
+        "ha_transport_failed",
+        "Home Assistant snapshot broker is unavailable",
+      );
+    }
+  }
 
   const timeoutMs = Number.isInteger(options.timeoutMs)
     ? options.timeoutMs

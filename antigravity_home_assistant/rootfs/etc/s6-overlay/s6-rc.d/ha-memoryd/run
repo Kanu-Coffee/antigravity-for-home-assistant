@@ -2,6 +2,8 @@
 # shellcheck shell=bash
 set -Eeuo pipefail
 
+unset SUPERVISOR_TOKEN
+
 readonly REFRESH_SECONDS=900
 readonly MAX_RETRY_SECONDS=300
 retry_seconds=30

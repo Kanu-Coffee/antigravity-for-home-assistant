@@ -1,10 +1,10 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
 
 umask 077
 
 readonly HELPER=/usr/local/share/antigravity-ha/browser-user-admin.mjs
-readonly RUNTIME_ENV=/run/antigravity-ha/runtime.env
 readonly MANAGED_AUTH_DIRECTORY=/data/browser-auth
 readonly MANAGED_LOCK=${MANAGED_AUTH_DIRECTORY}/operation.lock
 
@@ -40,10 +40,9 @@ unset \
   HA_BROWSER_TOKEN \
   NODE_OPTIONS \
   NODE_PATH
-if [[ -z "${SUPERVISOR_TOKEN:-}" && -r "${RUNTIME_ENV}" ]]; then
-  # shellcheck source=/dev/null
-  . "${RUNTIME_ENV}"
-fi
+# shellcheck source=/dev/null
+. /usr/local/lib/antigravity-ha/supervisor-credential.sh
+antigravity_ha_load_supervisor_credential
 if [[ -z "${SUPERVISOR_TOKEN:-}" ]]; then
   echo 'SUPERVISOR_TOKEN is unavailable; managed browser authentication cannot be removed safely' >&2
   exit 1

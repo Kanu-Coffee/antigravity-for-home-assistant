@@ -1,0 +1,15 @@
+{
+  "schema": "antigravity-ha-performance-budget/v1",
+  "baseline_evidence_sha256": "sha256:b2cb64cac2c5f12c61d4a779c06a4bca1307799e485086d9512974e231d51d09",
+  "baseline": {
+    "image_size_bytes": 558690739,
+    "host_component_peak_rss_bytes": 104890368,
+    "candidate_idle_memory_bytes_approx": 47815066,
+    "candidate_idle_cpu_percent": 0.0
+  },
+  "limits": {
+    "max_average_cpu_percent": 5.0,
+    "max_peak_rss_bytes": 201326592,
+    "max_image_size_bytes": 600000000
+  }
+}

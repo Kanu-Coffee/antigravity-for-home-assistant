@@ -23,7 +23,7 @@
 
 ## 버그와 기능 제안
 
-`$ha-feedback`은 이 앱 자체의 버그나 기능 제안을 읽기 전용으로 검증하고, 공개 가능한 보고서로 정리하는 preset입니다. 최초 요청은 조사와 보고서 작성만 승인하며 GitHub 제출은 승인하지 않습니다.
+`/ha-feedback`은 이 앱 자체의 버그나 기능 제안을 읽기 전용으로 검증하고, 공개 가능한 보고서로 정리하는 preset입니다. 최초 요청은 조사와 보고서 작성만 승인하며 GitHub 제출은 승인하지 않습니다.
 
 ### 버그 보고
 
@@ -33,7 +33,7 @@
 Antigravity for Home Assistant에서 다음 문제를 발견했어:
 <재현 가능한 증상, 발생 시점과 사용자 영향>
 
-$ha-feedback의 bug 흐름으로 읽기 전용 검증해 줘.
+/ha-feedback의 bug 흐름으로 읽기 전용 검증해 줘.
 앱과 Home Assistant 버전, 영향받는 경로, 최소 재현 단계, 예상 동작과
 실제 동작을 확인하고, 실행한 개별 검사는 PASS / FAIL / NOT_TESTED / NOT_RUN과
 근거로 구분해 줘. Home Assistant 파일, registry, 기기 상태, 앱 옵션을
@@ -48,7 +48,7 @@ GitHub 제출 흐름을 즉시 중단하고 비공개 보안 제보 경로만 �
 #### 버그 명시적 호출
 
 ```text
-$ha-feedback bug <재현 가능한 증상과 영향을 한두 문장으로 작성>
+/ha-feedback bug <재현 가능한 증상과 영향을 한두 문장으로 작성>
 ```
 
 ### 기능 제안
@@ -59,7 +59,7 @@ $ha-feedback bug <재현 가능한 증상과 영향을 한두 문장으로 작�
 Antigravity for Home Assistant에 다음 기능을 제안하고 싶어:
 <누가 어떤 상황에서 무엇을 달성하려는지와 현재 막히는 점>
 
-$ha-feedback의 feature 흐름으로 읽기 전용 검증해 줘.
+/ha-feedback의 feature 흐름으로 읽기 전용 검증해 줘.
 현재 문서와 기능이 이미 지원하는 범위, 확인한 근거, 가능한 대안과 우회법,
 사용자에게 보일 제안 동작, 호환성·보안·개인정보 위험, 범위 밖 항목과
 관찰 가능한 수용 기준을 정리해 줘. Home Assistant 구성이나 상태를 바꾸지 말고
@@ -74,7 +74,7 @@ $ha-feedback의 feature 흐름으로 읽기 전용 검증해 줘.
 #### 기능 명시적 호출
 
 ```text
-$ha-feedback feature <필요한 기능과 사용 사례를 한두 문장으로 작성>
+/ha-feedback feature <필요한 기능과 사용 사례를 한두 문장으로 작성>
 ```
 
 ### 생성되는 보고서와 제출 경계

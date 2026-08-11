@@ -1,0 +1,816 @@
+{
+  "files": [
+    {
+      "mode": "0644",
+      "path": "/etc/antigravity/mcp_config.json",
+      "sha256": "sha256:d8e397af03b5b032f21d0aa967086f0c78b33c87b76f2e9898ae0a144df7de02",
+      "size": 23
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/antigravity/settings.json",
+      "sha256": "sha256:668f0e08ed9cfc20cbce44e626ccf29ccbc835c8efd7e492d3eb5620ada372ae",
+      "size": 233
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/antigravity/telegram-settings.json",
+      "sha256": "sha256:0fb992ae315963db9b7bfba29df39b0a6daa46caaf3dea2ee21d8cbd9075d94c",
+      "size": 2049
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/motd",
+      "sha256": "sha256:d3d0be2c7414984ef7c8b1aa70afe47f819dabd74c04ae0963db93fc0a5a317b",
+      "size": 250
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/nginx/nginx.conf",
+      "sha256": "sha256:993184a707fe26c51b52090f225b6832a9e7edcfd6d14a3ad3a21784b94960bd",
+      "size": 3163
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/profile.d/antigravity-ha.sh",
+      "sha256": "sha256:f2fcbcb24d1679c86536735126a6bb75975d57d324839f27215436d8b9f39847",
+      "size": 139
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/antigravity-ha-init/dependencies.d/base",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0755",
+      "path": "/etc/s6-overlay/s6-rc.d/antigravity-ha-init/run",
+      "sha256": "sha256:5c626a3473e72d1f0c6bc9c1a52a321cb8439084166fae80af7e2a2d16374385",
+      "size": 115
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/antigravity-ha-init/type",
+      "sha256": "sha256:aab38fd7998987a22d44fda7822afcfa69d039d3ba02b1f707f064df64352217",
+      "size": 8
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/antigravity-ha-init/up",
+      "sha256": "sha256:4d829c48bfefaa27b4b5a72ec2f2f25181a6d28d5d281ecc2b3583feb1f1a589",
+      "size": 48
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/ha-change-broker/dependencies.d/antigravity-ha-init",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0755",
+      "path": "/etc/s6-overlay/s6-rc.d/ha-change-broker/run",
+      "sha256": "sha256:f1e74ff3054f961c162f2e63185c29451a28619fdb7be1b9bd24fa5eca56d993",
+      "size": 182
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/ha-change-broker/type",
+      "sha256": "sha256:d0001a150b83f68f09004c5059045cb76a3f064eed4d42ce072bc3722c118006",
+      "size": 8
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/ha-memoryd/dependencies.d/antigravity-ha-init",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/ha-memoryd/dependencies.d/ha-read-broker",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0755",
+      "path": "/etc/s6-overlay/s6-rc.d/ha-memoryd/run",
+      "sha256": "sha256:f940823a057873409bc7c318cd378f66096496b0b16b5e6c8e187afdcca0568b",
+      "size": 2751
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/ha-memoryd/type",
+      "sha256": "sha256:d0001a150b83f68f09004c5059045cb76a3f064eed4d42ce072bc3722c118006",
+      "size": 8
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/ha-read-broker/dependencies.d/antigravity-ha-init",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0755",
+      "path": "/etc/s6-overlay/s6-rc.d/ha-read-broker/run",
+      "sha256": "sha256:7bf46b06546b33829dbab402ad268c6e779cb3fc884ee505582c2d4a1ce61b00",
+      "size": 178
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/ha-read-broker/type",
+      "sha256": "sha256:d0001a150b83f68f09004c5059045cb76a3f064eed4d42ce072bc3722c118006",
+      "size": 8
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/ingress/dependencies.d/ttyd",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0755",
+      "path": "/etc/s6-overlay/s6-rc.d/ingress/finish",
+      "sha256": "sha256:7a846946305ca8af7ab3e5635be130ed5d0188e5bb5bd6ebcae7875a0e1a770e",
+      "size": 419
+    },
+    {
+      "mode": "0755",
+      "path": "/etc/s6-overlay/s6-rc.d/ingress/run",
+      "sha256": "sha256:37a65ae5f94a1b576a821ab6ce247d3a6c9e56fa635add028dca6995b7b9073f",
+      "size": 220
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/ingress/type",
+      "sha256": "sha256:d0001a150b83f68f09004c5059045cb76a3f064eed4d42ce072bc3722c118006",
+      "size": 8
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/sshd/dependencies.d/antigravity-ha-init",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0755",
+      "path": "/etc/s6-overlay/s6-rc.d/sshd/finish",
+      "sha256": "sha256:01853d4b30bd117c888236a100ab535c7fe41d82a74b3cd2c7cdecf0f7478d7c",
+      "size": 328
+    },
+    {
+      "mode": "0755",
+      "path": "/etc/s6-overlay/s6-rc.d/sshd/run",
+      "sha256": "sha256:3de3c931573528848ffc04868925fa9d88205310886a1a2711b55bf181f5a61e",
+      "size": 422
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/sshd/type",
+      "sha256": "sha256:d0001a150b83f68f09004c5059045cb76a3f064eed4d42ce072bc3722c118006",
+      "size": 8
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/telegram-bot/dependencies.d/antigravity-ha-init",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/telegram-bot/dependencies.d/ha-change-broker",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/telegram-bot/dependencies.d/ha-read-broker",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0755",
+      "path": "/etc/s6-overlay/s6-rc.d/telegram-bot/run",
+      "sha256": "sha256:4c1f090ceb1f14a7cd481a57645af8df1724dd41ddb2173588957caaf81f8a58",
+      "size": 99
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/telegram-bot/type",
+      "sha256": "sha256:d0001a150b83f68f09004c5059045cb76a3f064eed4d42ce072bc3722c118006",
+      "size": 8
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/ttyd/dependencies.d/antigravity-ha-init",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0755",
+      "path": "/etc/s6-overlay/s6-rc.d/ttyd/finish",
+      "sha256": "sha256:e0f86b1208c4b663b9b5c132a2aa923e9c05380fe04ecb265341ad80dacf1e53",
+      "size": 401
+    },
+    {
+      "mode": "0755",
+      "path": "/etc/s6-overlay/s6-rc.d/ttyd/run",
+      "sha256": "sha256:d77aae7f776929dbe27e9da90885a4c0844df395ebff4aace14b8b03ea025896",
+      "size": 772
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/ttyd/type",
+      "sha256": "sha256:d0001a150b83f68f09004c5059045cb76a3f064eed4d42ce072bc3722c118006",
+      "size": 8
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/user/contents.d/antigravity-ha-init",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/user/contents.d/ha-change-broker",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/user/contents.d/ha-memoryd",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/user/contents.d/ha-read-broker",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/user/contents.d/ingress",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/user/contents.d/sshd",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/user/contents.d/telegram-bot",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/s6-overlay/s6-rc.d/user/contents.d/ttyd",
+      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size": 1
+    },
+    {
+      "mode": "0644",
+      "path": "/etc/ssh/sshd_config",
+      "sha256": "sha256:13f5aff9b20414b79924f3405d3b2537c73691fc8b1e77e5da5bfe55d52bcae1",
+      "size": 895
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/agy",
+      "sha256": "sha256:db73ad85bad119fe1e84a5abc6f96a30409f7ac49987edf0bb10929a952b1841",
+      "size": 76
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/antigravity",
+      "sha256": "sha256:5d0bcac9d2377e098d4281737fb2298ac2bc23f87ff166360a215ff4480ee162",
+      "size": 2205
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/antigravity-ha-init",
+      "sha256": "sha256:e3e255df304aa4932bee09e8f24d90acc3d8aed65111641070f91dbeda68ffd1",
+      "size": 22037
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/antigravity-user-files-update",
+      "sha256": "sha256:9c65616ccd3ab07507bf4f0bdde35c6e6acb7344a15df58a438c98080d501220",
+      "size": 1293
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-addon-logs",
+      "sha256": "sha256:5b3d2e6002a26d3e5f2ebe7a4b91198f950a5103af85033e4461b91a125397c6",
+      "size": 281
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-antigravity",
+      "sha256": "sha256:409ff596aec32cafd929f9374af0ab694a8291ca2fd41b52415f3084a159c9d8",
+      "size": 150
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-antigravity-login",
+      "sha256": "sha256:409ff596aec32cafd929f9374af0ab694a8291ca2fd41b52415f3084a159c9d8",
+      "size": 150
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-api",
+      "sha256": "sha256:5a291d15bbabaea69497d8c9c3253d5fa407ed5992711c2accdd9ea8c31ae4cf",
+      "size": 638
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-browser-auth-ensure",
+      "sha256": "sha256:a20c6bf80de907f86cd4af57f8f399ba93a586ce8efff0e0a17be0b14edd7f36",
+      "size": 1139
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-browser-auth-refresh",
+      "sha256": "sha256:84276d3d0594e77c7d0c3f0f0b3dae13ca4d54d61faf411f5e1aadf20e1acab9",
+      "size": 7514
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-browser-auth-remove",
+      "sha256": "sha256:ab25602b04260dea5a4e0fb1def8f38e3e698b544bd79ca9b8715d9bbc1dc06a",
+      "size": 2467
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-browser-auth-setup",
+      "sha256": "sha256:865d0dbb7cf7375e0fe0c8f20a9b276f955cae8ed67297952c276c9f42de4586",
+      "size": 3346
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-browser-auth-status",
+      "sha256": "sha256:6c6c0eb07436bd171302d755e10ba277186b062e2bb91df01a5873d78b16264e",
+      "size": 277
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-browser-network-info",
+      "sha256": "sha256:b2c4c157b179ee08341a5f793f0e96697fe6ca119ce697336f992359c802731b",
+      "size": 2576
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-browser-user-create",
+      "sha256": "sha256:885d2fea67183d47ffd77783ecded530b9f1e3c22b87d8010ae4397ae3219bc2",
+      "size": 2214
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-browser-user-remove-password",
+      "sha256": "sha256:f0135d1191be43c8fa8e87619f1a372897361d820d468a3445c86e99e266c03a",
+      "size": 965
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-change-broker",
+      "sha256": "sha256:987d9de83686a6988012b5a2fa9ed5b9137328f4556ee8369242e9a9d4f6ce4a",
+      "size": 805
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-change-broker-client",
+      "sha256": "sha256:c12c26d0168142ed6749385e9336feeaf9e7e4a2e5aafb4a1ba6ff19d089e967",
+      "size": 608
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-change-proposal-mcp",
+      "sha256": "sha256:737e701d9a92dd0105fd44bee3010f41661cfafca2f7b066b4acdef61de5c438",
+      "size": 991
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-config-check",
+      "sha256": "sha256:222c69b5a9bcc40cb1b38cfc3a40b5c286bc066d59abca0a59f3e0ff63b86f55",
+      "size": 136
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-core-logs",
+      "sha256": "sha256:eb22668b9b6b893ccd7ea85dc4d111935a6a2dac881c1e2f02eb30eb54a5ed23",
+      "size": 155
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-feedback",
+      "sha256": "sha256:30e8b9e053d2c7d1310d9f585f40e268f4b8b45a2ef27024b749e24972d4c08e",
+      "size": 721
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-memory",
+      "sha256": "sha256:041718453b4783b3a37aca26ffb32098008e440fc8b77ee79fde1f835332c6fa",
+      "size": 304
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-memory-mcp",
+      "sha256": "sha256:e710b0b042e201dea11b462d7e95da88d21d1459b55c4c15f5d06ba0b96d6bd9",
+      "size": 1133
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-playwright-mcp",
+      "sha256": "sha256:129776b48c8c1bf17b030f466139b4b35ba35b025064b9b7bf004bc0dd25432b",
+      "size": 2651
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-read-broker",
+      "sha256": "sha256:5d7d2dc21ab603cbfaece08dd071058c1c139184e7bc2b5d2a9fcabab7c6cbe1",
+      "size": 799
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-read-mcp",
+      "sha256": "sha256:5d7957f0e795656f151c74422946fce420bb984496d959b1f769e924ff952413",
+      "size": 409
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-telegram-login",
+      "sha256": "sha256:a9988569e27d1d58ca467067aba9862f21e40caf1cce04d0ad88af284892ddfd",
+      "size": 1755
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-telegram-pair",
+      "sha256": "sha256:1da7a510975ef1e5f087421261ce0b213751d0bfc49a47030aeac83f4f1be3b5",
+      "size": 317
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/ha-validate-mcp",
+      "sha256": "sha256:f5a60ec6c094f7d44e8ce187673b4c09eb0a6015bffc60a13647ac1d13f6e888",
+      "size": 277
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/supervisor-api",
+      "sha256": "sha256:fe15752733a1d0ab7ad238d4dacb87eb7a71e11d92c8360a7471354f5c9a84db",
+      "size": 636
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/tmux-session-shell",
+      "sha256": "sha256:413c321ff63ea02d11725cb2adaf76f68955652f7f6e858d99fc49a41ca2d275",
+      "size": 580
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/bin/web-terminal-entrypoint",
+      "sha256": "sha256:70e2f9a19da1a1af4ce02fa772ffc6da68fe75bfc52b175fe25e9f43b37a1578",
+      "size": 775
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/lib/antigravity-ha/api-client.sh",
+      "sha256": "sha256:cda5118e55b6b773a5c52bf853d26ca7a9e34264c52eefd36d4f059e1f25b5e7",
+      "size": 4627
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/lib/antigravity-ha/browser-approval.sh",
+      "sha256": "sha256:a65dcdbebc5b7fe23fa3b690adf50f9c7ad76fa368a4a64ebd1436a0180f7993",
+      "size": 373
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/lib/antigravity-ha/config.sh",
+      "sha256": "sha256:67251ff5b835097bf6088d6b67ab7c357abde9937109ff910964ce2734b9dd8e",
+      "size": 1523
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/lib/antigravity-ha/environment.sh",
+      "sha256": "sha256:437e4baf2652e220f78a2367c00b630481ef5e727f07907aabc2bc40854192a3",
+      "size": 667
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/lib/antigravity-ha/supervisor-credential.sh",
+      "sha256": "sha256:8fd7e07257475c5c06c2f07ceb86d09ea0189c43d47d4fe9b057c40410bce2b5",
+      "size": 5069
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/lib/antigravity-ha/telegram-plugin.sh",
+      "sha256": "sha256:b1a1e507f414996f68d0b4f8b513d994a265e92bb867c2f500d4d5decc90a1db",
+      "size": 1390
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/libexec/antigravity-interactive-restricted",
+      "sha256": "sha256:a46bd69e4032c38333959f96a633e6aac1c39e92e4a94d13f17bd00805e4ce9b",
+      "size": 347
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/libexec/antigravity-interactive-sensitive-read",
+      "sha256": "sha256:c868118016dfb647de521f23aefe55b91b08bae54b893e3b38d4f8228ee466da",
+      "size": 754
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/libexec/ha-change-broker-runtime",
+      "sha256": "sha256:80b181744aab23bd3dbc1a25b66987904da257a387c27f199ccfe81f237de6b4",
+      "size": 287
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/libexec/ha-init-runtime",
+      "sha256": "sha256:2e1662861bd1a843501c9e56514ef2572f24e3084905e626b36f92101d0ed8ee",
+      "size": 229
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/libexec/ha-interactive-shell",
+      "sha256": "sha256:06780e040e33806ac84f6f2dbba1795cecded73f37b58e9f1f1f911d4d97a9a5",
+      "size": 529
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/libexec/ha-playwright-runtime",
+      "sha256": "sha256:7cb7fc6a798a30aa1496330f70c0fd83ab7fba7e4e7b0e79c91288eeaaf5b835",
+      "size": 1242
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/libexec/ha-read-broker-runtime",
+      "sha256": "sha256:0602af4a47b710b5aadafff1362f9def8d3ba42ecf56304363359501abbf4eda",
+      "size": 283
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/libexec/ha-ssh-session",
+      "sha256": "sha256:495f1d039a89729fc2a67aeec136de14d696a219c8223ace7a802c22156c131f",
+      "size": 485
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/libexec/ha-sshd-runtime",
+      "sha256": "sha256:e1455ffa018a73e6d3fd68e85744344607f08eb1df67e908575f5e2e5b555459",
+      "size": 119
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/libexec/ha-telegram-home-bootstrap",
+      "sha256": "sha256:0b5580bd58f2ace263cbd9391eb89c5f294ad3d4f5ba69b1f63cea77caacab2e",
+      "size": 7962
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/libexec/ha-telegram-runtime",
+      "sha256": "sha256:2b617e31920a6c7e42c67251f6522129acbed8ceaf87f812ca4556937716b524",
+      "size": 591
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/libexec/ha-telegram-worker",
+      "sha256": "sha256:ce4debcfc2760e88eac85d5703ec967da52673a6c720ae4548190a6834a964e9",
+      "size": 3076
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/AGENTS.md",
+      "sha256": "sha256:e1ea9376c7a9d9d5c656587e11539eb62181e3d599aa2901109ffcf93ed2f0bc",
+      "size": 8703
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/browser-auth-check.mjs",
+      "sha256": "sha256:021f2e90d413f7f66753a2a4367e94c3117126e718697ed46a7d1180c7b6aa94",
+      "size": 8436
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/browser-user-admin.mjs",
+      "sha256": "sha256:9114ee4ccddca4e6cfdda45c90e42ce816976c94513b40dc894ca9132491586a",
+      "size": 58789
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/ha-change-broker-client.mjs",
+      "sha256": "sha256:d059b2b8b0672090be964aa2dfc5d031cb2a7c34832e69dadeed06c472b6a074",
+      "size": 1834
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/ha-change-broker.mjs",
+      "sha256": "sha256:f80ec64535aaadceac2ba212bd7c3b4faf4dd566e0304388789efa49e9aa738c",
+      "size": 90037
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/ha-change-proposal-mcp.mjs",
+      "sha256": "sha256:db6edf29a7820dc9c6cbfb0ca3b0551033d8a98d89a9299ba2f581028c97151e",
+      "size": 11464
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/ha-feedback.mjs",
+      "sha256": "sha256:a08cfcd55666782d6624d998e580d590dd164ac2abd78295e19a3a4782e9744b",
+      "size": 63392
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/ha-memory-core.mjs",
+      "sha256": "sha256:445c189d87acd15e13b84e6e8b192e25d00313bd519629bddb43a731ab95cc55",
+      "size": 153838
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/ha-memory-ha-client.mjs",
+      "sha256": "sha256:afe9d71e41a4e06f9c5a4e85efdfde821cb03405eea29752400a7f2cedb5cf2c",
+      "size": 24401
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/ha-memory-mcp.mjs",
+      "sha256": "sha256:e70b308588919986d3c0694e539e7aa1f10a0330eb1b6d8d3b7c18d182635414",
+      "size": 38778
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/ha-memory.mjs",
+      "sha256": "sha256:07169c42ce6d8ae5ad72dec13ffdc1d78c4fc8019f33b73806eda0718576058e",
+      "size": 11207
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/ha-read-broker.mjs",
+      "sha256": "sha256:adfa17dc0af0fcbcfa93a02b93fd761a5704bd5390fa45ad6602481d8039307e",
+      "size": 28256
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/ha-read-client.mjs",
+      "sha256": "sha256:bca043f4620b8ae421c17831bbc8a2abe57f88b3dbcbeb5bb4184697d1b2eef0",
+      "size": 3749
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/ha-read-mcp.mjs",
+      "sha256": "sha256:b53dcd36c396ebef6b58672213f5bcc081cd2afcc44dcdaa662bd90f91af5b79",
+      "size": 10109
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/ha-telegram-pair.mjs",
+      "sha256": "sha256:c06590beb6f14b8a72142dc319a2ab295ce3e1f2b46fe380046e3389fbef5ad3",
+      "size": 1527
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/ha-validate-mcp.mjs",
+      "sha256": "sha256:833f4993e09d819eb4ccc6b9b63ee8eaafe6a7f2087c0763e981cc0195151f80",
+      "size": 8841
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/managed-plugin-update.mjs",
+      "sha256": "sha256:3c3fb54aa4505b3c211da3d286d3f900cbf27ff60071da48485f83025125ced1",
+      "size": 24411
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/playwright-init-page.ts",
+      "sha256": "sha256:3f02f249fc60d4bcb7b2ce5943f5adbd50324800cd321f04224cd0cefe8c6330",
+      "size": 631
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/playwright-mcp-proxy.mjs",
+      "sha256": "sha256:cfceb0fdf1f8b37469a599b339b3993741be0fd7e0ff011e9b0f209f04adb119",
+      "size": 10669
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/playwright-mcp.json",
+      "sha256": "sha256:1c83e0a305223d9792f193b1fa563e18a50922380402a7674d15b7408d354c11",
+      "size": 1014
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/playwright-telegram-init-page.ts",
+      "sha256": "sha256:644db6f40a6a93fe6f84d30e8f02bc208207e8daf110e70a00961e88a36a13fa",
+      "size": 1377
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/agents/ha-telegram/agent.md",
+      "sha256": "sha256:1d70f04bd69bb117950ece9e4b7a442a42c551eb2494883512c31d2329733584",
+      "size": 3135
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/mcp_config.json",
+      "sha256": "sha256:92a08d5fad373c617dfd765227bc8985de938d5d5f503685a6176fd85aa62892",
+      "size": 799
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/plugin.json",
+      "sha256": "sha256:c1c5e7a80ce1d5e56ecc127db365d5c49eec4ccc5b98a2b588b8947a429e5ba7",
+      "size": 180
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/rules/home-assistant-safety.md",
+      "sha256": "sha256:c98d28e3aec61c649bba066146a172e766c0f3a1f1007fc3414d7e517abc8d27",
+      "size": 1510
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/skills/ha-change-proposal/SKILL.md",
+      "sha256": "sha256:36829328cf6883baae1d5f7cba61aa55732dc5357f2efbf963fec16761fc54a3",
+      "size": 2272
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/skills/ha-dashboard/SKILL.md",
+      "sha256": "sha256:2da053b8a4fe4b6fb606990f8b6d97c6cbaee4bc38bd7aa9bcc1b2b49c675d74",
+      "size": 766
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/skills/ha-feedback/SKILL.md",
+      "sha256": "sha256:3561ab0b7751d50eba73aa9893be817e8086d7a7dca0d262855ac001f5be4452",
+      "size": 2557
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/skills/ha-memory/SKILL.md",
+      "sha256": "sha256:fecf4de8a7ede6714401fb089e6163c118b4cdd1dbb2b7a592d789a93a4b4ef6",
+      "size": 914
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assistant-operations/SKILL.md",
+      "sha256": "sha256:abd963b107e764b77c040066ed9c056da109d2b6e262879049444f48968e1234",
+      "size": 1213
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/supervisor-credential-fd.mjs",
+      "sha256": "sha256:f1d83f5b8e16b22f6230ef66e77694e3e9eb36a8d2c227f05870be0c2e1e4568",
+      "size": 1613
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/supervisor-options-migrate.mjs",
+      "sha256": "sha256:534dc7b3f7770b8b0d9ca4bef5c35622967a1066083dbc91efec3b124cc58163",
+      "size": 9047
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/telegram-bridge.mjs",
+      "sha256": "sha256:90e2622c42911ed5f37f1fa90954b85341bd11097a4c3e7015d1391cc6ba7238",
+      "size": 58643
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/telegram-pairing.mjs",
+      "sha256": "sha256:1e96367bb5dc50eb60992370a3a6e893d1b04b417685c755a349977f759edde2",
+      "size": 11281
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/telegram-result-schema.json",
+      "sha256": "sha256:c78482dbbe5383148181f96be913b1a39132ecd31ddcc25f6f381f8fe7907c2b",
+      "size": 452
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/telegram-state.mjs",
+      "sha256": "sha256:fc25bf84e4cf779f2efc68892dbe4732f90b697d984b14e63401de144014e707",
+      "size": 23525
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/telegram-workspace/.antigravity-ha-managed",
+      "sha256": "sha256:145b7e93d57509f7bcaf44e5509271cbfd573b441f60214a5419fa44a1e83560",
+      "size": 77
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/user-files-update.mjs",
+      "sha256": "sha256:765ba151420e67fa44ccc9f8ba1d9467879509a837083bfa214ce6511ec52ef6",
+      "size": 53179
+    }
+  ],
+  "schema": "antigravity-ha-source-rootfs/v1",
+  "source_rootfs_sha256": "sha256:22b435eb960bf5e47ba0d888b59e6a83087e76afc2b13a557b455fad8b49e8ed"
+}

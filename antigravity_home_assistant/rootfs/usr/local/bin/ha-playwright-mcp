@@ -1,12 +1,11 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
 
 readonly RUNTIME_DIR=/run/antigravity-ha
-readonly PLAYWRIGHT_PROXY=/usr/local/share/antigravity-ha/playwright-mcp-proxy.mjs
 readonly PLAYWRIGHT_HOME=/run/antigravity-ha/playwright-home
 readonly BROWSER_TOKEN_FILE=/run/antigravity-ha/home-assistant-browser.token
 readonly BROWSER_AUTH_CHECK=/usr/local/share/antigravity-ha/browser-auth-check.mjs
-readonly RUNTIME_ENV=/run/antigravity-ha/runtime.env
 readonly NODE_BINARY=/usr/bin/node
 
 umask 077
@@ -18,6 +17,23 @@ if (( $# != 0 )); then
   exit 64
 fi
 
+telegram_user_present=0
+telegram_chat_present=0
+[[ -v HA_TELEGRAM_USER_ID ]] && telegram_user_present=1
+[[ -v HA_TELEGRAM_CHAT_ID ]] && telegram_chat_present=1
+telegram_read_only=0
+if (( telegram_user_present != telegram_chat_present )); then
+  printf 'ha-playwright-mcp: incomplete Telegram requester binding\n' >&2
+  exit 78
+elif (( telegram_user_present == 1 )); then
+  if [[ ! "${HA_TELEGRAM_USER_ID}" =~ ^[1-9][0-9]{0,19}$ ]] \
+    || [[ ! "${HA_TELEGRAM_CHAT_ID}" =~ ^-?[1-9][0-9]{0,19}$ ]]; then
+    printf 'ha-playwright-mcp: invalid Telegram requester binding\n' >&2
+    exit 78
+  fi
+  telegram_read_only=1
+fi
+
 unset \
   BASH_ENV \
   antigravity_HA_BROWSER_TOKEN_VALIDATED \
@@ -26,6 +42,8 @@ unset \
   HA_BROWSER_EXPECTED_CLIENT_NAME \
   HA_BROWSER_EXPECTED_DISPLAY_NAME \
   HA_BROWSER_EXPECTED_USER_ID \
+  HA_TELEGRAM_USER_ID \
+  HA_TELEGRAM_CHAT_ID \
   NODE_OPTIONS \
   NODE_PATH
 for variable in "${!PLAYWRIGHT_MCP_@}"; do
@@ -34,10 +52,9 @@ done
 /usr/local/bin/ha-browser-auth-ensure --quiet || true
 if [[ -r "${BROWSER_TOKEN_FILE}" ]]; then
   browser_token=$(< "${BROWSER_TOKEN_FILE}")
-  if [[ -z "${SUPERVISOR_TOKEN:-}" && -r "${RUNTIME_ENV}" ]]; then
-    # shellcheck source=/dev/null
-    . "${RUNTIME_ENV}"
-  fi
+  # shellcheck source=/dev/null
+  . /usr/local/lib/antigravity-ha/supervisor-credential.sh
+  antigravity_ha_load_supervisor_credential
   if [[ -n "${SUPERVISOR_TOKEN:-}" ]] \
     && HA_BROWSER_TOKEN="${browser_token}" \
       "${NODE_BINARY}" "${BROWSER_AUTH_CHECK}" >/dev/null 2>&1; then
@@ -61,4 +78,5 @@ unset \
   ENV \
   NODE_OPTIONS \
   NODE_PATH
-exec "${NODE_BINARY}" "${PLAYWRIGHT_PROXY}"
+export ANTIGRAVITY_HA_TELEGRAM_READ_ONLY="${telegram_read_only}"
+exec /usr/local/libexec/ha-playwright-runtime

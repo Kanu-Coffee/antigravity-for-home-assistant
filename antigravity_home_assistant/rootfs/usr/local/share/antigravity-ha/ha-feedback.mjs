@@ -26,8 +26,8 @@ const CHECK_STATUSES = new Set([
 ]);
 const SAFE_OPTION_KEYS = new Set([
   "web_terminal_auto_start_antigravity",
-  "antigravity_approval_policy",
-  "antigravity_sandbox_mode",
+  "antigravity_tool_permission",
+  "antigravity_terminal_sandbox",
   "browser_approval_policy",
   "antigravity_user_files_update_mode",
   "home_assistant_browser_auto_auth",
@@ -701,6 +701,7 @@ function readantigravityVersion() {
         timeout: 3000,
         maxBuffer: 4096,
         env: {
+          AGY_CLI_DISABLE_AUTO_UPDATE: "true",
           HOME: "/data/home",
           ANTIGRAVITY_HOME: "/data/antigravity",
           LANG: "C.UTF-8",
@@ -939,7 +940,7 @@ function renderReport(report) {
     "",
     "## Submission declarations / 제출 확인",
     "",
-    "- [x] The report was generated with the read-only `$ha-feedback` workflow or equivalent manual checks.",
+    "- [x] The report was generated with the read-only `/ha-feedback` workflow or equivalent manual checks.",
     "- [x] Logs and screenshots are not included by default and no file is uploaded automatically.",
     "- [x] Automated privacy validation passed; the submitter must review this exact body again before publication.",
     `- [${report.security_issue ? " " : "x"}] This is not a security vulnerability.`,

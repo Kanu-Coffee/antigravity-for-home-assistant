@@ -2,4 +2,4 @@
 # shellcheck shell=bash
 set -Eeuo pipefail
 
-exec /usr/local/bin/antigravity-ha-init
+exec /usr/local/libexec/ha-init-runtime

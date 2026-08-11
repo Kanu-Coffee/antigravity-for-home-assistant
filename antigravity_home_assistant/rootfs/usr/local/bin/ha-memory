@@ -1,9 +1,10 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
 
-if [[ -r /run/antigravity-ha/runtime.env ]]; then
-  # shellcheck disable=SC1091
-  . /run/antigravity-ha/runtime.env
-fi
-
-exec /usr/bin/node /usr/local/share/antigravity-ha/ha-memory.mjs "$@"
+exec /usr/bin/env -i \
+  HOME=/tmp \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  /usr/bin/node /usr/local/share/antigravity-ha/ha-memory.mjs "$@"

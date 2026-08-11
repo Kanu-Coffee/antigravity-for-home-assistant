@@ -1,6 +1,5 @@
 import json
 import re
-import tomllib
 from pathlib import Path
 
 
@@ -24,6 +23,12 @@ INTERACTIVE_BROWSER_TOOLS = {
     "browser_press_key",
     "browser_select_option",
     "browser_type",
+}
+
+TELEGRAM_SAFE_BROWSER_TOOLS = SAFE_AUTO_APPROVE_BROWSER_TOOLS - {
+    "browser_hover",
+    "browser_navigate_back",
+    "browser_tabs",
 }
 
 ALLOWED_BROWSER_TOOLS = (
@@ -75,52 +80,59 @@ def test_playwright_dependency_is_locked_and_built_into_image(
     assert "npx " not in dockerfile
 
 
-def test_antigravity_system_config_registers_restricted_playwright_mcp(
+def test_playwright_runtime_drops_supervisor_credential_access(
+    addon_root: Path,
     rootfs: Path,
 ) -> None:
-    config_path = rootfs / "etc/antigravity/config.toml"
-    with config_path.open("rb") as stream:
-        config = tomllib.load(stream)
+    wrapper = (rootfs / "usr/local/bin/ha-playwright-mcp").read_text(
+        encoding="utf-8"
+    )
+    runtime = (
+        rootfs / "usr/local/libexec/ha-playwright-runtime"
+    ).read_text(encoding="utf-8")
+    apparmor = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
 
-    developer_instructions = config["developer_instructions"]
-    assert "http://127.0.0.1:8099/" in developer_instructions
-    assert "image-managed" in developer_instructions
-    assert "another browser skill or plugin" in developer_instructions
-    assert "localhost:8123" in developer_instructions
+    assert "exec /usr/local/libexec/ha-playwright-runtime" in wrapper
+    assert "SUPERVISOR_TOKEN" in runtime
+    assert "exec /usr/bin/env -i" in runtime
+    assert (
+        "/usr/bin/node "
+        "/usr/local/share/antigravity-ha/playwright-mcp-proxy.mjs"
+    ) in runtime
+    assert (
+        "/usr/local/libexec/ha-playwright-runtime Px -> "
+        "antigravity_home_assistant-browser,"
+    ) in apparmor
 
-    playwright = config["mcp_servers"]["playwright"]
-    assert playwright["command"] == "/usr/bin/env"
-    assert playwright["args"] == [
-        "-i",
-        "HOME=/run/antigravity-ha/playwright-home",
-        "LANG=C.UTF-8",
-        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        "/usr/local/bin/ha-playwright-mcp",
-    ]
+
+def test_antigravity_plugin_registers_restricted_playwright_mcp(
+    rootfs: Path,
+) -> None:
+    plugin_root = (
+        rootfs / "usr/local/share/antigravity-ha/plugins/home-assistant"
+    )
+    config = json.loads((plugin_root / "mcp_config.json").read_text(encoding="utf-8"))
+    playwright = config["mcpServers"]["playwright"]
+    assert playwright["command"] == "/usr/local/bin/ha-playwright-mcp"
+    assert playwright["args"] == []
     assert playwright["cwd"] == "/config"
-    assert playwright["env_vars"] == []
-    assert playwright["enabled"] is True
-    assert playwright["required"] is False
-    assert playwright["startup_timeout_sec"] == 30
-    assert playwright["tool_timeout_sec"] == 120
-    assert playwright["default_tools_approval_mode"] == "prompt"
-
-    enabled_tools = set(playwright["enabled_tools"])
-    assert enabled_tools == ALLOWED_BROWSER_TOOLS
-    assert DANGEROUS_BROWSER_TOOLS.isdisjoint(enabled_tools)
-
-    tool_modes = {
-        name: settings["approval_mode"]
-        for name, settings in playwright["tools"].items()
-    }
-    assert set(tool_modes) == enabled_tools
+    assert "SUPERVISOR_TOKEN" not in json.dumps(playwright)
     assert {
-        name for name, mode in tool_modes.items() if mode == "approve"
-    } == SAFE_AUTO_APPROVE_BROWSER_TOOLS
-    assert {
-        name for name, mode in tool_modes.items() if mode == "prompt"
-    } == INTERACTIVE_BROWSER_TOOLS
-    assert set(tool_modes.values()) == {"approve", "prompt"}
+        "browser_evaluate",
+        "browser_file_upload",
+        "browser_install",
+        "browser_run_code",
+    } <= set(playwright["disabledTools"])
+
+    dashboard_skill = (
+        plugin_root / "skills/ha-dashboard/SKILL.md"
+    ).read_text(encoding="utf-8")
+    safety_rule = (
+        plugin_root / "rules/home-assistant-safety.md"
+    ).read_text(encoding="utf-8")
+    for guidance in (dashboard_skill, safety_rule):
+        assert "http://127.0.0.1:8099/" in guidance
+        assert "explicit" in guidance.lower()
 
     proxy = (
         rootfs / "usr/local/share/antigravity-ha/playwright-mcp-proxy.mjs"
@@ -130,50 +142,46 @@ def test_antigravity_system_config_registers_restricted_playwright_mcp(
     )
     assert allowlist_match
     proxy_tools = set(re.findall(r'"(browser_[a-z_]+)"', allowlist_match.group(1)))
-    assert enabled_tools == proxy_tools
-
-    policy_helper = (
-        rootfs / "usr/local/lib/antigravity-ha/browser-approval.sh"
-    ).read_text(encoding="utf-8")
-
-    def helper_array(name: str) -> set[str]:
-        match = re.search(
-            rf"readonly {name}=\((.*?)\n\)", policy_helper, re.DOTALL
-        )
-        assert match
-        return set(re.findall(r"\b(browser_[a-z_]+)\b", match.group(1)))
-
-    assert helper_array("antigravity_HA_PLAYWRIGHT_SAFE_TOOLS") == (
-        SAFE_AUTO_APPROVE_BROWSER_TOOLS
+    assert ALLOWED_BROWSER_TOOLS == proxy_tools
+    telegram_allowlist_match = re.search(
+        r"const TELEGRAM_SAFE_TOOLS = new Set\(\[(.*?)\]\);", proxy, re.DOTALL
     )
-    assert helper_array("antigravity_HA_PLAYWRIGHT_INTERACTIVE_TOOLS") == (
-        INTERACTIVE_BROWSER_TOOLS
+    assert telegram_allowlist_match
+    telegram_tools = set(
+        re.findall(r'"(browser_[a-z_]+)"', telegram_allowlist_match.group(1))
     )
+    assert telegram_tools == TELEGRAM_SAFE_BROWSER_TOOLS
+    assert telegram_tools.isdisjoint(INTERACTIVE_BROWSER_TOOLS)
     assert SAFE_AUTO_APPROVE_BROWSER_TOOLS.isdisjoint(INTERACTIVE_BROWSER_TOOLS)
 
 
-def test_playwright_approval_policy_is_applied_by_the_antigravity_wrapper(
+def test_playwright_approval_policy_uses_native_settings_permissions(
     rootfs: Path,
 ) -> None:
-    policy_helper = (
-        rootfs / "usr/local/lib/antigravity-ha/browser-approval.sh"
+    updater = (
+        rootfs / "usr/local/share/antigravity-ha/user-files-update.mjs"
     ).read_text(encoding="utf-8")
     wrapper = (rootfs / "usr/local/bin/antigravity").read_text(encoding="utf-8")
     init_script = (rootfs / "usr/local/bin/antigravity-ha-init").read_text(
         encoding="utf-8"
     )
+    policy_validator = (
+        rootfs / "usr/local/lib/antigravity-ha/browser-approval.sh"
+    ).read_text(encoding="utf-8")
 
-    assert "safe | never | always" in policy_helper
-    assert "mcp_servers.playwright.default_tools_approval_mode" in policy_helper
-    assert '.approval_mode=\\"${approval_mode}\\"' in policy_helper
-    assert "approval_mode=approve" in policy_helper
-    assert "approval_mode=prompt" in policy_helper
-    assert 'browser_approval_policy=safe' in wrapper
-    assert "antigravity_ha_config_string 'browser_approval_policy' 'safe'" in wrapper
-    assert 'exit 78' in wrapper
-    assert '"${antigravity_HA_BROWSER_APPROVAL_ARGS[@]}"' in wrapper
-    assert "browser-approval.sh" in wrapper
-    assert "browser-approval.sh" in init_script
+    assert "browserPermissionRules" in updater
+    assert "mcp(playwright/${tool})" in updater
+    assert "Legacy browser_approval_policy was retired" in updater
+    assert 'browserPermissionRules()' in updater
+    assert "browser-approval.sh" not in wrapper
+    assert "mcp_servers.playwright" not in wrapper
+    assert " -c " not in wrapper
+    assert "-dangerously-skip-permissions" in wrapper
+    assert "-sandbox=true" in wrapper
+    assert "--sandbox=true" in wrapper
+    assert "-sandbox=* | --sandbox=*" in wrapper
+    assert "mcp_servers.playwright" not in policy_validator
+    assert "antigravity_HA_BROWSER_APPROVAL_ARGS" not in policy_validator
     assert "Configured headless browser approval policy" in init_script
     assert "Invalid headless browser approval policy" in init_script
 
@@ -185,14 +193,23 @@ def test_playwright_wrapper_uses_only_the_image_managed_stdio_server(
         encoding="utf-8"
     )
 
-    assert wrapper.startswith("#!/usr/bin/env bash\n")
+    assert wrapper.splitlines()[:3] == [
+        "#!/bin/bash -p",
+        "set -Eeuo pipefail",
+        "unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN",
+    ]
     assert "set -Eeuo pipefail" in wrapper
     assert "umask 077" in wrapper
     assert 'readonly PLAYWRIGHT_HOME=/run/antigravity-ha/playwright-home' in wrapper
     assert '"${RUNTIME_DIR}/playwright-output" "${PLAYWRIGHT_HOME}"' in wrapper
-    assert 'readonly PLAYWRIGHT_PROXY=' in wrapper
+    assert "PLAYWRIGHT_PROXY" not in wrapper
     assert 'if (( $# != 0 )); then' in wrapper
-    assert 'exec "${NODE_BINARY}" "${PLAYWRIGHT_PROXY}"' in wrapper
+    assert "[[ -v HA_TELEGRAM_USER_ID ]]" in wrapper
+    assert "[[ -v HA_TELEGRAM_CHAT_ID ]]" in wrapper
+    assert "^[1-9][0-9]{0,19}$" in wrapper
+    assert "^-?[1-9][0-9]{0,19}$" in wrapper
+    assert 'ANTIGRAVITY_HA_TELEGRAM_READ_ONLY="${telegram_read_only}"' in wrapper
+    assert "exec /usr/local/libexec/ha-playwright-runtime" in wrapper
     assert 'readonly NODE_BINARY=/usr/bin/node' in wrapper
     assert "NODE_OPTIONS" in wrapper
     assert "NODE_PATH" in wrapper
@@ -208,6 +225,14 @@ def test_playwright_wrapper_uses_only_the_image_managed_stdio_server(
     assert "npx" not in wrapper
     assert "npm" not in wrapper
     assert "--port" not in wrapper
+
+    runtime = (
+        rootfs / "usr/local/libexec/ha-playwright-runtime"
+    ).read_text(encoding="utf-8")
+    assert "/usr/local/share/antigravity-ha/playwright-mcp-proxy.mjs" in runtime
+    assert "SUPERVISOR_TOKEN" in runtime
+    assert "exec /usr/bin/env -i" in runtime
+    assert 'ANTIGRAVITY_HA_TELEGRAM_READ_ONLY="${telegram_read_only}"' in runtime
 
     proxy = (
         rootfs / "usr/local/share/antigravity-ha/playwright-mcp-proxy.mjs"
@@ -227,11 +252,64 @@ def test_playwright_wrapper_uses_only_the_image_managed_stdio_server(
     assert "writeJson(process.stdout, message, true)" in proxy
     assert 'createInterface({ input: child.stderr, crlfDelay: Infinity })' in proxy
     assert 'Object.prototype.hasOwnProperty.call(toolArgs, "filename")' in proxy
-    assert "ALLOWED_TOOLS.has(toolName)" in proxy
-    assert ".filter((tool) => ALLOWED_TOOLS.has(tool.name))" in proxy
+    assert "enabledTools.has(toolName)" in proxy
+    assert ".filter((tool) => enabledTools.has(tool.name))" in proxy
+    assert "TELEGRAM_SAFE_TOOLS" in proxy
+    assert "playwright-bootstrap-telegram" in proxy
+    assert 'const TELEGRAM_CANONICAL_ORIGIN = "http://127.0.0.1:8099"' in proxy
+    assert 'toolName === "browser_navigate"' in proxy
+    assert "isCanonicalTelegramNavigation(toolArgs?.url)" in proxy
+    assert '"--block-service-workers"' in proxy
+    assert '"--allowed-origins"' in proxy
+    assert '"--init-page"' in proxy
+    assert "startTelegramNetworkProxy" in proxy
+    assert '"--proxy-server"' in proxy
+    assert '"--proxy-bypass"' in proxy
+    assert '"<-loopback>"' in proxy
+    assert 'request.socket.destroy()' in proxy
     assert "HOME_ASSISTANT_NAVIGATION_GUIDANCE" in proxy
     assert "http://127.0.0.1:8099/" in proxy
     assert ".map(addImageManagedGuidance)" in proxy
+
+    telegram_init_page = (
+        rootfs
+        / "usr/local/share/antigravity-ha/playwright-telegram-init-page.ts"
+    ).read_text(encoding="utf-8")
+    assert 'const CANONICAL_HTTP_ORIGIN = "http://127.0.0.1:8099"' in (
+        telegram_init_page
+    )
+    assert 'const CANONICAL_WEBSOCKET_ORIGIN = "ws://127.0.0.1:8099"' in (
+        telegram_init_page
+    )
+    assert 'context.route("**/*"' in telegram_init_page
+    assert 'route.abort("blockedbyclient")' in telegram_init_page
+    assert "context.routeWebSocket" in telegram_init_page
+    assert "webSocket.connectToServer()" in telegram_init_page
+    assert 'webSocket.close({ code: 1008' in telegram_init_page
+
+
+def test_telegram_playwright_uses_a_parent_bound_read_only_profile(
+    addon_root: Path,
+) -> None:
+    apparmor = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
+    worker = apparmor.split(
+        "profile antigravity_home_assistant-telegram-worker", maxsplit=1
+    )[1].split(
+        "profile antigravity_home_assistant-change-broker", maxsplit=1
+    )[0]
+
+    assert (
+        "/usr/local/bin/ha-playwright-mcp Px -> "
+        "antigravity_home_assistant-playwright-bootstrap-telegram,"
+    ) in worker
+    assert (
+        "profile antigravity_home_assistant-playwright-bootstrap-telegram"
+    ) in apparmor
+    assert (
+        "/usr/local/libexec/ha-playwright-runtime Px -> "
+        "antigravity_home_assistant-browser-telegram,"
+    ) in apparmor
+    assert "profile antigravity_home_assistant-browser-telegram" in apparmor
 
 
 def test_playwright_runtime_is_headless_isolated_and_ephemeral(
@@ -250,7 +328,7 @@ def test_playwright_runtime_is_headless_isolated_and_ephemeral(
     assert browser["isolated"] is True
     assert "userDataDir" not in browser
     assert launch["headless"] is True
-    assert launch["executablePath"] == "/usr/bin/chromium-headless-shell"
+    assert launch["executablePath"] == "/usr/bin/chromium"
     assert launch["chromiumSandbox"] is False
     assert {"--disable-dev-shm-usage", "--no-sandbox"} <= set(launch["args"])
     assert context["viewport"] == {"width": 1440, "height": 900}
@@ -362,6 +440,17 @@ def test_browser_auth_refresh_is_private_fail_closed_and_called_at_init(
     )
     assert 'chmod 0600 "${status_tmp}"' in refresh
     assert 'mv -f "${status_tmp}" "${RUNTIME_STATUS}"' in refresh
+    optional_credential_load = (
+        "if ! antigravity_ha_load_supervisor_credential --optional; then"
+    )
+    assert optional_credential_load in refresh
+    assert refresh.index('status_tmp=$(mktemp "${RUNTIME_DIR}/.browser-auth-status.') < (
+        refresh.index(optional_credential_load)
+    )
+    assert refresh.index("write_status()") < refresh.index(optional_credential_load)
+    assert refresh.index(optional_credential_load) < refresh.index(
+        "antigravity_ha_config_validate"
+    )
     assert "write_status rejected invalid_options" in refresh
     assert "antigravity_ha_config_bool home_assistant_browser_auto_auth true" in refresh
     assert "write_status disabled option_disabled" in refresh
@@ -498,9 +587,11 @@ def test_real_playwright_mcp_smoke_is_part_of_container_validation(
     assert "tests/playwright_mcp_smoke.mjs" in docker_smoke
     assert "tests/ha_browser_gateway_fixture.mjs" in docker_smoke
     assert "/usr/local/bin/ha-playwright-mcp" in docker_smoke
-    assert "antigravity mcp list --json" in docker_smoke
+    assert "plugin validate" in docker_smoke
+    assert "mcpServers.playwright.command" in docker_smoke
     assert "PLAYWRIGHT_MCP_SMOKE_URL=http://127.0.0.1:8099/" in docker_smoke
     assert "PLAYWRIGHT_MCP_SMOKE_EXPECT_SOURCE_IP" in docker_smoke
+    assert "PLAYWRIGHT_MCP_SMOKE_TELEGRAM_REDIRECT_URL" in docker_smoke
     assert "home-assistant-internal-desktop.png" in docker_smoke
     assert "home-assistant-internal-mobile.png" in docker_smoke
     assert "PLAYWRIGHT_MCP_SMOKE_EXPECT_UNAUTHENTICATED=1" in docker_smoke
@@ -508,6 +599,10 @@ def test_real_playwright_mcp_smoke_is_part_of_container_validation(
     assert "--probe-websocket ws://127.0.0.1:8099/api/websocket" in docker_smoke
     assert "Home Assistant browser gateway was reachable outside app loopback" in docker_smoke
     assert "/run/antigravity-ha/playwright-output/init-sentinel" in docker_smoke
+    assert '"home_assistant_browser_token"' not in docker_smoke
+    assert '.source == "managed"' in docker_smoke
+    assert "/data/browser-auth/managed-user.json" in docker_smoke
+    assert "/data/browser-auth/managed-token" in docker_smoke
 
     approval_smoke = (
         repository_root / "tests/browser-approval-smoke.sh"
@@ -516,12 +611,16 @@ def test_real_playwright_mcp_smoke_is_part_of_container_validation(
         encoding="utf-8"
     )
     assert approval_smoke.startswith("#!/usr/bin/env bash\nset -Eeuo pipefail\n")
-    assert "antigravity mcp get playwright --json" in approval_smoke
+    assert "antigravity-user-files-update" in approval_smoke
+    assert "/data/home/.gemini/antigravity-cli/settings.json" in approval_smoke
+    assert 'mcp(playwright/${tool})' in approval_smoke
+    assert "settings.permissions" in approval_smoke
     assert "tests/fake-antigravity-real.sh" in approval_smoke
+    assert "-dangerously-skip-permissions=true" in approval_smoke
     assert "browser-approval-smoke.sh" in ci
 
 
-def test_released_image_update_smoke_is_wired_into_ci(
+def test_local_update_persistence_smoke_is_wired_into_ci(
     repository_root: Path,
 ) -> None:
     update_smoke_path = repository_root / "tests/update-smoke.sh"
@@ -531,35 +630,35 @@ def test_released_image_update_smoke_is_wired_into_ci(
     )
 
     assert update_smoke.startswith("#!/usr/bin/env bash\nset -Eeuo pipefail\n")
-    assert "ghcr.io/kanu-coffee/antigravity-for-home-assistant:0.5.0" in update_smoke
-    assert '\\"antigravity_user_files_update_mode\\":\\"preserve\\"' in update_smoke
+    assert "ghcr.io/kanu-coffee/antigravity-for-home-assistant:0.5.0" not in update_smoke
+    assert 'antigravity_user_files_update_mode: "preserve"' in update_smoke
+    assert "existing v1 installation" in update_smoke
+    assert "<<'SEED'" in update_smoke
+    assert "docker run --rm --interactive" in update_smoke
+    assert "seeded App options were not persisted to the update data volume" in (
+        update_smoke
+    )
+    assert 'test -s /data/options.json' in update_smoke
+    assert "type == \"object\"" in update_smoke
     assert '"${DATA_VOLUME}:/data"' in update_smoke
     assert '"${CONFIG_VOLUME}:/config"' in update_smoke
     assert "/data/antigravity/config.toml" in update_smoke
     assert "/data/antigravity/auth.json" in update_smoke
     assert "/data/antigravity/AGENTS.md" in update_smoke
     assert "/data/ssh/ssh_host_ed25519_key.pub" in update_smoke
-    for preserved_value in (
-        "CONFIG_HASH_BEFORE",
-        "AUTH_HASH_BEFORE",
-        "AGENTS_HASH_BEFORE",
-        "HA_CONFIG_HASH_BEFORE",
-        "HOST_KEY_BEFORE",
-        "OPTIONS_HASH_BEFORE",
-    ):
-        assert preserved_value in update_smoke
-    assert "antigravity mcp list --json" in update_smoke
-    assert "antigravity mcp get playwright --json" in update_smoke
-    assert 'has("browser_approval_policy") | not' in update_smoke
-    assert "antigravity debug prompt-input" in update_smoke
-    assert "http://127.0.0.1:8099/" in update_smoke
-    assert "tests/playwright_mcp_smoke.mjs" in update_smoke
+    assert "hashes_before" in update_smoke
+    assert "host_key_before" in update_smoke
+    assert "/data/home/.gemini/antigravity-cli/settings.json" in update_smoke
+    assert "/data/home/.gemini/config/mcp_config.json" in update_smoke
+    assert "/data/antigravity-ha-memory/memory.sqlite3" in update_smoke
+    assert "PRAGMA quick_check;" in update_smoke
+    assert "/data/home/.gemini/config/plugins/home-assistant/plugin.json" in update_smoke
 
-    assert "Run container smoke tests" in ci
-    assert "Verify update from released 0.5.0" in ci
-    assert ci.index("Run container smoke tests") < ci.index(
-        "Verify update from released 0.5.0"
-    )
-    assert "bash tests/update-smoke.sh" in ci
-    assert "ghcr.io/kanu-coffee/antigravity-for-home-assistant:0.5.0" in ci
+    assert "amd64-independent-smokes:" in ci
+    assert "- container" in ci
+    assert "- update" in ci
+    assert ci.index("- container") < ci.index("- update")
+    assert "exec bash tests/docker-smoke.sh" in ci
+    assert "exec bash tests/update-smoke.sh" in ci
+    assert "ghcr.io/kanu-coffee/antigravity-for-home-assistant:0.5.0" not in ci
     assert "antigravity-for-home-assistant:test" in ci

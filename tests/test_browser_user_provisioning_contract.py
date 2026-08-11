@@ -9,7 +9,11 @@ def test_browser_user_create_reads_password_without_process_arguments(
         encoding="utf-8"
     )
 
-    assert wrapper.startswith("#!/usr/bin/env bash\nset -Eeuo pipefail\n")
+    assert wrapper.splitlines()[:3] == [
+        "#!/bin/bash -p",
+        "set -Eeuo pipefail",
+        "unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN",
+    ]
     assert "Usage: ha-browser-user-create <display-name> <username>" in wrapper
     assert wrapper.count("read -r -s") == 2
     assert "< /dev/tty" in wrapper
@@ -77,7 +81,11 @@ def test_password_removal_requires_ready_status_and_explicit_user_id(
         rootfs / "usr/local/bin/ha-browser-user-remove-password"
     ).read_text(encoding="utf-8")
 
-    assert wrapper.startswith("#!/usr/bin/env bash\nset -Eeuo pipefail\n")
+    assert wrapper.splitlines()[:3] == [
+        "#!/bin/bash -p",
+        "set -Eeuo pipefail",
+        "unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN",
+    ]
     assert "Usage: ha-browser-user-remove-password <user-id>" in wrapper
     assert 'node "${HELPER}" remove-password "$1"' in wrapper
     assert "ha-browser-auth-status" in wrapper
@@ -98,7 +106,11 @@ def test_managed_browser_auth_commands_are_argument_free_and_refresh_runtime(
         (setup, "Usage: ha-browser-auth-setup"),
         (remove, "Usage: ha-browser-auth-remove"),
     ):
-        assert command.startswith("#!/usr/bin/env bash\nset -Eeuo pipefail\n")
+        assert command.splitlines()[:3] == [
+            "#!/bin/bash -p",
+            "set -Eeuo pipefail",
+            "unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN",
+        ]
         assert "umask 077" in command
         assert "if (( $# != 0 )); then" in command
         assert usage in command
@@ -135,7 +147,11 @@ def test_managed_browser_auth_commands_are_argument_free_and_refresh_runtime(
     assert 'node "${HELPER}" auto-setup ' not in setup
     assert 'node "${HELPER}" auto-remove ' not in remove
 
-    assert refresh.startswith("#!/usr/bin/env bash\nset -Eeuo pipefail\n")
+    assert refresh.splitlines()[:3] == [
+        "#!/bin/bash -p",
+        "set -Eeuo pipefail",
+        "unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN",
+    ]
     assert "Usage: ha-browser-auth-refresh [--quiet]" in refresh
     assert "if (( $# == 1 )) && [[ $1 == --quiet ]]; then" in refresh
     for hostile_variable in (
@@ -151,7 +167,11 @@ def test_managed_browser_auth_commands_are_argument_free_and_refresh_runtime(
         assert hostile_variable in refresh
     assert "set -x" not in refresh
 
-    assert ensure.startswith("#!/usr/bin/env bash\nset -Eeuo pipefail\n")
+    assert ensure.splitlines()[:3] == [
+        "#!/bin/bash -p",
+        "set -Eeuo pipefail",
+        "unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN",
+    ]
     assert "Usage: ha-browser-auth-ensure [--quiet]" in ensure
     assert "antigravity_ha_config_bool home_assistant_browser_auto_auth true" in ensure
     assert "antigravity_ha_config_string home_assistant_browser_token ''" in ensure

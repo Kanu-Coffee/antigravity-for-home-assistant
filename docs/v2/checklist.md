@@ -1,0 +1,309 @@
+# v2 구현 체크리스트
+
+## 1. 작업 규칙
+
+상태는 `TODO`, `IN_PROGRESS`, `BLOCKED`, `PARTIAL`, `VERIFIED`만 사용한다.
+`PARTIAL`은 좁은 local fixture 등 일부 범위만 통과했고 HAOS·architecture·E2E 같은
+필수 범위가 남았음을 뜻한다. `VERIFIED`에는 [test-plan.md](test-plan.md) 양식의
+요구 범위 전체 증거가 필요하다. 현재 코드에 파일이나 test가 있다는 사실만으로
+완료하지 않는다.
+
+구현 전 매번 확인한다.
+
+- [ ] 루트 `AGENTS.md`와 관련 `docs/v2/` 계약을 읽었는가?
+- [ ] 현재 Git 상태와 사용자 변경을 확인했는가?
+- [ ] secret, AppArmor, Telegram approval 또는 migration 경계가 바뀌는가?
+- [ ] 실제 Antigravity 1.1.11 help/schema로 인터페이스를 확인했는가?
+- [ ] rollback과 failure isolation이 정의됐는가?
+- [ ] 해당 test ID와 실제 HAOS 필요 여부가 정해졌는가?
+
+## 2. 제약사항과 주의사항
+
+### 반드시 지킬 제약
+
+- AppArmor는 항상 ON이며 끄는 option을 만들지 않는다.
+- `antigravity_sensitive_data_access`는 대화형 Antigravity의 top-level named `Px`
+  실행 프로필만 선택한다. 기본값은 `false`이며 `true`도 세 조건부 경로의
+  read-only만 허용한다.
+- Telegram 기존 bridge의 shell/tmux 실행 경로를 재사용하지 않는다.
+- `SUPERVISOR_TOKEN`과 credential을 model process에 전달하지 않는다.
+- Antigravity native `settings.json`, MCP와 plugin 경로만 사용한다.
+- `-c`를 config override로 사용하지 않는다.
+- 사용자 `/config/AGENTS.md`를 생성하거나 덮어쓰지 않는다.
+- `.storage`, Recorder DB, secrets와 auth 파일을 직접 수정하지 않는다.
+- GHCR tag, image와 release artifact를 덮어쓰지 않는다.
+- amd64 성공을 aarch64 또는 실제 HAOS 성공으로 확대하지 않는다.
+
+### 특히 주의할 부분
+
+- shell quote로 prompt를 안전하게 만들려고 하지 말고 shell 자체를 사용하지 않는다.
+- settings/plugin JSON merge는 unknown 사용자 key를 보존한다.
+- migration에서 symlink, hardlink, FIFO, device와 unsafe owner/mode를 거부한다.
+- browser read-only user도 모든 state를 볼 수 있으므로 결과는 민감하다.
+- `always-proceed`는 AppArmor와 broker 정책을 완화하지 않는다.
+- diagnostics, proposed diff와 command success는 mutation 승인/검증이 아니다.
+- memory 0건은 준비 완료나 검증된 no-result와 같지 않다.
+- 실제 HAOS/AppArmor 결과는 local Docker fixture와 별도 기록한다.
+- 대화형 Antigravity는 `/data/home`, Telegram은 전용
+  `/data/antigravity-ha/telegram-home`과 image-managed safe cwd를 사용한다. 실제
+  1.1.11 shared-HOME positive control에서는 user global MCP가 OAuth 인증 완료 전
+  launch됐지만, 전용 worker canary에서는 user global MCP와 `/config/.agents` marker가
+  모두 실행되지 않았고 managed MCP 변조는 exit 70, rules 변조는 fail closed로
+  닫혔다. 실제 HAOS OAuth 성공,
+  AppArmor enforce와 worker 자신의 OAuth 동일-process 유출 음성 시험 전에는 기본 OFF와
+  release blocker를 유지한다.
+- `config_patch` public preview는 broker-generated secret-safe bounded structured
+  diff, 생략 표시와 normalized mutation digest를 포함한다. local component suite는
+  secret canary 제거와 changed-preview 승인 무효화를 통과했다.
+- 실행 가능한 첫 config transaction은 canonical root-level
+  `input_boolean: !include <file>.yaml`과 제한된 helper schema뿐이다. broker가
+  `memory_begin_change` → atomic replace/config check → `input_boolean.reload` → fresh
+  API `memory_verify_change`를 수행하며 실패 시 검증된 backup을 다시 reload한다. 그 외
+  YAML은 preview-only이고 실행 시 fail closed한다. 실제 HAOS safe change는 아직
+  `NOT RUN`이므로 전체 config change를 end-to-end 완료로 표현하지 않는다.
+- pinned Antigravity binary의 background self-updater는 모든 native launch에서
+  `AGY_CLI_DISABLE_AUTO_UPDATE=true`로 차단한다. clean-HOME opt-out canary만으로 App
+  전체 wrapper/env 경계를 완료로 표시하지 않는다.
+
+### 2026-08-11 local v2 증거 스냅샷
+
+- 전체 Python suite: `134 passed`.
+- linux/amd64 `antigravity-for-home-assistant:v2-final-local`: manifest-list digest
+  `sha256:de1992f8c0df09a0b138a8c22659f68dc1e817079f6828149f68305df79ddb04`,
+  saved image config digest
+  `sha256:89fbca725e87f93af8d93f136b520f9e99738882ba3db2d6dc5e8db0f4d38a2b`.
+- linux/arm64 `antigravity-for-home-assistant:v2-final-local-arm64`:
+  manifest-list digest
+  `sha256:3cac3dcc76ba9d1410d3aac2369431a0568841f340f6b9748824b307cbd087df`,
+  saved image config digest
+  `sha256:1b63cf5afb9fb104426f94a1bdc9d6c3822c5fcc274a35515ee1d08fca17d82a`;
+  QEMU packaging, HOME/rules/MCP Telegram isolation와 container-replacement update
+  preservation PASS. 임시 binfmt 등록은 시험 후 제거했다.
+- 해당 amd64 image의 full Docker, memory, browser-approval, feedback,
+  managed-auth, user-files, managed-plugin과 update smoke: PASS.
+- amd64와 QEMU arm64 actual Antigravity 1.1.11 Telegram 전용 HOME/cwd 격리 canary와
+  managed MCP/rules tamper fail-closed: PASS.
+- canonical input boolean config transaction, memory begin/verify와 failure rollback local
+  fixture: PASS.
+- 실제 HAOS OAuth/AppArmor enforce, native arm64와 실제 Telegram/config mutation
+  E2E: `NOT RUN`. 이 스냅샷만으로 관련 마일스톤을 `VERIFIED`로 올리지 않는다.
+- candidate/release targeted contract 10개, actionlint, release/smoke ShellCheck,
+  workflow YAML과 수정 Markdown lint: PASS. 실제 candidate/Builder run, GHCR public
+  visibility, HAOS evidence와 numeric tag는 `NOT RUN`이다.
+- 위 최종 amd64 image에서 App 관리 plugin의
+  stage-fail/SIGKILL/postcondition-fail rollback과 native settings/MCP/state의
+  same-state/missing-MCP `prepared` SIGKILL recovery가 PASS했다. 실제 HAOS
+  update/rollback과 전원 차단 내구성은 `NOT RUN`이다.
+
+### 2026-08-12 pre-commit 통합 증거 스냅샷
+
+- current working tree를 embedded source manifest로 고정한 amd64 image
+  `sha256:379bc37a8a07151d192b64e3368440862e9155599202c05345adcffa2bca6c72`에서
+  rootfs digest
+  `sha256:22b435eb960bf5e47ba0d888b59e6a83087e76afc2b13a557b455fad8b49e8ed`와
+  135개 root-owned regular file을 검증했다.
+- full Python은 `165 passed, 1 skipped`; test container에서 Docker socket 부재로
+  skip된 Buildx context canary는 host Docker를 연결해 별도로 `1 passed`였다. Node
+  component는 두 묶음 60개, 전체 static/lint/AppArmor parser/App linter gate는 PASS했다.
+- 같은 이미지의 full Docker, feedback, browser approval, memory, managed auth,
+  Telegram isolation, user-files, managed-plugin과 update persistence smoke는 PASS했다.
+- 이 image의 OCI revision은 아직 변경 전 `HEAD`를 가리키므로 release 증거가 아니다.
+  public `1.0.4 → v2` rehearsal도 clean committed source preflight에서 의도대로 멈췄다.
+  commit-bound rebuild와 rehearsal 전에는 M6-01, M6-08 또는 M7-05를 승격하지 않는다.
+- 실제 HAOS, AppArmor enforce, OAuth, live Telegram/Core/Supervisor, native arm64와 remote
+  candidate/Builder/public GHCR은 계속 `NOT RUN`이다.
+
+## 3. 마일스톤
+
+### M0 — 문서와 기준선
+
+| ID | 상태 | 과제 | 완료 증거 |
+| --- | --- | --- | --- |
+| M0-01 | `VERIFIED` | `docs/v2/` 제품·아키텍처·보안 계약 작성 | 12개 문서, markdownlint 0, internal-link/contract check PASS |
+| M0-02 | `VERIFIED` | FR/SEC/TG/MIG/test traceability 검사 추가 | ST-010; `python3 tests/test_v2_docs_contract.py` 12/12 PASS |
+| M0-03 | `VERIFIED` | 현재 결함과 제거 대상을 issue 단위로 고정 | [gap register](gap-register.md) GAP/LEGACY IDs |
+| M0-04 | `VERIFIED` | v2 target version과 migration support window 확정 | [ADR-001](decisions.md#adr-001--v2-target과-직접-migration-창) |
+
+### M1 — 기존 CI 기준선 복구
+
+| ID | 상태 | 과제 | 완료 증거 |
+| --- | --- | --- | --- |
+| M1-01 | `VERIFIED` | s6 run executable bit 실패 해결 | pytest 119 PASS, ST-008 |
+| M1-02 | `VERIFIED` | ShellCheck와 `/bin/sh`/Bash 불일치 해결 | ST-003와 image smoke PASS |
+| M1-03 | `VERIFIED` | memory JSON/stdout/stderr 분리 | memory smoke PASS |
+| M1-04 | `VERIFIED` | stale `debug prompt-input` smoke 제거 | actual 1.1.11 image smoke PASS |
+| M1-05 | `VERIFIED` | Markdown와 secret scan 범위 정리 | ST-004, ST-007 PASS |
+| M1-06 | `PARTIAL` | CI job을 독립시켜 실패 증거 보존 | local actionlint/contract PASS; remote workflow run TODO |
+
+### M2 — Antigravity native 기반
+
+| ID | 상태 | 과제 | 완료 증거 |
+| --- | --- | --- | --- |
+| M2-01 | `PARTIAL` | 1.1.11 amd64/aarch64 artifact와 digest 고정 | both local image builds PASS; native HAOS aarch64 TODO |
+| M2-02 | `VERIFIED` | wrapper에서 Codex flags/token 주입 제거 | AG-002~003, AG-012와 image smoke PASS |
+| M2-03 | `PARTIAL` | native OAuth와 `/data/home` persistence | local persistence contract PASS; actual HAOS OAuth TODO |
+| M2-04 | `PARTIAL` | sparse `settings.json` merge 구현 | merge/unknown-key/failure recovery PASS; HAOS update TODO |
+| M2-05 | `PARTIAL` | `home-assistant` plugin 구조와 validation | actual 1.1.11 validation/rollback PASS; HAOS install TODO |
+| M2-06 | `PARTIAL` | plugin MCP와 최소환경 wrapper | local token/env canary PASS; HAOS AppArmor TODO |
+| M2-07 | `PARTIAL` | print/stream-json 실제 binary parser | parser/component PASS; real Telegram conversation TODO |
+| M2-08 | `PARTIAL` | image-managed rules와 사용자 guidance 분리 | static/native tamper contract PASS; HAOS user migration TODO |
+| M2-09 | `PARTIAL` | 모든 native launch에서 runtime self-updater opt-out 강제 | current amd64/QEMU arm64 PASS; native HAOS canary TODO |
+
+### M3 — credential/change broker와 AppArmor
+
+| ID | 상태 | 과제 | 완료 증거 |
+| --- | --- | --- | --- |
+| M3-01 | `PARTIAL` | 원본 credential 격리 broker 구현 | child-env/token canary PASS; HAOS enforce TODO |
+| M3-02 | `PARTIAL` | typed proposal, risk classifier, capability 구현 | broker unit/security suite PASS; HAOS mutation TODO |
+| M3-03 | `PARTIAL` | secret-safe structured patch/preview와 config transaction/check/reload/memory verify/rollback | local input_boolean + installed memory boundary PASS; HAOS safe change TODO |
+| M3-04 | `PARTIAL` | service_call과 분리된 typed transient device prior/test/always-restore workflow | local success/failure/in-doubt/replay PASS; HAOS safe test TODO |
+| M3-05 | `PARTIAL` | custom `apparmor.txt` root와 restricted/sensitive-read top-level named `Px` 실행 프로필 작성 | parser/static transition tests PASS; HAOS enforce TODO |
+| M3-06 | `TODO` | HAOS complain audit로 최소 allowlist 조정 | sanitized audit report |
+| M3-07 | `TODO` | HAOS enforce positive/negative matrix | AppArmor E2E PASS |
+| M3-08 | `PARTIAL` | 고위험 항상 확인 불변조건 검증 | local policy/replay matrix PASS; real Telegram E2E TODO |
+| M3-09 | `PARTIAL` | 민감정보 option의 profile 선택과 불변 deny 구현 | local profile matrix PASS; false/true HAOS matrix TODO |
+| M3-10 | `PARTIAL` | native OAuth 동일-process 잔여 위험 완화와 release 판단 | Telegram Home isolation PASS; actual interactive/Telegram OAuth canary TODO |
+
+### M4 — HA API, memory와 browser
+
+| ID | 상태 | 과제 | 완료 증거 |
+| --- | --- | --- | --- |
+| M4-01 | `VERIFIED` | ordinary read/memory/fresh-state validate의 ha-read broker ownership 고정; config-check/mutation/browser-auth는 scoped 분리 | static owner + shared failure injection PASS |
+| M4-02 | `PARTIAL` | bounded Core/Supervisor read/log tools | API/component contract PASS; HAOS E2E TODO |
+| M4-03 | `PARTIAL` | memory 모듈 분리와 bootstrap/degraded isolation | memory suite PASS; HAOS lifecycle TODO |
+| M4-04 | `PARTIAL` | explicit/candidate/change memory workflow | state-machine suite PASS; HAOS mutation TODO |
+| M4-05 | `PARTIAL` | Chromium executable와 Playwright lock 일치 | amd64 runtime/QEMU arm64 packaging PASS; native arm64 TODO |
+| M4-06 | `PARTIAL` | loopback gateway와 managed read-only identity | managed-auth suite PASS; HAOS identity lifecycle TODO |
+| M4-07 | `PARTIAL` | desktop/mobile/console/network 검증 | fixture rendered smoke PASS; rendered HAOS E2E TODO |
+| M4-08 | `PARTIAL` | browser/memory 비밀 및 output redaction | local canary security suite PASS; HAOS E2E TODO |
+
+### M5 — 새 Telegram 브리지
+
+| ID | 상태 | 과제 | 완료 증거 |
+| --- | --- | --- | --- |
+| M5-01 | `PARTIAL` | 기존 bridge 격리/제거와 기본 OFF 유지 | static/image entrypoint PASS; HAOS install TODO |
+| M5-02 | `PARTIAL` | long polling, static user/chat allowlist와 bounded metrics | Bot API/metric component tests PASS; live Bot API TODO |
+| M5-03 | `PARTIAL` | local-only pairing create/list/revoke | pairing security suite PASS; HAOS operator flow TODO |
+| M5-04 | `PARTIAL` | input normalization과 shell-free print worker | injection/argv/stdin suite PASS; live conversation TODO |
+| M5-05 | `PARTIAL` | per-chat queue, session, cancel와 timeout | concurrency + shortened soak contract PASS; fixed-duration candidate soak TODO |
+| M5-06 | `PARTIAL` | stream-json parser와 Telegram chunking | parser/output suite PASS; live Telegram formatting TODO |
+| M5-07 | `PARTIAL` | typed proposal와 broker-generated human-reviewable confirmation preview | local secret-safe diff + replay/cross-chat PASS; HAOS Telegram E2E TODO |
+| M5-08 | `PARTIAL` | 세 access mode와 high-risk matrix | local full policy suite PASS; HAOS E2E TODO |
+| M5-09 | `PARTIAL` | rate limit/backoff/idempotent result | sealed transport-ack crash replay + failure/restart injection PASS; live Bot API TODO |
+| M5-10 | `TODO` | 실제 HAOS Telegram E2E | sanitized E2E report |
+| M5-11 | `PARTIAL` | Telegram 전용 native Home/cwd와 user customization 격리 | actual 1.1.11 local canary PASS; HAOS OAuth/AppArmor TODO |
+
+### M6 — migration과 multi-arch release
+
+| ID | 상태 | 과제 | 완료 증거 |
+| --- | --- | --- | --- |
+| M6-01 | `PARTIAL` | v1 option conservative mapping | migration unit fixtures PASS; real v1 data TODO |
+| M6-02 | `PARTIAL` | preserve mode와 ownership conflict | local preflight/preserve/full update PASS; HAOS TODO |
+| M6-03 | `PARTIAL` | refresh_managed owned settings merge와 plugin mode-independent refresh의 one-shot/idempotency | local native merge/plugin transaction/full update PASS; HAOS restart/update TODO |
+| M6-04 | `PARTIAL` | reset_v2 strict ownership conflict, backup과 recovery | local state/target journal + SIGKILL rollback PASS; HAOS rollback TODO |
+| M6-05 | `PARTIAL` | memory/browser/SSH/OAuth preservation | amd64와 QEMU arm64 local update persistence PASS; two-arch HAOS update TODO |
+| M6-06 | `PARTIAL` | amd64와 aarch64 Docker build/runtime | amd64 full + arm64 QEMU packaging/Telegram isolation PASS; native HAOS both arch TODO |
+| M6-07 | `PARTIAL` | `image`, AppArmor와 breaking metadata | local schema/parser/App linter PASS; HAOS install TODO |
+| M6-08 | `PARTIAL` | staged candidate exact-digest smoke와 rebuild 없는 idempotent promotion | local workflow/contract tests; remote candidate/Builder run TODO |
+| M6-09 | `PARTIAL` | leaf SBOM, provenance, exact Cosign identity와 anonymous preflight | local workflow contract; public registry retrieval TODO |
+| M6-10 | `PARTIAL` | evidence-bound public update와 rollback rehearsal | fail-closed template/finalizer implemented; HAOS report NOT RUN |
+
+### M7 — 사용자 문서와 최종 감사
+
+| ID | 상태 | 과제 | 완료 증거 |
+| --- | --- | --- | --- |
+| M7-01 | `PARTIAL` | 한국어/영어 설치·OAuth·SSH·Telegram 안내 | docs lint/parity PASS; fresh-user/HAOS review TODO |
+| M7-02 | `PARTIAL` | App options, migration와 security warning 번역 | schema/translation parity PASS; HAOS UI review TODO |
+| M7-03 | `PARTIAL` | troubleshooting과 recovery runbook | local failure rehearsal PASS; HAOS rehearsal TODO |
+| M7-04 | `IN_PROGRESS` | requirement-by-requirement completion audit | local audit/static evidence PASS; HAOS/release evidence pending |
+| M7-05 | `PARTIAL` | v2 release와 post-publish install 검증 | idempotent release gate implemented; external release/install NOT RUN |
+
+## 4. 요구사항 추적표
+
+이 표의 필수 test ID는 [test-plan.md](test-plan.md)의 동일 요구사항 행과 정확히
+일치해야 한다. 상태를 `VERIFIED`로 바꾸려면 해당 행의 모든 test에 실제 범위와
+같은 PASS 증거가 필요하다.
+
+| 요구사항 ID | 구현 마일스톤 | 필수 test ID |
+| --- | --- | --- |
+| FR-001 | M2, M3, M6 | ST-002, ST-005, ST-008, IM-001, IM-002, IM-003, IM-011, HA-001, AA-001 |
+| FR-002 | M2 | AG-001, AG-002, AG-003, AG-004, AG-005, AG-006, AG-007, AG-008, AG-009, AG-010, AG-011, AG-012, AG-013, AG-014, IM-002, HA-001 |
+| FR-003 | M2, M6 | ST-008, IM-003, IM-004, IM-005, HA-001 |
+| FR-004 | M3, M4 | AG-005, AG-006, AG-007, IM-006, IM-007, IM-008, IM-009, IM-010, HA-002 |
+| FR-005 | M4 | IM-008, HA-002 |
+| FR-006 | M4 | IM-009, HA-003 |
+| FR-007 | M3, M5 | AG-013, IM-010, HA-004 |
+| FR-008 | M3, M4, M5, M6 | AG-013, ST-007, IM-007, IM-009, IM-010, IM-011, AA-001 |
+| SEC-001 | M3 | AG-013, ST-007, IM-007, IM-010, IM-011, AA-001 |
+| SEC-002 | M3, M4, M5, M6 | AG-013, ST-007, IM-007, IM-008, IM-009, IM-010, IM-011, AA-001 |
+| SEC-003 | M2, M3, M4, M5, M6 | AG-009, AG-012, AG-013, IM-007, IM-010, IM-011, IM-012, AA-001, HA-004, HA-005 |
+| SEC-004 | M3, M6 | ST-002, IM-011, AA-001 |
+| SEC-005 | M3, M4, M5 | AG-007, AG-013, IM-006, IM-007, IM-009, IM-010, AA-001 |
+| SEC-006 | M3, M4 | ST-007, IM-011, AA-001 |
+| SEC-007 | M3, M5 | IM-007, IM-010, HA-002, HA-004 |
+| SEC-008 | M3, M5 | AG-009, AG-012, AG-013, IM-010, IM-011, HA-004, AA-001 |
+| SEC-009 | M4 | IM-009, IM-011, HA-003, AA-001 |
+| SEC-010 | M4 | ST-007, IM-008, HA-002 |
+| SEC-011 | M3, M4, M5 | ST-007, IM-007, IM-009, IM-010, HA-004 |
+| SEC-012 | M3, M4, M5, M6 | AG-013, ST-007, IM-007, IM-009, IM-010, IM-011, IM-012, AA-001, HA-004, HA-005 |
+| TG-001 | M5 | AG-009, AG-012, IM-010, HA-004 |
+| TG-002 | M5 | ST-002, IM-010, HA-004 |
+| TG-003 | M5 | IM-010, HA-004 |
+| TG-004 | M5 | IM-010, HA-004 |
+| TG-005 | M5 | AG-009, AG-012, IM-010, HA-004 |
+| TG-006 | M5 | IM-010, HA-004 |
+| TG-007 | M2, M5 | AG-009, AG-010, AG-011, AG-012, AG-013, IM-010, HA-004 |
+| TG-008 | M3, M5 | IM-007, IM-010, HA-004 |
+| TG-009 | M3, M5 | IM-007, IM-010, HA-004 |
+| TG-010 | M3, M5 | IM-007, IM-010, HA-002, HA-004 |
+| TG-011 | M5 | IM-010, HA-004 |
+| TG-012 | M5 | ST-007, IM-010, HA-004 |
+| TG-013 | M5 | AG-013, IM-010, HA-004 |
+| MIG-001 | M2, M6 | AG-014, ST-002, ST-005, IM-001, IM-002, HA-001 |
+| MIG-002 | M6 | ST-007, IM-012, HA-005 |
+| MIG-003 | M6 | IM-012, HA-005 |
+| MIG-004 | M6 | IM-012, HA-005 |
+| MIG-005 | M6 | ST-001, ST-009, IM-012, HA-005 |
+| MIG-006 | M4, M6 | IM-008, IM-012, HA-002, HA-005 |
+| MIG-007 | M6 | IM-012, HA-005 |
+| MIG-008 | M2, M6 | AG-014, ST-005, IM-001, IM-002, HA-001, HA-005 |
+| MIG-009 | M1, M2, M6 | AG-014, ST-001, ST-002, ST-003, ST-004, ST-005, ST-006, ST-007, ST-008, ST-009, ST-010, IM-001, IM-002, IM-003, IM-004, IM-005, IM-006, IM-007, IM-008, IM-009, IM-010, IM-011, IM-012, AA-001 |
+| MIG-010 | M2, M6, M7 | AG-014, ST-010, IM-001, IM-002, IM-003, IM-004, IM-005, IM-006, IM-007, IM-008, IM-009, IM-010, IM-011, IM-012, HA-001, HA-002, HA-003, HA-004, HA-005, AA-001 |
+| MIG-011 | M0, M6, M7 | ST-010 |
+
+## 5. 현재 제거 또는 교체 대상
+
+다음 항목은 “쓸 수 있는 부분”이 아니라 v2 경계와 충돌하므로 교체한다.
+
+- Codex식 `config.toml` 생성과 `-c approval_policy/sandbox_mode` wrapper
+- `ANTIGRAVITY_TOKEN`/`GEMINI_API_KEY` option 주입
+- `debug prompt-input` 기반 smoke
+- shell script로 prompt를 삽입하고 tmux pane을 수집하는 Telegram 실행
+- unauthenticated requester에게 pairing link/PIN을 보여 주는 흐름
+- Telegram의 hard-coded no-approval/danger-full-access
+- raw prompt와 pane/model output logging
+- AppArmor 없는 App metadata
+
+다음 개념은 보안·native 계약에 맞춰 분해 후 재사용할 수 있다.
+
+- s6 서비스와 failure isolation
+- Ingress ttyd/tmux, 공개키 SSH와 `/data` host key
+- HA API/log helper의 endpoint allowlist
+- loopback browser gateway와 managed read-only identity
+- validated memory의 상태 머신과 privacy rule
+- feedback report의 privacy validation
+- atomic user-file update와 backup 아이디어
+
+## 6. 완료 감사 질문
+
+최종 완료 전에 각 명시 요구사항에 대해 다음 질문에 모두 답한다.
+
+1. 어떤 현재 파일/API/image가 구현을 증명하는가?
+2. 어떤 test가 정확히 이 범위를 실행했는가?
+3. test가 실행된 source SHA, image digest와 architecture는 무엇인가?
+4. 실제 HAOS/AppArmor가 필요한데 local fixture로만 대체하지 않았는가?
+5. negative, failure, migration과 rollback 경로도 검증했는가?
+6. secret 또는 실제 사용자 data가 증거에 포함되지 않았는가?
+7. 남은 `TODO`, `IN_PROGRESS`, `BLOCKED`, `PARTIAL`, `FAIL`, `NOT RUN`이 없는가?
+
+하나라도 증거가 없으면 Goal은 완료되지 않았다.

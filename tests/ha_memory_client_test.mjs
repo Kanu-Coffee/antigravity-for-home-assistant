@@ -67,11 +67,22 @@ class FakeWebSocket {
 }
 
 const {
+  fetchHomeAssistantBrokerRead,
   fetchHomeAssistantSnapshot,
   HomeAssistantUnavailableError,
 } = await import(
   process.env.HA_MEMORY_INSTALLED_TEST === "1" ? installedModule : sourceModule
 );
+
+function brokerReadWithFake(command, options = {}) {
+  return fetchHomeAssistantBrokerRead(command, {
+    token: "test-token",
+    timeoutMs: 1_000,
+    webSocketFactory: (url, socketOptions) =>
+      new FakeWebSocket(url, socketOptions),
+    ...options,
+  });
+}
 
 function resetFakeWebSocket() {
   FakeWebSocket.commandHandler = () => ({ success: true, result: [] });
@@ -142,6 +153,32 @@ test("automation detail failures reject the complete snapshot", async () => {
       /incomplete automation detail snapshot/u.test(error.message) &&
       !/fixture secret/u.test(error.message),
   );
+});
+
+test("broker WebSocket reads accept only the fixed registry and trace commands", async () => {
+  resetFakeWebSocket();
+  const commands = [];
+  FakeWebSocket.commandHandler = (command) => {
+    commands.push(command);
+    return { success: true, result: [{ area_id: "kitchen", name: "Kitchen" }] };
+  };
+  assert.deepEqual(
+    await brokerReadWithFake({ type: "config/area_registry/list" }),
+    [{ area_id: "kitchen", name: "Kitchen" }],
+  );
+  assert.equal(commands.length, 1);
+
+  await assert.rejects(
+    brokerReadWithFake({ type: "call_service", domain: "light", service: "turn_on" }),
+    (error) => error instanceof HomeAssistantUnavailableError &&
+      error.code === "ha_protocol_error",
+  );
+  await assert.rejects(
+    brokerReadWithFake({ type: "trace/get", domain: "automation", item_id: "safe" }),
+    (error) => error instanceof HomeAssistantUnavailableError &&
+      error.code === "ha_protocol_error",
+  );
+  assert.equal(commands.length, 1);
 });
 
 test("a complete automation detail snapshot is returned", async () => {

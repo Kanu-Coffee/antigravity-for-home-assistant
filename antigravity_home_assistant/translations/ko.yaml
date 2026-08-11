@@ -6,9 +6,15 @@ configuration:
   telegram_bot_token:
     name: Telegram Bot 토큰
     description: "@BotFather에서 발급받은 텔레그램 봇 토큰입니다."
+  telegram_allowed_user_ids:
+    name: 허용할 Telegram 사용자 ID
+    description: 정적 인증에 사용할 Telegram 사용자 ID 목록입니다. 정적 인증은 사용자와 채팅 허용 목록이 모두 일치해야 하며, 비어 있으면 유효한 로컬 페어링 승인이 없는 한 차단됩니다.
   telegram_allowed_chat_ids:
-    name: 수동 허가 Telegram Chat ID 목록
-    description: "(선택사항) 수동으로 허용할 숫자 Chat ID 목록입니다. 미입력 시 1-Click 딥링크 또는 6자리 PIN 코드로 자동 연동됩니다."
+    name: 허용할 Telegram 채팅 ID
+    description: 정적 인증에 사용할 Telegram 채팅 ID 목록입니다. 정적 인증은 채팅과 사용자 허용 목록이 모두 일치해야 하며, 비어 있으면 유효한 로컬 페어링 승인이 없는 한 차단됩니다.
+  telegram_access_mode:
+    name: Telegram 접근 모드
+    description: read_only는 변경을 차단하고, confirm_changes는 동일 채팅의 만료형 확인을 요구하며, autonomous도 고위험 작업에는 항상 확인을 요구합니다.
   authorized_keys:
     name: SSH 허용 공개키
     description: root 로그인을 허용할 OpenSSH 공개키입니다. 비밀번호 로그인은 항상 차단됩니다.
@@ -18,29 +24,30 @@ configuration:
   tmux_session_name:
     name: tmux 세션 이름
     description: 브라우저 재접속 후 터미널을 복원하는 공유 세션 이름입니다.
-  antigravity_approval_policy:
-    name: Antigravity 승인 정책
-    description: 대화형 Antigravity가 명령 실행 전에 승인을 요청하는 시점을 정합니다.
-  antigravity_sandbox_mode:
-    name: Antigravity 샌드박스 모드
-    description: danger-full-access는 이 App 컨테이너 내부에만 적용되며 HAOS 호스트 권한이 아닙니다.
-  browser_approval_policy:
-    name: 헤드리스 브라우저 승인 정책
+  antigravity_tool_permission:
+    name: Antigravity 도구 권한
+    description: Antigravity 네이티브 toolPermission 정책입니다. request-review가 안전한 기본값이며 always-proceed는 App 경계 안에서 가장 높은 자율성을 허용합니다.
+  antigravity_terminal_sandbox:
+    name: Antigravity 터미널 샌드박스 사용
+    description: 지원되는 환경에서 Antigravity의 명령 실행을 Linux 터미널 샌드박스 안으로 제한합니다.
+  antigravity_sensitive_data_access:
+    name: 민감한 HA 데이터 진단 읽기 허용
     description: >-
-      safe는 대시보드 탐색·점검을 자동 승인하고 클릭·입력 전에 확인합니다.
-      never는 현재 제한된 Playwright 도구의 승인창을 모두 생략하며, always는
-      모든 Playwright 도구마다 확인합니다. Antigravity approval_policy never는 전역
-      full-auto라 safe/always의 확인보다 우선할 수 있습니다. 변경 후 App을
-      재시작하고 새 Antigravity 세션을 시작하세요.
+      끄면 Antigravity가 secrets.yaml, .storage, Recorder 데이터베이스에
+      접근하지 못합니다. 켜도 대화형 Antigravity 자식 프로세스만 진단 목적으로
+      이 세 영역을 읽을 수 있고 쓰기는 계속 차단됩니다. Telegram, 브라우저,
+      메모리, App 토큰, SSH 키, 백업, SSL 및 클라우드 자격 증명은 항상
+      격리됩니다. 변경 후 App을 재시작하세요.
   antigravity_user_files_update_mode:
     name: Antigravity 사용자 파일 업데이트 방식
     description: >-
-      preserve는 기존 config.json과 base AGENTS.md를 보존합니다.
-      refresh_agents는 base AGENTS.md만 교체하고, refresh_all은 config.json도
-      현재 App 옵션 기반 기본값으로 초기화합니다. 선택한 파일은 App 버전마다
-      최대 한 번만 교체되며 이전 파일은 root 전용 민감 백업으로 저장됩니다.
-      한 번만 갱신하려면 완료 후 preserve로 되돌리세요. 그대로 두면 다음 App
-      버전에서 선택한 갱신이 다시 한 번 실행됩니다.
+      preserve는 기존 사용자 파일을 모두 보존합니다. refresh_managed는
+      이미지가 관리하는 규칙·플러그인·MCP 기본값만 갱신합니다. reset_v2는
+      root 전용 백업을 만든 뒤 App 관리 파일을 교체하며 Home Assistant 설정,
+      SSH 키와 검증된 메모리는 보존합니다. 더 이상 사용하지 않는
+      refresh_agents와 refresh_all은 v1 업그레이드 시작만을 위해 수용하고
+      Supervisor API로 refresh_managed에 정규화하므로 새 설정에서는 선택하지
+      마세요.
   home_assistant_browser_auto_auth:
     name: 헤드리스 브라우저 자동 인증
     description: >-
@@ -48,12 +55,6 @@ configuration:
       자동으로 만들거나 재사용합니다. 옵션 변경 뒤 App을 재시작하세요.
       끄면 다음 브라우저 세션부터 일반 로그인 화면을 표시하며, 관리형
       사용자는 명시적으로 삭제할 때까지 보존됩니다.
-  home_assistant_browser_token:
-    name: Home Assistant 수동 브라우저 토큰 재정의
-    description: >-
-      system-read-only 그룹만 가진 활성·로컬 전용 사용자의 장기 토큰을
-      수동으로 재정의할 때만 입력합니다. 자동 인증이 켜진 동안 관리형
-      사용자보다 우선하며, 유효하지 않거나 권한이 큰 토큰은 거부됩니다.
   log_level:
     name: 웹 터미널 로그 수준
     description: trace 또는 debug에서 ttyd 상세 로그를 켭니다. 비밀값과 Authorization 헤더는 기록하지 않습니다.

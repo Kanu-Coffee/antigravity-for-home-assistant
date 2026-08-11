@@ -1,0 +1,217 @@
+#!/bin/bash -p
+set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
+unset ANTIGRAVITY_TOKEN
+
+# shellcheck source=/dev/null
+. /usr/local/lib/antigravity-ha/telegram-plugin.sh
+
+umask 077
+
+readonly TELEGRAM_HOME=/data/antigravity-ha/telegram-home
+readonly CONFIG_ROOT=${TELEGRAM_HOME}/.gemini/config
+readonly CLI_ROOT=${TELEGRAM_HOME}/.gemini/antigravity-cli
+readonly SAFE_WORKSPACE=/usr/local/share/antigravity-ha/telegram-workspace
+readonly SETTINGS_SOURCE=/etc/antigravity/telegram-settings.json
+readonly MCP_SOURCE=/etc/antigravity/mcp_config.json
+readonly PLUGIN_SOURCE=/usr/local/share/antigravity-ha/plugins/home-assistant
+readonly PLUGIN_TARGET=${CONFIG_ROOT}/plugins/home-assistant
+readonly LOCK_PATH=/run/antigravity-ha/telegram-home.lock
+
+mode=''
+lock_held=false
+while (( $# > 0 )); do
+  case "$1" in
+    --runtime | --login)
+      if [[ -n "${mode}" ]]; then
+        printf 'ha-telegram-home-bootstrap: exactly one mode is required\n' >&2
+        exit 64
+      fi
+      mode=${1#--}
+      ;;
+    --lock-held)
+      lock_held=true
+      ;;
+    *)
+      printf 'ha-telegram-home-bootstrap: unsupported argument\n' >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+if [[ -z "${mode}" ]]; then
+  printf 'ha-telegram-home-bootstrap: --runtime or --login is required\n' >&2
+  exit 64
+fi
+
+install -d -m 0700 /run/antigravity-ha
+if [[ "${lock_held}" != true ]]; then
+  exec 9>"${LOCK_PATH}"
+  /usr/bin/flock --exclusive 9
+fi
+
+ensure_private_directory() {
+  local path=$1
+  if [[ -L "${path}" || ( -e "${path}" && ! -d "${path}" ) ]]; then
+    printf 'ha-telegram-home-bootstrap: unsafe managed directory: %s\n' "${path}" >&2
+    return 1
+  fi
+  if [[ ! -e "${path}" ]]; then
+    install -d -m 0700 "${path}"
+  fi
+  if [[ "$(stat -c '%u' -- "${path}")" != 0 ]]; then
+    printf 'ha-telegram-home-bootstrap: managed directory is not root-owned: %s\n' "${path}" >&2
+    return 1
+  fi
+  if [[ "$(stat -c '%a' -- "${path}")" != 700 ]]; then
+    chmod 0700 "${path}"
+  fi
+}
+
+install_managed_file() {
+  local source=$1
+  local target=$2
+  local target_directory temporary
+  target_directory=$(dirname -- "${target}")
+  temporary=$(mktemp "${target_directory}/.telegram-managed.XXXXXX")
+  install -m 0600 "${source}" "${temporary}"
+  mv -f -- "${temporary}" "${target}"
+}
+
+for directory in \
+  /data/antigravity-ha \
+  "${TELEGRAM_HOME}" \
+  "${TELEGRAM_HOME}/.gemini" \
+  "${CONFIG_ROOT}" \
+  "${CLI_ROOT}"; do
+  ensure_private_directory "${directory}"
+done
+
+if [[ -L "${SAFE_WORKSPACE}" || ! -d "${SAFE_WORKSPACE}" \
+  || "$(stat -c '%u:%a' -- "${SAFE_WORKSPACE}")" != '0:555' ]]; then
+  printf 'ha-telegram-home-bootstrap: the image-managed workspace is unsafe\n' >&2
+  exit 1
+fi
+if [[ -L "${SETTINGS_SOURCE}" || ! -f "${SETTINGS_SOURCE}" \
+  || -L "${MCP_SOURCE}" || ! -f "${MCP_SOURCE}" \
+  || -L "${PLUGIN_SOURCE}" || ! -d "${PLUGIN_SOURCE}" ]]; then
+  printf 'ha-telegram-home-bootstrap: an image-managed source is unsafe\n' >&2
+  exit 1
+fi
+if find -P "${PLUGIN_SOURCE}" -type l -print -quit | grep -q .; then
+  printf 'ha-telegram-home-bootstrap: the image-managed plugin contains a symbolic link\n' >&2
+  exit 1
+fi
+
+# Only known native customization surfaces are reset. Authentication and
+# conversation storage elsewhere in this dedicated HOME is deliberately left
+# untouched because the native OAuth backend is not inferred here.
+rm -rf -- \
+  "${CONFIG_ROOT}/agents" \
+  "${CONFIG_ROOT}/rules" \
+  "${CONFIG_ROOT}/skills" \
+  "${CONFIG_ROOT}/plugins" \
+  "${CLI_ROOT}/agents" \
+  "${CLI_ROOT}/plugins"
+rm -f -- \
+  "${TELEGRAM_HOME}/AGENTS.md" \
+  "${TELEGRAM_HOME}/GEMINI.md" \
+  "${CONFIG_ROOT}/AGENTS.md" \
+  "${CONFIG_ROOT}/GEMINI.md" \
+  "${CONFIG_ROOT}/hooks.json" \
+  "${CONFIG_ROOT}/plugins.json" \
+  "${CONFIG_ROOT}/skills.json"
+
+ensure_private_directory "${CONFIG_ROOT}/plugins"
+ensure_private_directory "${CLI_ROOT}/plugins"
+install_managed_file "${SETTINGS_SOURCE}" "${CLI_ROOT}/settings.json"
+install_managed_file "${MCP_SOURCE}" "${CONFIG_ROOT}/mcp_config.json"
+
+if [[ "${mode}" == login ]]; then
+  exit 0
+fi
+
+plugin_temporary=$(mktemp -d "${CONFIG_ROOT}/plugins/.home-assistant.XXXXXX")
+if ! antigravity_ha_stage_telegram_plugin \
+  "${PLUGIN_SOURCE}" "${plugin_temporary}"; then
+  rm -rf -- "${plugin_temporary}"
+  printf 'ha-telegram-home-bootstrap: plugin derivation failed\n' >&2
+  exit 1
+fi
+find -P "${plugin_temporary}" -type d -exec chmod 0700 {} +
+find -P "${plugin_temporary}" -type f -exec chmod 0600 {} +
+if find -P "${plugin_temporary}" -type l -print -quit | grep -q .; then
+  rm -rf -- "${plugin_temporary}"
+  printf 'ha-telegram-home-bootstrap: copied plugin contains a symbolic link\n' >&2
+  exit 1
+fi
+if ! /usr/bin/env -i \
+  AGY_CLI_DISABLE_AUTO_UPDATE=true \
+  HOME="${TELEGRAM_HOME}" \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  /usr/local/libexec/antigravity-real plugin validate \
+  "${plugin_temporary}" >/dev/null; then
+  rm -rf -- "${plugin_temporary}"
+  printf 'ha-telegram-home-bootstrap: image-managed plugin validation failed\n' >&2
+  exit 1
+fi
+mv -- "${plugin_temporary}" "${PLUGIN_TARGET}"
+
+if ! (
+  cd "${SAFE_WORKSPACE}"
+  /usr/bin/env -i \
+    AGY_CLI_DISABLE_AUTO_UPDATE=true \
+    HOME="${TELEGRAM_HOME}" \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    /usr/local/libexec/antigravity-real agent </dev/null
+) | grep -Fxq 'ha-telegram'; then
+  printf 'ha-telegram-home-bootstrap: ha-telegram was not discovered in the isolated HOME\n' >&2
+  exit 1
+fi
+
+# The 1.1.11 discovery probe serializes settings and removes only three values
+# that equal its native defaults. Accept exactly that semantic normalization,
+# reject every other customization change, then restore the explicit App-owned
+# file so the worker can enforce a byte-exact preflight on every launch.
+if [[ -L "${CLI_ROOT}/settings.json" || ! -f "${CLI_ROOT}/settings.json" \
+  || "$(stat -c '%u:%a' -- "${CLI_ROOT}/settings.json")" != '0:600' \
+  || -L "${CONFIG_ROOT}/mcp_config.json" || ! -f "${CONFIG_ROOT}/mcp_config.json" \
+  || "$(stat -c '%u:%a' -- "${CONFIG_ROOT}/mcp_config.json")" != '0:600' \
+  || -L "${PLUGIN_TARGET}" || ! -d "${PLUGIN_TARGET}" \
+  || "$(stat -c '%u' -- "${PLUGIN_TARGET}")" != 0 \
+  || -n "$(find -P "${PLUGIN_TARGET}" -type l -print -quit)" ]]; then
+  printf 'ha-telegram-home-bootstrap: managed customization became unsafe during validation\n' >&2
+  exit 1
+fi
+
+settings_expected=$(mktemp /run/antigravity-ha/.telegram-settings-expected.XXXXXX)
+settings_observed=$(mktemp /run/antigravity-ha/.telegram-settings-observed.XXXXXX)
+plugin_expected=$(mktemp -d /run/antigravity-ha/.telegram-plugin-expected.XXXXXX)
+if ! jq --exit-status --sort-keys '
+    (if .toolPermission == "request-review" then del(.toolPermission) else . end)
+    | (if .allowNonWorkspaceAccess == false then del(.allowNonWorkspaceAccess) else . end)
+    | (if .permissions.ask == [] then del(.permissions.ask) else . end)
+  ' "${SETTINGS_SOURCE}" > "${settings_expected}" \
+  || ! jq --exit-status --sort-keys . \
+    "${CLI_ROOT}/settings.json" > "${settings_observed}" \
+  || ! antigravity_ha_stage_telegram_plugin \
+    "${PLUGIN_SOURCE}" "${plugin_expected}" \
+  || ! cmp -s "${settings_expected}" "${settings_observed}" \
+  || ! cmp -s "${MCP_SOURCE}" "${CONFIG_ROOT}/mcp_config.json" \
+  || ! diff -qr "${plugin_expected}" "${PLUGIN_TARGET}" >/dev/null; then
+  rm -f -- "${settings_expected}" "${settings_observed}"
+  rm -rf -- "${plugin_expected}"
+  printf 'ha-telegram-home-bootstrap: managed customization changed during validation\n' >&2
+  exit 1
+fi
+rm -f -- "${settings_expected}" "${settings_observed}"
+rm -rf -- "${plugin_expected}"
+install_managed_file "${SETTINGS_SOURCE}" "${CLI_ROOT}/settings.json"
+if ! cmp -s "${SETTINGS_SOURCE}" "${CLI_ROOT}/settings.json"; then
+  printf 'ha-telegram-home-bootstrap: explicit managed settings could not be restored\n' >&2
+  exit 1
+fi

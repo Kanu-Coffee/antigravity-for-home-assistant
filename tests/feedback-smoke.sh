@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+TEST_PLATFORM=${TEST_PLATFORM:-linux/amd64}
+case "$TEST_PLATFORM" in
+  linux/amd64) EXPECTED_HA_ARCH=amd64 ;;
+  linux/arm64) EXPECTED_HA_ARCH=aarch64 ;;
+  *) echo "unsupported TEST_PLATFORM: ${TEST_PLATFORM}" >&2; exit 64 ;;
+esac
+HA_ARCH=${HA_ARCH:-$EXPECTED_HA_ARCH}
+[[ $HA_ARCH == "$EXPECTED_HA_ARCH" ]] || exit 64
+export TEST_PLATFORM HA_ARCH
+
 IMAGE=${1:-antigravity-for-home-assistant:test}
 EXPECTED_GH_VERSION=2.93.0
 TARGET_REPOSITORY=Kanu-Coffee/antigravity-for-home-assistant
@@ -12,6 +22,7 @@ FIXTURE_DIR=/tmp/feedback-fixtures
 FAKE_GH_BIN=/tmp/fake-gh
 FAKE_GH_STATE=/tmp/ha-feedback-fake-gh
 FAKE_GH_LOG="${FAKE_GH_STATE}/calls.log"
+SUPERVISOR_TOKEN_FIXTURE=feedback-smoke-supervisor-token
 WORK_DIR=$(mktemp -d)
 
 # Git Bash rewrites Linux container paths before invoking native Windows programs.
@@ -159,22 +170,30 @@ docker image inspect "${IMAGE}" >/dev/null 2>&1 \
 docker volume create "${DATA_VOLUME}" >/dev/null
 docker volume create "${CONFIG_VOLUME}" >/dev/null
 docker run --detach \
-  --platform linux/amd64 \
+  --platform "$TEST_PLATFORM" \
   --name "${CONTAINER}" \
   --volume "${DATA_VOLUME}:/data" \
   --volume "${CONFIG_VOLUME}:/config" \
   --entrypoint /bin/sh \
   "${IMAGE}" -c 'exec sleep infinity' >/dev/null
+printf '%s' "${SUPERVISOR_TOKEN_FIXTURE}" \
+  | docker exec --interactive "${CONTAINER}" /bin/sh -ceu '
+      install -d -m 0700 /run/antigravity-ha
+      umask 077
+      cat > /run/antigravity-ha/supervisor.token
+      chmod 0400 /run/antigravity-ha/supervisor.token
+    '
 
 GH_VERSION_LINE=$(docker exec "${CONTAINER}" gh --version | head -n 1) \
   || fail 'GitHub CLI is missing from the candidate image'
 [[ "${GH_VERSION_LINE}" == "gh version ${EXPECTED_GH_VERSION} "* ]] \
   || fail "unexpected GitHub CLI version: ${GH_VERSION_LINE}"
-docker exec "${CONTAINER}" test -f /etc/antigravity/skills/ha-feedback/SKILL.md \
-  || fail 'image-managed feedback Skill is missing'
 docker exec "${CONTAINER}" test -f \
-  /etc/antigravity/skills/ha-feedback/references/privacy.md \
-  || fail 'feedback Skill references are missing'
+  /usr/local/share/antigravity-ha/plugins/home-assistant/skills/ha-feedback/SKILL.md \
+  || fail 'image-managed feedback Skill is missing'
+docker exec "${CONTAINER}" grep -Fq '/ha-feedback' \
+  /usr/local/share/antigravity-ha/plugins/home-assistant/skills/ha-feedback/SKILL.md \
+  || fail 'feedback Skill is not documented as a native slash command'
 docker exec "${CONTAINER}" test -x /usr/local/bin/ha-feedback \
   || fail 'feedback helper is not executable'
 docker exec "${CONTAINER}" test -r \

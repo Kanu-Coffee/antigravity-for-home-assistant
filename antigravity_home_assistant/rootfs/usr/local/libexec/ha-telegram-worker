@@ -1,0 +1,83 @@
+#!/bin/bash -p
+set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
+unset ANTIGRAVITY_TOKEN
+
+# shellcheck source=/dev/null
+. /usr/local/lib/antigravity-ha/telegram-plugin.sh
+
+readonly TELEGRAM_HOME=/data/antigravity-ha/telegram-home
+readonly CONFIG_ROOT=${TELEGRAM_HOME}/.gemini/config
+readonly CLI_ROOT=${TELEGRAM_HOME}/.gemini/antigravity-cli
+readonly SAFE_WORKSPACE=/usr/local/share/antigravity-ha/telegram-workspace
+readonly SETTINGS_SOURCE=/etc/antigravity/telegram-settings.json
+readonly MCP_SOURCE=/etc/antigravity/mcp_config.json
+readonly PLUGIN_SOURCE=/usr/local/share/antigravity-ha/plugins/home-assistant
+readonly PLUGIN_TARGET=${CONFIG_ROOT}/plugins/home-assistant
+readonly LOCK_PATH=/run/antigravity-ha/telegram-home.lock
+
+fail_closed() {
+  printf 'ha-telegram-worker: isolated native configuration is unavailable\n' >&2
+  exit 70
+}
+
+[[ "${HOME:-}" == "${TELEGRAM_HOME}" ]] || fail_closed
+[[ "$(pwd -P)" == "${SAFE_WORKSPACE}" ]] || fail_closed
+[[ "${AGY_CLI_DISABLE_AUTO_UPDATE:-}" == true ]] || fail_closed
+[[ "${HA_TELEGRAM_USER_ID:-}" =~ ^[1-9][0-9]{0,19}$ ]] || fail_closed
+[[ "${HA_TELEGRAM_CHAT_ID:-}" =~ ^-?[1-9][0-9]{0,19}$ ]] || fail_closed
+
+exec 9>"${LOCK_PATH}"
+/usr/bin/flock --shared 9
+
+for path in \
+  "${TELEGRAM_HOME}" \
+  "${TELEGRAM_HOME}/.gemini" \
+  "${CONFIG_ROOT}" \
+  "${CONFIG_ROOT}/plugins" \
+  "${CLI_ROOT}" \
+  "${CLI_ROOT}/plugins"; do
+  [[ ! -L "${path}" && -d "${path}" \
+    && "$(stat -c '%u:%a' -- "${path}")" == '0:700' ]] || fail_closed
+done
+for path in "${CLI_ROOT}/settings.json" "${CONFIG_ROOT}/mcp_config.json"; do
+  [[ ! -L "${path}" && -f "${path}" \
+    && "$(stat -c '%u:%h:%a' -- "${path}")" == '0:1:600' ]] || fail_closed
+done
+
+cmp -s "${SETTINGS_SOURCE}" "${CLI_ROOT}/settings.json" || fail_closed
+cmp -s "${MCP_SOURCE}" "${CONFIG_ROOT}/mcp_config.json" || fail_closed
+[[ ! -L "${PLUGIN_TARGET}" && -d "${PLUGIN_TARGET}" ]] || fail_closed
+plugin_expected=$(mktemp -d /tmp/.telegram-plugin-expected.XXXXXX)
+if ! antigravity_ha_stage_telegram_plugin \
+  "${PLUGIN_SOURCE}" "${plugin_expected}"; then
+  rm -rf -- "${plugin_expected}"
+  fail_closed
+fi
+if find -P "${PLUGIN_TARGET}" -type l -print -quit | grep -q . \
+  || find -P "${PLUGIN_TARGET}" ! -user root -print -quit | grep -q . \
+  || find -P "${CONFIG_ROOT}/plugins" -mindepth 1 -maxdepth 1 \
+    ! -name home-assistant -print -quit | grep -q . \
+  || find -P "${CLI_ROOT}/plugins" -mindepth 1 -print -quit | grep -q . \
+  || ! diff -qr "${plugin_expected}" "${PLUGIN_TARGET}" >/dev/null; then
+  rm -rf -- "${plugin_expected}"
+  fail_closed
+fi
+rm -rf -- "${plugin_expected}"
+
+for path in \
+  "${TELEGRAM_HOME}/AGENTS.md" \
+  "${TELEGRAM_HOME}/GEMINI.md" \
+  "${CONFIG_ROOT}/AGENTS.md" \
+  "${CONFIG_ROOT}/GEMINI.md" \
+  "${CONFIG_ROOT}/agents" \
+  "${CONFIG_ROOT}/rules" \
+  "${CONFIG_ROOT}/skills" \
+  "${CONFIG_ROOT}/hooks.json" \
+  "${CONFIG_ROOT}/plugins.json" \
+  "${CONFIG_ROOT}/skills.json" \
+  "${CLI_ROOT}/agents"; do
+  [[ ! -e "${path}" && ! -L "${path}" ]] || fail_closed
+done
+
+exec /usr/local/libexec/antigravity-real "$@"

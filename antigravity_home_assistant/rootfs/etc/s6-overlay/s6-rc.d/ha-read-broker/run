@@ -1,0 +1,6 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+set -Eeuo pipefail
+
+bashio::log.info 'Starting the isolated Home Assistant read broker'
+exec /usr/local/bin/ha-read-broker

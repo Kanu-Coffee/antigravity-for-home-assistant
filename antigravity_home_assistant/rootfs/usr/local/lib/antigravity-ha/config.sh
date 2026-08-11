@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-readonly ANTIGRAVITY_HA_OPTIONS_FILE=${ANTIGRAVITY_HA_OPTIONS_FILE:-/data/options.json}
+readonly ANTIGRAVITY_HA_OPTIONS_FILE=${ANTIGRAVITY_HA_OPTIONS_FILE:-/run/antigravity-ha/ha-feedback-options.json}
 
 antigravity_ha_config_validate() {
   [[ -r "${ANTIGRAVITY_HA_OPTIONS_FILE}" ]] \

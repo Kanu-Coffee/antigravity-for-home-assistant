@@ -1,5 +1,6 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
 
 umask 077
 
@@ -12,7 +13,6 @@ readonly MANAGED_AUTH_DIRECTORY=/data/browser-auth
 readonly MANAGED_LOCK=${MANAGED_AUTH_DIRECTORY}/operation.lock
 readonly ADMIN_HELPER=/usr/local/share/antigravity-ha/browser-user-admin.mjs
 readonly AUTH_CHECK=/usr/local/share/antigravity-ha/browser-auth-check.mjs
-readonly RUNTIME_ENV=${RUNTIME_DIR}/runtime.env
 readonly NODE_BINARY=/usr/bin/node
 
 quiet=0
@@ -32,10 +32,8 @@ unset \
   HA_BROWSER_TOKEN \
   NODE_OPTIONS \
   NODE_PATH
-if [[ -z "${SUPERVISOR_TOKEN:-}" && -r "${RUNTIME_ENV}" ]]; then
-  # shellcheck source=/dev/null
-  . "${RUNTIME_ENV}"
-fi
+# shellcheck source=/dev/null
+. /usr/local/lib/antigravity-ha/supervisor-credential.sh
 
 # shellcheck source=/dev/null
 . /usr/local/lib/antigravity-ha/config.sh
@@ -68,6 +66,13 @@ write_status() {
   chmod 0600 "${status_tmp}"
   mv -f "${status_tmp}" "${RUNTIME_STATUS}"
 }
+
+# Credential absence must not bypass the sanitized status contract. A missing
+# or unsafe credential is handled below after the non-secret configuration and
+# managed-auth material have been classified.
+if ! antigravity_ha_load_supervisor_credential --optional; then
+  unset SUPERVISOR_TOKEN
+fi
 
 cleanup_managed_temps() {
   [[ -e "${MANAGED_AUTH_DIRECTORY}" ]] || return 0

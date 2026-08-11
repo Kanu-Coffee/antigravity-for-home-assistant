@@ -11,6 +11,7 @@ AuthenticationMethods publickey
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 ChallengeResponseAuthentication no
+UsePAM no
 PermitEmptyPasswords no
 PermitRootLogin prohibit-password
 AllowUsers root
@@ -23,8 +24,8 @@ AllowAgentForwarding no
 X11Forwarding no
 PermitTunnel no
 
-# Make Supervisor/antigravity environment available to non-interactive SSH commands.
-PermitUserEnvironment BASH_ENV,SUPERVISOR_TOKEN,ANTIGRAVITY_HOME,HA_URL,SUPERVISOR_URL
+# Make only non-secret Antigravity environment available to non-interactive SSH commands.
+PermitUserEnvironment BASH_ENV,ANTIGRAVITY_HOME,LANG,LC_ALL
 
 PrintMotd yes
 TCPKeepAlive yes
@@ -32,4 +33,4 @@ ClientAliveInterval 300
 ClientAliveCountMax 2
 LogLevel VERBOSE
 
-Subsystem sftp internal-sftp
+Subsystem sftp /usr/lib/openssh/sftp-server

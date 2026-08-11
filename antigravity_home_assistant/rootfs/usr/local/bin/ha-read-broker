@@ -1,0 +1,26 @@
+#!/bin/bash -p
+set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
+
+if (( $# != 0 )); then
+  printf 'ha-read-broker: command-line arguments are not supported\n' >&2
+  exit 64
+fi
+
+# shellcheck source=/dev/null
+. /usr/local/lib/antigravity-ha/supervisor-credential.sh
+readonly CREDENTIAL_FILE=/run/antigravity-ha/supervisor.token
+credential_fd=
+if ! antigravity_ha_open_supervisor_credential_pipe \
+  credential_fd "${CREDENTIAL_FILE}"; then
+  printf 'ha-read-broker: Supervisor credential is unavailable or unsafe\n' >&2
+  exit 78
+fi
+
+exec /usr/bin/env -i \
+  HOME=/tmp \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  ANTIGRAVITY_HA_SUPERVISOR_FD="${credential_fd}" \
+  /usr/local/libexec/ha-read-broker-runtime

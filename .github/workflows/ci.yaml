@@ -9,6 +9,7 @@ name: CI
       - "fix/**"
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -18,49 +19,226 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint-and-test:
-    name: Lint and unit tests
+  unit-and-contract-tests:
+    name: Python and Node unit/contract tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c  # v6.0.0
         with:
           python-version: "3.13"
           cache: pip
           cache-dependency-path: requirements-dev.txt
 
-      - name: Install test and lint dependencies
+      - name: Set up the image-matched Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: "22.23.2"
+
+      - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
-          sudo apt-get update
-          sudo apt-get install --yes jq shellcheck
 
       - name: Run Python policy and helper tests
         run: python -m pytest -ra
 
+  secret-scan:
+    name: Source and Git history secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c  # v6.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Run the focused secret policy
+        run: |
+          python -m pip install --disable-pip-version-check \
+            pytest==9.1.1 PyYAML==6.0.3
+          python -m pytest -ra tests/test_secret_scan.py
+
+  static-checks:
+    name: Static check (${{ matrix.check }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        check:
+          - actionlint
+          - apparmor
+          - diff
+          - hadolint
+          - markdown
+          - shellcheck
+          - yaml
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python for YAML lint
+        if: matrix.check == 'yaml'
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c  # v6.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install YAML lint
+        if: matrix.check == 'yaml'
+        run: python -m pip install --disable-pip-version-check yamllint==1.37.1
+
       - name: Run YAML lint
+        if: matrix.check == 'yaml'
         run: yamllint -c .yamllint .
 
-      - name: Run ShellCheck
+      - name: Validate GitHub Actions workflows
+        if: matrix.check == 'actionlint'
         run: |
-          git grep -Il '^#!' -- antigravity_home_assistant/rootfs tests \
+          docker run --rm \
+            --volume "${PWD}:/repo:ro" \
+            --workdir /repo \
+            rhysd/actionlint:1.7.9@sha256:a0383f60d92601e2694e24b24d37df7b6a40bed7cedbc447611c50009bf02d94 \
+            -color
+
+      - name: Run ShellCheck
+        if: matrix.check == 'shellcheck'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes shellcheck
+          git grep -Il -E \
+            '^#!.*((ba|da|k|z)?sh|bashio)([[:space:]]|$)' \
+            -- .github/scripts antigravity_home_assistant/rootfs tests \
             | xargs --no-run-if-empty shellcheck
 
       - name: Run Markdown lint
-        run: npx --yes markdownlint-cli2@0.23.0 "**/*.md" "#**/.pytest_cache/**"
+        if: matrix.check == 'markdown'
+        run: >-
+          npx --yes markdownlint-cli2@0.23.0
+          "**/*.md"
+          "#**/.pytest_cache/**"
+          "#**/node_modules/**"
+          "#scratch_codex/**"
 
       - name: Run Dockerfile lint
+        if: matrix.check == 'hadolint'
         run: |
           docker run --rm \
             --volume "${PWD}:/src:ro" \
             --workdir /src \
-            hadolint/hadolint:v2.14.0-alpine \
+            hadolint/hadolint:v2.14.0-alpine@sha256:7aba693c1442eb31c0b015c129697cb3b6cb7da589d85c7562f9deb435a6657c \
             hadolint --config .hadolint.yaml antigravity_home_assistant/Dockerfile
+
+      - name: Parse the enforcing AppArmor profile
+        if: matrix.check == 'apparmor'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes apparmor
+          sudo apparmor_parser --skip-kernel-load --skip-cache \
+            antigravity_home_assistant/apparmor.txt
+
+      - name: Reject whitespace errors
+        if: matrix.check == 'diff'
+        env:
+          EVENT_BEFORE: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -Eeuo pipefail
+          zero_sha=0000000000000000000000000000000000000000
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            [[ "$PR_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+            git diff --check "$PR_BASE_SHA...$HEAD_SHA"
+          elif [[ "$EVENT_BEFORE" =~ ^[0-9a-f]{40}$ ]] \
+            && [[ "$EVENT_BEFORE" != "$zero_sha" ]] \
+            && git cat-file -e "$EVENT_BEFORE^{commit}"; then
+            git diff --check "$EVENT_BEFORE...$HEAD_SHA"
+          else
+            git show --check --format= "$HEAD_SHA"
+          fi
+
+  telegram-security-contracts:
+    name: Telegram isolation, queue, and broker contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: "22.23.2"
+
+      - name: Run Telegram and change-broker security suites
+        run: >-
+          node --test
+          tests/telegram_bridge_test.mjs
+          tests/telegram_broker_integration_test.mjs
+          tests/telegram_pairing_test.mjs
+          tests/telegram_state_test.mjs
+          tests/ha_change_broker_test.mjs
+
+      - name: Run the shortened GAP-007 contract fixture
+        run: |
+          evidence_file="${RUNNER_TEMP}/gap007-contract.json"
+          tests/performance-durability-soak.sh \
+            --mode contract \
+            --evidence "$evidence_file" >/dev/null
+          node --input-type=module - "$evidence_file" <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFile } from "node:fs/promises";
+
+          const evidence = JSON.parse(await readFile(process.argv[2], "utf8"));
+          assert.equal(evidence.requirement_id, "GAP-007");
+          assert.equal(evidence.mode, "contract");
+          assert.equal(evidence.result, "PASS");
+          assert.equal(evidence.closure_eligible, false);
+          assert.equal(evidence.provenance.source_tree_stable, true);
+          assert.equal(evidence.provenance.module_origin, "host_source_contract");
+          assert.equal(
+            evidence.failure_injection.backoff_implementation,
+            "host_source_telegram_bridge_contract",
+          );
+          assert.equal(evidence.sanitization.external_calls, 0);
+          assert.equal(evidence.telegram.configured_global_workers, 2);
+          assert.equal(evidence.telegram.configured_queue_per_chat, 4);
+          assert.equal(evidence.bounded_io.indexed_entities, 1000);
+          NODE
+
+  read-memory-browser-contracts:
+    name: Read, validation, memory, and browser isolation contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: "22.23.2"
+
+      - name: Run failure-isolation suites
+        run: >-
+          node --test
+          tests/ha_read_broker_test.mjs
+          tests/ha_validate_mcp_test.mjs
+          tests/ha_memory_client_test.mjs
 
   home-assistant-addon-lint:
     name: Home Assistant App config
@@ -68,48 +246,162 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
       - name: Run Home Assistant add-on linter
-        uses: frenck/action-addon-linter@v2.21
+        uses: frenck/action-addon-linter@e984fe5c8ce60d9e5435ba2789de40fc0f5ca433  # v2.21
         with:
           path: ./antigravity_home_assistant
 
-  amd64-build-and-smoke:
-    name: linux/amd64 build and smoke
+  amd64-build:
+    name: Build linux/amd64 image once
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
       - name: Build local Home Assistant App image
         run: |
+          source_revision=$(git rev-parse HEAD)
+          source_rootfs_sha256=$(python3 .github/scripts/source-rootfs-manifest.py \
+            create \
+            --root antigravity_home_assistant/rootfs \
+            --manifest antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/source-rootfs-manifest.json)
+          python3 .github/scripts/source-rootfs-manifest.py verify-installed \
+            --root antigravity_home_assistant/rootfs \
+            --manifest antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
+            --exact >/dev/null
           docker build \
             --platform linux/amd64 \
+            --build-arg "SOURCE_REVISION=${source_revision}" \
+            --build-arg "SOURCE_ROOTFS_SHA256=${source_rootfs_sha256}" \
             --tag antigravity-for-home-assistant:test \
             antigravity_home_assistant
 
-      - name: Run verified feedback delivery smoke tests
-        run: bash tests/feedback-smoke.sh antigravity-for-home-assistant:test
-
-      - name: Run container smoke tests
-        run: bash tests/docker-smoke.sh antigravity-for-home-assistant:test
-
-      - name: Run headless browser approval policy smoke tests
-        run: bash tests/browser-approval-smoke.sh antigravity-for-home-assistant:test
-
-      - name: Run Home Assistant memory smoke tests
-        run: bash tests/memory-smoke.sh antigravity-for-home-assistant:test
-
-      - name: Run managed browser authentication smoke tests
-        run: bash tests/managed-auth-smoke.sh antigravity-for-home-assistant:test
-
-      - name: Run user-file update policy smoke tests
-        run: bash tests/user-files-update-smoke.sh antigravity-for-home-assistant:test
-
-      - name: Verify update from released 0.5.0 preserves persistent data
+      - name: Export the image once for independent smoke jobs
         run: |
-          bash tests/update-smoke.sh \
-            ghcr.io/kanu-coffee/antigravity-for-home-assistant:0.5.0 \
-            antigravity-for-home-assistant:test
+          sudo apt-get update
+          sudo apt-get install --yes zstd
+          docker save antigravity-for-home-assistant:test \
+            | zstd --threads=0 --fast=3 \
+              --output antigravity-for-home-assistant-amd64.tar.zst
+
+      - name: Upload the immutable workflow image artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: antigravity-for-home-assistant-amd64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: antigravity-for-home-assistant-amd64.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+
+  amd64-independent-smokes:
+    name: linux/amd64 smoke (${{ matrix.suite }})
+    needs: amd64-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - browser-approval
+          - container
+          - feedback
+          - managed-auth
+          - managed-plugin
+          - memory
+          - telegram-isolation
+          - update
+          - user-files
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Download the exact image built by the upstream job
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: antigravity-for-home-assistant-amd64-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Load the workflow image
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes zstd
+          zstd --decompress --stdout \
+            antigravity-for-home-assistant-amd64.tar.zst | docker load
+
+      - name: Run the independent smoke suite
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          case "$SUITE" in
+            browser-approval)
+              exec bash tests/browser-approval-smoke.sh antigravity-for-home-assistant:test
+              ;;
+            container)
+              exec bash tests/docker-smoke.sh antigravity-for-home-assistant:test
+              ;;
+            feedback)
+              exec bash tests/feedback-smoke.sh antigravity-for-home-assistant:test
+              ;;
+            managed-auth)
+              exec bash tests/managed-auth-smoke.sh antigravity-for-home-assistant:test
+              ;;
+            managed-plugin)
+              exec bash tests/managed-plugin-update-smoke.sh antigravity-for-home-assistant:test
+              ;;
+            memory)
+              exec bash tests/memory-smoke.sh antigravity-for-home-assistant:test
+              ;;
+            telegram-isolation)
+              exec bash tests/telegram-isolation-smoke.sh antigravity-for-home-assistant:test
+              ;;
+            update)
+              exec bash tests/update-smoke.sh antigravity-for-home-assistant:test
+              ;;
+            user-files)
+              exec bash tests/user-files-update-smoke.sh antigravity-for-home-assistant:test
+              ;;
+            *)
+              exit 64
+              ;;
+          esac
+
+  arm64-emulated-build-and-smoke:
+    name: linux/arm64 emulated build and smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Install QEMU emulation
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130  # v3.7.0
+        with:
+          platforms: arm64
+
+      - name: Build local arm64 Home Assistant App image under QEMU
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: |
+          source_revision=$(git rev-parse HEAD)
+          source_rootfs_sha256=$(python3 .github/scripts/source-rootfs-manifest.py \
+            create \
+            --root antigravity_home_assistant/rootfs \
+            --manifest antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/source-rootfs-manifest.json)
+          python3 .github/scripts/source-rootfs-manifest.py verify-installed \
+            --root antigravity_home_assistant/rootfs \
+            --manifest antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
+            --exact >/dev/null
+          docker build \
+            --platform linux/arm64 \
+            --build-arg BUILD_ARCH=aarch64 \
+            --build-arg "SOURCE_REVISION=${source_revision}" \
+            --build-arg "SOURCE_ROOTFS_SHA256=${source_rootfs_sha256}" \
+            --tag antigravity-for-home-assistant:arm64-test \
+            antigravity_home_assistant
+
+      - name: Run arm64 packaging smoke under QEMU
+        run: >-
+          bash tests/arm64-emulated-smoke.sh
+          antigravity-for-home-assistant:arm64-test

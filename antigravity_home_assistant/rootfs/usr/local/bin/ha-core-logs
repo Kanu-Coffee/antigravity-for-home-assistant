@@ -1,4 +1,5 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
 
 exec supervisor-api --raw --accept text/x-log GET /core/logs

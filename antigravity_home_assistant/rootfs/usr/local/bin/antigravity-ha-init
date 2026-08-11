@@ -2,6 +2,14 @@
 # shellcheck shell=bash
 set -Eeuo pipefail
 
+# The AppArmor transition launcher preserves only this injected credential.
+# Capture it before the first external command, immediately remove the exported
+# name, and keep the bootstrap copy as a non-exported shell variable until the
+# scoped runtime credential file can be created after migration bootstrapping.
+supervisor_credential_bootstrap=${SUPERVISOR_TOKEN:-}
+unset SUPERVISOR_TOKEN
+export -n supervisor_credential_bootstrap
+
 umask 077
 
 readonly RUNTIME_DIR=/run/antigravity-ha
@@ -16,6 +24,9 @@ readonly HA_RENDER_UPSTREAM=${RUNTIME_DIR}/home-assistant-render-upstream.conf
 readonly HA_BROWSER_AUTH_STATUS=${RUNTIME_DIR}/browser-auth-status.json
 readonly HA_BROWSER_NETWORK_STATUS=${RUNTIME_DIR}/browser-network-info.json
 readonly HA_FEEDBACK_OPTIONS=${RUNTIME_DIR}/ha-feedback-options.json
+readonly SENSITIVE_DATA_ACCESS_MARKER=${RUNTIME_DIR}/sensitive-data-access.enabled
+readonly MANAGED_PLUGIN_UPDATE=/usr/local/share/antigravity-ha/managed-plugin-update.mjs
+readonly SUPERVISOR_OPTIONS_MIGRATION=/usr/local/share/antigravity-ha/supervisor-options-migrate.mjs
 
 rm -rf -- /run/antigravity-ha/playwright-output
 install -d -m 0700 \
@@ -41,11 +52,9 @@ else
 fi
 
 # shellcheck source=/dev/null
-. /usr/local/lib/antigravity-ha/config.sh
-# shellcheck source=/dev/null
 . /usr/local/lib/antigravity-ha/browser-approval.sh
 
-if ! antigravity_ha_config_validate; then
+if ! jq --exit-status 'type == "object"' /data/options.json >/dev/null; then
   bashio::log.fatal '/data/options.json is missing or invalid'
   exit 1
 fi
@@ -58,13 +67,21 @@ if ! jq --exit-status '
     def option_bool($key; $default):
       (if has($key) then .[$key] else $default end)
       | if type == "boolean" then . else error("invalid safe boolean option") end;
+    def option_string_array($key):
+      (if has($key) then .[$key] else [] end)
+      | if type == "array" and all(.[]; type == "string")
+        then . else error("invalid safe string array option") end;
     {
+      authorized_keys: option_string_array("authorized_keys"),
       web_terminal_auto_start_antigravity: option_bool("web_terminal_auto_start_antigravity"; false),
-      antigravity_approval_policy: option_string("antigravity_approval_policy"; "on-request"),
-      antigravity_sandbox_mode: option_string("antigravity_sandbox_mode"; "danger-full-access"),
+      antigravity_tool_permission: option_string("antigravity_tool_permission"; "request-review"),
+      antigravity_terminal_sandbox: option_bool("antigravity_terminal_sandbox"; true),
+      antigravity_sensitive_data_access: option_bool("antigravity_sensitive_data_access"; false),
       browser_approval_policy: option_string("browser_approval_policy"; "safe"),
       antigravity_user_files_update_mode: option_string("antigravity_user_files_update_mode"; "preserve"),
-      home_assistant_browser_auto_auth: option_bool("home_assistant_browser_auto_auth"; true)
+      home_assistant_browser_auto_auth: option_bool("home_assistant_browser_auto_auth"; true),
+      log_level: option_string("log_level"; "info"),
+      tmux_session_name: option_string("tmux_session_name"; "antigravity-ha")
     }
   ' /data/options.json > "${feedback_options_tmp}"; then
   rm -f "${feedback_options_tmp}"
@@ -73,6 +90,26 @@ if ! jq --exit-status '
 fi
 chmod 0600 "${feedback_options_tmp}"
 mv -f "${feedback_options_tmp}" "${HA_FEEDBACK_OPTIONS}"
+
+# Every process outside the init confinement reads only this allowlisted,
+# non-secret snapshot. The raw Supervisor options file may contain the
+# Telegram bot token and is never the default for shared configuration helpers.
+# shellcheck source=/dev/null
+. /usr/local/lib/antigravity-ha/config.sh
+if ! antigravity_ha_config_validate; then
+  bashio::log.fatal 'The allowlisted App option snapshot is invalid'
+  exit 1
+fi
+
+rm -f "${SENSITIVE_DATA_ACCESS_MARKER}"
+if jq --exit-status '.antigravity_sensitive_data_access == true' \
+  "${HA_FEEDBACK_OPTIONS}" >/dev/null; then
+  sensitive_access_tmp=$(mktemp "${RUNTIME_DIR}/.sensitive-data-access.XXXXXX")
+  printf 'enabled\n' > "${sensitive_access_tmp}"
+  chmod 0400 "${sensitive_access_tmp}"
+  mv -f "${sensitive_access_tmp}" "${SENSITIVE_DATA_ACCESS_MARKER}"
+  unset sensitive_access_tmp
+fi
 
 if [[ ! -d /config ]]; then
   bashio::log.fatal '/config is not mounted; map homeassistant_config to /config'
@@ -88,24 +125,6 @@ write_probe=$(mktemp /config/.antigravity-ha-write-test.XXXXXX)
 rm -f "${write_probe}"
 bashio::log.info 'Verified read-write access to /config'
 
-approval_policy=$(antigravity_ha_config_string 'antigravity_approval_policy' 'on-request')
-case "${approval_policy}" in
-  untrusted | on-request | never) ;;
-  *)
-    bashio::log.fatal 'Invalid antigravity approval policy'
-    exit 1
-    ;;
-esac
-
-sandbox_mode=$(antigravity_ha_config_string 'antigravity_sandbox_mode' 'danger-full-access')
-case "${sandbox_mode}" in
-  workspace-write | danger-full-access) ;;
-  *)
-    bashio::log.fatal 'Invalid antigravity sandbox mode'
-    exit 1
-    ;;
-esac
-
 if ! browser_approval_policy=$(antigravity_ha_config_string 'browser_approval_policy' 'safe'); then
   bashio::log.fatal 'Invalid headless browser approval policy'
   exit 1
@@ -116,8 +135,9 @@ if ! antigravity_ha_browser_approval_policy_validate "${browser_approval_policy}
 fi
 bashio::log.info "Configured headless browser approval policy: ${browser_approval_policy}"
 
-unset approval_policy sandbox_mode browser_approval_policy
+unset browser_approval_policy
 
+legacy_user_files_mode_migration_pending=false
 user_files_update_result=''
 if user_files_update_result=$(/usr/local/bin/antigravity-user-files-update); then
   if ! jq --exit-status \
@@ -125,30 +145,49 @@ if user_files_update_result=$(/usr/local/bin/antigravity-user-files-update); the
       and (.refreshed | type == "array")
       and (.warnings | type == "array")
       and (.recovered | type == "boolean")
-      and (.mode | type == "string")' \
+      and (.mode | type == "string")
+      and (.requested_mode | type == "string")
+      and (
+        .requested_mode == "preserve"
+        or .requested_mode == "refresh_managed"
+        or .requested_mode == "reset_v2"
+        or .requested_mode == "refresh_agents"
+        or .requested_mode == "refresh_all"
+      )
+      and (if .requested_mode == "refresh_agents"
+              or .requested_mode == "refresh_all"
+        then .mode == "refresh_managed"
+        else .mode == .requested_mode
+        end)' \
     <<< "${user_files_update_result}" >/dev/null; then
     bashio::log.fatal 'antigravity user-file update helper returned an invalid result'
     exit 1
   fi
-
-  if jq --exit-status '.created | index("config") != null' \
+  if jq --exit-status '
+      (.requested_mode == "refresh_agents"
+        or .requested_mode == "refresh_all")
+      and .mode == "refresh_managed"
+    ' <<< "${user_files_update_result}" >/dev/null; then
+    legacy_user_files_mode_migration_pending=true
+  fi
+  if jq --exit-status '.created | index("settings") != null' \
     <<< "${user_files_update_result}" >/dev/null; then
-    bashio::log.info 'Created persistent antigravity configuration'
-  elif jq --exit-status '.refreshed | index("config") != null' \
+    bashio::log.info 'Created persistent Antigravity CLI settings.json'
+  elif jq --exit-status '.refreshed | index("settings") != null' \
     <<< "${user_files_update_result}" >/dev/null; then
-    bashio::log.notice 'Refreshed persistent antigravity configuration from this App version'
+    bashio::log.notice 'Reset persistent Antigravity CLI settings.json from this App version'
   else
-    bashio::log.info 'Preserved existing antigravity configuration'
+    bashio::log.info 'Preserved existing Antigravity CLI settings.json'
   fi
 
-  if jq --exit-status '.created | index("agents") != null' \
+  if jq --exit-status '.created | index("mcp") != null' \
     <<< "${user_files_update_result}" >/dev/null; then
-    bashio::log.info 'Created persistent Home Assistant operating guidance for antigravity'
-  elif jq --exit-status '.refreshed | index("agents") != null' \
+    bashio::log.info 'Created persistent Antigravity global MCP configuration'
+  elif jq --exit-status '.refreshed | index("mcp") != null' \
     <<< "${user_files_update_result}" >/dev/null; then
-    bashio::log.notice 'Refreshed persistent antigravity operating guidance from this App version'
+    bashio::log.notice 'Reset persistent Antigravity global MCP configuration from this App version'
   else
-    bashio::log.info 'Preserved existing antigravity operating guidance'
+    bashio::log.info 'Preserved existing Antigravity global MCP configuration'
   fi
 
   if jq --exit-status '.recovered' \
@@ -179,68 +218,97 @@ if [[ -e "${ANTIGRAVITY_DATA}/auth.json" ]]; then
   chmod 0600 "${ANTIGRAVITY_DATA}/auth.json"
 fi
 
-# Provision Antigravity CLI global config and MCP server definitions
-mkdir -p /data/home/.gemini/config /root/.gemini/config
-if [[ -f /etc/antigravity/config.toml ]]; then
-  cp -f /etc/antigravity/config.toml /data/home/.gemini/config/config.toml
-  cp -f /etc/antigravity/config.toml /root/.gemini/config/config.toml
-  chmod 0600 /data/home/.gemini/config/config.toml /root/.gemini/config/config.toml
+managed_plugin_result=''
+if ! managed_plugin_result=$(
+  /usr/bin/env -i \
+    AGY_CLI_DISABLE_AUTO_UPDATE=true \
+    HOME="${DATA_HOME}" \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    /usr/bin/node "${MANAGED_PLUGIN_UPDATE}"
+); then
+  bashio::log.fatal 'The image-managed Home Assistant plugin could not be installed or recovered safely'
+  exit 1
 fi
-
-if [[ -f /data/antigravity/AGENTS.md ]]; then
-  cp -f /data/antigravity/AGENTS.md /data/home/.gemini/config/AGENTS.md
-  cp -f /data/antigravity/AGENTS.md /root/.gemini/config/AGENTS.md
-  chmod 0644 /data/home/.gemini/config/AGENTS.md /root/.gemini/config/AGENTS.md
+if ! jq --exit-status '
+    type == "object"
+    and (.backup_directory == null or (.backup_directory | type == "string"))
+    and (.degraded | type == "boolean")
+    and (.recovered | type == "boolean")
+    and (.updated | type == "boolean")
+    and (.version == null or (.version | type == "string"))
+    and (.warning == null or (.warning | type == "string"))
+  ' <<< "${managed_plugin_result}" >/dev/null; then
+  bashio::log.fatal 'The managed plugin update helper returned an invalid result'
+  exit 1
 fi
-
-cat <<'EOF' > /data/home/.gemini/mcp_config.json
-{
-  "mcpServers": {
-    "ha_memory": {
-      "command": "/usr/bin/env",
-      "args": ["-i", "HOME=/data/home", "LANG=C.UTF-8", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "/usr/local/bin/ha-memory-mcp"],
-      "cwd": "/config"
-    },
-    "playwright": {
-      "command": "/usr/bin/env",
-      "args": ["-i", "HOME=/run/antigravity-ha/playwright-home", "LANG=C.UTF-8", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "/usr/local/bin/ha-playwright-mcp"],
-      "cwd": "/config"
-    }
-  }
-}
-EOF
-cp -f /data/home/.gemini/mcp_config.json /root/.gemini/mcp_config.json
-chmod 0600 /data/home/.gemini/mcp_config.json /root/.gemini/mcp_config.json
-
-if [[ ! -f /config/AGENTS.md && -f /data/antigravity/AGENTS.md ]]; then
-  cp /data/antigravity/AGENTS.md /config/AGENTS.md
-  chmod 0644 /config/AGENTS.md
-  bashio::log.info 'Provisioned Home Assistant AGENTS.md operating guidance in /config'
+if jq --exit-status '.recovered' <<< "${managed_plugin_result}" >/dev/null; then
+  bashio::log.warning 'Recovered an interrupted managed plugin transaction'
 fi
+if jq --exit-status '.degraded' <<< "${managed_plugin_result}" >/dev/null; then
+  bashio::log.warning "$(jq --raw-output '.warning' <<< "${managed_plugin_result}")"
+elif jq --exit-status '.updated' <<< "${managed_plugin_result}" >/dev/null; then
+  bashio::log.notice 'Installed the image-managed Home Assistant Antigravity plugin transactionally'
+else
+  bashio::log.info 'Validated the existing image-managed Home Assistant Antigravity plugin'
+fi
+managed_plugin_backup=$(jq --raw-output '.backup_directory // empty' \
+  <<< "${managed_plugin_result}")
+if [[ -n "${managed_plugin_backup}" ]]; then
+  bashio::log.notice "Stored the previous managed plugin in ${managed_plugin_backup}"
+fi
+unset managed_plugin_backup managed_plugin_result
 
-runtime_tmp=$(mktemp "${RUNTIME_DIR}/.runtime.env.XXXXXX")
-{
-  printf 'export HOME=%q\n' "${DATA_HOME}"
-  printf 'export ANTIGRAVITY_HOME=%q\n' "${ANTIGRAVITY_DATA}"
-  printf 'export HA_URL=%q\n' 'http://supervisor/core/api'
-  printf 'export SUPERVISOR_URL=%q\n' 'http://supervisor'
-  if [[ -n "${SUPERVISOR_TOKEN:-}" ]]; then
-    if [[ "${SUPERVISOR_TOKEN}" == *$'\n'* || "${SUPERVISOR_TOKEN}" == *$'\r'* ]]; then
-      bashio::log.fatal 'Supervisor token contains an invalid line break'
-      exit 1
+if ! /usr/local/libexec/ha-telegram-home-bootstrap --runtime; then
+  bashio::log.fatal 'Could not prepare the isolated Telegram Antigravity HOME'
+  exit 1
+fi
+bashio::log.info 'Prepared the isolated Telegram Antigravity HOME and managed plugin'
+
+rm -f "${RUNTIME_DIR}/runtime.env"
+supervisor_credential_available=false
+if [[ -n "${supervisor_credential_bootstrap}" ]]; then
+  if [[ "${supervisor_credential_bootstrap}" == *$'\n'* \
+    || "${supervisor_credential_bootstrap}" == *$'\r'* \
+    || ${#supervisor_credential_bootstrap} -gt 4096 ]]; then
+    unset supervisor_credential_bootstrap
+    bashio::log.fatal 'Supervisor token is unavailable or unsafe'
+    exit 1
+  fi
+  supervisor_credential_tmp=$(mktemp "${RUNTIME_DIR}/.supervisor.token.XXXXXX")
+  printf '%s' "${supervisor_credential_bootstrap}" > "${supervisor_credential_tmp}"
+  chmod 0400 "${supervisor_credential_tmp}"
+  mv -f "${supervisor_credential_tmp}" "${RUNTIME_DIR}/supervisor.token"
+  supervisor_credential_available=true
+  unset supervisor_credential_tmp
+else
+  rm -f "${RUNTIME_DIR}/supervisor.token"
+fi
+# The raw Supervisor credential is now owned by the scoped helper boundary.
+unset supervisor_credential_bootstrap
+
+if [[ "${legacy_user_files_mode_migration_pending}" == true ]]; then
+  supervisor_options_migration_result=''
+  if supervisor_options_migration_result=$(
+    /usr/bin/node "${SUPERVISOR_OPTIONS_MIGRATION}"
+  ) && jq --exit-status '
+      type == "object"
+      and keys == ["status"]
+      and (.status == "migrated" or .status == "not_required")
+    ' <<< "${supervisor_options_migration_result}" >/dev/null; then
+    if jq --exit-status '.status == "migrated"' \
+      <<< "${supervisor_options_migration_result}" >/dev/null; then
+      bashio::log.notice 'Normalized the deprecated user-file update option through the Supervisor self-options API'
+    else
+      bashio::log.info 'The deprecated user-file update option was already normalized'
     fi
-    printf 'export SUPERVISOR_TOKEN=%q\n' "${SUPERVISOR_TOKEN}"
+  else
+    bashio::log.warning 'Could not persist the deprecated user-file update option normalization through Supervisor; the safe in-memory mapping was applied and persistence will retry on the next App start'
   fi
-  antigravity_token=$(antigravity_ha_config_string 'antigravity_token' '')
-  if [[ -n "${antigravity_token}" ]]; then
-    printf 'export ANTIGRAVITY_TOKEN=%q\n' "${antigravity_token}"
-    printf 'export GEMINI_API_KEY=%q\n' "${antigravity_token}"
-    bashio::log.info 'Antigravity CLI authentication token configured from App options'
-  fi
-  unset antigravity_token
-} > "${runtime_tmp}"
-chmod 0600 "${runtime_tmp}"
-mv -f "${runtime_tmp}" "${RUNTIME_DIR}/runtime.env"
+  unset supervisor_options_migration_result
+fi
+unset legacy_user_files_mode_migration_pending
 
 if /usr/local/bin/ha-memory init >/dev/null 2>&1; then
   bashio::log.info 'Validated the persistent Home Assistant memory store'
@@ -254,23 +322,16 @@ ssh_environment_tmp=$(mktemp /root/.ssh/.environment.XXXXXX)
   printf 'ANTIGRAVITY_HOME=%s\n' "${ANTIGRAVITY_DATA}"
   printf 'HA_URL=%s\n' 'http://supervisor/core/api'
   printf 'SUPERVISOR_URL=%s\n' 'http://supervisor'
-  if [[ -n "${SUPERVISOR_TOKEN:-}" ]]; then
-    printf 'SUPERVISOR_TOKEN=%s\n' "${SUPERVISOR_TOKEN}"
-  fi
-  antigravity_token=$(antigravity_ha_config_string 'antigravity_token' '')
-  if [[ -n "${antigravity_token}" ]]; then
-    printf 'ANTIGRAVITY_TOKEN=%s\n' "${antigravity_token}"
-    printf 'GEMINI_API_KEY=%s\n' "${antigravity_token}"
-  fi
-  unset antigravity_token
+  printf 'LANG=%s\n' 'C.UTF-8'
+  printf 'LC_ALL=%s\n' 'C.UTF-8'
 } > "${ssh_environment_tmp}"
 chmod 0600 "${ssh_environment_tmp}"
 mv -f "${ssh_environment_tmp}" /root/.ssh/environment
 
-if [[ -z "${SUPERVISOR_TOKEN:-}" ]]; then
+if [[ "${supervisor_credential_available}" != true ]]; then
   bashio::log.warning 'SUPERVISOR_TOKEN is unavailable; API helpers will remain disabled'
 else
-  bashio::log.info 'Core and Supervisor API runtime environment configured'
+  bashio::log.info 'Configured the isolated Core and Supervisor helper credential'
 fi
 
 unset NODE_OPTIONS NODE_PATH
@@ -304,14 +365,10 @@ unset browser_auth_status browser_auth_reason
 
 ha_frontend_scheme=http
 ha_frontend_port=8123
-if [[ -n "${SUPERVISOR_TOKEN:-}" ]]; then
+if [[ "${supervisor_credential_available}" == true ]]; then
   core_info_tmp=$(mktemp "${RUNTIME_DIR}/.core-info.XXXXXX")
-  if curl --fail --silent \
-    --connect-timeout 1 \
-    --max-time 2 \
-    --header "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
-    --output "${core_info_tmp}" \
-    http://supervisor/core/info; then
+  if /usr/local/bin/supervisor-api --raw GET /core/info \
+    > "${core_info_tmp}" 2>/dev/null; then
     candidate_port=$(jq --exit-status --raw-output \
       'select(.result == "ok") | .data.port // 8123 | tostring' \
       "${core_info_tmp}" 2>/dev/null || true)
@@ -331,6 +388,7 @@ if [[ -n "${SUPERVISOR_TOKEN:-}" ]]; then
   fi
   rm -f "${core_info_tmp}"
 fi
+unset supervisor_credential_available
 
 ha_render_upstream_tmp=$(mktemp "${RUNTIME_DIR}/.home-assistant-render-upstream.XXXXXX")
 printf 'set %s "%s://homeassistant:%s";\n' \
@@ -429,7 +487,7 @@ fi
 
 # OpenSSH rejects public keys for a locked account. Password authentication stays disabled in sshd_config.
 passwd -d root >/dev/null
-usermod -s /bin/bash root
+usermod -s /usr/local/libexec/ha-ssh-session root
 
 find "${TMUX_DATA}" -mindepth 1 -maxdepth 1 -type d -name 'tmux-*' -exec rm -rf -- {} +
 

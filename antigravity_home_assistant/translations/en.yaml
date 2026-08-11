@@ -6,9 +6,15 @@ configuration:
   telegram_bot_token:
     name: Telegram Bot Token
     description: "Telegram Bot Token issued by @BotFather."
+  telegram_allowed_user_ids:
+    name: Allowed Telegram user IDs
+    description: Telegram user IDs for static authorization. Static authorization requires both the user and chat allowlists to match; an empty list is blocked unless a valid local pairing authorization exists.
   telegram_allowed_chat_ids:
-    name: Manual Allowed Telegram Chat IDs
-    description: "(Optional) List of numerical Telegram Chat IDs. If omitted, you can pair automatically via 1-Click Deep Link or 6-digit PIN code."
+    name: Allowed Telegram chat IDs
+    description: Telegram chat IDs for static authorization. Static authorization requires both the chat and user allowlists to match; an empty list is blocked unless a valid local pairing authorization exists.
+  telegram_access_mode:
+    name: Telegram access mode
+    description: read_only blocks mutations; confirm_changes requires an expiring same-chat confirmation; autonomous permits low-risk changes while high-risk actions still require confirmation.
   authorized_keys:
     name: Authorized SSH keys
     description: OpenSSH public keys allowed to sign in as root. Password login is always disabled.
@@ -18,30 +24,30 @@ configuration:
   tmux_session_name:
     name: tmux session name
     description: Shared session used to restore the terminal after a browser reconnect.
-  antigravity_approval_policy:
-    name: Antigravity approval policy
-    description: Controls when interactive Antigravity asks before running commands.
-  antigravity_sandbox_mode:
-    name: Antigravity sandbox mode
-    description: danger-full-access applies only inside this App container, not to the HAOS host.
-  browser_approval_policy:
-    name: Headless browser approval policy
+  antigravity_tool_permission:
+    name: Antigravity tool permission
+    description: Native Antigravity toolPermission policy. request-review is the safe default; always-proceed grants the most autonomy inside the App boundary.
+  antigravity_terminal_sandbox:
+    name: Enable the Antigravity terminal sandbox
+    description: Keep native Antigravity command execution inside its Linux terminal sandbox where supported.
+  antigravity_sensitive_data_access:
+    name: Allow diagnostic reads of sensitive HA data
     description: >-
-      safe automatically approves dashboard navigation and inspection but asks
-      before clicks or input. never suppresses approval prompts for the current
-      restricted Playwright tool set. always asks for every Playwright tool.
-      Antigravity approval_policy never is an umbrella full-auto policy and may
-      override safe or always prompts. Restart the App and start a new Antigravity
-      session after changing this option.
+      Keep disabled to block Antigravity from secrets.yaml, .storage, and the
+      Recorder database. When enabled, only the interactive Antigravity child
+      may read those three areas for diagnostics; writes remain blocked and
+      Telegram, browser, memory, App tokens, SSH keys, backups, SSL, and cloud
+      credentials remain isolated. Restart the App after changing this option.
   antigravity_user_files_update_mode:
     name: Antigravity user-file update mode
     description: >-
-      preserve keeps the existing config.json and base AGENTS.md.
-      refresh_agents replaces only the base AGENTS.md; refresh_all also resets
-      config.json to the current App-option defaults. Each selected file is
-      replaced at most once per App version and its previous copy is stored in
-      a root-only sensitive backup. Choose preserve again after a one-time
-      refresh, or the selected refresh will run once on the next App version.
+      preserve keeps all existing user files. refresh_managed updates only
+      image-managed rules, plugins, and MCP defaults. reset_v2 creates a
+      root-only backup before replacing App-managed Antigravity files while
+      preserving Home Assistant configuration, SSH keys, and validated memory.
+      Deprecated refresh_agents and refresh_all values are accepted only to
+      start a v1 upgrade and are normalized to refresh_managed through
+      Supervisor; do not select them for new configuration.
   home_assistant_browser_auto_auth:
     name: Headless browser automatic authentication
     description: >-
@@ -50,13 +56,6 @@ configuration:
       after changing this option. Disabling it shows the normal login page on
       the next browser session; the managed identity is preserved until you
       explicitly remove it.
-  home_assistant_browser_token:
-    name: Manual Home Assistant browser token override
-    description: >-
-      Optional manual long-lived token for one active, local-only user whose only
-      group is system-read-only. It is used only while automatic authentication
-      is enabled and overrides the managed identity. Invalid or over-privileged
-      tokens are rejected.
   log_level:
     name: Web terminal log level
     description: Enables detailed ttyd logs for trace or debug. Secrets and authorization headers are never logged.
