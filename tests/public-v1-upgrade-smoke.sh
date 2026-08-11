@@ -597,10 +597,39 @@ assert_no_canary_in_runtime_targets() {
   local app_token=$2
   local browser_token=$3
   local bot_token=$4
-  container_exec "${container}" /bin/bash -ceu '
+  local scan_result
+  local scan_status
+  set +e
+  scan_result=$(container_exec "${container}" /bin/bash -ceu '
     app_token=$1
     browser_token=$2
     bot_token=$3
+
+    print_path() {
+      printf "%s\n" "$1" | jq --raw-input --compact-output .
+    }
+
+    validate_native_cli_log_link() {
+      local link_path=$1
+      local link_target
+      local target_path
+      case "$link_path" in
+        /data/home/.gemini/antigravity-cli/cli.log | \
+          /data/antigravity-ha/telegram-home/.gemini/antigravity-cli/cli.log)
+          ;;
+        *) return 1 ;;
+      esac
+      [[ $(stat -c "%u:%g:%h:%a:%F" -- "$link_path") == \
+        "0:0:1:777:symbolic link" ]] || return 1
+      link_target=$(readlink -- "$link_path") || return 1
+      [[ $link_target =~ ^log/cli-[0-9]{8}_[0-9]{6}\.log$ ]] || return 1
+      [[ $link_target != /* && $link_target != *..* ]] || return 1
+      target_path=${link_path%/cli.log}/${link_target}
+      [[ -f $target_path && ! -L $target_path ]] || return 1
+      [[ $(stat -c "%u:%g:%h:%a:%F" -- "$target_path") == \
+        "0:0:1:600:regular file" ]] || return 1
+    }
+
     for root in \
       /run/antigravity-ha \
       /config \
@@ -614,14 +643,22 @@ assert_no_canary_in_runtime_targets() {
       /data/home/.gemini/config \
       /data/ssh \
       /root/.gemini; do
-      [[ ! -L $root ]] || exit 2
-      [[ -e $root ]] || continue
-      if IFS= read -r -d "" unsafe_path < <(
-        find -P "$root" -xdev \
-          \( -type l -o \( -type f ! -links 1 \) \) -print0 -quit
-      ); then
-        exit 2
+      if [[ -L $root ]]; then
+        print_path "$root"
+        exit 20
       fi
+      [[ -e $root ]] || continue
+      while IFS= read -r -d "" unsafe_path; do
+        if [[ -L $unsafe_path ]] \
+          && validate_native_cli_log_link "$unsafe_path"; then
+          continue
+        fi
+        print_path "$unsafe_path"
+        exit 20
+      done < <(
+        find -P "$root" -xdev \
+          \( -type l -o \( -type f ! -links 1 \) \) -print0
+      )
       while IFS= read -r -d "" path; do
         for canary in "$app_token" "$browser_token" "$bot_token"; do
           set +e
@@ -630,15 +667,32 @@ assert_no_canary_in_runtime_targets() {
           status=$?
           set -e
           case "$status" in
-            0) exit 1 ;;
+            0)
+              print_path "$path"
+              exit 21
+              ;;
             1) ;;
-            *) exit 2 ;;
+            *)
+              print_path "$path"
+              exit 22
+              ;;
           esac
         done
       done < <(find -P "$root" -xdev -type f -links 1 -print0)
     done
-  ' -- "${app_token}" "${browser_token}" "${bot_token}" >/dev/null \
-    || fail 'a retired legacy token was copied into a v2 runtime target'
+  ' -- "${app_token}" "${browser_token}" "${bot_token}")
+  scan_status=$?
+  set -e
+  case "${scan_status}" in
+    0)
+      [[ -z ${scan_result} ]] \
+        || fail 'runtime target scan returned unexpected output'
+      ;;
+    20) fail "unsafe runtime target metadata: ${scan_result}" ;;
+    21) fail "a retired legacy token remained in a v2 runtime target: ${scan_result}" ;;
+    22) fail "a v2 runtime target could not be scanned safely: ${scan_result}" ;;
+    *) fail 'v2 runtime target inspection failed' ;;
+  esac
 }
 
 assert_managed_plugin_contract() {

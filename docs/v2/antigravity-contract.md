@@ -157,6 +157,13 @@ Antigravity 1.1.11은 system default와 같은 값을 저장하지 않는 sparse
 같은 이유로 default `colorScheme: "terminal"` 대신 CLI가 왕복 보존하는 공식
 non-default `colorScheme: "tokyo night"`를 사용한다.
 
+1.1.11은 각 native CLI HOME의 `antigravity-cli/cli.log`를 같은 directory 아래
+`log/cli-YYYYMMDD_HHMMSS.log`를 가리키는 상대 symlink로 만든다. public v1 update
+canary는 interactive와 격리 Telegram HOME의 이 exact 두 경로만 허용하며, link가
+root 소유이고 target이 같은 CLI root 내부의 root 소유, single-link regular 0600
+file인지 확인한다. resolved log target은 secret canary scan에서 제외하지 않으며 그
+밖의 symlink와 hardlink는 실패한다.
+
 permission precedence는 native 규칙대로 deny > ask > allow다. AppArmor deny와
 broker의 고위험 정책은 `always-proceed`로도 완화되지 않는다.
 

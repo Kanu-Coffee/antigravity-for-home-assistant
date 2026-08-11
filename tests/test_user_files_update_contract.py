@@ -97,6 +97,30 @@ def test_public_v1_upgrade_rehearsal_is_source_and_candidate_bound(
     assert '"${CANDIDATE_IMAGE}" >/dev/null' not in smoke
 
 
+def test_public_v1_runtime_scan_only_allows_native_cli_log_links(
+    repository_root: Path,
+) -> None:
+    smoke = (repository_root / "tests/public-v1-upgrade-smoke.sh").read_text(
+        encoding="utf-8"
+    )
+    for required in (
+        "validate_native_cli_log_link",
+        "/data/home/.gemini/antigravity-cli/cli.log",
+        "/data/antigravity-ha/telegram-home/.gemini/antigravity-cli/cli.log",
+        "^log/cli-[0-9]{8}_[0-9]{6}\\.log$",
+        '"0:0:1:777:symbolic link"',
+        '"0:0:1:600:regular file"',
+        'find -P "$root" -xdev -type f -links 1 -print0',
+        "unsafe runtime target metadata",
+        "a retired legacy token remained in a v2 runtime target",
+        "a v2 runtime target could not be scanned safely",
+    ):
+        assert required in smoke
+
+    assert "find -L" not in smoke
+    assert "readlink -f" not in smoke
+
+
 def test_user_file_update_option_is_safe_by_default(
     addon_config: dict,
 ) -> None:
