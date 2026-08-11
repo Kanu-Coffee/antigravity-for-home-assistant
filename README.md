@@ -9,133 +9,182 @@
 <h1 align="center">Antigravity for Home Assistant</h1>
 
 <p align="center">
-  Home Assistant 안에서 <strong>Google Antigravity AI CLI(<code>agy</code>)</strong> 및 <strong>Telegram Bot 메신저</strong>와 대화하며<br>
-  스마트홈 제어, 대시보드 검증, 자동화 구축, 엔티티 정리 및 오류 해결을 수행하는 올인원 AI 어시스턴트 앱입니다.
+  Home Assistant 안에서 Google Antigravity CLI를 실행하고,<br>
+  안전한 API·브라우저·메모리 도구와 Telegram으로 HAOS를 관리하는 실험 단계 App입니다.
 </p>
 
 <p align="center">
   <a href="https://github.com/Kanu-Coffee/antigravity-for-home-assistant/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/Kanu-Coffee/antigravity-for-home-assistant?include_prereleases"></a>
   <a href="https://github.com/Kanu-Coffee/antigravity-for-home-assistant/actions/workflows/ci.yaml"><img alt="CI" src="https://github.com/Kanu-Coffee/antigravity-for-home-assistant/actions/workflows/ci.yaml/badge.svg"></a>
-  <img alt="Architecture: amd64" src="https://img.shields.io/badge/architecture-amd64-blue">
+  <img alt="Architecture: amd64 and aarch64" src="https://img.shields.io/badge/architecture-amd64%20%7C%20aarch64-blue">
   <img alt="Stage: experimental" src="https://img.shields.io/badge/stage-experimental-orange">
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-green"></a>
 </p>
 
 <p align="center">
-  <a href="https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FKanu-Coffee%2Fantigravity-for-home-assistant"><img alt="Home Assistant에 앱 저장소 추가" src="https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg"></a>
+  <a href="https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FKanu-Coffee%2Fantigravity-for-home-assistant"><img alt="Home Assistant에 App 저장소 추가" src="https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg"></a>
 </p>
 
----
+> [!WARNING]
+> 이 App은 `/config` 쓰기 권한과 Home Assistant Core·Supervisor 관리자급 API
+> 권한을 사용합니다. 신뢰하는 관리자만 설치하고, 변경 전 백업과 preview를
+> 확인하세요. 현재 `experimental`이며 실제 HAOS 양쪽 아키텍처의 전체 설치·업데이트·
+> rollback 검증은 릴리스별 증거를 확인해야 합니다.
 
-## 🌟 주요 특징
+## v2가 제공하는 것
 
-- 🤖 **Native Google Antigravity CLI (`agy`) 탑재**: Google DeepMind 팀이 개발한 강력한 AI 코딩 & 시스템 제어 에이전트 내장.
-- 📱 **Telegram Bot 모바일 원격 제어 (3종 간편 연동)**: 1-Click 딥링크 클릭, 6자리 핀 코드 입력, 수동 Chat ID 등록 중 원하는 방식으로 어디서나 스마트폰으로 대화.
-- 🧠 **`ha_memory` 지속성 지식 메모리 DB (16개 도구)**: 집안의 구조, 사용자 선호도, 디바이스 별칭 및 자동화 규칙을 SQLite 메모리에 안전하게 기억.
-- 🌐 **`playwright` 대시보드 브라우저 검증 MCP (16개 도구)**: Headless Chromium을 이용해 Ingress 웹 UI 대시보드 스냅샷 및 렌더링 검사 자동 수행.
-- 🛡️ **HAOS 특화 안전 가이드라인 (`AGENTS.md`)**: `secrets.yaml`, `.storage` 보안 보호 및 YAML 수정 전후 `ha-config-check` 검증 의무화.
-- ⚡ **실시간 `tmux` 세션 동기화**: 웹 터미널(`ttyd`)과 텔레그램 봇 간의 인증 및 대화 컨텍스트 실시간 공유.
+- 고정된 native Google Antigravity CLI와 `agy` 명령
+- Home Assistant용 image-managed plugin, rules, skills, bounded read MCP
+- `/config` 설정 검사, Core/App 로그, 제한된 Supervisor API helper
+- read-only 관리형 사용자로 HA dashboard를 보는 headless Playwright MCP
+- 명시적 사실과 검증된 후보만 보존하는 bounded HA memory
+- shell/tmux 입력을 중계하지 않는 비대화형 Telegram bridge
+- requester·chat·preview digest·TTL에 묶인 승인 broker
+- 항상 enforce되는 AppArmor와 선택형 민감정보 진단 read-only profile
+- `amd64`와 `aarch64`용 GHCR prebuilt release image
 
----
+## 빠른 설치
 
-## 📱 Telegram Bot 모바일 연동 가이드
+요구사항은 Supervisor가 있는 Home Assistant OS 또는 Supervised 환경, `amd64` 또는
+`aarch64` 장치, 인터넷 연결, Antigravity를 사용할 Google 계정입니다. HACS로
+설치하는 통합이 아닙니다.
 
-텔레그램 메신저를 통해 모바일이나 외출 중에도 Antigravity AI에게 말을 걸고 집안 상태를 확인하거나 제어할 수 있습니다.
+1. Home Assistant에서 **설정 → Apps → App store → Repositories**를 엽니다.
+2. 다음 저장소 URL을 추가합니다.
 
-```mermaid
-flowchart LR
-    U["📱 사용자 (Telegram App)"] -->|질문·명령어 전송| T["Telegram Bot API"]
-    T -->|Long Polling 수신| B["Telegram Bridge 데몬"]
-    B -->|실시간 주입 tmux send-keys| A["Antigravity AI Agent"]
-    A -->|API / Playwright / Memory| H["Home Assistant Core"]
-    A -->|답변 반환| B
-    B -->|Markdown 청크 분할 전송| U
-```
-
-### 1단계: Telegram 봇 토큰 발급 (10초 소요)
-1. 텔레그램 앱에서 **[@BotFather](https://t.me/botfather)** 검색 후 대화 시작 (`/start`)
-2. `/newbot` 입력 후 봇 이름 및 봇 사용자 이름(Username, 끝이 `bot`으로 끝남) 지정
-3. 생성 완료 후 발급되는 **HTTP API Token** (예: `123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ`) 복사
-
-### 2단계: Home Assistant 애드온 설정 등록
-1. Home Assistant **[설정] ➔ [애드온] ➔ [Antigravity for Home Assistant]** 이동
-2. **구성 (Configuration)** 탭 클릭
-3. `telegram_enabled`: **`true`** 체크
-4. `telegram_bot_token`: 복사한 봇 토큰 붙여넣기 ➔ **저장** 후 **애드온 재시작**
-
-### 3단계: 3가지 중 원하는 방식으로 원클릭 연동 완료!
-
-| 연동 방식 | 연동 방법 (아래 3가지 중 편한 것 선택) | 추천 대상 |
-|---|---|---|
-| **1. 1-Click Deep Link (추천)** | 애드온 로그에 뜬 `🔗 https://t.me/YourBot?start=PAIR_xxxx` 링크를 클릭하면 텔레그램 앱이 열리며 **1초 만에 자동 승인** | **가장 빠르고 간편함** |
-| **2. 6자리 PIN 코드** | 텔레그램 봇 대화창에 애드온 로그에 뜬 **6자리 핀 번호(예: `702-215`)**를 메시지로 입력 | **스마트폰 앱에서 직접 입력 시** |
-| **3. 수동 Chat ID 등록** | 애드온 설정 탭의 `telegram_allowed_chat_ids`에 자신의 숫자 Chat ID 직접 입력 | **수동 관리 선호 시** |
-
----
-
-## 💬 텔레그램 및 터미널 사용 예시
-
-연동이 완료되면 텔레그램이나 웹 터미널에서 일반 대화하듯 자유롭게 질문하시면 됩니다!
-
-### 💡 스마트홈 제어 및 상태 확인
-- *"거실 조명 켜줘"*
-- *"현재 집안에 켜져 있는 기기 목록과 에어컨 온도 알려줘"*
-- *"안방 공기청정기 필터 상태 확인해줘"*
-
-### ⚙️ 자동화 및 YAML 설정 작성
-- *"오후 11시 이후에 거실 모션이 감지되면 복도 조명을 20% 밝기로 켜는 자동화 만들어줘"*
-- *"현재 automations.yaml 문법에 오류가 없는지 ha-config-check로 점검해줘"*
-
-### 🧠 지속성 메모리 및 사용자 선호도 기억 (`ha_memory`)
-- *"우리 집 거실 공기청정기는 오후 10시 이후 항상 저소음 모드로 동작해야 해. 이 사실을 ha_memory에 기억해둬."*
-- *"기억해둔 내 선호도를 바탕으로 밤 시간 자동화를 재구성해줘."*
-
-### 📋 텔레그램 전용 명령어
-- `/start` : 봇 환영 메시지 및 연동 상태 확인
-- `/status` : Home Assistant Core API, Supervisor, YAML 설정 상태 실시간 리포트
-- `/help` : 사용 도움말 표시
-- `/unpair` : 현재 텔레그램 계정 연동 해제
-
----
-
-## 🛠️ 내장 헬퍼 명령어 모음
-
-웹 터미널(`ttyd`) 및 SSH 세션에서 사용할 수 있는 전용 헬퍼 도구입니다.
-
-| 명령어 | 설명 |
-|---|---|
-| `agy` / `antigravity` | Google Antigravity AI CLI 대화형 세션 시작 |
-| `ha-antigravity-login` | Google Account OAuth 2.0 헤드리스 브라우저 로그인 실행 |
-| `ha-config-check` | Home Assistant Core YAML 구성 검사 수행 |
-| `ha-core-logs` | Home Assistant Core 시스템 로그 확인 |
-| `ha-addon-logs` | 설치된 애드온별 실시간 로그 스트리밍 |
-| `ha-memory status` | `ha_memory` SQLite 데이터베이스 무결성 및 엔티티 카탈로그 현황 조회 |
-| `ha-feedback` | 앱 버그 제보 및 기능 제안을 위한 자동화 리포트 도구 |
-
----
-
-## 📦 5분 설치 가이드
-
-### 요구사항
-- Home Assistant OS 또는 Supervised 환경
-- **amd64** 아키텍처 지원 기기
-- Google 계정 (Antigravity CLI 인증용)
-
-### 설치 방법
-1. Home Assistant **[설정] ➔ [애드온] ➔ [애드온 스토어]**를 엽니다.
-2. 우측 상단 `⋮` 메뉴 ➔ **저장소(Repositories)**에 아래 URL을 추가합니다:
    ```text
    https://github.com/Kanu-Coffee/antigravity-for-home-assistant
    ```
-3. 저장소 목록에서 **Antigravity for Home Assistant**를 선택하고 **Install**을 누릅니다.
-4. **OPEN WEB UI**를 눌러 웹 터미널을 열고, 최초 1회 로그인을 진행합니다:
+
+3. **Antigravity for Home Assistant**를 설치하고 기본 설정으로 시작합니다.
+   릴리스 App은 장치에서 소스를 빌드하지 않고
+   `ghcr.io/kanu-coffee/antigravity-for-home-assistant`의 아키텍처별 이미지를
+   받습니다.
+4. **OPEN WEB UI**에서 최초 한 번 native OAuth를 시작합니다.
+
    ```bash
    ha-antigravity-login
    ```
-5. 화면에 나타나는 Google 인증 링크를 통해 권한을 부여하면 모든 설정이 완료됩니다!
 
----
+5. CLI가 보여 주는 Google 인증 절차를 완료한 뒤 새 세션을 시작합니다.
 
-## 📄 라이선스
+   ```bash
+   agy
+   ```
 
-본 프로젝트의 소스 코드는 [Apache License 2.0](LICENSE)으로 배포됩니다.
+`ha-antigravity-login`은 별도 로그인 subcommand를 흉내 내지 않고 controlling TTY에서
+공식 Antigravity first-run OAuth를 실행합니다. OAuth 자료를 출력하거나 이슈에
+첨부하지 마세요.
+
+## Telegram 설정
+
+> [!CAUTION]
+> actual Antigravity 1.1.11 local canary에서 공유 HOME의 global MCP launch를 재현한
+> 뒤 Telegram 전용 HOME·safe cwd에서는 같은 marker와 `/config/.agents` marker가
+> 실행되지 않고 managed customization 변조가 fail-closed됨을 확인했습니다. 그러나
+> 실제 HAOS OAuth 성공과 AppArmor enforce는 아직 미검증이므로 그 gate 전까지
+> `telegram_enabled: false`를 유지하세요.
+
+신뢰하는 local Ingress/SSH TTY에서 `ha-telegram-login`을 한 번 실행해 Telegram 전용
+identity의 공식 native first-run OAuth를 완료한 뒤 bot을 활성화합니다. 대화형
+Antigravity의 로그인 자료를 복사하거나 경로를 추정하지 마세요.
+
+[@BotFather](https://t.me/botfather)에서 bot token을 만든 뒤 다음 두 인증 방법 중
+하나를 선택합니다.
+
+### 정적 허용 목록
+
+App 설정에 사용자 ID와 채팅 ID를 모두 넣습니다. 요청은 두 목록의 교집합에
+포함될 때만 허용됩니다. 어느 한 목록만 채우면 인증되지 않습니다.
+
+```yaml
+telegram_enabled: true
+telegram_bot_token: "REDACTED"
+telegram_allowed_user_ids:
+  - "123456789"
+telegram_allowed_chat_ids:
+  - "123456789"
+telegram_access_mode: confirm_changes
+```
+
+### 로컬 일회용 pairing
+
+Web UI 또는 SSH의 로컬 셸에서 token을 만들고 만료 전에 같은 bot에 전송합니다.
+
+```bash
+ha-telegram-pair create --ttl 5m
+```
+
+Telegram에서 `/start TOKEN`을 보냅니다. token은 한 번만 표시되고 한 번만 사용할
+수 있으므로 비밀로 취급합니다. 승인 목록은 `ha-telegram-pair list`, 철회는
+`ha-telegram-pair revoke AUTHORIZATION_ID`로 관리합니다. PIN, 자동 deep link,
+`/unpair`는 v2 계약이 아닙니다.
+
+### 세 가지 동작 모드
+
+| 모드 | 조회 | 변경 proposal |
+| --- | --- | --- |
+| `read_only` | 허용 | 실행 거부 |
+| `confirm_changes` | 허용 | 매번 같은 사용자·채팅의 확인 필요 |
+| `autonomous` | 허용 | broker가 검증 가능한 저위험 설정 변경만 자동 실행 |
+
+현재 최소 broker는 device safety metadata가 없는 모든 HA `service_call`을 고위험으로
+재분류하므로 `autonomous`에서도 사람 확인이 필요합니다. restart, update, restore,
+delete는 아직 지원하지 않고 fail closed합니다. Telegram worker는
+`agy --print --output-format stream-json --mode plan`으로 proposal만 만들며, shell이나
+공유 tmux에 명령을 주입하지 않습니다.
+
+## 안전 기본값
+
+- AppArmor는 항상 켜져 있으며 App 옵션으로 끌 수 없습니다.
+- `antigravity_sensitive_data_access: false`가 기본값입니다. 이때 대화형
+  Antigravity도 `secrets.yaml`, `.storage`, Recorder DB를 읽거나 쓸 수 없습니다.
+- 값을 `true`로 바꾸면 대화형 Antigravity child만 세 종류를 진단용으로 읽을 수
+  있고 쓰기·이름 변경·삭제는 계속 거부됩니다.
+- Telegram, browser, memory, broker, 일반 shell에는 이 권한이 전달되지 않습니다.
+- SSH private key, App token, backup, SSL private material, cloud auth는 두 설정 모두
+  차단됩니다.
+- `always-proceed`나 terminal sandbox 해제도 AppArmor와 Telegram broker 정책을
+  우회하지 못합니다.
+- native OAuth를 수행하는 대화형 process는 `/data/home`, Telegram process는 별도
+  `/data/antigravity-ha/telegram-home`에 접근합니다. 두 identity는 공유되지 않지만
+  AppArmor만으로 각 process의 정상 인증 read와 그 process 안에서 유도된 credential
+  read를 완전히 구분할 수 없는 잔여 위험이 있습니다.
+
+SSH는 공개키만 허용합니다. TCP `2224`를 인터넷에 직접 노출하지 말고 신뢰하는
+VPN을 사용하세요.
+
+## 업데이트와 migration
+
+`antigravity_user_files_update_mode`의 기본값은 `preserve`입니다.
+
+| 값 | 동작 |
+| --- | --- |
+| `preserve` | OAuth와 사용자 소유 settings·MCP·plugin을 보존; App 소유 HA plugin은 version당 보안 갱신 |
+| `refresh_managed` | 위 보존 원칙과 plugin 갱신에 더해 소유권이 기록된 settings key·permission rule을 backup 후 merge |
+| `reset_v2` | 같은 managed settings merge를 엄격하게 수행하고 ownership이 없거나 모호하면 중단 |
+
+`reset_v2`도 `/config`, OAuth, SSH key, browser identity, memory와 사용자 plugin을
+초기화하지 않습니다. 소유권을 증명할 수 없으면 덮어쓰지 않고 중단합니다. 업데이트
+mode와 관계없이 App 소유 `home-assistant` plugin은 안전한 ownership marker가 있을
+때 App version당 한 번 canonical image copy로 갱신됩니다. 같은 이름의 marker 없는
+plugin은 사용자 소유 충돌로 보고 시작을 중단합니다. 업데이트 전 Home Assistant
+전체 backup과 현재 동작 version/image를 기록하고, 실패하면
+`preserve`로 되돌린 뒤 이전 immutable version과 검증된 scoped backup으로
+복구하세요. 자동 HAOS rollback은 보장하지 않습니다.
+
+## 문서와 검증 상태
+
+- [한국어 App 사용 설명서](antigravity_home_assistant/DOCS.md)
+- [English App user guide](antigravity_home_assistant/DOCS.en.md)
+- [v2 개발 계약과 체크리스트](docs/v2/README.md)
+- [릴리스와 변경 이력](antigravity_home_assistant/CHANGELOG.md)
+
+저장소 테스트는 native CLI 계약, Telegram broker, read broker, memory, browser,
+migration과 AppArmor 정책을 검사합니다. 그러나 generic Linux의 parse/build 성공은
+실제 HAOS AppArmor enforce나 양쪽 아키텍처 runtime 성공의 대체 증거가 아닙니다.
+설치 전 해당 릴리스의 CI, GHCR multi-arch manifest와 HAOS 검증 기록을 확인하세요.
+
+## 라이선스
+
+[Apache License 2.0](LICENSE)

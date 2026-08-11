@@ -4,7 +4,6 @@ import re
 import shutil
 import stat
 import subprocess
-import tomllib
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -105,49 +104,31 @@ def _form_fields(form: dict) -> dict[str, dict]:
     }
 
 
-def test_feedback_skill_metadata_references_and_routing(rootfs: Path) -> None:
-    skill_root = rootfs / "etc/antigravity/skills/ha-feedback"
-    skill_source = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+def test_feedback_native_skill_metadata_and_routing(rootfs: Path) -> None:
+    skill_path = (
+        rootfs
+        / "usr/local/share/antigravity-ha/plugins/home-assistant/skills/ha-feedback/SKILL.md"
+    )
+    skill_source = skill_path.read_text(encoding="utf-8")
     metadata, skill_body = _skill_frontmatter(skill_source)
 
     assert metadata["name"] == "ha-feedback"
     assert "bug reports" in metadata["description"]
     assert "feature proposals" in metadata["description"]
     assert "TODO" not in skill_source
-
-    reference_root = skill_root / "references"
-    references = {
-        path.name: path.read_text(encoding="utf-8")
-        for path in reference_root.iterdir()
-        if path.is_file()
-    }
-    assert set(references) == {
-        "bug.md",
-        "feature.md",
-        "privacy.md",
-        "submission.md",
-    }
-    for reference_name in references:
-        assert f"references/{reference_name}" in skill_body
-
-    for status in ALLOWED_CHECK_STATUSES:
-        assert f'"{status}"' in references["bug.md"]
-        assert f'"{status}"' in references["feature.md"]
-    assert "acceptance_criteria" in references["feature.md"]
-    assert "explicitly say what is unknown" in references["feature.md"]
-    assert "private vulnerability reporting" in references["privacy.md"]
-    assert "do not run GitHub candidate search" in references["privacy.md"]
-    assert "current user turn" in references["submission.md"]
-    assert "github submit <report> --confirm <token>" in references["submission.md"]
-
-    openai = yaml.safe_load(
-        (skill_root / "agents/openai.yaml").read_text(encoding="utf-8")
-    )
-    assert openai["interface"]["display_name"] == "Home Assistant Feedback"
-    assert openai["interface"]["short_description"]
-    assert "$ha-feedback bug <symptom>" in openai["interface"]["default_prompt"]
-    assert "$ha-feedback feature <request>" in openai["interface"]["default_prompt"]
-    assert openai["policy"]["allow_implicit_invocation"] is True
+    normalized_skill_body = " ".join(skill_body.split())
+    for required in (
+        "/ha-feedback bug <symptom>",
+        "/ha-feedback feature <request>",
+        "Keep validation observational",
+        "private `0600` temporary JSON file",
+        "stop every public candidate-search",
+        "exact final repository",
+        "current user turn",
+        "github submit <report> --confirm <token>",
+        "Never retry an uncertain or failed direct submission automatically",
+    ):
+        assert required in normalized_skill_body
 
     runtime_guidance = (
         rootfs / "usr/local/share/antigravity-ha/AGENTS.md"
@@ -157,7 +138,7 @@ def test_feedback_skill_metadata_references_and_routing(rootfs: Path) -> None:
     )[0]
     normalized_guidance = " ".join(feedback_guidance.lower().split())
     for required in (
-        "$ha-feedback",
+        "/ha-feedback",
         "bug",
         "feature",
         "observational",
@@ -168,19 +149,40 @@ def test_feedback_skill_metadata_references_and_routing(rootfs: Path) -> None:
     ):
         assert required in normalized_guidance
 
-    with (rootfs / "etc/antigravity/config.toml").open("rb") as stream:
-        config = tomllib.load(stream)
-    instructions = " ".join(config["developer_instructions"].lower().split())
+    instructions = " ".join(skill_source.lower().split())
     for required in (
-        "$ha-feedback",
+        "/ha-feedback",
         "bug",
         "feature",
-        "read-only",
-        "stop public submission for security issues",
-        "exact final repository, title, and body",
+        "observational",
+        "stop every public candidate-search",
+        "exact final repository",
         "current user turn",
     ):
         assert required in instructions
+
+
+def test_feedback_user_surfaces_use_the_native_slash_command(
+    addon_root: Path,
+    repository_root: Path,
+    rootfs: Path,
+) -> None:
+    surfaces = [
+        repository_root / "AGENTS.md",
+        repository_root / "SUPPORT.md",
+        repository_root / "docs/examples.ko.md",
+        repository_root / "docs/examples.en.md",
+        addon_root / "README.md",
+        addon_root / "README.en.md",
+        rootfs / "usr/local/share/antigravity-ha/AGENTS.md",
+        rootfs / "usr/local/share/antigravity-ha/ha-feedback.mjs",
+        rootfs
+        / "usr/local/share/antigravity-ha/plugins/home-assistant/skills/ha-feedback/SKILL.md",
+    ]
+    for surface in surfaces:
+        content = surface.read_text(encoding="utf-8")
+        assert "/ha-feedback" in content
+        assert "$ha-feedback" not in content
 
 
 def test_feedback_helper_is_pinned_and_image_managed(
@@ -189,36 +191,41 @@ def test_feedback_helper_is_pinned_and_image_managed(
     repository_root: Path,
     rootfs: Path,
 ) -> None:
-    assert addon_config["version"] == "1.0.4"
+    assert addon_config["version"] == "2.0.0"
     assert "/feedback/" in (repository_root / ".gitignore").read_text(
         encoding="utf-8"
     )
     dockerfile = (addon_root / "Dockerfile").read_text(encoding="utf-8")
-    assert "ARG BUILD_VERSION=1.0.4" in dockerfile
+    assert "ARG BUILD_VERSION=2.0.0" in dockerfile
     assert "ARG GH_VERSION=2.93.0" in dockerfile
     assert (
-        "ARG GH_SHA256="
+        "ARG GH_AMD64_SHA256="
         "02d1290eba130e0b896f3709ffff22e1c75a51475ddb70476a85abc6b5807af0"
     ) in dockerfile
-    assert 'gh_archive="gh_${GH_VERSION}_linux_amd64.tar.gz"' in dockerfile
+    assert (
+        "ARG GH_ARM64_SHA256="
+        "c55feb33684abba57e9909737340d5b39282257c0363e1edde6785ac4a413be7"
+    ) in dockerfile
+    assert 'gh_archive="gh_${GH_VERSION}_linux_${gh_arch}.tar.gz"' in dockerfile
     assert (
         '"https://github.com/cli/cli/releases/download/'
         'v${GH_VERSION}/${gh_archive}"'
     ) in dockerfile
     assert (
-        '"${GH_SHA256}" "/tmp/${gh_archive}" '
-        "| sha256sum --check --strict -"
+        "printf '%s  %s\\n' \"${gh_sha256}\" \"/tmp/${gh_archive}\""
     ) in dockerfile
     assert (
-        'install -m 0755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" '
-        "/usr/local/bin/gh"
+        '"/tmp/gh_${GH_VERSION}_linux_${gh_arch}/bin/gh" /usr/local/bin/gh'
     ) in dockerfile
     assert dockerfile.count('"gh version ${GH_VERSION} "') >= 2
-    assert "find /etc/antigravity/skills/ha-feedback -type d -exec chmod 0755" in dockerfile
-    assert "find /etc/antigravity/skills/ha-feedback -type f -exec chmod 0644" in dockerfile
+    assert "find /usr/local/share/antigravity-ha/plugins -type d -exec chmod 0755" in dockerfile
+    assert "find /usr/local/share/antigravity-ha/plugins -type f -exec chmod 0644" in dockerfile
     assert "/usr/local/share/antigravity-ha/ha-feedback.mjs" in dockerfile
     assert "node --check /usr/local/share/antigravity-ha/ha-feedback.mjs" in dockerfile
-    assert "ha-feedback --help | grep -Fq 'ha-feedback github submit'" in dockerfile
+    assert (
+        "node /usr/local/share/antigravity-ha/ha-feedback.mjs --help" in dockerfile
+    )
+    assert "ha-feedback --help" not in dockerfile
 
     wrapper = (rootfs / "usr/local/bin/ha-feedback").read_text(encoding="utf-8")
     assert wrapper.startswith("#!/bin/bash -p\n")
@@ -246,6 +253,7 @@ def test_feedback_helper_is_pinned_and_image_managed(
         assert forbidden_assignment not in wrapper
 
     helper = _helper_path(rootfs).read_text(encoding="utf-8")
+    assert 'AGY_CLI_DISABLE_AUTO_UPDATE: "true"' in helper
     for required in (
         'const SCHEMA_VERSION = "1"',
         f'const TARGET_REPOSITORY = "{TARGET_REPOSITORY}"',

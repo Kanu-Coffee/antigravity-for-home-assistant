@@ -24,7 +24,7 @@ or device states yet:
 
 ## Bug and feature feedback
 
-`$ha-feedback` is a preset for validating a bug or feature request about this app in read-only mode and preparing a report that is safe to publish. The initial request authorizes investigation and report preparation only, not GitHub submission.
+`/ha-feedback` is a preset for validating a bug or feature request about this app in read-only mode and preparing a report that is safe to publish. The initial request authorizes investigation and report preparation only, not GitHub submission.
 
 ### Bug report
 
@@ -34,7 +34,7 @@ or device states yet:
 I found the following problem in Antigravity for Home Assistant:
 <reproducible symptom, when it occurs, and user impact>
 
-Use the $ha-feedback bug workflow to validate it in read-only mode.
+Use the /ha-feedback bug workflow to validate it in read-only mode.
 Identify the app and Home Assistant versions, affected path, minimal reproduction,
 expected behavior, and actual behavior. Classify every check as PASS, FAIL, NOT_TESTED,
 or NOT_RUN and include the supporting evidence. Do not change Home Assistant files,
@@ -51,7 +51,7 @@ Create the report bundle, but do not submit it yet. Show me the final public pre
 #### Explicit bug invocation
 
 ```text
-$ha-feedback bug <describe the reproducible symptom and impact in one or two sentences>
+/ha-feedback bug <describe the reproducible symptom and impact in one or two sentences>
 ```
 
 ### Feature request
@@ -62,7 +62,7 @@ $ha-feedback bug <describe the reproducible symptom and impact in one or two sen
 I want to propose the following feature for Antigravity for Home Assistant:
 <who needs to achieve what, in which situation, and what currently blocks them>
 
-Use the $ha-feedback feature workflow to validate it in read-only mode.
+Use the /ha-feedback feature workflow to validate it in read-only mode.
 Summarize what the current documentation and product already support, the evidence
 checked, alternatives and current workarounds, proposed user-visible behavior,
 compatibility, security and privacy risks, out-of-scope items, and observable
@@ -78,7 +78,7 @@ but do not submit it yet. Show me the final public preview.
 #### Explicit feature invocation
 
 ```text
-$ha-feedback feature <describe the needed behavior and use case in one or two sentences>
+/ha-feedback feature <describe the needed behavior and use case in one or two sentences>
 ```
 
 ### Report bundle and submission boundary

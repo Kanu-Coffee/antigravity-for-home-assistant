@@ -1,0 +1,227 @@
+---
+name: Candidate
+
+"on":
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Build an immutable candidate, or finalize existing HAOS evidence
+        required: true
+        default: build
+        type: choice
+        options:
+          - build
+          - finalize
+      candidate_run_id:
+        description: Successful Candidate build run ID (finalize only)
+        required: false
+        type: string
+      candidate_run_attempt:
+        description: Successful Candidate build run attempt (finalize only)
+        required: false
+        type: string
+      haos_evidence_json:
+        description: Sanitized exact-digest HAOS evidence JSON (finalize only)
+        required: false
+        default: "{}"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-${{ github.ref }}-${{ inputs.mode }}
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    name: Run complete source quality gate
+    if: inputs.mode == 'build'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yaml
+
+  build:
+    name: Build, stage, and test immutable candidate
+    if: inputs.mode == 'build'
+    needs: quality
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-app.yaml
+    with:
+      app: antigravity_home_assistant
+      candidate: true
+      candidate_tag: candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+  finalize:
+    name: Bind sanitized HAOS evidence to exact candidate
+    if: inputs.mode == 'finalize'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Resolve successful candidate run and artifact
+        id: candidate
+        env:
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          [[ $CANDIDATE_RUN_ID =~ ^[1-9][0-9]*$ ]]
+          [[ $CANDIDATE_RUN_ATTEMPT =~ ^[1-9][0-9]*$ ]]
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${CANDIDATE_RUN_ID}" \
+            > candidate-run.json
+          jq --exit-status \
+            --argjson attempt "$CANDIDATE_RUN_ATTEMPT" '
+              .path == ".github/workflows/candidate.yaml"
+              and .event == "workflow_dispatch"
+              and .status == "completed"
+              and .conclusion == "success"
+              and .run_attempt == $attempt
+              and (.head_sha | test("^[0-9a-f]{40}$"))
+            ' candidate-run.json >/dev/null
+          source_sha=$(jq --raw-output .head_sha candidate-run.json)
+          [[ $GITHUB_SHA == "$source_sha" ]] || {
+            echo "Finalize must be dispatched at the exact candidate source" >&2
+            exit 1
+          }
+          artifact_name="release-candidate-${source_sha}-${CANDIDATE_RUN_ID}-${CANDIDATE_RUN_ATTEMPT}"
+          gh api \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${CANDIDATE_RUN_ID}/artifacts?name=${artifact_name}" \
+            > candidate-artifacts.json
+          jq --exit-status \
+            --arg artifact_name "$artifact_name" '
+              .total_count == 1
+              and (.artifacts | length == 1)
+              and .artifacts[0].name == $artifact_name
+              and .artifacts[0].expired == false
+              and (.artifacts[0].digest | test("^sha256:[0-9a-f]{64}$"))
+            ' candidate-artifacts.json >/dev/null
+          {
+            printf 'artifact_digest=%s\n' \
+              "$(jq --raw-output .artifacts[0].digest candidate-artifacts.json)"
+            printf 'artifact_name=%s\n' "$artifact_name"
+            printf 'candidate_run_attempt=%s\n' "$CANDIDATE_RUN_ATTEMPT"
+            printf 'candidate_run_id=%s\n' "$CANDIDATE_RUN_ID"
+            printf 'source_sha=%s\n' "$source_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out exact candidate evidence verifier
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          ref: ${{ steps.candidate.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Download candidate by exact run and artifact name
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: ${{ steps.candidate.outputs.artifact_name }}
+          path: release-evidence
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.candidate.outputs.candidate_run_id }}
+
+      - name: Validate manual evidence against exact candidate
+        env:
+          ARTIFACT_DIGEST: ${{ steps.candidate.outputs.artifact_digest }}
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.candidate.outputs.source_sha }}
+        run: |
+          set -Eeuo pipefail
+          cd release-evidence
+          jq --raw-output '.inputs.haos_evidence_json' \
+            "$GITHUB_EVENT_PATH" > manual-haos-evidence.json
+          python3 ../.github/scripts/release_contract.py manual \
+            --candidate candidate.json \
+            --manual manual-haos-evidence.json
+          bash ../.github/scripts/verify-manual-evidence.sh \
+            manual-haos-evidence.json \
+            candidate.json \
+            haos-gates
+          test "$(jq --raw-output .source_sha candidate.json)" = "$SOURCE_SHA"
+          python3 ../.github/scripts/candidate_repository.py verify \
+            --repository candidate-repository \
+            --manifest candidate-repository-manifest.json >/dev/null
+          python3 ../.github/scripts/candidate_repository.py verify-archive \
+            --repository candidate-repository \
+            --manifest candidate-repository-manifest.json \
+            --archive haos-candidate-repository.zip
+          test "sha256:$(sha256sum candidate-repository-manifest.json | cut -d ' ' -f 1)" = \
+            "$(jq --raw-output .haos_rehearsal.repository_manifest_sha256 candidate.json)"
+          test "sha256:$(sha256sum haos-candidate-repository.zip | cut -d ' ' -f 1)" = \
+            "$(jq --raw-output .haos_rehearsal.repository_archive_sha256 candidate.json)"
+          for sbom in antigravity-for-home-assistant-*.spdx.json; do
+            (( $(stat --format '%s' "$sbom") < 16777216 ))
+          done
+          python3 ../.github/scripts/release_contract.py finalize \
+            --candidate candidate.json \
+            --manual manual-haos-evidence.json \
+            --gap007-evidence gap007-release.json \
+            --haos-gates-dir haos-gates \
+            --candidate-artifact-digest "$ARTIFACT_DIGEST" \
+            --actor "$GITHUB_ACTOR" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output release-evidence.json
+
+      - name: Set immutable release evidence artifact name
+        id: evidence
+        env:
+          CANDIDATE_RUN_ATTEMPT: ${{ steps.candidate.outputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ steps.candidate.outputs.candidate_run_id }}
+          SOURCE_SHA: ${{ steps.candidate.outputs.source_sha }}
+        run: |
+          version=$(jq --raw-output .candidate.version \
+            release-evidence/release-evidence.json)
+          printf 'artifact_name=release-evidence-%s-%s-%s-%s-%s-%s\n' \
+            "$version" "$SOURCE_SHA" \
+            "$CANDIDATE_RUN_ID" "$CANDIDATE_RUN_ATTEMPT" \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable final release evidence
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ steps.evidence.outputs.artifact_name }}
+          path: |
+            release-evidence/release-evidence.json
+            release-evidence/candidate.json
+            release-evidence/candidate-index.json
+            release-evidence/gap007-release.json
+            release-evidence/manual-haos-evidence.json
+            release-evidence/haos-gates/*.json
+            release-evidence/candidate-repository/
+            release-evidence/candidate-repository-manifest.json
+            release-evidence/haos-candidate-repository.zip
+            release-evidence/antigravity-for-home-assistant-amd64.spdx.json
+            release-evidence/antigravity-for-home-assistant-arm64.spdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish exact annotated-tag trailers
+        env:
+          ARTIFACT_NAME: ${{ steps.evidence.outputs.artifact_name }}
+          CANDIDATE_RUN_ATTEMPT: ${{ steps.candidate.outputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ steps.candidate.outputs.candidate_run_id }}
+          RAW_ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: |
+          set -Eeuo pipefail
+          [[ $RAW_ARTIFACT_DIGEST =~ ^[0-9a-f]{64}$ ]]
+          artifact_digest="sha256:${RAW_ARTIFACT_DIGEST}"
+          {
+            echo '## Final release evidence is ready'
+            echo
+            echo 'Create the annotated numeric tag at the candidate source SHA with exactly these trailers:'
+            echo
+            echo '```text'
+            printf 'Candidate-Run-ID: %s\n' "$CANDIDATE_RUN_ID"
+            printf 'Candidate-Run-Attempt: %s\n' "$CANDIDATE_RUN_ATTEMPT"
+            printf 'Release-Evidence-Run-ID: %s\n' "$GITHUB_RUN_ID"
+            printf 'Release-Evidence-Run-Attempt: %s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'Release-Evidence-Artifact: %s\n' "$ARTIFACT_NAME"
+            printf 'Release-Evidence-SHA256: %s\n' "$artifact_digest"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

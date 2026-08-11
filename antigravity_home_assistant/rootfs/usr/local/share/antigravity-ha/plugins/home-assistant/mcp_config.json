@@ -1,0 +1,36 @@
+{
+  "mcpServers": {
+    "ha_change": {
+      "command": "/usr/local/bin/ha-change-proposal-mcp",
+      "args": [],
+      "cwd": "/config"
+    },
+    "ha_memory": {
+      "command": "/usr/local/bin/ha-memory-mcp",
+      "args": [],
+      "cwd": "/config"
+    },
+    "ha_read": {
+      "command": "/usr/local/bin/ha-read-mcp",
+      "args": [],
+      "cwd": "/config"
+    },
+    "ha_validate": {
+      "command": "/usr/local/bin/ha-validate-mcp",
+      "args": [],
+      "cwd": "/config"
+    },
+    "playwright": {
+      "command": "/usr/local/bin/ha-playwright-mcp",
+      "args": [],
+      "cwd": "/config",
+      "disabledTools": [
+        "browser_evaluate",
+        "browser_file_upload",
+        "browser_handle_dialog",
+        "browser_install",
+        "browser_run_code"
+      ]
+    }
+  }
+}

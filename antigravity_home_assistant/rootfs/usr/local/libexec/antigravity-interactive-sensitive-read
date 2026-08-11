@@ -1,0 +1,24 @@
+#!/bin/bash -p
+set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
+
+readonly ACCESS_MARKER=/run/antigravity-ha/sensitive-data-access.enabled
+if [[ ! -f "${ACCESS_MARKER}" || -L "${ACCESS_MARKER}" ]]; then
+  printf '%s\n' \
+    'Sensitive Home Assistant reads are disabled; enable the App option and restart' \
+    >&2
+  exit 78
+fi
+if [[ "$(stat -c '%u:%a:%h' "${ACCESS_MARKER}")" != 0:400:1 ]]; then
+  printf '%s\n' 'Sensitive data access marker is unsafe' >&2
+  exit 78
+fi
+
+exec /usr/bin/env -i \
+  AGY_CLI_DISABLE_AUTO_UPDATE=true \
+  HOME=/data/home \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  TERM=xterm-256color \
+  /usr/local/libexec/antigravity-real "$@"

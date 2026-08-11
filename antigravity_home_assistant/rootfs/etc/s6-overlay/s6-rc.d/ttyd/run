@@ -2,13 +2,22 @@
 # shellcheck shell=bash
 set -Eeuo pipefail
 
+# The terminal and Antigravity processes must not inherit the Supervisor
+# credential. Privileged helpers load it from the root-only runtime file only
+# for the duration of an API call.
+unset SUPERVISOR_TOKEN
+
+# shellcheck source=/dev/null
+. /usr/local/lib/antigravity-ha/environment.sh
+
 declare -a options=(
   --interface 127.0.0.1
   --port 7682
   --writable
 )
 
-log_level=$(jq --raw-output '.log_level // "info"' /data/options.json)
+log_level=$(jq --raw-output '.log_level // "info"' \
+  "${ANTIGRAVITY_HA_OPTIONS_FILE}")
 if [[ "${log_level}" == trace || "${log_level}" == debug ]]; then
   options+=(--debug 7)
 else

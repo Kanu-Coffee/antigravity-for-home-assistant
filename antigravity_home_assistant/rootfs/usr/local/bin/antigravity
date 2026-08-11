@@ -1,71 +1,69 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Keep config.json user-owned while applying current App options
+# Keep one stable launcher for Ingress, SSH, scripts, and the `agy` alias. The
+# real Antigravity CLI reads its native JSON settings and plugin registry from
+# HOME; do not translate App options into Codex-style `-c` overrides here.
 # shellcheck source=/dev/null
 . /usr/local/lib/antigravity-ha/environment.sh
 # shellcheck source=/dev/null
 . /usr/local/lib/antigravity-ha/config.sh
-# shellcheck source=/dev/null
-. /usr/local/lib/antigravity-ha/browser-approval.sh
 
-# Inject ANTIGRAVITY_TOKEN from add-on options if provided
-if antigravity_ha_config_validate; then
-  _antigravity_token=$(antigravity_ha_config_string 'antigravity_token' '')
-  if [[ -n "${_antigravity_token}" ]]; then
-    export ANTIGRAVITY_TOKEN="${_antigravity_token}"
-  fi
-  unset _antigravity_token
-fi
+for argument in "$@"; do
+  case "${argument}" in
+    -dangerously-skip-permissions | -dangerously-skip-permissions=* \
+      | --dangerously-skip-permissions | --dangerously-skip-permissions=*)
+      echo 'antigravity: --dangerously-skip-permissions is disabled in this App' >&2
+      exit 78
+      ;;
+  esac
+done
+unset argument
 
-# Ensure user .gemini configuration directory, config.toml, and AGENTS.md exist
-if [[ ! -d "${HOME:-/data/home}/.gemini/config" ]]; then
-  mkdir -p "${HOME:-/data/home}/.gemini/config"
-fi
-if [[ ! -f "${HOME:-/data/home}/.gemini/config/config.toml" && -f /etc/antigravity/config.toml ]]; then
-  cp -f /etc/antigravity/config.toml "${HOME:-/data/home}/.gemini/config/config.toml" 2>/dev/null || true
-fi
-if [[ ! -f "${HOME:-/data/home}/.gemini/config/AGENTS.md" && -f /data/antigravity/AGENTS.md ]]; then
-  cp -f /data/antigravity/AGENTS.md "${HOME:-/data/home}/.gemini/config/AGENTS.md" 2>/dev/null || true
-fi
-
-approval_policy=on-request
-sandbox_mode=danger-full-access
-browser_approval_policy=safe
-if antigravity_ha_config_validate; then
-  approval_policy=$(antigravity_ha_config_string 'antigravity_approval_policy' 'on-request')
-  sandbox_mode=$(antigravity_ha_config_string 'antigravity_sandbox_mode' 'danger-full-access')
-  if ! browser_approval_policy=$(antigravity_ha_config_string 'browser_approval_policy' 'safe'); then
-    printf 'antigravity: invalid headless browser approval policy\n' >&2
+terminal_sandbox=true
+if [[ -e "${ANTIGRAVITY_HA_OPTIONS_FILE}" ]]; then
+  if ! terminal_sandbox=$(antigravity_ha_config_bool \
+    antigravity_terminal_sandbox true); then
+    echo 'antigravity: antigravity_terminal_sandbox must be a boolean' >&2
     exit 78
   fi
 fi
 
-case "${approval_policy}" in
-  untrusted | on-request | never) ;;
-  *)
-    printf 'antigravity: invalid App approval policy\n' >&2
-    exit 78
-    ;;
-esac
-case "${sandbox_mode}" in
-  workspace-write | danger-full-access) ;;
-  *)
-    printf 'antigravity: invalid App sandbox mode\n' >&2
-    exit 78
-    ;;
-esac
-if ! antigravity_ha_browser_approval_policy_validate "${browser_approval_policy}"; then
-  printf 'antigravity: invalid headless browser approval policy\n' >&2
-  exit 78
+antigravity_HA_NATIVE_ARGS=()
+if [[ "${terminal_sandbox}" == true ]]; then
+  sandbox_present=false
+  for argument in "$@"; do
+    case "${argument}" in
+      -sandbox | --sandbox | -sandbox=true | --sandbox=true)
+        sandbox_present=true
+        ;;
+      -sandbox=* | --sandbox=*)
+        echo 'antigravity: sandbox overrides must use the exact value true' >&2
+        exit 78
+        ;;
+    esac
+  done
+  if [[ "${sandbox_present}" == false ]]; then
+    antigravity_HA_NATIVE_ARGS+=(--sandbox)
+  fi
+  unset sandbox_present
 fi
-if ! antigravity_ha_browser_build_approval_args "${browser_approval_policy}"; then
-  printf 'antigravity: unable to apply headless browser approval policy\n' >&2
-  exit 78
-fi
+unset terminal_sandbox argument
 
-exec /usr/local/libexec/antigravity-real \
-  -c "approval_policy=\"${approval_policy}\"" \
-  -c "sandbox_mode=\"${sandbox_mode}\"" \
-  "${antigravity_HA_BROWSER_APPROVAL_ARGS[@]}" \
-  "$@"
+sensitive_data_access=false
+if [[ -e "${ANTIGRAVITY_HA_OPTIONS_FILE}" ]]; then
+  if ! sensitive_data_access=$(antigravity_ha_config_bool \
+    antigravity_sensitive_data_access false); then
+    echo 'antigravity: antigravity_sensitive_data_access must be a boolean' >&2
+    exit 78
+  fi
+fi
+if [[ "${sensitive_data_access}" == true ]]; then
+  antigravity_HA_LAUNCHER=/usr/local/libexec/antigravity-interactive-sensitive-read
+else
+  antigravity_HA_LAUNCHER=/usr/local/libexec/antigravity-interactive-restricted
+fi
+unset sensitive_data_access
+
+exec "${antigravity_HA_LAUNCHER}" \
+  "${antigravity_HA_NATIVE_ARGS[@]}" "$@"

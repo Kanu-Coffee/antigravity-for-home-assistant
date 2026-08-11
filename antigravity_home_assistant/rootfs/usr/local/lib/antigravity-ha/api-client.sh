@@ -38,7 +38,7 @@ api_main() {
   local response_file
   local http_status
   local curl_status
-  local curl_bin=${CURL_BIN:-curl}
+  local curl_bin=${API_CURL_BIN:?API_CURL_BIN must select the image-managed curl binary}
   local -a curl_args
 
   while (( $# > 0 )); do
@@ -120,8 +120,11 @@ api_main() {
   chmod 0600 "${header_file}"
 
   curl_args=(
+    --disable
     --silent
     --show-error
+    --noproxy '*'
+    --proto '=http'
     --request "${method}"
     --header "@${header_file}"
     --header "Accept: ${accept}"
@@ -136,7 +139,14 @@ api_main() {
   curl_args+=("${API_BASE_URL%/}${path}")
 
   set +e
-  http_status=$("${curl_bin}" "${curl_args[@]}")
+  http_status=$(
+    /usr/bin/env -i \
+      HOME=/nonexistent \
+      LANG=C.UTF-8 \
+      LC_ALL=C.UTF-8 \
+      PATH=/usr/bin:/bin \
+      "${curl_bin}" "${curl_args[@]}"
+  )
   curl_status=$?
   set -e
 

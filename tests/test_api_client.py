@@ -35,11 +35,13 @@ def api_harness(tmp_path: Path, rootfs: Path) -> tuple[str, Path, Path]:
     harness.write_text(
         """#!/usr/bin/env bash
 set -Eeuo pipefail
-API_PROGRAM_NAME=${TEST_API_PROGRAM_NAME:-test-api}
-API_BASE_URL=http://example.invalid
-API_CHECK_RESULT=${TEST_API_CHECK_RESULT:-false}
 library=$1
-shift
+curl_bin=$2
+shift 2
+readonly API_PROGRAM_NAME=${TEST_API_PROGRAM_NAME:-test-api}
+readonly API_BASE_URL=http://example.invalid
+readonly API_CHECK_RESULT=${TEST_API_CHECK_RESULT:-false}
+readonly API_CURL_BIN=${curl_bin}
 # shellcheck source=/dev/null
 . "${library}"
 api_main "$@"
@@ -51,13 +53,23 @@ api_main "$@"
     mock_curl.write_text(
         """#!/usr/bin/env bash
 set -Eeuo pipefail
+fixture_dir=$(dirname "$0")
 output=''
 authorization_file=''
 accept_header=''
-response_body=${MOCK_BODY-}
-if [[ -z "${response_body}" ]]; then
-  response_body='{}'
-fi
+request_url=''
+response_body=$(cat "${fixture_dir}/response-body")
+expected_token=$(cat "${fixture_dir}/expected-token")
+expected_accept=$(cat "${fixture_dir}/expected-accept")
+expected_url=$(cat "${fixture_dir}/expected-url")
+mock_status=$(cat "${fixture_dir}/response-status")
+mock_exit=$(cat "${fixture_dir}/curl-exit")
+for forbidden_name in CURL_BIN API_CURL_BIN HA_URL SUPERVISOR_URL http_proxy https_proxy \
+  HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy NO_PROXY no_proxy CURL_HOME; do
+  if [[ -v "${forbidden_name}" ]]; then
+    exit 92
+  fi
+done
 while (( $# > 0 )); do
   case "$1" in
     --output)
@@ -72,8 +84,12 @@ while (( $# > 0 )); do
       fi
       shift 2
       ;;
-    --request|--write-out|--connect-timeout|--max-time|--data)
+    --request|--write-out|--connect-timeout|--max-time|--data|--noproxy|--proto)
       shift 2
+      ;;
+    http://*)
+      request_url=$1
+      shift
       ;;
     *)
       shift
@@ -81,17 +97,20 @@ while (( $# > 0 )); do
   esac
 done
 if [[ -z "${authorization_file}" ]] \
-  || ! grep -Fqx "Authorization: Bearer ${SUPERVISOR_TOKEN}" "${authorization_file}"; then
+  || ! grep -Fqx "Authorization: Bearer ${expected_token}" "${authorization_file}"; then
   exit 90
 fi
-if [[ "${accept_header}" != "Accept: ${MOCK_EXPECT_ACCEPT}" ]]; then
+if [[ "${accept_header}" != "Accept: ${expected_accept}" ]]; then
   exit 91
+fi
+if [[ "${request_url}" != "${expected_url}" ]]; then
+  exit 93
 fi
 if [[ -n "${output}" ]]; then
   printf '%s' "${response_body}" > "${output}"
 fi
-printf '%s' "${MOCK_STATUS:-200}"
-exit "${MOCK_CURL_EXIT:-0}"
+printf '%s' "${mock_status}"
+exit "${mock_exit}"
 """,
         encoding="utf-8",
     )
@@ -112,14 +131,31 @@ def run_api(
     expected_accept: str = "application/json",
 ) -> subprocess.CompletedProcess[str]:
     bash, harness, library = api_harness
+    mock_curl = harness.parent / "mock-curl"
+    request_path = next(
+        argument for argument in arguments if argument.startswith("/")
+    )
+    fixture_values = {
+        "response-body": body,
+        "response-status": status,
+        "curl-exit": curl_exit,
+        "expected-token": token or "",
+        "expected-accept": expected_accept,
+        "expected-url": f"http://example.invalid{request_path}",
+    }
+    for filename, value in fixture_values.items():
+        (harness.parent / filename).write_text(value, encoding="utf-8")
     env = os.environ.copy()
     env.update(
         {
-            "CURL_BIN": str(harness.parent / "mock-curl"),
-            "MOCK_BODY": body,
-            "MOCK_STATUS": status,
-            "MOCK_CURL_EXIT": curl_exit,
-            "MOCK_EXPECT_ACCEPT": expected_accept,
+            "CURL_BIN": "/attacker-controlled/curl",
+            "API_CURL_BIN": "/attacker-controlled/api-curl",
+            "HA_URL": "http://attacker.invalid/core/api",
+            "SUPERVISOR_URL": "http://attacker.invalid",
+            "http_proxy": "http://attacker.invalid:8080",
+            "HTTPS_PROXY": "http://attacker.invalid:8080",
+            "ALL_PROXY": "socks5://attacker.invalid:1080",
+            "CURL_HOME": "/attacker-controlled/curl-home",
             "TEST_API_CHECK_RESULT": "true" if check_result else "false",
         }
     )
@@ -129,7 +165,7 @@ def run_api(
         env["SUPERVISOR_TOKEN"] = token
 
     return subprocess.run(
-        [bash, str(harness), str(library), *arguments],
+        [bash, str(harness), str(library), str(mock_curl), *arguments],
         capture_output=True,
         text=True,
         env=env,
@@ -258,8 +294,37 @@ def test_api_helper_wrappers_select_expected_result_policy(rootfs: Path) -> None
 
     assert "API_CHECK_RESULT=false" in ha_api
     assert "API_CHECK_RESULT=true" in supervisor_api
+    assert "readonly API_BASE_URL=http://supervisor/core/api" in ha_api
+    assert "readonly API_BASE_URL=http://supervisor" in supervisor_api
+    assert "HA_URL" not in ha_api
+    assert "SUPERVISOR_URL" not in supervisor_api
+    assert "readonly API_CURL_BIN=/usr/bin/curl" in ha_api
+    assert "readonly API_CURL_BIN=/usr/bin/curl" in supervisor_api
     assert "api_main \"$@\"" in ha_api
     assert "api_main \"$@\"" in supervisor_api
+
+
+def test_api_transport_ignores_caller_routing_environment(rootfs: Path) -> None:
+    environment = (
+        rootfs / "usr/local/lib/antigravity-ha/environment.sh"
+    ).read_text(encoding="utf-8")
+    client = (
+        rootfs / "usr/local/lib/antigravity-ha/api-client.sh"
+    ).read_text(encoding="utf-8")
+    sshd = (rootfs / "etc/ssh/sshd_config").read_text(encoding="utf-8")
+
+    assert 'HA_URL="${HA_URL:-' not in environment
+    assert 'SUPERVISOR_URL="${SUPERVISOR_URL:-' not in environment
+    assert "CURL_BIN:-" not in client
+    assert "/usr/bin/env -i" in client
+    assert "--disable" in client
+    assert "--noproxy '*'" in client
+    assert "--proto '=http'" in client
+    permit_environment = next(
+        line for line in sshd.splitlines() if line.startswith("PermitUserEnvironment ")
+    )
+    assert "HA_URL" not in permit_environment
+    assert "SUPERVISOR_URL" not in permit_environment
 
 
 def test_log_helpers_request_supported_log_media_type(rootfs: Path) -> None:

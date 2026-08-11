@@ -1,11 +1,9 @@
 #!/bin/bash -p
 set -Eeuo pipefail
-
-unset SUPERVISOR_TOKEN
-if [[ -r /run/antigravity-ha/runtime.env ]]; then
-  # shellcheck disable=SC1091
-  . /run/antigravity-ha/runtime.env
-fi
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
+# shellcheck source=/dev/null
+. /usr/local/lib/antigravity-ha/supervisor-credential.sh
+antigravity_ha_load_supervisor_credential
 
 # Privileged Bash ignores BASH_ENV and exported functions before this script
 # starts. The Node helper then receives only the fixed runtime it needs; test

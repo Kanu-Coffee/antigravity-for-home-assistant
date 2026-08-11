@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const SERVER_NAME = "antigravity-ha-memory";
@@ -34,6 +35,37 @@ const CANDIDATE_STATUSES = new Set([
 ]);
 const CONFLICT_STATUSES = new Set(["open", "resolved"]);
 const CONFLICT_WINNERS = new Set(["candidate", "existing", "ha"]);
+const TELEGRAM_READ_ONLY_TOOLS = new Set([
+  "memory_search",
+  "memory_show",
+  "memory_list_candidates",
+  "memory_status",
+  "memory_history",
+  "memory_conflicts",
+]);
+
+function currentAppArmorProfile() {
+  try {
+    return readFileSync("/proc/self/attr/current", "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+const telegramRestrictionEnvironment =
+  process.env.ANTIGRAVITY_HA_TELEGRAM_READ_ONLY;
+if (
+  telegramRestrictionEnvironment !== undefined &&
+  !["0", "1"].includes(telegramRestrictionEnvironment)
+) {
+  throw new Error("Invalid Telegram MCP restriction mode");
+}
+const appArmorProfile = currentAppArmorProfile();
+const TELEGRAM_READ_ONLY =
+  telegramRestrictionEnvironment === "1" ||
+  /antigravity_home_assistant-(?:telegram-worker|memory-telegram)(?:\s|$)/u.test(
+    appArmorProfile,
+  );
 
 const SERVER_INSTRUCTIONS = [
   "Search Home Assistant memory at the start of each Home Assistant request,",
@@ -1084,7 +1116,13 @@ async function handleRequest(message) {
       writeMessage(jsonRpcResult(id, {}));
       return;
     case "tools/list":
-      writeMessage(jsonRpcResult(id, { tools }));
+      writeMessage(
+        jsonRpcResult(id, {
+          tools: TELEGRAM_READ_ONLY
+            ? tools.filter((tool) => TELEGRAM_READ_ONLY_TOOLS.has(tool.name))
+            : tools,
+        }),
+      );
       return;
     case "tools/call": {
       let params;
@@ -1094,7 +1132,17 @@ async function handleRequest(message) {
         writeMessage(jsonRpcError(id, -32602, error.message));
         return;
       }
-      if (typeof params.name !== "string" || !toolByName.has(params.name)) {
+      if (typeof params.name !== "string") {
+        writeMessage(jsonRpcError(id, -32602, "Unknown or missing tool name"));
+        return;
+      }
+      if (TELEGRAM_READ_ONLY && !TELEGRAM_READ_ONLY_TOOLS.has(params.name)) {
+        writeMessage(
+          jsonRpcError(id, -32601, `Memory tool is not enabled: ${params.name}`),
+        );
+        return;
+      }
+      if (!toolByName.has(params.name)) {
         writeMessage(jsonRpcError(id, -32602, "Unknown or missing tool name"));
         return;
       }

@@ -1,5 +1,7 @@
+import json
+import os
 import re
-import tomllib
+import subprocess
 from pathlib import Path
 
 
@@ -87,7 +89,13 @@ def test_memory_runtime_artifacts_are_image_managed(rootfs: Path) -> None:
         assert binary.is_file(), binary_name
 
         wrapper = binary.read_text(encoding="utf-8")
-        assert wrapper.startswith("#!/usr/bin/env bash\n")
+        assert wrapper.splitlines()[:3] == [
+            "#!/bin/bash -p",
+            "set -Eeuo pipefail",
+            "unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN",
+        ]
+        assert "antigravity_ha_load_supervisor_credential" not in wrapper
+        assert "exec /usr/bin/env -i" in wrapper
         assert "set -Eeuo pipefail" in wrapper
         assert "/usr/bin/node" in wrapper
         assert f"/usr/local/share/antigravity-ha/{module_name}" in wrapper
@@ -158,6 +166,7 @@ def test_memory_daemon_is_optional_to_terminal_and_ssh(rootfs: Path) -> None:
         if "bashio::log" in line
     )
     assert (memory_service / "dependencies.d/antigravity-ha-init").is_file()
+    assert (memory_service / "dependencies.d/ha-read-broker").is_file()
 
     for service in ("ttyd", "sshd"):
         assert not (s6_root / service / "dependencies.d/ha-memoryd").exists()
@@ -178,60 +187,33 @@ def test_init_bootstraps_only_the_local_memory_database(rootfs: Path) -> None:
     assert "/usr/local/bin/ha-memory refresh" not in init_script
 
 
-def test_system_config_registers_optional_memory_mcp(rootfs: Path) -> None:
-    config_path = rootfs / "etc/antigravity/config.toml"
-    with config_path.open("rb") as stream:
-        config = tomllib.load(stream)
-
-    instructions = " ".join(config["developer_instructions"].lower().split())
+def test_native_plugin_registers_memory_mcp_and_guidance(rootfs: Path) -> None:
+    plugin_root = rootfs / "usr/local/share/antigravity-ha/plugins/home-assistant"
+    config = json.loads((plugin_root / "mcp_config.json").read_text(encoding="utf-8"))
+    instructions = " ".join(
+        (plugin_root / "skills/ha-memory/SKILL.md")
+        .read_text(encoding="utf-8")
+        .lower()
+        .split()
+    )
     for required in (
         "/data/antigravity-ha-memory/memory.sqlite3",
         "memory_search",
         "memory_remember_explicit",
-        "memory_list_candidates",
-        "memory_reject_candidate",
         "memory_begin_change",
         "memory_verify_change",
-        "ha-memory remember",
-        "home:household",
         "empty",
         "degraded",
         "stale",
-        "agents.override.md",
-        "home assistant api",
     ):
         assert required in instructions
-    assert "when practical" not in instructions
-    assert "never substitute an exists/name check" in instructions
 
-    memory_mcp = config["mcp_servers"]["ha_memory"]
-    assert memory_mcp["command"] == "/usr/bin/env"
-    assert memory_mcp["args"][0] == "-i"
-    assert memory_mcp["args"][-1] == "/usr/local/bin/ha-memory-mcp"
-    assert any(arg.startswith("PATH=") for arg in memory_mcp["args"])
-    assert all("SUPERVISOR_TOKEN" not in arg for arg in memory_mcp["args"])
+    memory_mcp = config["mcpServers"]["ha_memory"]
+    assert memory_mcp["command"] == "/usr/local/bin/ha-memory-mcp"
+    assert memory_mcp["args"] == []
+    assert "SUPERVISOR_TOKEN" not in json.dumps(memory_mcp)
     assert memory_mcp["cwd"] == "/config"
-    assert memory_mcp["env_vars"] == []
-    assert memory_mcp["enabled"] is True
-    assert memory_mcp["required"] is False
-    assert set(memory_mcp["enabled_tools"]) == {
-        "memory_search",
-        "memory_show",
-        "memory_remember_explicit",
-        "memory_propose",
-        "memory_list_candidates",
-        "memory_reject_candidate",
-        "memory_add_evidence",
-        "memory_verify_candidate",
-        "memory_apply_candidate",
-        "memory_begin_change",
-        "memory_verify_change",
-        "memory_status",
-        "memory_history",
-        "memory_conflicts",
-        "memory_resolve_conflict",
-        "memory_rollback",
-    }
+    assert "env" not in memory_mcp
 
 
 def test_memory_mcp_exposes_only_the_structured_protocol(rootfs: Path) -> None:
@@ -263,6 +245,80 @@ def test_memory_mcp_exposes_only_the_structured_protocol(rootfs: Path) -> None:
     )[0]
     assert 'requireString(args, "subject", { maxLength: 512 })' in list_case
     assert "optional: true" not in list_case
+
+
+def test_memory_mcp_forces_a_bounded_read_only_telegram_surface(
+    addon_root: Path,
+    rootfs: Path,
+) -> None:
+    wrapper = (rootfs / "usr/local/bin/ha-memory-mcp").read_text(
+        encoding="utf-8"
+    )
+    mcp_path = rootfs / "usr/local/share/antigravity-ha/ha-memory-mcp.mjs"
+    mcp = mcp_path.read_text(encoding="utf-8")
+    apparmor = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
+
+    assert "[[ -v HA_TELEGRAM_USER_ID ]]" in wrapper
+    assert "[[ -v HA_TELEGRAM_CHAT_ID ]]" in wrapper
+    assert "^[1-9][0-9]{0,19}$" in wrapper
+    assert "^-?[1-9][0-9]{0,19}$" in wrapper
+    assert 'ANTIGRAVITY_HA_TELEGRAM_READ_ONLY="${telegram_read_only}"' in wrapper
+    assert "unset HA_TELEGRAM_USER_ID HA_TELEGRAM_CHAT_ID" in wrapper
+    assert "TELEGRAM_READ_ONLY_TOOLS" in mcp
+    assert "tools.filter((tool) => TELEGRAM_READ_ONLY_TOOLS.has(tool.name))" in mcp
+    assert "Memory tool is not enabled" in mcp
+    assert "memory-telegram" in mcp
+    assert (
+        "/usr/local/bin/ha-memory-mcp Px -> "
+        "antigravity_home_assistant-memory-telegram,"
+    ) in apparmor
+    assert "profile antigravity_home_assistant-memory-telegram" in apparmor
+
+    requests = "\n".join(
+        json.dumps(message)
+        for message in (
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "memory_remember_explicit",
+                    "arguments": {},
+                },
+            },
+        )
+    )
+    environment = {
+        **os.environ,
+        "ANTIGRAVITY_HA_TELEGRAM_READ_ONLY": "1",
+    }
+    completed = subprocess.run(
+        ["node", str(mcp_path)],
+        input=f"{requests}\n",
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=True,
+        env=environment,
+    )
+    responses = {
+        message["id"]: message
+        for line in completed.stdout.splitlines()
+        if line.strip()
+        for message in (json.loads(line),)
+    }
+    listed_names = {tool["name"] for tool in responses[1]["result"]["tools"]}
+    assert listed_names == {
+        "memory_search",
+        "memory_show",
+        "memory_list_candidates",
+        "memory_status",
+        "memory_history",
+        "memory_conflicts",
+    }
+    assert responses[2]["error"]["code"] == -32601
+    assert "not enabled" in responses[2]["error"]["message"]
 
 
 def test_memory_ha_client_uses_the_fixed_snapshot_allowlist(rootfs: Path) -> None:
@@ -383,3 +439,25 @@ def test_memory_feature_does_not_expand_app_privileges(
 
     for forbidden_key in ("docker_api", "full_access", "host_network"):
         assert forbidden_key not in addon_config
+
+
+def test_v2_memory_migration_is_identity_and_fail_closed(
+    repository_root: Path, rootfs: Path
+) -> None:
+    core = (
+        rootfs / "usr/local/share/antigravity-ha/ha-memory-core.mjs"
+    ).read_text(encoding="utf-8")
+    migration = (repository_root / "docs/v2/migration-release.md").read_text(
+        encoding="utf-8"
+    )
+    smoke = (repository_root / "tests/memory-smoke.sh").read_text(encoding="utf-8")
+
+    assert "export const MEMORY_SCHEMA_VERSION = 1" in core
+    assert '"migration_required"' in core
+    assert '"unsupported_schema"' in core
+    assert "readOnly: true" in core
+    assert "PRAGMA quick_check" in core
+    assert "public 1.0.4와 v2.0.0은 모두 application schema `1`" in migration
+    assert "현재 binary는 forward migration을 구현하지 않는다" in migration
+    assert "PERSISTED_MCP_RECALL" in smoke
+    assert "new MCP process did not recall the MCP-applied fact" in smoke

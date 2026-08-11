@@ -1,0 +1,56 @@
+{
+  "schema": "antigravity-ha-manual-evidence/v1",
+  "version": "2.0.0",
+  "source_sha": "REPLACE_WITH_40_HEX_CANDIDATE_SOURCE_SHA",
+  "candidate_manifest_digest": "sha256:REPLACE_WITH_64_HEX_CANDIDATE_DIGEST",
+  "gates": {
+    "apparmor_enforce": {
+      "status": "NOT_RUN",
+      "evidence_uri": "",
+      "sha256": "",
+      "format": ""
+    },
+    "haos_aarch64_install_persistence": {
+      "status": "NOT_RUN",
+      "evidence_uri": "",
+      "sha256": "",
+      "format": ""
+    },
+    "haos_amd64_local_migration": {
+      "status": "NOT_RUN",
+      "evidence_uri": "",
+      "sha256": "",
+      "format": ""
+    },
+    "migration_modes": {
+      "status": "NOT_RUN",
+      "evidence_uri": "",
+      "sha256": "",
+      "format": ""
+    },
+    "oauth_isolation_persistence": {
+      "status": "NOT_RUN",
+      "evidence_uri": "",
+      "sha256": "",
+      "format": ""
+    },
+    "native_updater_canary": {
+      "status": "NOT_RUN",
+      "evidence_uri": "",
+      "sha256": "",
+      "format": ""
+    },
+    "local_migration_rollback": {
+      "status": "NOT_RUN",
+      "evidence_uri": "",
+      "sha256": "",
+      "format": ""
+    },
+    "telegram_modes": {
+      "status": "NOT_RUN",
+      "evidence_uri": "",
+      "sha256": "",
+      "format": ""
+    }
+  }
+}

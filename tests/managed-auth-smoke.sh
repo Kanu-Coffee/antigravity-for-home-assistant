@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+TEST_PLATFORM=${TEST_PLATFORM:-linux/amd64}
+case "$TEST_PLATFORM" in
+  linux/amd64) EXPECTED_HA_ARCH=amd64 ;;
+  linux/arm64) EXPECTED_HA_ARCH=aarch64 ;;
+  *) echo "unsupported TEST_PLATFORM: ${TEST_PLATFORM}" >&2; exit 64 ;;
+esac
+HA_ARCH=${HA_ARCH:-$EXPECTED_HA_ARCH}
+[[ $HA_ARCH == "$EXPECTED_HA_ARCH" ]] || exit 64
+export TEST_PLATFORM HA_ARCH
+
 IMAGE=${1:-antigravity-for-home-assistant:test}
 TEST_ID="antigravity-ha-managed-auth-${RANDOM}-$$"
 APP_CONTAINER="${TEST_ID}-app"
@@ -64,7 +74,7 @@ wait_for_log() {
 
 start_app() {
   docker run --detach \
-    --platform linux/amd64 \
+    --platform "$TEST_PLATFORM" \
     --name "${APP_CONTAINER}" \
     --network "${NETWORK}" \
     --env SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN}" \
@@ -106,7 +116,7 @@ write_options() {
   local options_json=$1
   printf '%s' "${options_json}" \
     | docker run --rm --interactive \
-      --platform linux/amd64 \
+      --platform "$TEST_PLATFORM" \
       --entrypoint /bin/sh \
       --volume "${DATA_VOLUME}:/data" \
       "${IMAGE}" \
@@ -124,6 +134,18 @@ set_auto_auth() {
       /data/options.json > /data/options.json.tmp
     chmod 0600 /data/options.json.tmp
     mv /data/options.json.tmp /data/options.json
+    # The production snapshot is rebuilt by init on an App option restart.
+    # This smoke intentionally toggles the option in-place, so update the
+    # non-secret runtime snapshot as the equivalent test-harness operation.
+    if [ -f /run/antigravity-ha/ha-feedback-options.json ]; then
+      jq --argjson value "$1" \
+        ".home_assistant_browser_auto_auth = \$value" \
+        /run/antigravity-ha/ha-feedback-options.json \
+        > /run/antigravity-ha/ha-feedback-options.json.tmp
+      chmod 0600 /run/antigravity-ha/ha-feedback-options.json.tmp
+      mv /run/antigravity-ha/ha-feedback-options.json.tmp \
+        /run/antigravity-ha/ha-feedback-options.json
+    fi
   ' sh "${value}"
 }
 
@@ -133,7 +155,7 @@ docker volume create "${DATA_VOLUME}" >/dev/null
 docker volume create "${CONFIG_VOLUME}" >/dev/null
 
 docker create \
-  --platform linux/amd64 \
+  --platform "$TEST_PLATFORM" \
   --name "${FIXTURE_CONTAINER}" \
   --network "${NETWORK}" \
   --network-alias supervisor \
@@ -152,7 +174,7 @@ wait_for_log "${FIXTURE_CONTAINER}" \
 # A missing new option must use the manifest default (true) for both fresh
 # installs and upgrades whose existing options.json predates the option.
 write_options \
-  '{"authorized_keys":[],"web_terminal_auto_start_antigravity":false,"tmux_session_name":"antigravity-ha-auto-auth","antigravity_approval_policy":"on-request","antigravity_sandbox_mode":"danger-full-access","log_level":"info"}'
+  '{"authorized_keys":[],"web_terminal_auto_start_antigravity":false,"tmux_session_name":"antigravity-ha-auto-auth","antigravity_tool_permission":"request-review","antigravity_terminal_sandbox":true,"log_level":"info"}'
 start_app
 docker exec "${APP_CONTAINER}" ha-browser-auth-status \
   | docker exec --interactive "${APP_CONTAINER}" jq --exit-status \
@@ -242,7 +264,7 @@ docker volume rm -f "${DATA_VOLUME}" "${CONFIG_VOLUME}" >/dev/null
 docker volume create "${DATA_VOLUME}" >/dev/null
 docker volume create "${CONFIG_VOLUME}" >/dev/null
 write_options \
-  '{"authorized_keys":[],"web_terminal_auto_start_antigravity":false,"tmux_session_name":"antigravity-ha-managed-auth","antigravity_approval_policy":"on-request","antigravity_sandbox_mode":"danger-full-access","home_assistant_browser_auto_auth":false,"log_level":"info"}'
+  '{"authorized_keys":[],"web_terminal_auto_start_antigravity":false,"tmux_session_name":"antigravity-ha-managed-auth","antigravity_tool_permission":"request-review","antigravity_terminal_sandbox":true,"home_assistant_browser_auto_auth":false,"log_level":"info"}'
 start_app
 docker exec "${APP_CONTAINER}" ha-browser-auth-status \
   | docker exec --interactive "${APP_CONTAINER}" jq --exit-status \

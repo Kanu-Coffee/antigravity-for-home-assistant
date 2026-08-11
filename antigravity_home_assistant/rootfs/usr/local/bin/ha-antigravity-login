@@ -3,6 +3,5 @@ set -Eeuo pipefail
 
 # shellcheck source=/dev/null
 . /usr/local/lib/antigravity-ha/environment.sh
-install -d -m 0700 "${ANTIGRAVITY_HOME}"
 cd /config
 exec antigravity "$@"

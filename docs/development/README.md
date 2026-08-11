@@ -1,53 +1,48 @@
-# 개발 문서
+# Superseded v1 development evidence
 
-[프로젝트 README](../../README.md) · [기여 안내](../../CONTRIBUTING.md) · [보관 문서](../archive/README.md)
+[현재 v2 계약](../v2/README.md) · [프로젝트 README](../../README.md) ·
+[기여 안내](../../CONTRIBUTING.md) · [보관 문서](../archive/README.md)
 
-이 디렉터리는 사용자 설치 안내와 분리된 구현 계약, 아키텍처, 보안 모델, 테스트 전략과 검증 기록을 보관합니다. 런타임 이미지에는 포함되지 않습니다.
+> [!CAUTION]
+> 이 디렉터리의 모든 Markdown 문서는 superseded historical evidence입니다.
+> 현재 제품·런타임·보안·패키징·테스트 계약이 아니며, 구현 지침으로 사용하면
+> 안 됩니다. v2 작업의 유일한 canonical 계약은 [`docs/v2/`](../v2/README.md)입니다.
 
-## 문서 지도
+## 현재 작업 라우팅
 
-| 문서 | 역할 |
+v2 작업은 다음 순서로 읽습니다.
+
+1. 루트 [AGENTS.md](../../AGENTS.md)
+2. [v2 문서 색인과 상태 규칙](../v2/README.md)
+3. [제품 사양](../v2/product-spec.md)과 [아키텍처](../v2/architecture.md)
+4. 변경에 해당하는 [Antigravity](../v2/antigravity-contract.md),
+   [보안](../v2/security.md), [Telegram](../v2/telegram-spec.md) 또는
+   [migration·release](../v2/migration-release.md) 계약
+5. [테스트 계획](../v2/test-plan.md)과 [구현 체크리스트](../v2/checklist.md)
+
+구현 파일이나 test가 존재한다는 사실만으로 `VERIFIED`라고 표시하지 않습니다.
+실제 test ID, source SHA, image digest, architecture와 필요한 HAOS/AppArmor 증거를
+기록합니다.
+
+## 이 디렉터리를 보존하는 이유
+
+아래 파일은 v1 당시의 설계 의도, 조사와 릴리스 증거를 추적하는 데만 사용합니다.
+내용에 나오는 단일 아키텍처, legacy provider 설정, `config.toml`, `runtime.env`,
+shell/tmux Telegram 또는 과거 option 이름은 v2 계약이 아닙니다.
+
+| Historical document | 보존 목적 |
 | --- | --- |
-| [rules.md](rules.md) | 저장소 작업 원칙과 제품 불변조건 |
-| [product_spec.md](product_spec.md) | 제품 요구사항과 수용 기준 |
-| [architecture.md](architecture.md) | 신뢰 경계, 런타임 구성요소와 데이터 흐름 |
-| [addon_spec.md](addon_spec.md) | Home Assistant 앱 패키징·옵션 계약 |
-| [security.md](security.md) | 상세 threat model과 운영 가드레일 |
-| [test_plan.md](test_plan.md) | 자동·컨테이너·HAOS 검증 전략 |
-| [decisions.md](decisions.md) | Architecture Decision Records |
-| [references.md](references.md) | 공식 근거와 구현 참고 자료 |
-| [progress.md](progress.md) | 릴리스·실기·CI 증거를 포함한 누적 개발 기록 |
-| [releasing.md](releasing.md) | 현재 workflow 기반 릴리스·검증·롤백 절차 |
+| [rules.md](rules.md) | 당시 저장소 작업 원칙 |
+| [product_spec.md](product_spec.md) | v1 제품 요구와 수용 기준 |
+| [architecture.md](architecture.md) | v1 신뢰 경계와 runtime 구조 |
+| [addon_spec.md](addon_spec.md) | v1 App metadata와 option 설계 |
+| [security.md](security.md) | v1 threat model과 guardrail |
+| [test_plan.md](test_plan.md) | v1 검증 전략 |
+| [decisions.md](decisions.md) | 과거 architecture decision |
+| [references.md](references.md) | 당시 참고 자료 |
+| [progress.md](progress.md) | 과거 CI·실기 증거 |
+| [releasing.md](releasing.md) | 과거 publish 절차 |
 
-## 작업 순서
-
-1. 루트 [AGENTS.md](../../AGENTS.md)와 [rules.md](rules.md)를 읽습니다.
-2. [progress.md](progress.md)에서 현재 상태와 검증 공백을 확인합니다.
-3. 변경과 관련된 제품·아키텍처·보안·테스트 계약을 읽습니다.
-4. 런타임 변경은 작은 단위로 구현하고 관련 자동 테스트를 실행합니다.
-5. 사용자 영향이 있으면 앱 `README.md`, `DOCS.md`, 영문 문서와 `CHANGELOG.md`를 함께 갱신합니다.
-6. 테스트하지 않은 사항은 PASS로 기록하지 않습니다.
-
-## 런타임 경계
-
-앱 동작을 바꾸는 주요 표면은 다음과 같습니다.
-
-- `antigravity_home_assistant/rootfs/**`
-- `antigravity_home_assistant/Dockerfile`
-- `antigravity_home_assistant/playwright/package*.json`
-- `antigravity_home_assistant/config.yaml`
-- `.github/workflows/**`
-- `tests/**`
-
-일반 README와 이 디렉터리의 문서는 Docker image에 복사되지 않습니다. 반면 `antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/AGENTS.md`는 런타임 지침이므로 루트의 개발용 `AGENTS.md`와 혼동하지 마세요.
-
-## 현재 배포 제약
-
-- `amd64` 전용
-- `stage: experimental`
-- 기본 `boot: manual`
-- public GHCR version tag 기반 배포
-- Supervisor `manager`, `/config` read-write
-- `hassio_role: admin`, Docker API, `full_access`, host network와 AppArmor 비활성화는 사용하지 않음
-
-과거 MVP 프롬프트와 초기 구현·Git 운영 계획은 [archive](../archive/README.md)에 보존되어 있으며 현재 지침으로 사용하지 않습니다.
+historical 문서에서 재사용할 아이디어가 있으면 먼저 v2 요구사항 ID와 test mapping을
+추가하고 canonical 문서에 새 결정으로 반영합니다. 이 디렉터리의 문구를 그대로
+현재 상태나 지원 범위로 인용하지 않습니다.

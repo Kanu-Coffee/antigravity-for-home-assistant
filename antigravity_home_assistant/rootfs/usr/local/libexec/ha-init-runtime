@@ -1,0 +1,10 @@
+#!/bin/bash -p
+set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH
+
+if (( $# != 0 )); then
+  printf 'ha-init-runtime: command-line arguments are not supported\n' >&2
+  exit 64
+fi
+
+exec /usr/local/bin/antigravity-ha-init

@@ -1,0 +1,272 @@
+---
+name: Post-publish HA-005 acceptance
+
+"on":
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published numeric v2 release version; dispatch this workflow at its tag
+        required: true
+        type: string
+      report_json:
+        description: Sanitized antigravity-ha-ha005-acceptance/v1 JSON
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: post-publish-ha005-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  accept:
+    name: Validate and preserve post-publish HA-005 evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Authorize maintainer dispatch at the numeric v2 tag
+        env:
+          DISPATCH_ACTOR: ${{ github.actor }}
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -Eeuo pipefail
+          [[ $EVENT_NAME == workflow_dispatch ]]
+          [[ $RELEASE_VERSION =~ ^2\.[0-9]+\.[0-9]+$ ]]
+          [[ $GITHUB_REF == "refs/tags/${RELEASE_VERSION}" ]] || {
+            echo "HA-005 acceptance must be dispatched at the exact numeric release tag" >&2
+            exit 1
+          }
+          declare -A checked=()
+          for maintainer_login in "$DISPATCH_ACTOR" "$TRIGGERING_ACTOR"; do
+            [[ $maintainer_login =~ ^[A-Za-z0-9-]{1,100}$ ]]
+            [[ ${checked[$maintainer_login]+yes} ]] && continue
+            checked[$maintainer_login]=yes
+            permission=$(gh api \
+              "/repos/${GITHUB_REPOSITORY}/collaborators/${maintainer_login}/permission" \
+              --jq .permission)
+            case "$permission" in
+              admin|maintain|write) ;;
+              *)
+                echo "${maintainer_login} is not authorized to accept release evidence" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+      - name: Check out the exact annotated release tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.version }}
+
+      - name: Resolve tag-bound final evidence and published GitHub Release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -Eeuo pipefail
+          python3 --version >/dev/null
+          bash .github/scripts/parse-release-tag.sh "$RELEASE_VERSION"
+          source_sha=$(git rev-list --max-count=1 "refs/tags/${RELEASE_VERSION}")
+          [[ $source_sha == "$GITHUB_SHA" ]] || {
+            echo "workflow ref does not resolve to the annotated tag source" >&2
+            exit 1
+          }
+          gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_VERSION}" \
+            > published-release.json
+          jq --exit-status \
+            --arg source_sha "$source_sha" \
+            --arg version "$RELEASE_VERSION" '
+              .tag_name == $version
+              and .target_commitish == $source_sha
+              and .draft == false
+              and .prerelease == true
+              and (.published_at | test(
+                "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+              ))
+              and ([.assets[] | select(.name == "release-evidence.json")] | length == 1)
+            ' published-release.json >/dev/null
+          printf 'published_at_utc=%s\n' \
+            "$(jq --raw-output .published_at published-release.json)" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Verify finalizer run and immutable artifact from tag trailers
+        env:
+          EVIDENCE_ARTIFACT: ${{ steps.release.outputs.evidence_artifact }}
+          EVIDENCE_DIGEST: ${{ steps.release.outputs.evidence_digest }}
+          EVIDENCE_RUN_ATTEMPT: ${{ steps.release.outputs.evidence_run_attempt }}
+          EVIDENCE_RUN_ID: ${{ steps.release.outputs.evidence_run_id }}
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+        run: |
+          set -Eeuo pipefail
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${EVIDENCE_RUN_ID}" \
+            > evidence-run.json
+          jq --exit-status \
+            --arg source_sha "$SOURCE_SHA" \
+            --argjson attempt "$EVIDENCE_RUN_ATTEMPT" '
+              .path == ".github/workflows/candidate.yaml"
+              and .event == "workflow_dispatch"
+              and .status == "completed"
+              and .conclusion == "success"
+              and .run_attempt == $attempt
+              and .head_sha == $source_sha
+            ' evidence-run.json >/dev/null
+          gh api \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${EVIDENCE_RUN_ID}/artifacts?name=${EVIDENCE_ARTIFACT}" \
+            > evidence-artifacts.json
+          jq --exit-status \
+            --arg artifact "$EVIDENCE_ARTIFACT" \
+            --arg digest "$EVIDENCE_DIGEST" '
+              .total_count == 1
+              and (.artifacts | length == 1)
+              and .artifacts[0].name == $artifact
+              and .artifacts[0].expired == false
+              and .artifacts[0].digest == $digest
+            ' evidence-artifacts.json >/dev/null
+
+      - name: Download exact tag-bound final release evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: ${{ steps.release.outputs.evidence_artifact }}
+          path: release-evidence
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.release.outputs.evidence_run_id }}
+
+      - name: Compare the GitHub Release evidence asset with the finalizer artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -Eeuo pipefail
+          mkdir release-asset
+          gh release download "$RELEASE_VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern release-evidence.json \
+            --dir release-asset
+          cmp --silent \
+            release-evidence/release-evidence.json \
+            release-asset/release-evidence.json || {
+              echo "GitHub Release evidence differs from tag-bound finalizer artifact" >&2
+              exit 1
+            }
+
+      - name: Validate complete tag-bound final release contract
+        id: contract
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -Eeuo pipefail
+          python3 .github/scripts/release_contract.py release \
+            --evidence release-evidence/release-evidence.json \
+            --gap007-evidence release-evidence/gap007-release.json \
+            --haos-gates-dir release-evidence/haos-gates \
+            --version "$RELEASE_VERSION" \
+            --source-sha "${{ steps.release.outputs.source_sha }}" \
+            --candidate-run-id "${{ steps.release.outputs.candidate_run_id }}" \
+            --candidate-run-attempt "${{ steps.release.outputs.candidate_run_attempt }}" \
+            --evidence-run-id "${{ steps.release.outputs.evidence_run_id }}" \
+            --evidence-run-attempt "${{ steps.release.outputs.evidence_run_attempt }}" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx for anonymous public verification
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
+        with:
+          version: v0.32.1
+
+      - name: Verify the published GHCR v2 tag anonymously
+        env:
+          AMD64_DIGEST: ${{ steps.contract.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.contract.outputs.arm64_digest }}
+          GENERIC_DIGEST: ${{ steps.contract.outputs.generic_digest }}
+          IMAGE: ${{ steps.contract.outputs.image }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -Eeuo pipefail
+          anonymous_config=$(mktemp -d)
+          trap 'rm -rf -- "$anonymous_config"' EXIT
+          printf '{}\n' > "${anonymous_config}/config.json"
+          export DOCKER_CONFIG=$anonymous_config
+          docker buildx imagetools inspect --raw \
+            "${IMAGE}:${RELEASE_VERSION}" > public-index.json
+          index_result=$(python3 .github/scripts/release_contract.py index \
+            --manifest public-index.json \
+            --expected-arch amd64 \
+            --expected-arch aarch64 \
+            --expected-digest "$GENERIC_DIGEST")
+          [[ $(jq --raw-output .amd64 <<< "$index_result") == "$AMD64_DIGEST" ]]
+          [[ $(jq --raw-output .aarch64 <<< "$index_result") == "$ARM64_DIGEST" ]]
+          docker pull --platform linux/amd64 "${IMAGE}:${RELEASE_VERSION}"
+
+      - name: Validate and canonicalize sanitized HA-005 report
+        env:
+          AMD64_DIGEST: ${{ steps.contract.outputs.amd64_digest }}
+          GENERIC_DIGEST: ${{ steps.contract.outputs.generic_digest }}
+          PUBLISHED_AT_UTC: ${{ steps.release.outputs.published_at_utc }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+        run: |
+          set -Eeuo pipefail
+          jq --raw-output '.inputs.report_json' "$GITHUB_EVENT_PATH" \
+            > submitted-ha005-report.json
+          python3 .github/scripts/release_contract.py ha005-report \
+            --release-evidence release-evidence/release-evidence.json \
+            --report submitted-ha005-report.json \
+            --version "$RELEASE_VERSION" \
+            --source-sha "$SOURCE_SHA" \
+            --generic-digest "$GENERIC_DIGEST" \
+            --amd64-runtime-digest "$AMD64_DIGEST" \
+            --published-at-utc "$PUBLISHED_AT_UTC" \
+            --output ha005-acceptance.json
+          chmod 0600 ha005-acceptance.json
+
+      - name: Upload immutable canonical HA-005 artifact
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ha005-acceptance-${{ inputs.version }}-${{ steps.release.outputs.source_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ha005-acceptance.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Attach or verify the immutable GitHub Release acceptance record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+        run: |
+          set -Eeuo pipefail
+          bash .github/scripts/ensure-release-acceptance.sh \
+            "$RELEASE_VERSION" \
+            "$SOURCE_SHA" \
+            ha005-acceptance.json
+
+      - name: Summarize final HA-005 acceptance binding
+        env:
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          RAW_ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+        run: |
+          set -Eeuo pipefail
+          [[ $RAW_ARTIFACT_DIGEST =~ ^[0-9a-f]{64}$ ]]
+          canonical_digest="sha256:$(sha256sum ha005-acceptance.json | cut -d ' ' -f 1)"
+          {
+            echo '## Post-publish HA-005 accepted'
+            echo
+            printf -- '- Release: %s at %s\n' "$RELEASE_VERSION" "$SOURCE_SHA"
+            printf -- '- Canonical JSON: %s\n' "$canonical_digest"
+            printf -- '- Actions artifact: %s (sha256:%s)\n' \
+              "$ARTIFACT_ID" "$RAW_ARTIFACT_DIGEST"
+            printf -- '- Release asset: ha005-acceptance.json\n'
+          } >> "$GITHUB_STEP_SUMMARY"

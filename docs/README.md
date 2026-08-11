@@ -2,6 +2,23 @@
 
 [한국어 README](../README.md) · [English README](../README.en.md)
 
+> [!IMPORTANT]
+> [v2 문서 패키지](v2/README.md)가 현재 v2 구현의 유일한 canonical 제품·아키텍처·
+> 보안·Telegram·migration·test 계약입니다. 다른 개발 문서와 충돌하면 `docs/v2/`를
+> 따릅니다.
+
+## v2 canonical 계약
+
+- [문서 패키지 읽기 순서와 상태 규칙](v2/README.md)
+- [제품 요구사항](v2/product-spec.md)
+- [아키텍처](v2/architecture.md)
+- [Antigravity 1.1.11 계약](v2/antigravity-contract.md)
+- [보안 계약](v2/security.md)
+- [Telegram 계약](v2/telegram-spec.md)
+- [Migration·release 계약](v2/migration-release.md)
+- [테스트 계획](v2/test-plan.md)
+- [구현 체크리스트](v2/checklist.md)
+
 ## 사용자 문서
 
 - [한국어 사용 설명서](../antigravity_home_assistant/DOCS.md)
@@ -14,7 +31,10 @@
 
 ## 개발·운영 문서
 
-- [개발 문서 인덱스](development/README.md)
+- [v1 개발 기록](development/README.md) — superseded historical evidence
 - [보관 문서 안내](archive/README.md)
 
-사용자 가이드는 현재 공개 버전을 기준으로 유지합니다. 개발 과정의 상세 설계, 검증 증거와 과거 계획은 GitHub 첫 화면을 복잡하게 만들지 않도록 별도 디렉터리에 보관합니다.
+`docs/development/*.md` 전체는 v1 당시의 판단과 증거를 재현하기 위해 보존합니다.
+amd64-only, 비-native 설정, legacy runtime 환경과 과거 release 절차를 현재 v2
+지침으로 사용하지 마세요. 사용자 가이드는 현재 공개 버전을 기준으로 유지하고,
+구현 상태 판정은 v2 checklist와 실제 test evidence를 사용합니다.

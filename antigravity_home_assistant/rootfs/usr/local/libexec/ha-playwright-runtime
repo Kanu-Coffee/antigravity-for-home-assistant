@@ -1,0 +1,41 @@
+#!/bin/bash -p
+set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
+
+if (( $# != 0 )); then
+  printf 'ha-playwright-runtime: command-line arguments are not supported\n' >&2
+  exit 64
+fi
+
+case "${ANTIGRAVITY_HA_TELEGRAM_READ_ONLY:-}" in
+  0 | 1) readonly telegram_read_only="${ANTIGRAVITY_HA_TELEGRAM_READ_ONLY}" ;;
+  *)
+    printf 'ha-playwright-runtime: invalid Telegram restriction mode\n' >&2
+    exit 78
+    ;;
+esac
+
+case "${antigravity_HA_BROWSER_TOKEN_VALIDATED:-0}" in
+  0 | 1) readonly browser_token_validated="${antigravity_HA_BROWSER_TOKEN_VALIDATED:-0}" ;;
+  *) readonly browser_token_validated=0 ;;
+esac
+
+unset \
+  BASH_ENV \
+  ENV \
+  HA_BROWSER_AUTH_WEBSOCKET_URL \
+  HA_BROWSER_EXPECTED_CLIENT_NAME \
+  HA_BROWSER_EXPECTED_DISPLAY_NAME \
+  HA_BROWSER_EXPECTED_USER_ID \
+  NODE_OPTIONS \
+  NODE_PATH \
+  SUPERVISOR_TOKEN
+
+exec /usr/bin/env -i \
+  HOME=/run/antigravity-ha/playwright-home \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  antigravity_HA_BROWSER_TOKEN_VALIDATED="${browser_token_validated}" \
+  ANTIGRAVITY_HA_TELEGRAM_READ_ONLY="${telegram_read_only}" \
+  /usr/bin/node /usr/local/share/antigravity-ha/playwright-mcp-proxy.mjs

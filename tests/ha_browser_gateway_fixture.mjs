@@ -7,6 +7,7 @@ const AUTHENTICATED_MARKER =
   "HA_BROWSER_GATEWAY_AUTHENTICATED:antigravity HA fixture";
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const DEDICATED_USER_ID = "antigravity-browser-read-only-user";
+const MANAGED_OPERATION_ID = process.env.GATEWAY_FIXTURE_OPERATION_ID;
 
 function normalizeAddress(address) {
   return String(address ?? "").replace(/^::ffff:/, "");
@@ -263,13 +264,15 @@ function decodeWebSocketFrame(buffer) {
 function dedicatedUser() {
   return {
     id: DEDICATED_USER_ID,
-    name: "antigravity browser (read only)",
+    name: `antigravity Browser (managed) ${MANAGED_OPERATION_ID.slice(0, 16)}`,
     is_active: true,
     is_admin: false,
     is_owner: false,
     local_only: true,
     system_generated: false,
     group_ids: ["system-read-only"],
+    username: null,
+    credentials: [],
   };
 }
 
@@ -368,6 +371,22 @@ function acceptWebSocket(
           result: dedicatedUser(),
         });
       } else if (
+        message.type === "auth/refresh_tokens" &&
+        authenticatedAs === "browser"
+      ) {
+        console.log(`${label} accepted browser auth/refresh_tokens`);
+        send({
+          id: message.id,
+          type: "result",
+          success: true,
+          result: [{
+            id: "gateway-managed-refresh-token",
+            type: "long_lived_access_token",
+            client_name: `Antigravity for Home Assistant browser ${MANAGED_OPERATION_ID}`,
+            is_current: true,
+          }],
+        });
+      } else if (
         message.type === "config/auth/list" &&
         authenticatedAs === "supervisor"
       ) {
@@ -390,6 +409,10 @@ async function serveFixture() {
   const browserToken = process.env.GATEWAY_FIXTURE_BROWSER_TOKEN;
   assert(supervisorToken, "GATEWAY_FIXTURE_TOKEN is required");
   assert(browserToken, "GATEWAY_FIXTURE_BROWSER_TOKEN is required");
+  assert(
+    typeof MANAGED_OPERATION_ID === "string" && MANAGED_OPERATION_ID.length >= 20,
+    "GATEWAY_FIXTURE_OPERATION_ID is required",
+  );
 
   const supervisor = createServer((request, response) => {
     if (request.url === "/core/info") {
@@ -458,6 +481,14 @@ async function serveFixture() {
         "Content-Type": "text/html; charset=utf-8",
       });
       response.end(tokenReflectionHtml());
+      return;
+    }
+    if (pathname === "/security/redirect-outside") {
+      response.writeHead(302, {
+        "Cache-Control": "no-store",
+        Location: "http://127.0.0.1:7682/",
+      });
+      response.end();
       return;
     }
     if (pathname === "/favicon.ico") {

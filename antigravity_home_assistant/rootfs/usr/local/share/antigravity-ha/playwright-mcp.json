@@ -4,7 +4,7 @@
     "isolated": true,
     "launchOptions": {
       "headless": true,
-      "executablePath": "/usr/bin/chromium-headless-shell",
+      "executablePath": "/usr/bin/chromium",
       "chromiumSandbox": false,
       "args": [
         "--disable-dev-shm-usage",

@@ -4,4 +4,4 @@ set -Eeuo pipefail
 # shellcheck source=/dev/null
 . /usr/local/lib/antigravity-ha/environment.sh
 cd /config
-exec "${antigravity_BIN:-antigravity}" "$@"
+exec antigravity "$@"
