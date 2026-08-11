@@ -611,8 +611,11 @@ assert_no_canary_in_runtime_targets() {
 
     validate_native_cli_log_link() {
       local link_path=$1
+      local cli_root
       local link_target
+      local log_directory
       local target_path
+      local target_contract
       case "$link_path" in
         /data/home/.gemini/antigravity-cli/cli.log | \
           /data/antigravity-ha/telegram-home/.gemini/antigravity-cli/cli.log)
@@ -621,13 +624,22 @@ assert_no_canary_in_runtime_targets() {
       esac
       [[ $(stat -c "%u:%g:%h:%a:%F" -- "$link_path") == \
         "0:0:1:777:symbolic link" ]] || return 1
+      cli_root=${link_path%/cli.log}
+      log_directory=${cli_root}/log
+      [[ -d $cli_root && ! -L $cli_root ]] || return 1
+      [[ $(stat -c "%u:%g:%a:%F" -- "$cli_root") == \
+        "0:0:700:directory" ]] || return 1
+      [[ -d $log_directory && ! -L $log_directory ]] || return 1
+      [[ $(stat -c "%u:%g:%a:%F" -- "$log_directory") == \
+        "0:0:700:directory" ]] || return 1
       link_target=$(readlink -- "$link_path") || return 1
       [[ $link_target =~ ^log/cli-[0-9]{8}_[0-9]{6}\.log$ ]] || return 1
       [[ $link_target != /* && $link_target != *..* ]] || return 1
-      target_path=${link_path%/cli.log}/${link_target}
+      target_path=${cli_root}/${link_target}
       [[ -f $target_path && ! -L $target_path ]] || return 1
-      [[ $(stat -c "%u:%g:%h:%a:%F" -- "$target_path") == \
-        "0:0:1:600:regular file" ]] || return 1
+      target_contract=$(stat -c "%u:%g:%h:%a:%F" -- "$target_path") \
+        || return 1
+      [[ $target_contract =~ ^0:0:1:(600|644):regular\ file$ ]] || return 1
     }
 
     for root in \

@@ -160,9 +160,11 @@ non-default `colorScheme: "tokyo night"`를 사용한다.
 1.1.11은 각 native CLI HOME의 `antigravity-cli/cli.log`를 같은 directory 아래
 `log/cli-YYYYMMDD_HHMMSS.log`를 가리키는 상대 symlink로 만든다. public v1 update
 canary는 interactive와 격리 Telegram HOME의 이 exact 두 경로만 허용하며, link가
-root 소유이고 target이 같은 CLI root 내부의 root 소유, single-link regular 0600
-file인지 확인한다. resolved log target은 secret canary scan에서 제외하지 않으며 그
-밖의 symlink와 hardlink는 실패한다.
+root 소유이고 CLI root와 `log` parent가 모두 root 소유 real 0700 directory인지
+확인한다. clean v2가 만든 target은 root 소유, single-link regular 0600 file이다.
+public v1에서 그대로 보존된 target은 enclosing directory가 위 조건을 만족할 때만
+legacy 0644도 허용한다. resolved log target은 두 mode 모두 secret canary scan에서
+제외하지 않으며 그 밖의 symlink와 hardlink는 실패한다.
 
 permission precedence는 native 규칙대로 deny > ask > allow다. AppArmor deny와
 broker의 고위험 정책은 `always-proceed`로도 완화되지 않는다.

@@ -109,7 +109,10 @@ def test_public_v1_runtime_scan_only_allows_native_cli_log_links(
         "/data/antigravity-ha/telegram-home/.gemini/antigravity-cli/cli.log",
         "^log/cli-[0-9]{8}_[0-9]{6}\\.log$",
         '"0:0:1:777:symbolic link"',
-        '"0:0:1:600:regular file"',
+        "cli_root=${link_path%/cli.log}",
+        "log_directory=${cli_root}/log",
+        '"0:0:700:directory"',
+        "^0:0:1:(600|644):regular\\ file$",
         'find -P "$root" -xdev -type f -links 1 -print0',
         "unsafe runtime target metadata",
         "a retired legacy token remained in a v2 runtime target",
@@ -119,6 +122,8 @@ def test_public_v1_runtime_scan_only_allows_native_cli_log_links(
 
     assert "find -L" not in smoke
     assert "readlink -f" not in smoke
+    assert "^0:0:1:[0-7]{3}:regular\\ file$" not in smoke
+    assert "^0:0:1:(600|644|666):regular\\ file$" not in smoke
 
 
 def test_user_file_update_option_is_safe_by_default(
