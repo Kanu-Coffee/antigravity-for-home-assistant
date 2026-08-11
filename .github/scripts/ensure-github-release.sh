@@ -88,24 +88,30 @@ verify_release_assets() {
       return 1
     }
     if [[ $existing_name != ha005-acceptance.json ]] \
+      && [[ $existing_name != public-install-acceptance.json ]] \
       && [[ ! ${expected_asset_paths[$existing_name]+present} ]]; then
       echo "existing GitHub Release has unexpected asset: ${existing_name}" >&2
       return 1
     fi
   done
-  if [[ ${actual_asset_counts[ha005-acceptance.json]:-0} == 1 ]]; then
-    jq --exit-status '
-      [.assets[] | select(.name == "ha005-acceptance.json")] as $matches
-      | ($matches | length == 1)
-        and $matches[0].state == "uploaded"
-        and ($matches[0].digest | type == "string")
-        and ($matches[0].digest | test("^sha256:[0-9a-f]{64}$"))
-        and ($matches[0].size | type == "number" and . > 0)
-    ' "$current_release" >/dev/null || {
-      echo "existing HA-005 acceptance asset metadata is invalid" >&2
-      return 1
-    }
-  fi
+  for acceptance_name in \
+    ha005-acceptance.json \
+    public-install-acceptance.json; do
+    if [[ ${actual_asset_counts[$acceptance_name]:-0} == 1 ]]; then
+      jq --exit-status --arg name "$acceptance_name" '
+        [.assets[] | select(.name == $name)] as $matches
+        | ($matches | length == 1)
+          and $matches[0].state == "uploaded"
+          and ($matches[0].digest | type == "string")
+          and ($matches[0].digest | test("^sha256:[0-9a-f]{64}$"))
+          and ($matches[0].size | type == "number"
+            and . > 0 and . <= 1048576)
+      ' "$current_release" >/dev/null || {
+        echo "existing acceptance asset metadata is invalid: ${acceptance_name}" >&2
+        return 1
+      }
+    fi
+  done
 
   asset_index=0
   for asset in "${assets[@]}"; do

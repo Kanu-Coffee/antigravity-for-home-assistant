@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import inspect
 import json
 import re
 from collections import Counter
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import ModuleType
 from urllib.parse import unquote
@@ -469,6 +471,7 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
     }
     template = json.loads(read(V2 / "release-evidence-template.json"))
     assert set(template["gates"]) == expected_gates
+    assert "HA-008" not in json.dumps(template, sort_keys=True)
     for gate in template["gates"].values():
         assert gate == {
             "status": "NOT_RUN",
@@ -483,6 +486,7 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
     assert isinstance(gate_test_ids, dict)
     assert set(gate_test_ids) == expected_gates
     assert all("HA-005" not in identifiers for identifiers in gate_test_ids.values())
+    assert all("HA-008" not in identifiers for identifiers in gate_test_ids.values())
     assert gate_test_ids["haos_aarch64_install_persistence"][-1] == "HA-006"
     assert gate_test_ids["haos_amd64_local_migration"][-1] == "HA-007"
     assert gate_test_ids["migration_modes"] == ["HA-007"]
@@ -506,7 +510,9 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
 
     decisions = re.sub(r"\s+", " ", read(V2 / "decisions.md"))
     assert "source contract: 최신 공개 v1 tag `1.0.4` (amd64 only)" in decisions
-    assert "amd64의 post-publish `HA-005`와 aarch64의 `HA-006`" in decisions
+    assert "amd64의 post-publish `HA-005`" in decisions
+    assert "pre-publish aarch64 `HA-006`" in decisions
+    assert "양 architecture에서 fresh install하는 post-publish `HA-008`" in decisions
     assert "amd64와 aarch64에서 `HA-005`" not in decisions
 
     plan_text = re.sub(r"\s+", " ", read(V2 / "test-plan.md"))
@@ -518,9 +524,38 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
         assert "HA-005" in content
         assert "HA-006" in content
         assert "HA-007" in content
+        assert "HA-008" in content
         assert "haos-gates/<gate>.json" in content
         assert "haos_gate_evidence" in content
         assert 'format: "github_actions_zip"' in content
+
+    template_cli = (
+        "python3 .github/scripts/release_contract.py haos-report-templates \\ "
+        "--candidate candidate.json \\ --output-dir haos-report-templates"
+    )
+    for content in (plan_text, migration):
+        assert template_cli in content
+        assert "haos-report-templates/" in content
+        assert "unchanged template" in content or "template 원본" in content
+
+    deadline_formulas = (
+        "min(candidate artifact expires_at, earliest gate artifact expires_at, "
+        "oldest HAOS observed_at_utc + 30 days)",
+        "min(candidate artifact expires_at, finalizer artifact expires_at, "
+        "oldest embedded HAOS observed_at_utc + 30 days)",
+        "min(finalizer artifact expires_at, "
+        "oldest embedded HAOS observed_at_utc + 30 days, "
+        "oldest HA-008 installation observed_at_utc + 30 days)",
+    )
+    for content in (plan_text, migration):
+        assert "`retention-days`" in content
+        assert "`expires_at`" in content and "authoritative" in content
+        assert all(formula in content for formula in deadline_formulas)
+        assert "만료된 artifact를 재업로드" in content
+        assert "attempt" in content and "섞" in content
+        assert "annotated tag" in content and "이동하지 않는다" in content
+        assert "**Re-run all jobs**" in content
+        assert "새 version" in content
     assert "`Post-publish HA-005 acceptance`" in plan_text
     assert "`.github/workflows/postpublish-ha005.yaml`" in plan_text
     assert "`antigravity-ha-ha005-acceptance/v1`" in plan_text
@@ -539,6 +574,9 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
     assert "artifact availability 창은 report 관찰 시각의 30일 freshness" in plan_text
 
     trace = traceability_map(V2 / "test-plan.md")
+    assert "HA-008" in declared_test_ids()
+    assert "HA-008" in trace["FR-001"]
+    assert "HA-008" in trace["MIG-010"]
     for requirement in (
         "SEC-003",
         "SEC-012",
@@ -558,6 +596,9 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
 
     gaps = read(V2 / "gap-register.md")
     assert "| GAP-005 | `OPEN`" in gaps and "original repository/add-on identity" in gaps
+    gap006 = next(line for line in gaps.splitlines() if line.startswith("| GAP-006 |"))
+    assert "`OPEN`" in gap006 and "HA-008" in gap006
+    assert "HA-005" not in gap006
     assert "| GAP-007 | `IN_PROGRESS`" in gaps
 
     assert literal_assignment(contract_path, "HA005_REPORT_SCHEMA") == (
@@ -664,11 +705,104 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
     )
     assert previous["addon_slug"] == literal_assignment(contract_path, "PUBLIC_APP_SLUG")
 
+    public_install_template = json.loads(
+        read(V2 / "public-install-acceptance-template.json")
+    )
+    assert set(public_install_template) == {
+        "schema",
+        "test_id",
+        "status",
+        "release",
+        "installations",
+        "sanitization",
+        "attestation",
+    }
+    assert public_install_template["schema"] == literal_assignment(
+        contract_path, "PUBLIC_INSTALL_REPORT_SCHEMA"
+    )
+    assert public_install_template["test_id"] == "HA-008"
+    assert public_install_template["status"] == "NOT_RUN"
+    public_release = public_install_template["release"]
+    assert set(public_release) == {
+        "version",
+        "source_sha",
+        "published_at_utc",
+        "repository_url",
+        "addon_slug",
+        "generic_image",
+        "generic_digest",
+        "runtime_digests",
+    }
+    assert public_release["repository_url"] == literal_assignment(
+        contract_path, "PUBLIC_REPOSITORY_URL"
+    )
+    assert public_release["addon_slug"] == literal_assignment(
+        contract_path, "PUBLIC_APP_SLUG"
+    )
+    assert public_release["generic_image"] == literal_assignment(
+        contract_path, "PUBLIC_GENERIC_IMAGE"
+    )
+    assert public_release["runtime_digests"] == {"amd64": "", "aarch64": ""}
+    expected_public_install_checks = literal_assignment(
+        contract_path, "EXPECTED_PUBLIC_INSTALL_CHECKS"
+    )
+    assert set(public_install_template["installations"]) == {"amd64", "aarch64"}
+    for architecture, installation in public_install_template["installations"].items():
+        assert set(installation) == {
+            "status",
+            "installation_source",
+            "repository_id_sha256",
+            "data_identity_before_restart_sha256",
+            "data_identity_after_restart_sha256",
+            "observed_repository_version",
+            "observed_generic_digest",
+            "observed_runtime_digest",
+            "checks",
+            "environment",
+            "observed_at_utc",
+        }
+        assert installation["status"] == "NOT_RUN"
+        assert (
+            installation["installation_source"]
+            == "original_custom_repository_prebuilt_image"
+        )
+        assert set(installation["checks"]) == expected_public_install_checks
+        assert set(installation["checks"].values()) == {"NOT_RUN"}
+        assert set(installation["environment"]) == {
+            "platform",
+            "architecture",
+            "haos_version",
+            "supervisor_version",
+            "core_version",
+            "final_app_version",
+            "apparmor_mode",
+        }
+        assert installation["environment"]["platform"] == "HAOS"
+        assert installation["environment"]["architecture"] == architecture
+        assert installation["observed_at_utc"] == ""
+    assert set(public_install_template["sanitization"]) == {
+        "contains_credentials",
+        "contains_entity_or_chat_identifiers",
+        "contains_raw_logs_or_prompts",
+        "contains_private_host_or_user_identifiers",
+    }
+    assert set(public_install_template["sanitization"].values()) == {True}
+    assert set(public_install_template["attestation"]) == {
+        "real_haos_devices",
+        "original_public_repository_verified",
+        "public_release_observed_after_publish",
+        "independent_fresh_installs_verified",
+        "both_architectures_scope_reviewed",
+        "sanitized_by_maintainer",
+    }
+    assert set(public_install_template["attestation"].values()) == {False}
+
     contract = load_python_module(contract_path, "v2_docs_release_contract")
     contract.validate_release_evidence = lambda evidence: evidence
     source_sha = "a" * 40
     generic_digest = "sha256:" + "1" * 64
     amd64_digest = "sha256:" + "2" * 64
+    aarch64_digest = "sha256:" + "3" * 64
     release_evidence = {
         "candidate": {
             "version": "2.0.0",
@@ -679,6 +813,7 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
                     "digest": generic_digest,
                 },
                 "amd64": {"runtime_digest": amd64_digest},
+                "aarch64": {"runtime_digest": aarch64_digest},
             },
         }
     }
@@ -696,6 +831,56 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
         assert str(error) == "HA-005 report did not pass"
     else:
         raise AssertionError("unchanged HA-005 template unexpectedly passed validation")
+
+    try:
+        contract.validate_public_install_report(
+            release_evidence,
+            public_install_template,
+            version="2.0.0",
+            source_sha=source_sha,
+            generic_digest=generic_digest,
+            amd64_runtime_digest=amd64_digest,
+            aarch64_runtime_digest=aarch64_digest,
+            published_at_utc="2020-01-01T00:00:00Z",
+        )
+    except contract.ContractError as error:
+        assert str(error) == "public-install report did not pass"
+    else:
+        raise AssertionError(
+            "unchanged public-install template unexpectedly passed validation"
+        )
+
+    template_args = contract.build_parser().parse_args(
+        [
+            "haos-report-templates",
+            "--candidate",
+            "candidate.json",
+            "--output-dir",
+            "haos-report-templates",
+        ]
+    )
+    assert template_args.command == "haos-report-templates"
+    assert template_args.candidate == Path("candidate.json")
+    assert template_args.output_dir == Path("haos-report-templates")
+    assert callable(template_args.handler)
+
+    build_workflow = re.sub(
+        r"\s+", " ", read(ROOT / ".github" / "workflows" / "build-app.yaml")
+    )
+    assert template_cli in build_workflow
+    assert "haos-report-templates/" in build_workflow
+    assert "haos-report-templates/<gate>.json" in build_workflow
+    assert "Unchanged NOT_RUN templates are rejected" in build_workflow
+    assert "haos-report-templates/<gate>.json" in workflow
+    assert "unchanged NOT_RUN template is rejected" in workflow
+
+    candidate_workflow = read(ROOT / ".github" / "workflows" / "candidate.yaml")
+    builder_workflow = read(ROOT / ".github" / "workflows" / "builder.yaml")
+    for artifact_workflow in (build_workflow, workflow, candidate_workflow):
+        assert "retention-days: 30" in artifact_workflow
+    assert ".expired == false" in workflow
+    assert ".expired == false" in candidate_workflow
+    assert builder_workflow.count(".expired == false") >= 2
 
     postpublish = read(ROOT / ".github" / "workflows" / "postpublish-ha005.yaml")
     for token in (
@@ -726,6 +911,22 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
     assert "pre-finalize gate나 Candidate evidence로 순환시키지 않는다" in migration
     assert "tag-bound finalizer Actions artifact와 GitHub Release" in migration
     assert "artifact가 만료하면" in migration
+
+    public_install_workflow = read(
+        ROOT / ".github" / "workflows" / "postpublish-public-install.yaml"
+    )
+    for token in (
+        "Post-publish public install acceptance",
+        literal_assignment(contract_path, "PUBLIC_INSTALL_REPORT_SCHEMA"),
+        "public-install-report",
+        "public-install-acceptance.json",
+        "docker pull --platform linux/amd64",
+        "docker pull --platform linux/arm64",
+        ".expired == false",
+    ):
+        assert token in public_install_workflow
+    assert "Candidate / finalize" not in public_install_workflow
+    assert "ha005-acceptance.json" not in public_install_workflow
 
 
 def test_antigravity_contract_matches_managed_plugin_inventory() -> None:
@@ -766,22 +967,35 @@ def test_antigravity_contract_matches_managed_plugin_inventory() -> None:
         assert f'"{server}"' in contract
 
 
+def direct_test_checks(
+    namespace: Mapping[str, object] | None = None,
+) -> list[tuple[str, Callable[[], None]]]:
+    scope = globals() if namespace is None else namespace
+    checks: list[tuple[str, Callable[[], None]]] = []
+    invalid: list[str] = []
+    for name in sorted(scope):
+        check = scope[name]
+        if not name.startswith("test_") or not callable(check):
+            continue
+        try:
+            signature = inspect.signature(check)
+        except (TypeError, ValueError):
+            invalid.append(f"{name} (uninspectable signature)")
+            continue
+        if signature.parameters:
+            invalid.append(f"{name}{signature}")
+            continue
+        checks.append((name, check))
+
+    if invalid:
+        raise AssertionError(
+            "direct runner requires zero-argument test_* callables: "
+            + ", ".join(invalid)
+        )
+    return checks
+
+
 if __name__ == "__main__":
-    checks = [
-        test_requirement_ids_are_stable_unique_and_contiguous,
-        test_every_requirement_has_matching_test_plan_and_checklist_rows,
-        test_traceability_uses_only_declared_tests_and_no_test_is_orphaned,
-        test_local_v2_markdown_links_resolve,
-        test_known_release_blockers_cannot_be_marked_verified,
-        test_native_oauth_residual_risk_is_not_claimed_as_isolated,
-        test_telegram_isolation_canary_is_local_and_haos_gate_remains,
-        test_architecture_matches_current_s6_and_runtime_socket_graph,
-        test_device_test_and_transport_ownership_milestones_match_local_evidence,
-        test_native_auto_update_opt_out_is_required_but_not_claimed_complete,
-        test_decisions_and_gap_register_are_closed_contracts,
-        test_release_evidence_docs_preserve_phase_and_architecture_boundaries,
-        test_antigravity_contract_matches_managed_plugin_inventory,
-    ]
-    for check in checks:
+    for name, check in direct_test_checks():
         check()
-        print(f"PASS {check.__name__}")
+        print(f"PASS {name}")

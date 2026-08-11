@@ -383,7 +383,15 @@ Candidate와 Builder workflow 조건:
 2. candidate artifact의 `haos-candidate-repository.zip`과 manifest/archive digest를
    검증한다. 포함된 App directory를 공식 local testing `/addons` 경로에
    사용하고, 실행 중 observed image digest가 candidate record와 같지 않으면
-   중단한다.
+   중단한다. 같은 artifact의 `haos-report-templates/`는 exact candidate binding과
+   여덟 gate의 key set을 가진 fail-closed authoring skeleton이다. 필요하면 다음
+   명령으로 exact set을 다시 만들며 unchanged template은 증거가 아니다.
+
+   ```bash
+   python3 .github/scripts/release_contract.py haos-report-templates \
+     --candidate candidate.json \
+     --output-dir haos-report-templates
+   ```
 3. amd64에서 exact public v1.0.4 source를
    `/addons/antigravity_home_assistant`에 source-build install하고 image ID, source SHA와
    local repository identity를 기록한다. 같은 directory/slug를 candidate App directory로
@@ -396,7 +404,8 @@ Candidate와 Builder workflow 조건:
    gate별로 별도 dispatch한다. workflow summary가 준 `status`, `evidence_uri`,
    `sha256`, `format: "github_actions_zip"`을 변경하지 않고 합친 여덟 record로
    [release-evidence-template.json](release-evidence-template.json)을 채우고
-   `Candidate / finalize`에 전달한다.
+   `Candidate / finalize`에 전달한다. aggregate template은 개별 gate authoring이나
+   post-publish acceptance report에 사용하지 않는다.
 5. finalize summary의 여섯 trailer를 그대로 사용해 candidate source commit에
    annotated numeric tag를 만든다.
 6. Builder가 artifact/source/public preflight를 통과한 뒤 exact digest를 numeric tag로
@@ -409,8 +418,9 @@ Candidate와 Builder workflow 조건:
    resume한다.
 9. numeric tag의 anonymous generic/per-arch 접근, exact platform, signature,
    provenance와 leaf SPDX retrievability를 확인한다.
-10. post-publish public repository metadata와 numeric App fresh install을 amd64/aarch64에서
-    확인한다. 별도 amd64 HAOS에서 original custom repository identity로
+10. post-publish public repository metadata와 numeric prebuilt App fresh install을
+    amd64/aarch64에서 확인하고 `HA-008` report를 만든다. 별도 amd64 HAOS에서
+    original custom repository identity로
     설치한 public v1.0.4를 같은 repository/slug의 numeric v2로 update하고 실제
     public update/rollback `HA-005`를 수행한다. exact published digest와
     original repository/add-on/data identity, public-v1 source-build image와 matching
@@ -419,15 +429,23 @@ Candidate와 Builder workflow 조건:
     numeric tag의 `Post-publish HA-005 acceptance` workflow에 제출한다. workflow가
     canonical `ha005-acceptance.json`을 Actions artifact와 GitHub Release asset으로
     보존한 후에만 수용을 완료한다. 이 record는 pre-finalize gate나
-    Candidate evidence로 순환시키지 않는다.
+    Candidate evidence로 순환시키지 않는다. HA-008은
+    [fail-closed public install template](public-install-acceptance-template.json)에서
+    작성해 별도 `Post-publish public install acceptance` workflow에 제출한다.
+    workflow는 두 architecture가 모두 든 canonical
+    `public-install-acceptance.json`을 고유 Actions artifact와 fixed Release asset으로
+    보존한다. 각 architecture의 restart 전후 data identity hash가 일치하고 두 장비의
+    random identity sentinel hash는 서로 달라야 하며, 전체 post-publish 수용에는 두
+    acceptance asset이 모두 필요하다.
 
 1~4의 외부 evidence가 하나라도 없거나 `NOT_RUN`이면 finalize와 Builder는 fail
 closed한다. 현재 이 repository에는 실제 HAOS final evidence와 public candidate package
 상태가 없으므로 v2 release gate는 `PARTIAL`이다.
-발행 전 bundle rehearsal은 local repository identity만 검증하므로 10의 `HA-005`를
-대체할 수 없다. 10이 통과하기 전에는 post-publish 수용과 v2 완료를 표시하지
-않는다. post-publish upload/validation/artifact contract는 구현됐지만 실제
-공개 release와 `HA-005` report는 없어 `NOT RUN`이다.
+발행 전 bundle rehearsal은 local repository identity만 검증하므로 10의 `HA-005`나
+public numeric two-arch fresh install `HA-008`을 대체할 수 없다. 10이 통과하기 전에는
+post-publish 수용과 v2 완료를 표시하지 않는다. post-publish
+upload/validation/artifact contract는 구현됐지만 실제 공개 release와 HA-005/HA-008
+report는 없어 `NOT RUN`이다.
 10의 workflow는 tag-bound finalizer Actions artifact와 GitHub Release의
 `release-evidence.json` byte 동일성을 다시 검증한다. 해당 Actions artifact는
 30일 보존되므로 만료 전에, 보통 publish 직후 `HA-005`를 제출해야
@@ -435,6 +453,35 @@ closed한다. 현재 이 repository에는 실제 HAOS final evidence와 public c
 우회하지 못하고 fail closed한다. 이 제출 창은 observation이 release
 publish 후이고 report 제출 시 30일보다 오래되지 않아야 한다는
 timestamp 계약과 별개다.
+
+각 artifact의 `retention-days`는 상한이며 GitHub REST API가 반환한 `expires_at`을
+authoritative availability로 사용한다. finalize deadline은 다음과 같다.
+
+```text
+min(candidate artifact expires_at,
+    earliest gate artifact expires_at,
+    oldest HAOS observed_at_utc + 30 days)
+```
+
+numeric tag 생성과 Builder deadline은 다음과 같다.
+
+```text
+min(candidate artifact expires_at,
+    finalizer artifact expires_at,
+    oldest embedded HAOS observed_at_utc + 30 days)
+```
+
+HA-008 workflow deadline은 다음과 같다.
+
+```text
+min(finalizer artifact expires_at,
+    oldest embedded HAOS observed_at_utc + 30 days,
+    oldest HA-008 installation observed_at_utc + 30 days)
+```
+
+만료된 artifact를 재업로드하거나 attempt를 섞거나 annotated tag를 이동하지 않는다.
+tag 생성 전이면 **Re-run all jobs**로 Candidate와 여덟 gate/finalize를 새 atomic
+chain으로 반복한다. numeric tag 이후 복구할 수 없으면 새 version에서 다시 시작한다.
 
 `stage: experimental`은 최소 두 아키텍처의 실제 HAOS 릴리스 회귀와 한 번의
 성공적인 이전 public version update가 쌓일 때까지 유지한다.
@@ -465,6 +512,12 @@ generic digest와 amd64 runtime digest를 다시 결합하고 original repositor
 add-on/data identity의 update/rollback 동일성을 강제한다. 고유 Actions artifact와
 덮어쓰기 없는 fixed-name GitHub Release asset이 같은 canonical JSON을
 보존하며, Candidate finalize가 이 post-publish record를 입력으로 요구하지 않는다.
+
+post-publish `HA-008`도 여덟 manual gate의 부분이 아니다. 별도
+`public-install-acceptance.json`은 같은 numeric version/source와 generic/두 leaf
+digest에 양 architecture의 original public repository fresh install/start/restart
+관찰을 결합한다. 고유 Actions artifact와 fixed-name Release asset은 create-once이며
+HA-005와 어느 순서로 붙어도 동일 byte resume만 허용한다.
 
 template의 `NOT_RUN`은 의도적인 fail-closed 초기값이다. 필수 완료 조건의 실제
 sanitized evidence가 없으면 final artifact, numeric image와 GitHub Release를 만들지

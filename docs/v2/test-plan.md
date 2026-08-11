@@ -284,6 +284,23 @@ rehearsal은 공식 local testing `/addons/antigravity_home_assistant`에 exact 
 source를 build한 뒤 같은 directory/slug를 candidate App directory로 교체하는
 `HA-007`이다. original custom repository의 public update/rollback `HA-005`가 아니다.
 
+Candidate artifact의 `haos-report-templates/`에는 exact candidate binding과 여덟 gate의
+key/check set을 자동으로 채운 fail-closed authoring template이 들어 있다. 동일 결과는
+다음 명령으로 재생성할 수 있다.
+
+```bash
+python3 .github/scripts/release_contract.py haos-report-templates \
+  --candidate candidate.json \
+  --output-dir haos-report-templates
+```
+
+생성물은 `status`와 모든 check가 `NOT_RUN`, 관찰 환경과 timestamp가 empty,
+sanitization flag가 `true`, attestation이 `false`이므로 그대로 제출하면 반드시
+실패한다. 각 장비의 실제 관찰을 working copy에 채운 뒤 `haos-report`로 로컬 검증하고
+`HAOS evidence` workflow에 제출한다. `release-evidence-template.json`은 검증된 여덟
+artifact의 URI/digest를 합치는 finalize 입력일 뿐 개별 report authoring template이
+아니며 post-publish HA-005/HA-008 template과 혼용하지 않는다.
+
 `HAOS evidence` workflow는 candidate run ID/attempt, gate와 sanitized report를 gate별로
 별도 dispatch한다. exact candidate artifact/source와 report schema를 검증한 뒤
 `format: "github_actions_zip"`인 고유 Actions artifact record를 낸다. finalize는 각
@@ -295,11 +312,35 @@ release contract 검사에서 실패해야 한다. 이 검사는 evidence integr
 candidate binding을 보장하지만 보고서 속 HAOS 관찰의 진실성은 maintainer
 review라는 trusted-attestor 경계다.
 
-numeric release 발행 후 original public repository의 metadata/fresh install을 두
-architecture에서 확인한다. amd64에서는 같은 original repository/add-on
-identity의 public v1.0.4를 numeric v2로 update하고 rollback하는 `HA-005`를
-별도로 수행한다. 이 post-publish acceptance를 finalize 입력으로
-순환시키지 않는다. 별도 `Post-publish HA-005 acceptance`
+artifact의 `retention-days`는 availability 상한일 뿐이며 GitHub REST API의 실제
+`expires_at`이 authoritative deadline이다. Candidate finalize는 다음 중 가장 이른
+시각 전에 끝나야 한다.
+
+```text
+min(candidate artifact expires_at,
+    earliest gate artifact expires_at,
+    oldest HAOS observed_at_utc + 30 days)
+```
+
+numeric tag 생성과 Builder 완료 deadline은 다음과 같다.
+
+```text
+min(candidate artifact expires_at,
+    finalizer artifact expires_at,
+    oldest embedded HAOS observed_at_utc + 30 days)
+```
+
+만료된 artifact를 재업로드하거나 서로 다른 run attempt를 섞거나 annotated tag를
+이동하지 않는다. numeric tag를 만들기 전이면 **Re-run all jobs**로 새 Candidate를
+만들어 여덟 gate와 finalize를 같은 atomic chain에서 다시 수행한다. numeric tag를
+이미 만들었는데 chain을 복구할 수 없으면 그 tag를 재사용하지 않고 새 version에서
+다시 시작한다.
+
+numeric release 발행 후 original public repository의 metadata와 numeric prebuilt
+image fresh install을 두 architecture에서 확인하는 `HA-008`을 수행한다. amd64에서는
+같은 original repository/add-on identity의 public v1.0.4를 numeric v2로 update하고
+rollback하는 `HA-005`를 별도로 수행한다. 두 post-publish acceptance를 finalize
+입력으로 순환시키지 않는다. 별도 `Post-publish HA-005 acceptance`
 (`.github/workflows/postpublish-ha005.yaml`)는 exact numeric v2 tag ref에서
 `version`과 `report_json`만 받는다. tag-bound finalizer artifact와 GitHub Release의
 byte-identical `release-evidence.json`, non-draft prerelease, anonymous public GHCR digest를
@@ -328,6 +369,28 @@ sanitization flag를 `true`, 관찰값을 empty string으로 둔다. 실제 관�
 sanitization review 후 모든 placeholder를 교체한다. 변경하지 않은
 template은 `release_contract.py ha005-report`가 거부한다.
 실제 공개 release와 `HA-005` report는 없으므로 상태는 계속 `NOT RUN`이다.
+
+`Post-publish public install acceptance` workflow는 exact numeric tag에서 sanitized
+`antigravity-ha-public-install-acceptance/v1` report를 받는다. report 하나가 amd64와
+aarch64의 original public repository fresh install, exact generic/leaf digest,
+start/stop/restart와 data identity persistence를 모두 포함해야 하며 한 architecture라도
+빠지면 실패한다. canonical `public-install-acceptance.json`은 고유 90일 Actions
+artifact와 fixed-name GitHub Release asset에 create-once로 보존한다. 운영자는
+[public install acceptance template](public-install-acceptance-template.json)의
+`NOT_RUN`, empty observation, unsafe sanitization과 false attestation을 실제 관찰로
+교체한다. 변경하지 않은 template은 `public-install-report`가 거부한다.
+
+HA-008 dispatch deadline은 다음 중 가장 이른 시각이다.
+
+```text
+min(finalizer artifact expires_at,
+    oldest embedded HAOS observed_at_utc + 30 days,
+    oldest HA-008 installation observed_at_utc + 30 days)
+```
+
+전체 post-publish 수용에는 durable GitHub Release의 `ha005-acceptance.json`과
+`public-install-acceptance.json`이 모두 필요하다. 실제 numeric release와 HA-008
+report가 없으므로 상태는 계속 `NOT RUN`이다.
 
 Builder 정적/remote 시험은 다음 failure injection을 포함한다.
 
@@ -494,6 +557,27 @@ update/rollback 수용인 `HA-005`로 기록하지 않는다.
 HA-007의 OAuth/native-updater 보존은 `haos_amd64_local_migration` report 내
 dedicated check로 입증한다. 양 arch cross-cutting OAuth/updater report에는
 `previous_release`가 없으므로 그 report 자체가 HA-007을 claim하지 않는다.
+
+### HA-008 — post-publish public repository fresh install
+
+numeric prerelease 발행 후 original custom repository를 실제 HAOS amd64와 aarch64에
+각각 등록하거나 refresh하고 다음을 수행한다.
+
+1. 설치 전에 App과 local Candidate repository가 없음을 확인
+2. repository metadata에서 exact numeric version 확인
+3. source build가 아닌 published prebuilt image로 fresh install
+4. observed generic/architecture runtime digest가 Release evidence와 일치함을 확인
+5. App start/stop/restart와 Supervisor health 확인
+6. restart 뒤 dedicated data identity가 보존되고 AppArmor가 enforce임을 확인
+
+두 architecture record를 하나의 sanitized report에 결합한다. HA-008은 pre-publish
+HA-006/HA-007 또는 amd64 update/rollback HA-005를 대체하지 않으며 Candidate의 여덟
+manual gate에도 들어가지 않는다. 각 record의
+`data_identity_before_restart_sha256`와
+`data_identity_after_restart_sha256`는 동일해야 하며, repository identity hash와는
+달라야 한다. 각 장비에는 hardware/host identifier가 아닌 별도의 random identity
+sentinel을 사용하며 두 architecture의 data identity hash도 서로 달라야 한다. 따라서
+persistence나 독립 설치 check의 `PASS` 선언만으로는 validation을 통과할 수 없다.
 
 ## AA-001 — AppArmor 검증
 
@@ -665,7 +749,7 @@ remaining gap:
 
 | 요구사항 ID | 필수 test ID |
 | --- | --- |
-| FR-001 | ST-002, ST-005, ST-008, IM-001, IM-002, IM-003, IM-011, HA-001, AA-001 |
+| FR-001 | ST-002, ST-005, ST-008, IM-001, IM-002, IM-003, IM-011, HA-001, HA-008, AA-001 |
 | FR-002 | AG-001, AG-002, AG-003, AG-004, AG-005, AG-006, AG-007, AG-008, AG-009, AG-010, AG-011, AG-012, AG-013, AG-014, IM-002, HA-001 |
 | FR-003 | ST-008, IM-003, IM-004, IM-005, HA-001 |
 | FR-004 | AG-005, AG-006, AG-007, IM-006, IM-007, IM-008, IM-009, IM-010, HA-002 |
@@ -707,5 +791,5 @@ remaining gap:
 | MIG-007 | IM-012, HA-005, HA-007 |
 | MIG-008 | AG-014, ST-005, IM-001, IM-002, HA-001, HA-006 |
 | MIG-009 | AG-014, ST-001, ST-002, ST-003, ST-004, ST-005, ST-006, ST-007, ST-008, ST-009, ST-010, IM-001, IM-002, IM-003, IM-004, IM-005, IM-006, IM-007, IM-008, IM-009, IM-010, IM-011, IM-012, HA-006, HA-007, AA-001 |
-| MIG-010 | AG-014, ST-010, IM-001, IM-002, IM-003, IM-004, IM-005, IM-006, IM-007, IM-008, IM-009, IM-010, IM-011, IM-012, HA-001, HA-002, HA-003, HA-004, HA-005, HA-006, HA-007, AA-001 |
+| MIG-010 | AG-014, ST-010, IM-001, IM-002, IM-003, IM-004, IM-005, IM-006, IM-007, IM-008, IM-009, IM-010, IM-011, IM-012, HA-001, HA-002, HA-003, HA-004, HA-005, HA-006, HA-007, HA-008, AA-001 |
 | MIG-011 | ST-010 |

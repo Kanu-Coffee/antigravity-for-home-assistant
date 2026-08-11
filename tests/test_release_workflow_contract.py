@@ -431,6 +431,77 @@ def _ha005_report(
     }
 
 
+def _public_install_report(
+    release_evidence: dict[str, object],
+    *,
+    published_at_utc: str,
+    observed_at_utc: str,
+) -> dict[str, object]:
+    candidate = release_evidence["candidate"]
+    images = candidate["images"]
+    version = candidate["version"]
+    installations = {}
+    for architecture in ("amd64", "aarch64"):
+        data_identity = _digest(f"{architecture}-data-identity")
+        installations[architecture] = {
+            "status": "PASS",
+            "installation_source": "original_custom_repository_prebuilt_image",
+            "repository_id_sha256": _digest(f"{architecture}-repository-id"),
+            "data_identity_before_restart_sha256": data_identity,
+            "data_identity_after_restart_sha256": data_identity,
+            "observed_repository_version": version,
+            "observed_generic_digest": images["generic"]["digest"],
+            "observed_runtime_digest": images[architecture]["runtime_digest"],
+            "checks": {
+                name: "PASS"
+                for name in sorted(CONTRACT.EXPECTED_PUBLIC_INSTALL_CHECKS)
+            },
+            "environment": {
+                "platform": "HAOS",
+                "architecture": architecture,
+                "haos_version": "16.1",
+                "supervisor_version": "2026.8.1",
+                "core_version": "2026.8.0",
+                "final_app_version": version,
+                "apparmor_mode": "enforce",
+            },
+            "observed_at_utc": observed_at_utc,
+        }
+    return {
+        "schema": CONTRACT.PUBLIC_INSTALL_REPORT_SCHEMA,
+        "test_id": "HA-008",
+        "status": "PASS",
+        "release": {
+            "version": version,
+            "source_sha": candidate["source_sha"],
+            "published_at_utc": published_at_utc,
+            "repository_url": CONTRACT.PUBLIC_REPOSITORY_URL,
+            "addon_slug": CONTRACT.PUBLIC_APP_SLUG,
+            "generic_image": CONTRACT.PUBLIC_GENERIC_IMAGE,
+            "generic_digest": images["generic"]["digest"],
+            "runtime_digests": {
+                "amd64": images["amd64"]["runtime_digest"],
+                "aarch64": images["aarch64"]["runtime_digest"],
+            },
+        },
+        "installations": installations,
+        "sanitization": {
+            "contains_credentials": False,
+            "contains_entity_or_chat_identifiers": False,
+            "contains_raw_logs_or_prompts": False,
+            "contains_private_host_or_user_identifiers": False,
+        },
+        "attestation": {
+            "real_haos_devices": True,
+            "original_public_repository_verified": True,
+            "public_release_observed_after_publish": True,
+            "independent_fresh_installs_verified": True,
+            "both_architectures_scope_reviewed": True,
+            "sanitized_by_maintainer": True,
+        },
+    }
+
+
 def _write_haos_gate_dir(path: Path, candidate: dict[str, object]) -> dict[str, str]:
     path.mkdir()
     result = {}
@@ -839,6 +910,36 @@ def test_haos_gate_reports_bind_schema_source_arch_and_scope(
             candidate, "oauth_isolation_persistence", wrong_source
         )
 
+    wrong_manifest = _haos_report(candidate, "telegram_modes")
+    wrong_manifest["candidate_manifest_digest"] = _digest("wrong-manifest")
+    with pytest.raises(CONTRACT.ContractError, match="candidate manifest differs"):
+        CONTRACT.validate_haos_gate_report(
+            candidate, "telegram_modes", wrong_manifest
+        )
+
+    wrong_leaf = _haos_report(candidate, "telegram_modes")
+    wrong_leaf["candidate_images"] = dict(wrong_leaf["candidate_images"])
+    wrong_leaf["candidate_images"]["amd64_runtime_digest"] = _digest(
+        "wrong-amd64-leaf"
+    )
+    with pytest.raises(CONTRACT.ContractError, match="image binding differs"):
+        CONTRACT.validate_haos_gate_report(candidate, "telegram_modes", wrong_leaf)
+
+    wrong_rehearsal = _haos_report(candidate, "telegram_modes")
+    wrong_rehearsal["haos_rehearsal"] = dict(wrong_rehearsal["haos_rehearsal"])
+    wrong_rehearsal["haos_rehearsal"]["digest"] = _digest("wrong-rehearsal")
+    with pytest.raises(CONTRACT.ContractError, match="rehearsal repository"):
+        CONTRACT.validate_haos_gate_report(
+            candidate, "telegram_modes", wrong_rehearsal
+        )
+
+    wrong_test_ids = _haos_report(candidate, "telegram_modes")
+    wrong_test_ids["test_ids"] = [*wrong_test_ids["test_ids"], "HA-008"]
+    with pytest.raises(CONTRACT.ContractError, match="test ID set is not exact"):
+        CONTRACT.validate_haos_gate_report(
+            candidate, "telegram_modes", wrong_test_ids
+        )
+
     missing_check = _haos_report(candidate, "apparmor_enforce")
     missing_check["checks"].pop("other_pid_proc_denied")
     with pytest.raises(CONTRACT.ContractError, match="checks are incomplete"):
@@ -897,6 +998,103 @@ def test_haos_gate_reports_bind_schema_source_arch_and_scope(
         )
 
 
+def test_haos_report_templates_are_exact_deterministic_and_fail_closed(
+    tmp_path: Path,
+) -> None:
+    candidate = _candidate()
+    candidate_path = tmp_path / "candidate.json"
+    candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+    first_output = tmp_path / "first"
+    second_output = tmp_path / "second"
+
+    for output_directory in (first_output, second_output):
+        result = _run(
+            [
+                "python3",
+                str(CONTRACT_PATH),
+                "haos-report-templates",
+                "--candidate",
+                str(candidate_path),
+                "--output-dir",
+                str(output_directory),
+            ]
+        )
+        assert result.returncode == 0, result.stderr
+
+    expected_names = {
+        f"{gate}.json" for gate in CONTRACT.EXPECTED_MANUAL_GATES
+    }
+    assert {path.name for path in first_output.iterdir()} == expected_names
+    assert {path.name for path in second_output.iterdir()} == expected_names
+
+    for gate in sorted(CONTRACT.EXPECTED_MANUAL_GATES):
+        first_path = first_output / f"{gate}.json"
+        second_path = second_output / f"{gate}.json"
+        assert first_path.read_bytes() == second_path.read_bytes()
+        report = json.loads(first_path.read_text(encoding="utf-8"))
+        assert report == CONTRACT.build_haos_report_template(candidate, gate)
+        assert set(report) == CONTRACT.HAOS_GATE_REPORT_KEYS
+        assert report["status"] == "NOT_RUN"
+        assert report["test_ids"] == CONTRACT.EXPECTED_HAOS_GATE_TEST_IDS[gate]
+        assert set(report["checks"]) == CONTRACT.EXPECTED_HAOS_GATE_CHECKS[gate]
+        assert set(report["checks"].values()) == {"NOT_RUN"}
+        assert set(report["environment"]) == CONTRACT.HAOS_GATE_ENVIRONMENT_KEYS
+        assert report["environment"]["architectures"] == (
+            CONTRACT.EXPECTED_HAOS_GATE_ARCHITECTURES[gate]
+        )
+        assert all(
+            report["environment"][name] == ""
+            for name in (
+                "haos_version",
+                "supervisor_version",
+                "core_version",
+                "app_version",
+                "apparmor_mode",
+            )
+        )
+        assert set(report["sanitization"].values()) == {True}
+        assert set(report["attestation"].values()) == {False}
+        if gate in CONTRACT.HAOS_LOCAL_V1_GATES:
+            assert report["previous_release"]["image_id"] == ""
+            assert report["previous_release"]["image_digest_verified"] is False
+        else:
+            assert report["previous_release"] is None
+        with pytest.raises(CONTRACT.ContractError, match="did not pass"):
+            CONTRACT.validate_haos_gate_report(candidate, gate, report)
+
+    sentinel = first_output / "sentinel"
+    sentinel.write_text("preserve", encoding="utf-8")
+    result = _run(
+        [
+            "python3",
+            str(CONTRACT_PATH),
+            "haos-report-templates",
+            "--candidate",
+            str(candidate_path),
+            "--output-dir",
+            str(first_output),
+        ]
+    )
+    assert result.returncode != 0
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+
+    symlink_output = tmp_path / "symlink-output"
+    symlink_output.symlink_to(second_output, target_is_directory=True)
+    result = _run(
+        [
+            "python3",
+            str(CONTRACT_PATH),
+            "haos-report-templates",
+            "--candidate",
+            str(candidate_path),
+            "--output-dir",
+            str(symlink_output),
+        ]
+    )
+    assert result.returncode != 0
+    assert {path.name for path in second_output.iterdir()} == expected_names
+
+
 def test_haos_gate_zip_rejects_extra_symlink_and_reuse(
     tmp_path: Path,
 ) -> None:
@@ -953,6 +1151,24 @@ def _validate_ha005(
         source_sha=candidate["source_sha"],
         generic_digest=candidate["images"]["generic"]["digest"],
         amd64_runtime_digest=candidate["images"]["amd64"]["runtime_digest"],
+        published_at_utc=published_at_utc,
+    )
+
+
+def _validate_public_install(
+    release_evidence: dict[str, object],
+    report: dict[str, object],
+    published_at_utc: str,
+) -> dict[str, object]:
+    candidate = release_evidence["candidate"]
+    return CONTRACT.validate_public_install_report(
+        release_evidence,
+        report,
+        version=candidate["version"],
+        source_sha=candidate["source_sha"],
+        generic_digest=candidate["images"]["generic"]["digest"],
+        amd64_runtime_digest=candidate["images"]["amd64"]["runtime_digest"],
+        aarch64_runtime_digest=candidate["images"]["aarch64"]["runtime_digest"],
         published_at_utc=published_at_utc,
     )
 
@@ -1125,12 +1341,336 @@ def test_ha005_postpublish_report_rejects_binding_scope_and_sanitization_drift()
         )
 
 
-def test_release_acceptance_attachment_is_create_once_and_never_clobbers(
+def test_public_install_report_binds_both_architectures_and_canonicalizes(
     tmp_path: Path,
+) -> None:
+    evidence = _release_evidence()
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    published = (now - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    observed = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    report = _public_install_report(
+        evidence, published_at_utc=published, observed_at_utc=observed
+    )
+    assert _validate_public_install(evidence, report, published) == report
+    assert all(
+        "HA-008" not in identifiers
+        for identifiers in CONTRACT.EXPECTED_HAOS_GATE_TEST_IDS.values()
+    )
+
+    evidence_path = tmp_path / "release-evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+    report_path = tmp_path / "submitted.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    output_path = tmp_path / "public-install-acceptance.json"
+    candidate = evidence["candidate"]
+    result = _run(
+        [
+            "python3",
+            str(CONTRACT_PATH),
+            "public-install-report",
+            "--release-evidence",
+            str(evidence_path),
+            "--report",
+            str(report_path),
+            "--version",
+            candidate["version"],
+            "--source-sha",
+            candidate["source_sha"],
+            "--generic-digest",
+            candidate["images"]["generic"]["digest"],
+            "--amd64-runtime-digest",
+            candidate["images"]["amd64"]["runtime_digest"],
+            "--aarch64-runtime-digest",
+            candidate["images"]["aarch64"]["runtime_digest"],
+            "--published-at-utc",
+            published,
+            "--output",
+            str(output_path),
+        ]
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(output_path.read_text()) == report
+    assert output_path.read_text().endswith("\n")
+
+    unchanged_template = json.loads(
+        (ROOT / "docs/v2/public-install-acceptance-template.json").read_text()
+    )
+    with pytest.raises(CONTRACT.ContractError, match="report did not pass"):
+        _validate_public_install(evidence, unchanged_template, published)
+
+
+def test_public_install_report_rejects_incomplete_or_drifted_observations() -> None:
+    evidence = _release_evidence()
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    published = (now - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    observed = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def report() -> dict[str, object]:
+        return _public_install_report(
+            evidence, published_at_utc=published, observed_at_utc=observed
+        )
+
+    missing_arch = report()
+    missing_arch["installations"].pop("aarch64")
+    with pytest.raises(CONTRACT.ContractError, match="architecture set is not exact"):
+        _validate_public_install(evidence, missing_arch, published)
+
+    extra_arch = report()
+    extra_arch["installations"]["s390x"] = dict(
+        extra_arch["installations"]["amd64"]
+    )
+    with pytest.raises(CONTRACT.ContractError, match="architecture set is not exact"):
+        _validate_public_install(evidence, extra_arch, published)
+
+    wrong_release = report()
+    wrong_release["release"]["source_sha"] = "b" * 40
+    with pytest.raises(CONTRACT.ContractError, match="release binding differs"):
+        _validate_public_install(evidence, wrong_release, published)
+
+    wrong_repository = report()
+    wrong_repository["release"]["repository_url"] = "https://example.invalid/repo"
+    with pytest.raises(CONTRACT.ContractError, match="release binding differs"):
+        _validate_public_install(evidence, wrong_repository, published)
+
+    wrong_generic = report()
+    wrong_generic["installations"]["amd64"]["observed_generic_digest"] = (
+        _digest("wrong-public-generic")
+    )
+    with pytest.raises(CONTRACT.ContractError, match="generic digest differs"):
+        _validate_public_install(evidence, wrong_generic, published)
+
+    swapped_leaf = report()
+    swapped_leaf["installations"]["aarch64"]["observed_runtime_digest"] = (
+        evidence["candidate"]["images"]["amd64"]["runtime_digest"]
+    )
+    with pytest.raises(CONTRACT.ContractError, match="runtime digest differs"):
+        _validate_public_install(evidence, swapped_leaf, published)
+
+    candidate_source = report()
+    candidate_source["installations"]["amd64"]["installation_source"] = (
+        "local_addons_source_build"
+    )
+    with pytest.raises(CONTRACT.ContractError, match="installation source"):
+        _validate_public_install(evidence, candidate_source, published)
+
+    reused_identity = report()
+    reused_identity["installations"]["amd64"][
+        "data_identity_before_restart_sha256"
+    ] = (
+        reused_identity["installations"]["amd64"]["repository_id_sha256"]
+    )
+    reused_identity["installations"]["amd64"][
+        "data_identity_after_restart_sha256"
+    ] = reused_identity["installations"]["amd64"]["repository_id_sha256"]
+    with pytest.raises(CONTRACT.ContractError, match="must be distinct"):
+        _validate_public_install(evidence, reused_identity, published)
+
+    changed_after_restart = report()
+    changed_after_restart["installations"]["aarch64"][
+        "data_identity_after_restart_sha256"
+    ] = _digest("different-aarch64-data-identity")
+    with pytest.raises(CONTRACT.ContractError, match="changed across restart"):
+        _validate_public_install(evidence, changed_after_restart, published)
+
+    reused_across_architectures = report()
+    amd64_identity = reused_across_architectures["installations"]["amd64"][
+        "data_identity_before_restart_sha256"
+    ]
+    reused_across_architectures["installations"]["aarch64"][
+        "data_identity_before_restart_sha256"
+    ] = amd64_identity
+    reused_across_architectures["installations"]["aarch64"][
+        "data_identity_after_restart_sha256"
+    ] = amd64_identity
+    with pytest.raises(CONTRACT.ContractError, match="unique across architectures"):
+        _validate_public_install(
+            evidence, reused_across_architectures, published
+        )
+
+    missing_check = report()
+    missing_check["installations"]["aarch64"]["checks"].pop(
+        "fresh_install_from_original_public_repository"
+    )
+    with pytest.raises(CONTRACT.ContractError, match="checks are incomplete"):
+        _validate_public_install(evidence, missing_check, published)
+
+    not_run_check = report()
+    not_run_check["installations"]["amd64"]["checks"][
+        "supervisor_healthy_after_restart"
+    ] = "NOT_RUN"
+    with pytest.raises(CONTRACT.ContractError, match="checks are incomplete"):
+        _validate_public_install(evidence, not_run_check, published)
+
+    wrong_repository_version = report()
+    wrong_repository_version["installations"]["aarch64"][
+        "observed_repository_version"
+    ] = "2.0.1"
+    with pytest.raises(CONTRACT.ContractError, match="metadata version differs"):
+        _validate_public_install(evidence, wrong_repository_version, published)
+
+    wrong_arch = report()
+    wrong_arch["installations"]["amd64"]["environment"]["architecture"] = (
+        "aarch64"
+    )
+    with pytest.raises(CONTRACT.ContractError, match="architecture differs"):
+        _validate_public_install(evidence, wrong_arch, published)
+
+    complain_mode = report()
+    complain_mode["installations"]["aarch64"]["environment"][
+        "apparmor_mode"
+    ] = "complain"
+    with pytest.raises(CONTRACT.ContractError, match="AppArmor mode"):
+        _validate_public_install(evidence, complain_mode, published)
+
+    wrong_app_version = report()
+    wrong_app_version["installations"]["amd64"]["environment"][
+        "final_app_version"
+    ] = "2.0.1"
+    with pytest.raises(CONTRACT.ContractError, match="final App version differs"):
+        _validate_public_install(evidence, wrong_app_version, published)
+
+    numeric_sanitization = report()
+    numeric_sanitization["sanitization"] = {
+        name: 0 for name in numeric_sanitization["sanitization"]
+    }
+    with pytest.raises(CONTRACT.ContractError, match="not boolean false"):
+        _validate_public_install(evidence, numeric_sanitization, published)
+
+    numeric_attestation = report()
+    numeric_attestation["attestation"] = {
+        name: 1 for name in numeric_attestation["attestation"]
+    }
+    with pytest.raises(CONTRACT.ContractError, match="not boolean true"):
+        _validate_public_install(evidence, numeric_attestation, published)
+
+    prepublish = report()
+    prepublish["installations"]["amd64"]["observed_at_utc"] = (
+        now - timedelta(hours=3)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with pytest.raises(CONTRACT.ContractError, match="predates"):
+        _validate_public_install(evidence, prepublish, published)
+
+    future = report()
+    future["installations"]["aarch64"]["observed_at_utc"] = (
+        now + timedelta(minutes=6)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with pytest.raises(CONTRACT.ContractError, match="future"):
+        _validate_public_install(evidence, future, published)
+
+    future_published = (now + timedelta(minutes=6)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    future_release = _public_install_report(
+        evidence,
+        published_at_utc=future_published,
+        observed_at_utc=future_published,
+    )
+    with pytest.raises(CONTRACT.ContractError, match="published timestamp is in the future"):
+        _validate_public_install(evidence, future_release, future_published)
+
+    old_published = (now - timedelta(days=32)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    stale = _public_install_report(
+        evidence,
+        published_at_utc=old_published,
+        observed_at_utc=(now - timedelta(days=31)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+    with pytest.raises(CONTRACT.ContractError, match="older than 30 days"):
+        _validate_public_install(evidence, stale, old_published)
+
+    ha005_report = _ha005_report(
+        evidence, published_at_utc=published, observed_at_utc=observed
+    )
+    with pytest.raises(CONTRACT.ContractError, match="keys are not exact"):
+        _validate_public_install(evidence, ha005_report, published)
+    with pytest.raises(CONTRACT.ContractError, match="keys are not exact"):
+        CONTRACT.validate_ha005_report(
+            evidence,
+            report(),
+            version=evidence["candidate"]["version"],
+            source_sha=evidence["candidate"]["source_sha"],
+            generic_digest=evidence["candidate"]["images"]["generic"]["digest"],
+            amd64_runtime_digest=evidence["candidate"]["images"]["amd64"][
+                "runtime_digest"
+            ],
+            published_at_utc=published,
+        )
+
+
+def test_haos_and_public_install_reports_enforce_exact_30_day_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixed_now = datetime(2026, 8, 12, 12, 0, 0, tzinfo=timezone.utc)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz: timezone | None = None) -> datetime:
+            return fixed_now if tz is not None else fixed_now.replace(tzinfo=None)
+
+    monkeypatch.setattr(CONTRACT, "datetime", FixedDateTime)
+    boundary = (fixed_now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    expired = (fixed_now - timedelta(days=30, seconds=1)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+    candidate = _candidate()
+    haos_report = _haos_report(candidate, "telegram_modes")
+    haos_report["observed_at_utc"] = boundary
+    CONTRACT.validate_haos_gate_report(candidate, "telegram_modes", haos_report)
+    haos_report["observed_at_utc"] = expired
+    with pytest.raises(CONTRACT.ContractError, match="older than 30 days"):
+        CONTRACT.validate_haos_gate_report(
+            candidate, "telegram_modes", haos_report
+        )
+
+    evidence = _release_evidence(candidate)
+    published = (fixed_now - timedelta(days=31)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    public_report = _public_install_report(
+        evidence,
+        published_at_utc=published,
+        observed_at_utc=boundary,
+    )
+    _validate_public_install(evidence, public_report, published)
+    public_report["installations"]["amd64"]["observed_at_utc"] = expired
+    with pytest.raises(CONTRACT.ContractError, match="older than 30 days"):
+        _validate_public_install(evidence, public_report, published)
+
+
+def test_public_install_report_loader_rejects_unsafe_or_ambiguous_files(
+    tmp_path: Path,
+) -> None:
+    duplicate = tmp_path / "duplicate.json"
+    duplicate.write_text('{"schema":"one","schema":"two"}\n', encoding="utf-8")
+    with pytest.raises(CONTRACT.ContractError, match="duplicate JSON key"):
+        CONTRACT.load_public_install_report(duplicate)
+
+    target = tmp_path / "target.json"
+    target.write_text("{}\n", encoding="utf-8")
+    symlink = tmp_path / "symlink.json"
+    symlink.symlink_to(target)
+    with pytest.raises(CONTRACT.ContractError, match="single regular file"):
+        CONTRACT.load_public_install_report(symlink)
+
+    hardlink = tmp_path / "hardlink.json"
+    os.link(target, hardlink)
+    with pytest.raises(CONTRACT.ContractError, match="single regular file"):
+        CONTRACT.load_public_install_report(hardlink)
+
+    oversized = tmp_path / "oversized.json"
+    oversized.write_bytes(b" " * (CONTRACT.PUBLIC_INSTALL_MAX_BYTES + 1))
+    with pytest.raises(CONTRACT.ContractError, match="exceeds 60000 bytes"):
+        CONTRACT.load_public_install_report(oversized)
+
+
+@pytest.mark.parametrize(
+    "asset_name",
+    ["ha005-acceptance.json", "public-install-acceptance.json"],
+)
+def test_release_acceptance_attachment_is_create_once_and_never_clobbers(
+    tmp_path: Path, asset_name: str,
 ) -> None:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    remote_asset = tmp_path / "remote-ha005-acceptance.json"
+    remote_asset = tmp_path / f"remote-{asset_name}"
     upload_log = tmp_path / "uploads.log"
     _write_executable(
         fake_bin / "gh",
@@ -1155,15 +1695,18 @@ if [[ $1 == api ]]; then
         size=$(stat --format '%s' "${FAKE_REMOTE_ASSET}")
         jq --null-input \
           --arg digest "$digest" \
+          --arg asset_name "${FAKE_ASSET_NAME}" \
           --arg source "${FAKE_SOURCE_SHA}" \
           --arg version "${FAKE_VERSION}" \
           --argjson prerelease "${FAKE_PRERELEASE}" \
+          --argjson duplicate "${FAKE_DUPLICATE}" \
           --argjson size "$size" \
           '{tag_name: $version, target_commitish: $source, draft: false,
             prerelease: $prerelease,
             published_at: "2026-08-12T00:00:00Z",
-            assets: [{name: "ha005-acceptance.json", state: "uploaded",
-              digest: $digest, size: $size}]}'
+            assets: [{name: $asset_name, state: "uploaded",
+              digest: $digest, size: $size}]}
+          | if $duplicate then .assets += [.assets[0]] else . end'
       else
         jq --null-input \
           --arg source "${FAKE_SOURCE_SHA}" \
@@ -1177,7 +1720,9 @@ if [[ $1 == api ]]; then
     *) exit 64 ;;
   esac
 elif [[ $1 == release && $2 == upload ]]; then
-  cp -- "$4" "${FAKE_REMOTE_ASSET}"
+  if [[ ${FAKE_UPLOAD_NOOP} != 1 ]]; then
+    cp -- "$4" "${FAKE_REMOTE_ASSET}"
+  fi
   printf 'upload\n' >> "${FAKE_UPLOAD_LOG}"
 elif [[ $1 == release && $2 == download ]]; then
   shift 3
@@ -1185,7 +1730,7 @@ elif [[ $1 == release && $2 == download ]]; then
   while (($#)); do
     if [[ $1 == --dir ]]; then output_directory=$2; shift 2; else shift; fi
   done
-  cp -- "${FAKE_REMOTE_ASSET}" "${output_directory}/ha005-acceptance.json"
+  cp -- "${FAKE_REMOTE_ASSET}" "${output_directory}/${FAKE_ASSET_NAME}"
 else
   exit 64
 fi
@@ -1193,19 +1738,54 @@ fi
     )
     source_sha = "a" * 40
     version = "2.0.0"
-    local_asset = tmp_path / "ha005-acceptance.json"
-    local_asset.write_text('{"schema":"fixture-one"}\n', encoding="utf-8")
+    local_asset = tmp_path / asset_name
+    if asset_name == "ha005-acceptance.json":
+        schema = CONTRACT.HA005_REPORT_SCHEMA
+        test_id = "HA-005"
+        swapped_schema = CONTRACT.PUBLIC_INSTALL_REPORT_SCHEMA
+    else:
+        schema = CONTRACT.PUBLIC_INSTALL_REPORT_SCHEMA
+        test_id = "HA-008"
+        swapped_schema = CONTRACT.HA005_REPORT_SCHEMA
+    valid_attachment = {
+        "schema": schema,
+        "test_id": test_id,
+        "status": "PASS",
+        "release": {"version": version, "source_sha": source_sha},
+    }
+    local_asset.write_text(
+        json.dumps(valid_attachment) + "\n", encoding="utf-8"
+    )
     env = os.environ | {
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
         "FAKE_REMOTE_ASSET": str(remote_asset),
+        "FAKE_ASSET_NAME": asset_name,
+        "FAKE_DUPLICATE": "false",
         "FAKE_PRERELEASE": "true",
         "FAKE_SOURCE_SHA": source_sha,
         "FAKE_TAG_OBJECT": "c" * 40,
         "FAKE_UPLOAD_LOG": str(upload_log),
+        "FAKE_UPLOAD_NOOP": "0",
         "FAKE_VERSION": version,
         "GITHUB_REPOSITORY": "Kanu-Coffee/antigravity-for-home-assistant",
     }
     script = ROOT / ".github/scripts/ensure-release-acceptance.sh"
+
+    invalid_attachment = dict(valid_attachment)
+    invalid_attachment["schema"] = swapped_schema
+    local_asset.write_text(
+        json.dumps(invalid_attachment) + "\n", encoding="utf-8"
+    )
+    rejected = _run(
+        ["bash", str(script), version, source_sha, str(local_asset)], env=env
+    )
+    assert rejected.returncode != 0
+    assert "schema or release binding differs" in rejected.stderr
+    assert not remote_asset.exists()
+    assert not upload_log.exists()
+    local_asset.write_text(
+        json.dumps(valid_attachment) + "\n", encoding="utf-8"
+    )
 
     created = _run(
         ["bash", str(script), version, source_sha, str(local_asset)], env=env
@@ -1220,7 +1800,11 @@ fi
     assert upload_log.read_text().splitlines() == ["upload"]
 
     original_remote = remote_asset.read_bytes()
-    local_asset.write_text('{"schema":"conflicting"}\n', encoding="utf-8")
+    conflicting_attachment = dict(valid_attachment)
+    conflicting_attachment["unexpected"] = True
+    local_asset.write_text(
+        json.dumps(conflicting_attachment) + "\n", encoding="utf-8"
+    )
     conflict = _run(
         ["bash", str(script), version, source_sha, str(local_asset)], env=env
     )
@@ -1237,6 +1821,22 @@ fi
     assert wrong_release_state.returncode != 0
     assert remote_asset.read_bytes() == original_remote
     assert upload_log.read_bytes() == uploads_before
+
+    duplicate = _run(
+        ["bash", str(script), version, source_sha, str(local_asset)],
+        env=env | {"FAKE_DUPLICATE": "true"},
+    )
+    assert duplicate.returncode != 0
+    assert remote_asset.read_bytes() == original_remote
+    assert upload_log.read_bytes() == uploads_before
+
+    remote_asset.unlink()
+    no_op_upload = _run(
+        ["bash", str(script), version, source_sha, str(local_asset)],
+        env=env | {"FAKE_UPLOAD_NOOP": "1"},
+    )
+    assert no_op_upload.returncode != 0
+    assert not remote_asset.exists()
 
 
 def _registry_fake_environment(
@@ -1651,6 +2251,14 @@ def test_existing_release_requires_exact_remote_tag_and_target(
             "size": len(acceptance_bytes),
         }
     )
+    optional_release["assets"].append(
+        {
+            "name": "public-install-acceptance.json",
+            "state": "uploaded",
+            "digest": _digest(b'{"schema":"public-install"}\n'),
+            "size": len(b'{"schema":"public-install"}\n'),
+        }
+    )
     release_path.write_text(json.dumps(optional_release), encoding="utf-8")
     result = _run(
         ["bash", str(script), "2.0.0", source, str(notes), str(asset)],
@@ -1812,6 +2420,9 @@ def test_workflows_encode_exact_release_invariants() -> None:
     postpublish_ha005 = (
         ROOT / ".github/workflows/postpublish-ha005.yaml"
     ).read_text()
+    postpublish_public_install = (
+        ROOT / ".github/workflows/postpublish-public-install.yaml"
+    ).read_text()
     ci = (ROOT / ".github/workflows/ci.yaml").read_text()
     release_oci = (ROOT / ".github/scripts/release-oci.sh").read_text()
     github_release = (
@@ -1820,6 +2431,7 @@ def test_workflows_encode_exact_release_invariants() -> None:
     haos_workflow = yaml.safe_load(haos_evidence)
     build_workflow = yaml.safe_load(build)
     postpublish_workflow = yaml.safe_load(postpublish_ha005)
+    public_install_workflow = yaml.safe_load(postpublish_public_install)
     assert set(
         haos_workflow["on"]["workflow_dispatch"]["inputs"]["gate"]["options"]
     ) == CONTRACT.EXPECTED_MANUAL_GATES
@@ -1859,6 +2471,10 @@ def test_workflows_encode_exact_release_invariants() -> None:
     assert "release-evidence/haos-gates/*.json" in builder
     assert "Validate and preserve candidate-bound HAOS gate report" in haos_evidence
     assert "release_contract.py haos-report" in haos_evidence
+    assert "release_contract.py haos-report-templates" in build
+    assert "haos-report-templates/" in build
+    assert "haos-report-templates/<gate>.json" in build
+    assert "haos-report-templates/<gate>.json" in haos_evidence
     assert "manual-gate-evidence.json" in haos_evidence
     assert "actions/artifacts/${ARTIFACT_ID}/zip" in haos_evidence
     assert "haos_amd64_local_migration" in haos_evidence
@@ -1920,6 +2536,55 @@ def test_workflows_encode_exact_release_invariants() -> None:
     ).read_text()
     assert "Candidate / finalize" not in postpublish_ha005
     assert "ha005" not in " ".join(sorted(CONTRACT.EXPECTED_MANUAL_GATES))
+    assert set(public_install_workflow["on"]["workflow_dispatch"]["inputs"]) == {
+        "version",
+        "report_json",
+    }
+    assert public_install_workflow["jobs"]["accept"]["permissions"] == {
+        "actions": "read",
+        "contents": "write",
+    }
+    for token in (
+        "collaborators/${maintainer_login}/permission",
+        '[[ $GITHUB_REF == "refs/tags/${RELEASE_VERSION}" ]]',
+        "parse-release-tag.sh",
+        "release-evidence/release-evidence.json",
+        "cmp --silent",
+        "release_contract.py release",
+        "docker buildx imagetools inspect --raw",
+        "export DOCKER_CONFIG=$anonymous_config",
+        ".draft == false",
+        ".prerelease == true",
+        "expired == false",
+    ):
+        assert token in postpublish_public_install
+    assert 'docker pull --platform linux/amd64 "${IMAGE}@${AMD64_DIGEST}"' in (
+        postpublish_public_install
+    )
+    assert 'docker pull --platform linux/arm64 "${IMAGE}@${ARM64_DIGEST}"' in (
+        postpublish_public_install
+    )
+    assert "release_contract.py public-install-report" in postpublish_public_install
+    assert "--aarch64-runtime-digest \"$ARM64_DIGEST\"" in postpublish_public_install
+    assert "public-install-acceptance-${{ inputs.version }}" in postpublish_public_install
+    assert "public-install-acceptance.json" in postpublish_public_install
+    assert "retention-days: 90" in postpublish_public_install
+    assert "ensure-release-acceptance.sh" in postpublish_public_install
+    assert "ha005-acceptance.json" not in postpublish_public_install
+    assert "Candidate / finalize" not in postpublish_public_install
+    assert "HA-008" not in " ".join(
+        identifier
+        for identifiers in CONTRACT.EXPECTED_HAOS_GATE_TEST_IDS.values()
+        for identifier in identifiers
+    )
+    acceptance_helper = (
+        ROOT / ".github/scripts/ensure-release-acceptance.sh"
+    ).read_text()
+    assert "ha005-acceptance.json)" in acceptance_helper
+    assert "public-install-acceptance.json)" in acceptance_helper
+    assert CONTRACT.HA005_REPORT_SCHEMA in acceptance_helper
+    assert CONTRACT.PUBLIC_INSTALL_REPORT_SCHEMA in acceptance_helper
+    assert "public-install-acceptance.json" in github_release
     for path in (
         ROOT / "tests/browser-approval-smoke.sh",
         ROOT / "tests/docker-smoke.sh",

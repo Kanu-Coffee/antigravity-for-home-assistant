@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import re
+import shutil
 import stat
 import sys
 import zipfile
@@ -50,6 +51,38 @@ EXPECTED_MANUAL_GATES = {
     "oauth_isolation_persistence",
     "native_updater_canary",
     "telegram_modes",
+}
+HAOS_GATE_REPORT_SCHEMA = "antigravity-ha-haos-gate-evidence/v1"
+HAOS_GATE_REPORT_KEYS = {
+    "schema",
+    "gate",
+    "status",
+    "version",
+    "source_sha",
+    "candidate_manifest_digest",
+    "candidate_images",
+    "haos_rehearsal",
+    "test_ids",
+    "checks",
+    "environment",
+    "previous_release",
+    "observed_at_utc",
+    "sanitization",
+    "attestation",
+}
+HAOS_GATE_ENVIRONMENT_KEYS = {
+    "platform",
+    "architectures",
+    "haos_version",
+    "supervisor_version",
+    "core_version",
+    "app_version",
+    "apparmor_mode",
+}
+HAOS_LOCAL_V1_GATES = {
+    "haos_amd64_local_migration",
+    "local_migration_rollback",
+    "migration_modes",
 }
 EXPECTED_HAOS_GATE_TEST_IDS = {
     "apparmor_enforce": ["AA-001"],
@@ -179,6 +212,22 @@ EXPECTED_HA005_CHECKS = {
     "rollback_prior_local_image_selected",
     "rollback_repository_addon_data_and_recovery_verified",
     "same_repository_and_addon_identity",
+}
+PUBLIC_INSTALL_REPORT_SCHEMA = "antigravity-ha-public-install-acceptance/v1"
+PUBLIC_INSTALL_MAX_BYTES = 60_000
+EXPECTED_PUBLIC_INSTALL_CHECKS = {
+    "app_absent_before_install",
+    "apparmor_enforce",
+    "app_start_stop_restart",
+    "data_identity_persisted_after_restart",
+    "fresh_install_from_original_public_repository",
+    "local_candidate_repository_absent",
+    "numeric_version_visible_in_repository_metadata",
+    "original_public_repository_added",
+    "prebuilt_image_used_without_source_build",
+    "published_generic_digest_verified",
+    "published_runtime_digest_verified",
+    "supervisor_healthy_after_restart",
 }
 VERSION_STRING_RE = re.compile(r"[0-9]+(?:\.[0-9]+){0,2}\Z")
 UTC_TIMESTAMP_RE = re.compile(
@@ -782,28 +831,11 @@ def validate_haos_gate_report(
     require(gate in EXPECTED_MANUAL_GATES, "unknown HAOS evidence gate")
     require(isinstance(report, dict), "HAOS gate report is not an object")
     require(
-        set(report)
-        == {
-            "schema",
-            "gate",
-            "status",
-            "version",
-            "source_sha",
-            "candidate_manifest_digest",
-            "candidate_images",
-            "haos_rehearsal",
-            "test_ids",
-            "checks",
-            "environment",
-            "previous_release",
-            "observed_at_utc",
-            "sanitization",
-            "attestation",
-        },
+        set(report) == HAOS_GATE_REPORT_KEYS,
         "HAOS gate report keys are not exact",
     )
     require(
-        report.get("schema") == "antigravity-ha-haos-gate-evidence/v1",
+        report.get("schema") == HAOS_GATE_REPORT_SCHEMA,
         "wrong HAOS gate report schema",
     )
     require(report.get("gate") == gate, "HAOS report gate binding differs")
@@ -843,17 +875,7 @@ def validate_haos_gate_report(
     )
     environment = report.get("environment")
     require(
-        isinstance(environment, dict)
-        and set(environment)
-        == {
-            "platform",
-            "architectures",
-            "haos_version",
-            "supervisor_version",
-            "core_version",
-            "app_version",
-            "apparmor_mode",
-        },
+        isinstance(environment, dict) and set(environment) == HAOS_GATE_ENVIRONMENT_KEYS,
         "HAOS report environment is not exact",
     )
     require(environment.get("platform") == "HAOS", "HAOS report platform is not HAOS")
@@ -869,22 +891,14 @@ def validate_haos_gate_report(
             and VERSION_STRING_RE.fullmatch(version_value),
             f"HAOS report {version_name} is invalid",
         )
-    expected_app_version = (
-        "1.0.4"
-        if gate == "local_migration_rollback"
-        else candidate["haos_rehearsal"]["version"]
-    )
+    expected_app_version = expected_haos_app_version(candidate, gate)
     require(
         environment.get("app_version") == expected_app_version,
         "HAOS report installed App version differs from gate postcondition",
     )
     require(environment.get("apparmor_mode") == "enforce", "HAOS report AppArmor is not enforce")
     previous_release = report.get("previous_release")
-    requires_local_v1 = gate in {
-        "haos_amd64_local_migration",
-        "local_migration_rollback",
-        "migration_modes",
-    }
+    requires_local_v1 = gate in HAOS_LOCAL_V1_GATES
     if requires_local_v1:
         require(
             isinstance(previous_release, dict)
@@ -985,6 +999,108 @@ def command_haos_report(args: argparse.Namespace) -> None:
     validate_haos_gate_report(candidate, args.gate, report)
     if args.output:
         write_json(args.output, report)
+
+
+def expected_haos_app_version(candidate: dict[str, Any], gate: str) -> str:
+    require(gate in EXPECTED_MANUAL_GATES, "unknown HAOS evidence gate")
+    return (
+        "1.0.4"
+        if gate == "local_migration_rollback"
+        else candidate["haos_rehearsal"]["version"]
+    )
+
+
+def build_haos_report_template(
+    candidate: dict[str, Any], gate: str
+) -> dict[str, Any]:
+    require(gate in EXPECTED_MANUAL_GATES, "unknown HAOS evidence gate")
+    images = candidate["images"]
+    previous_release: dict[str, Any] | None = None
+    if gate in HAOS_LOCAL_V1_GATES:
+        previous_release = {
+            "version": "1.0.4",
+            "source_sha": PUBLIC_V1_SOURCE_SHA,
+            "image_id": "",
+            "installation_source": "local_addons_source_build",
+            "repository_identity": "same_local_repository_identity",
+            "image_digest_verified": False,
+        }
+    return {
+        "schema": HAOS_GATE_REPORT_SCHEMA,
+        "gate": gate,
+        "status": "NOT_RUN",
+        "version": candidate["version"],
+        "source_sha": candidate["source_sha"],
+        "candidate_manifest_digest": images["generic"]["digest"],
+        "candidate_images": {
+            "generic_manifest_digest": images["generic"]["digest"],
+            "amd64_stage_digest": images["amd64"]["stage_digest"],
+            "amd64_runtime_digest": images["amd64"]["runtime_digest"],
+            "aarch64_stage_digest": images["aarch64"]["stage_digest"],
+            "aarch64_runtime_digest": images["aarch64"]["runtime_digest"],
+        },
+        "haos_rehearsal": candidate["haos_rehearsal"],
+        "test_ids": EXPECTED_HAOS_GATE_TEST_IDS[gate],
+        "checks": {
+            name: "NOT_RUN" for name in sorted(EXPECTED_HAOS_GATE_CHECKS[gate])
+        },
+        "environment": {
+            "platform": "HAOS",
+            "architectures": EXPECTED_HAOS_GATE_ARCHITECTURES[gate],
+            "haos_version": "",
+            "supervisor_version": "",
+            "core_version": "",
+            "app_version": "",
+            "apparmor_mode": "",
+        },
+        "previous_release": previous_release,
+        "observed_at_utc": "",
+        "sanitization": {
+            "contains_credentials": True,
+            "contains_entity_or_chat_identifiers": True,
+            "contains_raw_logs_or_prompts": True,
+        },
+        "attestation": {
+            "candidate_digest_verified": False,
+            "real_haos_device": False,
+            "sanitized_by_maintainer": False,
+            "scope_reviewed": False,
+        },
+    }
+
+
+def command_haos_report_templates(args: argparse.Namespace) -> None:
+    candidate = validate_candidate(load_json(args.candidate))
+    output_directory = args.output_dir
+    require(
+        not output_directory.exists() and not output_directory.is_symlink(),
+        "HAOS template output directory already exists or is a symlink",
+    )
+    parent = output_directory.parent
+    require(
+        parent.is_dir() and not parent.is_symlink(),
+        "HAOS template output parent is unsafe",
+    )
+    output_directory.mkdir(mode=0o700)
+    try:
+        for gate in sorted(EXPECTED_MANUAL_GATES):
+            path = output_directory / f"{gate}.json"
+            payload = json.dumps(
+                build_haos_report_template(candidate, gate),
+                indent=2,
+                sort_keys=True,
+                ensure_ascii=False,
+            ) + "\n"
+            with path.open("x", encoding="utf-8") as stream:
+                stream.write(payload)
+        require(
+            {path.name for path in output_directory.iterdir()}
+            == {f"{gate}.json" for gate in EXPECTED_MANUAL_GATES},
+            "generated HAOS template file set is not exact",
+        )
+    except BaseException:
+        shutil.rmtree(output_directory)
+        raise
 
 
 def parse_utc_timestamp(value: Any, name: str) -> datetime:
@@ -1263,6 +1379,307 @@ def command_ha005_report(args: argparse.Namespace) -> None:
         source_sha=args.source_sha,
         generic_digest=args.generic_digest,
         amd64_runtime_digest=args.amd64_runtime_digest,
+        published_at_utc=args.published_at_utc,
+    )
+    write_json(args.output, report)
+
+
+def load_public_install_report(path: Path) -> Any:
+    try:
+        metadata = path.lstat()
+        raw = path.read_bytes()
+    except OSError as error:
+        raise ContractError(f"cannot read public-install report: {error}") from error
+    require(
+        stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1,
+        "public-install report path is not a single regular file",
+    )
+    require(
+        len(raw) <= PUBLIC_INSTALL_MAX_BYTES,
+        "public-install report exceeds 60000 bytes",
+    )
+    return strict_json_object(raw, "public-install report")
+
+
+def validate_public_install_report(
+    release_evidence: Any,
+    report: Any,
+    *,
+    version: str,
+    source_sha: str,
+    generic_digest: str,
+    amd64_runtime_digest: str,
+    aarch64_runtime_digest: str,
+    published_at_utc: str,
+) -> dict[str, Any]:
+    evidence = validate_release_evidence(release_evidence)
+    candidate = evidence["candidate"]
+    expected_version = validate_version(version)
+    require(
+        expected_version.split(".", 1)[0] == "2",
+        "public-install acceptance requires a numeric v2 release",
+    )
+    expected_source_sha = validate_source_sha(
+        source_sha, "public-install release source SHA"
+    )
+    expected_generic_digest = validate_digest(
+        generic_digest, "public-install public generic digest"
+    )
+    expected_runtime_digests = {
+        "amd64": validate_digest(
+            amd64_runtime_digest, "public-install public amd64 runtime digest"
+        ),
+        "aarch64": validate_digest(
+            aarch64_runtime_digest,
+            "public-install public aarch64 runtime digest",
+        ),
+    }
+    published_at = parse_utc_timestamp(
+        published_at_utc,
+        "public-install GitHub Release published timestamp",
+    )
+    now = datetime.now(timezone.utc)
+    require(
+        published_at <= now + timedelta(minutes=5),
+        "public-install GitHub Release published timestamp is in the future",
+    )
+    require(
+        candidate["version"] == expected_version,
+        "public-install release version differs from evidence",
+    )
+    require(
+        candidate["source_sha"] == expected_source_sha,
+        "public-install release source differs from evidence",
+    )
+    require(
+        candidate["images"]["generic"]
+        == {"name": PUBLIC_GENERIC_IMAGE, "digest": expected_generic_digest},
+        "public-install generic image differs from release evidence",
+    )
+    for architecture, expected_digest in expected_runtime_digests.items():
+        require(
+            candidate["images"][architecture]["runtime_digest"]
+            == expected_digest,
+            f"public-install {architecture} runtime digest differs from release evidence",
+        )
+
+    require(isinstance(report, dict), "public-install report is not an object")
+    require(
+        set(report)
+        == {
+            "schema",
+            "test_id",
+            "status",
+            "release",
+            "installations",
+            "sanitization",
+            "attestation",
+        },
+        "public-install report keys are not exact",
+    )
+    require(
+        report.get("schema") == PUBLIC_INSTALL_REPORT_SCHEMA,
+        "wrong public-install report schema",
+    )
+    require(report.get("test_id") == "HA-008", "wrong public-install test ID")
+    require(report.get("status") == "PASS", "public-install report did not pass")
+    require(
+        report.get("release")
+        == {
+            "version": expected_version,
+            "source_sha": expected_source_sha,
+            "published_at_utc": published_at_utc,
+            "repository_url": PUBLIC_REPOSITORY_URL,
+            "addon_slug": PUBLIC_APP_SLUG,
+            "generic_image": PUBLIC_GENERIC_IMAGE,
+            "generic_digest": expected_generic_digest,
+            "runtime_digests": expected_runtime_digests,
+        },
+        "public-install report release binding differs",
+    )
+
+    installations = report.get("installations")
+    require(
+        isinstance(installations, dict)
+        and set(installations) == {"amd64", "aarch64"},
+        "public-install architecture set is not exact",
+    )
+    data_identities: set[str] = set()
+    for architecture in ("amd64", "aarch64"):
+        installation = installations[architecture]
+        label = f"public-install {architecture}"
+        require(
+            isinstance(installation, dict)
+            and set(installation)
+            == {
+                "status",
+                "installation_source",
+                "repository_id_sha256",
+                "data_identity_before_restart_sha256",
+                "data_identity_after_restart_sha256",
+                "observed_repository_version",
+                "observed_generic_digest",
+                "observed_runtime_digest",
+                "checks",
+                "environment",
+                "observed_at_utc",
+            },
+            f"{label} record keys are not exact",
+        )
+        require(
+            installation.get("status") == "PASS",
+            f"{label} record did not pass",
+        )
+        require(
+            installation.get("installation_source")
+            == "original_custom_repository_prebuilt_image",
+            f"{label} installation source is not the original public repository prebuilt image",
+        )
+        repository_identity = validate_digest(
+            installation.get("repository_id_sha256"),
+            f"{label} repository identity digest",
+        )
+        data_identity_before = validate_digest(
+            installation.get("data_identity_before_restart_sha256"),
+            f"{label} data identity before restart digest",
+        )
+        data_identity_after = validate_digest(
+            installation.get("data_identity_after_restart_sha256"),
+            f"{label} data identity after restart digest",
+        )
+        require(
+            data_identity_before == data_identity_after,
+            f"{label} data identity changed across restart",
+        )
+        require(
+            repository_identity != data_identity_before,
+            f"{label} repository and data identity digests must be distinct",
+        )
+        require(
+            data_identity_before not in data_identities,
+            "public-install data identities must be unique across architectures",
+        )
+        data_identities.add(data_identity_before)
+        require(
+            installation.get("observed_repository_version") == expected_version,
+            f"{label} repository metadata version differs",
+        )
+        require(
+            installation.get("observed_generic_digest")
+            == expected_generic_digest,
+            f"{label} observed generic digest differs",
+        )
+        require(
+            installation.get("observed_runtime_digest")
+            == expected_runtime_digests[architecture],
+            f"{label} observed runtime digest differs",
+        )
+        checks = installation.get("checks")
+        require(
+            isinstance(checks, dict)
+            and set(checks) == EXPECTED_PUBLIC_INSTALL_CHECKS
+            and set(checks.values()) == {"PASS"},
+            f"{label} required checks are incomplete",
+        )
+        environment = installation.get("environment")
+        require(
+            isinstance(environment, dict)
+            and set(environment)
+            == {
+                "platform",
+                "architecture",
+                "haos_version",
+                "supervisor_version",
+                "core_version",
+                "final_app_version",
+                "apparmor_mode",
+            },
+            f"{label} environment is not exact",
+        )
+        require(environment.get("platform") == "HAOS", f"{label} platform is not HAOS")
+        require(
+            environment.get("architecture") == architecture,
+            f"{label} architecture differs",
+        )
+        for version_name in ("haos_version", "supervisor_version", "core_version"):
+            version_value = environment.get(version_name)
+            require(
+                isinstance(version_value, str)
+                and len(version_value) <= 32
+                and VERSION_STRING_RE.fullmatch(version_value),
+                f"{label} {version_name} is invalid",
+            )
+        require(
+            environment.get("final_app_version") == expected_version,
+            f"{label} final App version differs",
+        )
+        require(
+            environment.get("apparmor_mode") == "enforce",
+            f"{label} AppArmor mode is not enforce",
+        )
+        observed_at = parse_utc_timestamp(
+            installation.get("observed_at_utc"),
+            f"{label} observation timestamp",
+        )
+        require(
+            observed_at >= published_at,
+            f"{label} observation predates the GitHub Release",
+        )
+        require(
+            observed_at <= now + timedelta(minutes=5),
+            f"{label} report timestamp is in the future",
+        )
+        require(
+            observed_at >= now - timedelta(days=30),
+            f"{label} report is older than 30 days",
+        )
+
+    sanitization = report.get("sanitization")
+    require(
+        sanitization
+        == {
+            "contains_credentials": False,
+            "contains_entity_or_chat_identifiers": False,
+            "contains_raw_logs_or_prompts": False,
+            "contains_private_host_or_user_identifiers": False,
+        },
+        "public-install report sanitization contract failed",
+    )
+    require(
+        all(value is False for value in sanitization.values()),
+        "public-install report sanitization flags are not boolean false",
+    )
+    attestation = report.get("attestation")
+    require(
+        attestation
+        == {
+            "real_haos_devices": True,
+            "original_public_repository_verified": True,
+            "public_release_observed_after_publish": True,
+            "independent_fresh_installs_verified": True,
+            "both_architectures_scope_reviewed": True,
+            "sanitized_by_maintainer": True,
+        },
+        "public-install trusted-attestor declaration is incomplete",
+    )
+    require(
+        all(value is True for value in attestation.values()),
+        "public-install trusted-attestor flags are not boolean true",
+    )
+    return report
+
+
+def command_public_install_report(args: argparse.Namespace) -> None:
+    release_evidence = load_json(args.release_evidence)
+    report = load_public_install_report(args.report)
+    validate_public_install_report(
+        release_evidence,
+        report,
+        version=args.version,
+        source_sha=args.source_sha,
+        generic_digest=args.generic_digest,
+        amd64_runtime_digest=args.amd64_runtime_digest,
+        aarch64_runtime_digest=args.aarch64_runtime_digest,
         published_at_utc=args.published_at_utc,
     )
     write_json(args.output, report)
@@ -1564,6 +1981,11 @@ def build_parser() -> argparse.ArgumentParser:
     haos_report.add_argument("--output", type=Path)
     haos_report.set_defaults(handler=command_haos_report)
 
+    haos_templates = commands.add_parser("haos-report-templates")
+    haos_templates.add_argument("--candidate", type=Path, required=True)
+    haos_templates.add_argument("--output-dir", type=Path, required=True)
+    haos_templates.set_defaults(handler=command_haos_report_templates)
+
     ha005_report = commands.add_parser("ha005-report")
     ha005_report.add_argument("--release-evidence", type=Path, required=True)
     ha005_report.add_argument("--report", type=Path, required=True)
@@ -1577,6 +1999,23 @@ def build_parser() -> argparse.ArgumentParser:
         ha005_report.add_argument(f"--{name}", required=True)
     ha005_report.add_argument("--output", type=Path, required=True)
     ha005_report.set_defaults(handler=command_ha005_report)
+
+    public_install_report = commands.add_parser("public-install-report")
+    public_install_report.add_argument(
+        "--release-evidence", type=Path, required=True
+    )
+    public_install_report.add_argument("--report", type=Path, required=True)
+    for name in (
+        "version",
+        "source-sha",
+        "generic-digest",
+        "amd64-runtime-digest",
+        "aarch64-runtime-digest",
+        "published-at-utc",
+    ):
+        public_install_report.add_argument(f"--{name}", required=True)
+    public_install_report.add_argument("--output", type=Path, required=True)
+    public_install_report.set_defaults(handler=command_public_install_report)
 
     finalize = commands.add_parser("finalize")
     finalize.add_argument("--candidate", type=Path, required=True)

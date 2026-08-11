@@ -26,7 +26,7 @@ name: HAOS evidence
           - native_updater_canary
           - telegram_modes
       report_json:
-        description: Sanitized antigravity-ha-haos-gate-evidence/v1 JSON
+        description: Candidate-bound sanitized v1 JSON completed from haos-report-templates/<gate>.json; unchanged NOT_RUN template is rejected
         required: true
         type: string
 

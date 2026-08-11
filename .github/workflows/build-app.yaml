@@ -685,6 +685,9 @@ jobs:
             --manifest candidate-index.json \
             --gap007-evidence gap007-release.json \
             --output candidate.json
+          python3 .github/scripts/release_contract.py haos-report-templates \
+            --candidate candidate.json \
+            --output-dir haos-report-templates
           for sbom in antigravity-for-home-assistant-*.spdx.json; do
             (( $(stat --format '%s' "$sbom") < 16777216 ))
           done
@@ -705,6 +708,7 @@ jobs:
             candidate.json
             candidate-index.json
             gap007-release.json
+            haos-report-templates/
             antigravity-for-home-assistant-amd64.spdx.json
             antigravity-for-home-assistant-arm64.spdx.json
             candidate-repository/
@@ -737,6 +741,10 @@ jobs:
             printf -- "- HAOS rehearsal version: \`%s-candidate.%s.%s\`\n" \
               "${{ needs.prepare.outputs.version }}" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
             printf -- "- HAOS repository bundle: \`candidate-repository/\`\n"
+            printf -- "- HAOS gate authoring templates: \`haos-report-templates/<gate>.json\`\n"
+            echo
+            echo 'The generated templates are fail-closed authoring aids. Unchanged NOT_RUN templates are rejected.'
+            echo 'Complete a working copy only after the matching real-HAOS checks, then submit it to HAOS evidence.'
             echo
             echo 'Run Candidate / finalize only after the exact digest HAOS evidence is available.'
           } >> "$GITHUB_STEP_SUMMARY"

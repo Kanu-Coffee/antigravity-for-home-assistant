@@ -120,7 +120,7 @@
 | ID | 상태 | 과제 | 완료 증거 |
 | --- | --- | --- | --- |
 | M0-01 | `VERIFIED` | `docs/v2/` 제품·아키텍처·보안 계약 작성 | 12개 문서, markdownlint 0, internal-link/contract check PASS |
-| M0-02 | `VERIFIED` | FR/SEC/TG/MIG/test traceability 검사 추가 | ST-010; `python3 tests/test_v2_docs_contract.py` 13/13 PASS |
+| M0-02 | `VERIFIED` | FR/SEC/TG/MIG/test traceability 검사 추가 | ST-010; `python3 tests/test_v2_docs_contract.py` 14/14 PASS |
 | M0-03 | `VERIFIED` | 현재 결함과 제거 대상을 issue 단위로 고정 | [gap register](gap-register.md) GAP/LEGACY IDs |
 | M0-04 | `VERIFIED` | v2 target version과 migration support window 확정 | [ADR-001](decisions.md#adr-001--v2-target과-직접-migration-창) |
 
@@ -206,7 +206,7 @@
 | M6-07 | `PARTIAL` | `image`, AppArmor와 breaking metadata | local schema/parser/App linter PASS; HAOS install TODO |
 | M6-08 | `PARTIAL` | staged candidate exact-digest smoke, HAOS rehearsal bundle와 rebuild 없는 idempotent promotion | remote PR Builder PASS; Candidate workflow/actual bundle run TODO |
 | M6-09 | `PARTIAL` | leaf SBOM, provenance, exact Cosign identity와 anonymous preflight | local workflow contract; public registry retrieval TODO |
-| M6-10 | `PARTIAL` | candidate-bound local HAOS rehearsal과 post-publish public acceptance | pre-finalize finalizer·post-publish HA-005 validator/uploader implemented; HA-006/HA-007/HA-005 NOT RUN |
+| M6-10 | `PARTIAL` | candidate-bound local HAOS rehearsal과 post-publish public acceptance | pre-finalize finalizer와 post-publish HA-005/HA-008 validator/uploader implemented; HA-005/006/007/008 NOT RUN |
 
 ### M7 — 사용자 문서와 최종 감사
 
@@ -216,7 +216,7 @@
 | M7-02 | `PARTIAL` | App options, migration와 security warning 번역 | schema/translation parity PASS; HAOS UI review TODO |
 | M7-03 | `PARTIAL` | troubleshooting과 recovery runbook | local failure rehearsal PASS; HAOS rehearsal TODO |
 | M7-04 | `IN_PROGRESS` | requirement-by-requirement completion audit | local audit/static evidence PASS; HAOS/release evidence pending |
-| M7-05 | `PARTIAL` | v2 release와 post-publish install/update 검증 | idempotent release/HA-005 acceptance gate implemented; public HA-005/install NOT RUN |
+| M7-05 | `PARTIAL` | v2 release와 post-publish install/update 검증 | idempotent release와 독립 HA-005/HA-008 acceptance gate implemented; public HA-005/HA-008 NOT RUN |
 
 ## 4. 요구사항 추적표
 
@@ -226,7 +226,7 @@
 
 | 요구사항 ID | 구현 마일스톤 | 필수 test ID |
 | --- | --- | --- |
-| FR-001 | M2, M3, M6 | ST-002, ST-005, ST-008, IM-001, IM-002, IM-003, IM-011, HA-001, AA-001 |
+| FR-001 | M2, M3, M6, M7 | ST-002, ST-005, ST-008, IM-001, IM-002, IM-003, IM-011, HA-001, HA-008, AA-001 |
 | FR-002 | M2 | AG-001, AG-002, AG-003, AG-004, AG-005, AG-006, AG-007, AG-008, AG-009, AG-010, AG-011, AG-012, AG-013, AG-014, IM-002, HA-001 |
 | FR-003 | M2, M6 | ST-008, IM-003, IM-004, IM-005, HA-001 |
 | FR-004 | M3, M4 | AG-005, AG-006, AG-007, IM-006, IM-007, IM-008, IM-009, IM-010, HA-002 |
@@ -268,7 +268,7 @@
 | MIG-007 | M6 | IM-012, HA-005, HA-007 |
 | MIG-008 | M2, M6 | AG-014, ST-005, IM-001, IM-002, HA-001, HA-006 |
 | MIG-009 | M1, M2, M6 | AG-014, ST-001, ST-002, ST-003, ST-004, ST-005, ST-006, ST-007, ST-008, ST-009, ST-010, IM-001, IM-002, IM-003, IM-004, IM-005, IM-006, IM-007, IM-008, IM-009, IM-010, IM-011, IM-012, HA-006, HA-007, AA-001 |
-| MIG-010 | M2, M6, M7 | AG-014, ST-010, IM-001, IM-002, IM-003, IM-004, IM-005, IM-006, IM-007, IM-008, IM-009, IM-010, IM-011, IM-012, HA-001, HA-002, HA-003, HA-004, HA-005, HA-006, HA-007, AA-001 |
+| MIG-010 | M2, M6, M7 | AG-014, ST-010, IM-001, IM-002, IM-003, IM-004, IM-005, IM-006, IM-007, IM-008, IM-009, IM-010, IM-011, IM-012, HA-001, HA-002, HA-003, HA-004, HA-005, HA-006, HA-007, HA-008, AA-001 |
 | MIG-011 | M0, M6, M7 | ST-010 |
 
 ## 5. 현재 제거 또는 교체 대상

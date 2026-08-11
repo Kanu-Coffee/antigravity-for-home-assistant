@@ -13,7 +13,7 @@
 | GAP-003 | `OPEN` | AppArmor 실제 enforce | HAOS의 AA-001 positive/negative matrix와 예상 deny audit PASS |
 | GAP-004 | `OPEN` | live Telegram | 실제 Bot API에서 세 mode, pairing, replay, restart와 network interruption HA-004 PASS |
 | GAP-005 | `OPEN` | public v1 migration | numeric publish 후 original repository/add-on identity의 amd64 `1.0.4 → 2.0.0` update/rollback HA-005 PASS |
-| GAP-006 | `OPEN` | public release supply chain | Candidate/HAOS evidence/finalize, numeric promotion/supply chain, reviewed merge/Release resume, post-publish two-arch repository install과 anonymous pull PASS |
+| GAP-006 | `OPEN` | public release supply chain | Candidate/HAOS evidence/finalize, numeric promotion/supply chain, reviewed merge/Release resume, post-publish two-arch public fresh-install `HA-008` artifact와 anonymous pull PASS |
 | GAP-007 | `IN_PROGRESS` | 성능·내구성 | current exact Candidate의 30분 Telegram soak, 15분 동시 장애, 1,000 entity, restart 20회 evidence가 immutable artifact에 보존 |
 | GAP-008 | `OPEN` | transient device test HAOS 증거 | 분리된 typed workflow의 local success/failure/replay suite는 PASS; 실제 safe entity restore E2E 필요 |
 | GAP-009 | `CLOSED` | transport ownership | ordinary read/memory/validate를 ha-read broker로 고정한 static + shared failure-injection PASS; privileged mutation/browser-auth 분리 사유 문서화 |
