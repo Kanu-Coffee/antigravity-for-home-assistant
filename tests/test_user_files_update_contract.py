@@ -76,6 +76,9 @@ def test_public_v1_upgrade_rehearsal_is_source_and_candidate_bound(
         'supervisor_option_prevalidation: "NOT_RUN"',
         'contains_credentials: false',
         "preserve mode unexpectedly claimed ownership of user native files",
+        '(has("toolPermission") | not)',
+        '$state.managed.settings.permission_rules',
+        'colorScheme:"tokyo night"',
     ):
         assert required in smoke
 

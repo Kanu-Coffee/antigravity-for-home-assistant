@@ -149,6 +149,14 @@ App이 소유한 key만 merge한다. 최소 관리 key는 다음과 같다.
 | `always-proceed` | `always-proceed` | native prompt를 줄이지만 AppArmor와 broker는 유지 |
 | `strict` | `strict` | 모든 non-read 작업을 확인 |
 
+Antigravity 1.1.11은 system default와 같은 값을 저장하지 않는 sparse persistence를
+적용한다. 따라서 `agy agent`가 `request-review`를 읽으면 redundant
+`toolPermission` key를 제거할 수 있다. 이 경우에도 App이 생성한
+`permissions.allow`, `permissions.ask`, `permissions.deny`가 native authorization
+계약이며 세 bucket과 ownership rule 전체를 검증해야 한다. 사용자 설정 보존 테스트는
+같은 이유로 default `colorScheme: "terminal"` 대신 CLI가 왕복 보존하는 공식
+non-default `colorScheme: "tokyo night"`를 사용한다.
+
 permission precedence는 native 규칙대로 deny > ask > allow다. AppArmor deny와
 broker의 고위험 정책은 `always-proceed`로도 완화되지 않는다.
 

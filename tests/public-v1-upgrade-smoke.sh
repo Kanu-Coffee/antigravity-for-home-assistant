@@ -926,13 +926,34 @@ MAPPING_FIXTURE
   assert_path_absent "${MAPPING_V2_CONTAINER}" \
     /data/antigravity-ha-test/legacy-mcp-executed
 
-  container_exec "${MAPPING_V2_CONTAINER}" jq --exit-status '
-    .toolPermission == "request-review"
-    and .enableTerminalSandbox == true
-    and (has("browser_approval_policy") | not)
-    and (has("antigravity_token") | not)
-    and (has("home_assistant_browser_token") | not)
-  ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null \
+  container_exec "${MAPPING_V2_CONTAINER}" jq --exit-status --slurp '
+    .[0] as $settings
+    | .[1] as $state
+    | ($settings
+      | (has("toolPermission") | not)
+      and .enableTerminalSandbox == true
+      and ((.permissions | keys | sort) == ["allow", "ask", "deny"])
+      and ((.permissions.allow | length) == (.permissions.allow | unique | length))
+      and ((.permissions.ask | length) == (.permissions.ask | unique | length))
+      and ((.permissions.deny | length) == (.permissions.deny | unique | length))
+      and (.permissions.allow | index("mcp(ha_read/ha_read_state)") != null)
+      and (.permissions.allow | index("mcp(playwright/browser_snapshot)") != null)
+      and (.permissions.ask | index("command(*)") != null)
+      and (.permissions.ask | index("mcp(home-assistant/*)") != null)
+      and (.permissions.ask | index("mcp(playwright/browser_click)") != null)
+      and (.permissions.deny | index("command(sudo)") != null)
+      and (.permissions.deny | index("read_file(/config/secrets.yaml)") != null)
+      and (has("browser_approval_policy") | not)
+      and (has("antigravity_token") | not)
+      and (has("home_assistant_browser_token") | not))
+    and (([
+      $settings.permissions.allow[],
+      $settings.permissions.ask[],
+      $settings.permissions.deny[]
+    ] | sort) == ($state.managed.settings.permission_rules | sort))
+  ' \
+    /data/home/.gemini/antigravity-cli/settings.json \
+    /data/antigravity-ha/migration/native-files-state.json >/dev/null \
     || fail 'legacy options were not conservatively mapped into fresh native settings'
   container_exec "${MAPPING_V2_CONTAINER}" cmp --silent \
     /etc/antigravity/mcp_config.json \
@@ -1017,6 +1038,7 @@ MAPPING_FIXTURE
 
 run_preserve_scenario() {
   local memory_result
+  local settings_metadata_before
   local path
   local key_type
   declare -a preserved_paths=(
@@ -1025,7 +1047,6 @@ run_preserve_scenario() {
     /data/antigravity/config.toml
     /data/antigravity/AGENTS.md
     /data/github-cli/hosts.yml
-    /data/home/.gemini/antigravity-cli/settings.json
     /data/home/.gemini/config/mcp_config.json
     /config/.antigravity-ha-public-v1-preserve
   )
@@ -1064,9 +1085,9 @@ printf '%s\n' "${FIXTURE_MARKER}-legacy-agents" > /data/antigravity/AGENTS.md
 printf '%s\n' "${FIXTURE_MARKER}-github" > /data/github-cli/hosts.yml
 jq --null-input --arg marker "${FIXTURE_MARKER}" '
   {
-    colorScheme:"terminal",
-    toolPermission:"strict",
+    colorScheme:"tokyo night",
     enableTerminalSandbox:true,
+    toolPermission:"strict",
     user_v1_marker:$marker
   }
 ' > /data/home/.gemini/antigravity-cli/settings.json
@@ -1097,6 +1118,8 @@ PRESERVE_FIXTURE
     hashes_before["${path}"]=$(container_hash "${PRESERVE_V1_CONTAINER}" "${path}")
     metadata_before["${path}"]=$(file_contract "${PRESERVE_V1_CONTAINER}" "${path}")
   done
+  settings_metadata_before=$(file_contract "${PRESERVE_V1_CONTAINER}" \
+    /data/home/.gemini/antigravity-cli/settings.json)
   assert_logs_clean "${PRESERVE_V1_CONTAINER}"
   stop_app "${PRESERVE_V1_CONTAINER}"
 
@@ -1110,11 +1133,22 @@ PRESERVE_FIXTURE
       "${metadata_before[${path}]}" ]] \
       || fail "persistent public v1 file metadata changed during upgrade: ${path}"
   done
+  [[ $(file_contract "${PRESERVE_V2_CONTAINER}" \
+    /data/home/.gemini/antigravity-cli/settings.json) == \
+    "${settings_metadata_before}" ]] \
+    || fail 'user native settings metadata changed during upgrade'
   container_exec "${PRESERVE_V2_CONTAINER}" jq --exit-status \
     --arg marker "${PRESERVE_MARKER}" '
-      .user_v1_marker == $marker
+      ((keys | sort) == [
+        "colorScheme",
+        "enableTerminalSandbox",
+        "toolPermission",
+        "user_v1_marker"
+      ])
+      and .colorScheme == "tokyo night"
       and .toolPermission == "strict"
       and .enableTerminalSandbox == true
+      and .user_v1_marker == $marker
     ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null \
     || fail 'user native settings were not preserved semantically'
   container_exec "${PRESERVE_V2_CONTAINER}" jq --exit-status \
