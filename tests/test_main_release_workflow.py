@@ -100,6 +100,11 @@ def test_main_release_creates_annotated_tag_and_prerelease_without_fake_evidence
     assert ".name == $title" in text
     assert "grep -Fq '(HTTP 404)' \"$release_error\"" in text
     assert "real-device acceptance continues after publication" in text
+    assert (
+        "printf -- '- Status: experimental prerelease; real-device acceptance "
+        "continues after publication.'" in text
+    )
+    assert "continues after publication.\\n'" not in text
     assert "haos_evidence_json" not in text
     assert "release-evidence.json" not in text
 

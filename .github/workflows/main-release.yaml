@@ -207,7 +207,7 @@ jobs:
               "$RUN_ID" "$RUN_ATTEMPT"
             printf -- '- Multi-arch OCI digest: `%s`\n' \
               "$(jq --raw-output .images.generic.digest "$candidate")"
-            printf -- '- Status: experimental prerelease; real-device acceptance continues after publication.\n'
+            printf -- '- Status: experimental prerelease; real-device acceptance continues after publication.'
           } > main-release-notes.md
           {
             printf 'amd64_image=%s\n' \
