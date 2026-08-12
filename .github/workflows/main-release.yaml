@@ -139,7 +139,9 @@ jobs:
           while IFS= read -r changed_path; do
             case "$changed_path" in
               .github/scripts/anonymous-candidate-preflight.sh | \
+              .github/scripts/release-oci.sh | \
               .github/workflows/main-release.yaml | \
+              tests/test_release_workflow_contract.py | \
               tests/test_main_release_workflow.py)
                 ;;
               *)

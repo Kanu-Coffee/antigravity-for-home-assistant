@@ -50,7 +50,9 @@ def test_main_release_consumes_one_exact_successful_candidate() -> None:
     assert 'git merge-base --is-ancestor "$SOURCE_SHA" "$GITHUB_SHA"' in text
     assert "Candidate-to-main runtime drift" in text
     assert ".github/scripts/anonymous-candidate-preflight.sh" in text
+    assert ".github/scripts/release-oci.sh" in text
     assert ".github/workflows/main-release.yaml" in text
+    assert "tests/test_release_workflow_contract.py" in text
     assert "tests/test_main_release_workflow.py" in text
     assert "source-rootfs-manifest.py verify" in text
     assert ".gap007_release.source_rootfs_sha256" in text
