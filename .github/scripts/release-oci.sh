@@ -82,9 +82,11 @@ if current_digest=$(inspect_digest \
   echo "conflict: ${target} resolves to ${current_digest}, expected ${expected_digest}" >&2
   exit 1
 fi
+precheck_message=$(<"$precheck_error")
 if ! grep -Eiq \
   'manifest unknown|no such manifest|manifest[^[:cntrl:]]*not found' \
-  "$precheck_error"; then
+  "$precheck_error" \
+  && [[ $precheck_message != "ERROR: ${target}: not found" ]]; then
   cat "$precheck_error" >&2
   echo "registry absence was not established for ${target}; refusing to create" >&2
   exit 1

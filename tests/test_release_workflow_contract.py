@@ -1846,6 +1846,7 @@ def _registry_fake_environment(
     expected_digest: str,
     gh_exit: int = 0,
     precheck_not_found: bool = False,
+    precheck_not_found_message: str = "manifest unknown",
     inspect_error: str = "",
 ) -> tuple[dict[str, str], Path]:
     fake_bin = tmp_path / "bin"
@@ -1872,7 +1873,7 @@ if [[ $1 == buildx && $2 == imagetools && $3 == inspect ]]; then
     exit 1
   fi
   if [[ ${FAKE_PRECHECK_NOT_FOUND} == 1 && ! -e ${FAKE_CREATED_STATE} ]]; then
-    echo 'manifest unknown' >&2
+    printf '%s\n' "$FAKE_PRECHECK_NOT_FOUND_MESSAGE" >&2
     exit 1
   fi
   cat "$FAKE_RAW_MANIFEST"
@@ -1898,6 +1899,7 @@ fi
         "FAKE_GH_EXIT": str(gh_exit),
         "FAKE_INSPECT_ERROR": inspect_error,
         "FAKE_PRECHECK_NOT_FOUND": "1" if precheck_not_found else "0",
+        "FAKE_PRECHECK_NOT_FOUND_MESSAGE": precheck_not_found_message,
         "FAKE_RAW_MANIFEST": str(raw_path),
         "FAKE_VERSIONS_JSON": json.dumps(versions),
         "GH_TOKEN": "synthetic-token",
@@ -1945,6 +1947,57 @@ def test_registry_promotion_absent_same_conflict_and_api_error(
     )
     assert result.returncode == 0, result.stderr
     assert "imagetools create" in log.read_text()
+
+    buildx_not_found_dir = tmp_path / "buildx-not-found"
+    buildx_not_found_dir.mkdir()
+    env, log = _registry_fake_environment(
+        buildx_not_found_dir,
+        [[]],
+        raw,
+        digest,
+        precheck_not_found=True,
+        precheck_not_found_message=f"ERROR: {target}: not found",
+    )
+    result = _run(
+        ["bash", str(script), "ensure-tag", target, source, digest], env=env
+    )
+    assert result.returncode == 0, result.stderr
+    assert "imagetools create" in log.read_text()
+
+    wrong_target_dir = tmp_path / "wrong-target-not-found"
+    wrong_target_dir.mkdir()
+    env, log = _registry_fake_environment(
+        wrong_target_dir,
+        [[]],
+        raw,
+        digest,
+        inspect_error=(
+            "ERROR: ghcr.io/kanu-coffee/"
+            "amd64-antigravity-for-home-assistant:2.0.0: not found"
+        ),
+    )
+    result = _run(
+        ["bash", str(script), "ensure-tag", target, source, digest], env=env
+    )
+    assert result.returncode != 0
+    assert "registry absence was not established" in result.stderr
+    assert "imagetools create" not in log.read_text()
+
+    mixed_error_dir = tmp_path / "mixed-not-found-error"
+    mixed_error_dir.mkdir()
+    env, log = _registry_fake_environment(
+        mixed_error_dir,
+        [[]],
+        raw,
+        digest,
+        inspect_error=f"ERROR: {target}: not found\nunexpected EOF",
+    )
+    result = _run(
+        ["bash", str(script), "ensure-tag", target, source, digest], env=env
+    )
+    assert result.returncode != 0
+    assert "registry absence was not established" in result.stderr
+    assert "imagetools create" not in log.read_text()
 
     same_dir = tmp_path / "same"
     same_dir.mkdir()
