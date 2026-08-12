@@ -1,0 +1,475 @@
+---
+name: Main release
+
+"on":
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Numeric App version already present on main
+        required: true
+        default: "2.0.0"
+        type: string
+      candidate_run_id:
+        description: Successful Candidate build run ID
+        required: true
+        type: string
+      candidate_run_attempt:
+        description: Successful Candidate build run attempt
+        required: true
+        default: "1"
+        type: string
+      confirm:
+        description: Type publish-from-main to publish the exact Candidate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: main-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Promote exact Candidate and publish numeric release
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+      packages: write
+    steps:
+      - name: Authorize single-main release
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          RUN_ID: ${{ inputs.candidate_run_id }}
+        run: |
+          set -Eeuo pipefail
+          [[ $GITHUB_ACTOR == "$GITHUB_REPOSITORY_OWNER" ]]
+          [[ $CONFIRM == publish-from-main ]]
+          [[ $RELEASE_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ $RUN_ID =~ ^[1-9][0-9]*$ ]]
+          [[ $RUN_ATTEMPT =~ ^[1-9][0-9]*$ ]]
+
+      - name: Check out current main
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve immutable Candidate artifact
+        id: artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAIN_SHA: ${{ github.sha }}
+          RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          RUN_ID: ${{ inputs.candidate_run_id }}
+        run: |
+          set -Eeuo pipefail
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}" \
+            > candidate-run.json
+          jq --exit-status \
+            --arg main_sha "$MAIN_SHA" \
+            --argjson attempt "$RUN_ATTEMPT" '
+              .path == ".github/workflows/candidate.yaml"
+              and .event == "workflow_dispatch"
+              and .status == "completed"
+              and .conclusion == "success"
+              and .run_attempt == $attempt
+              and .head_branch == "main"
+              and .head_sha == $main_sha
+            ' candidate-run.json >/dev/null
+          source_sha=$(jq --raw-output .head_sha candidate-run.json)
+          artifact_name="release-candidate-${source_sha}-${RUN_ID}-${RUN_ATTEMPT}"
+          gh api \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts?name=${artifact_name}" \
+            > candidate-artifacts.json
+          jq --exit-status \
+            --arg artifact_name "$artifact_name" '
+              .total_count == 1
+              and (.artifacts | length == 1)
+              and .artifacts[0].name == $artifact_name
+              and .artifacts[0].expired == false
+              and (.artifacts[0].digest | test("^sha256:[0-9a-f]{64}$"))
+            ' candidate-artifacts.json >/dev/null
+          {
+            printf 'artifact_digest=%s\n' \
+              "$(jq --raw-output .artifacts[0].digest candidate-artifacts.json)"
+            printf 'artifact_id=%s\n' \
+              "$(jq --raw-output .artifacts[0].id candidate-artifacts.json)"
+            printf 'artifact_name=%s\n' "$artifact_name"
+            printf 'source_sha=%s\n' "$source_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Reconfirm unchanged remote main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          remote_main=$(gh api "/repos/${GITHUB_REPOSITORY}/commits/main" \
+            --jq .sha)
+          [[ $remote_main == "$GITHUB_SHA" ]]
+
+      - name: Download exact Candidate artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifact.outputs.artifact_id }}
+          digest-mismatch: error
+          path: release-candidate
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.candidate_run_id }}
+
+      - name: Validate Candidate against current main
+        id: candidate
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          RUN_ID: ${{ inputs.candidate_run_id }}
+          SOURCE_SHA: ${{ steps.artifact.outputs.source_sha }}
+        run: |
+          set -Eeuo pipefail
+          candidate=release-candidate/candidate.json
+          test -f "$candidate"
+          python3 .github/scripts/source-rootfs-manifest.py verify \
+            --root antigravity_home_assistant/rootfs \
+            --manifest \
+              antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/source-rootfs-manifest.json
+          [[ $SOURCE_SHA == "$GITHUB_SHA" ]]
+          config_version=$(sed -n \
+            's/^version: "\([^"]*\)"$/\1/p' \
+            antigravity_home_assistant/config.yaml)
+          [[ $config_version == "$RELEASE_VERSION" ]]
+          jq --exit-status \
+            --arg source "$SOURCE_SHA" \
+            --arg version "$RELEASE_VERSION" \
+            --argjson run_attempt "$RUN_ATTEMPT" \
+            --argjson run_id "$RUN_ID" '
+              .schema == "antigravity-ha-release-candidate/v1"
+              and .source_sha == $source
+              and .version == $version
+              and .run_id == $run_id
+              and .run_attempt == $run_attempt
+              and .automated_gates == {
+                "exact_digest_smoke": "PASS",
+                "gap007_performance_durability": "PASS",
+                "native_arm64_full_feasible": "PASS",
+                "source_quality": "PASS",
+                "spdx_leaf_sbom": "PASS"
+              }
+              and (.images.generic.digest | test("^sha256:[0-9a-f]{64}$"))
+              and (.images.amd64.stage_digest | test("^sha256:[0-9a-f]{64}$"))
+              and (.images.aarch64.stage_digest | test("^sha256:[0-9a-f]{64}$"))
+            ' "$candidate" >/dev/null
+          current_rootfs=$(jq --raw-output .source_rootfs_sha256 \
+            antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/source-rootfs-manifest.json)
+          [[ $(jq --raw-output .gap007_release.source_rootfs_sha256 \
+            "$candidate") == "$current_rootfs" ]]
+          [[ $(jq --raw-output .gap007_release.source_sha "$candidate") == \
+            "$SOURCE_SHA" ]]
+          [[ sha256:$(sha256sum release-candidate/gap007-release.json | \
+            cut -d ' ' -f 1) == \
+            $(jq --raw-output .gap007_release.evidence_sha256 "$candidate") ]]
+          index_result=$(python3 .github/scripts/release_contract.py index \
+            --manifest release-candidate/candidate-index.json \
+            --expected-arch amd64 \
+            --expected-arch aarch64 \
+            --expected-digest \
+              "$(jq --raw-output .images.generic.digest "$candidate")")
+          [[ $(jq --raw-output .amd64 <<< "$index_result") == \
+            $(jq --raw-output .images.amd64.runtime_digest "$candidate") ]]
+          [[ $(jq --raw-output .aarch64 <<< "$index_result") == \
+            $(jq --raw-output .images.aarch64.runtime_digest "$candidate") ]]
+          tag_message=$(printf \
+            'Antigravity for Home Assistant %s\n\nCandidate-Run-ID: %s\nCandidate-Run-Attempt: %s\n' \
+            "$RELEASE_VERSION" "$RUN_ID" "$RUN_ATTEMPT")
+          printf '%s\n' "$tag_message" > main-release-tag-message.txt
+          # shellcheck disable=SC2016
+          {
+            printf '# Antigravity for Home Assistant %s\n\n' "$RELEASE_VERSION"
+            printf 'Published from the exact successful Candidate on the single `main` development line.\n\n'
+            printf -- '- Candidate source: `%s`\n' "$SOURCE_SHA"
+            printf -- '- Candidate run: `%s` (attempt `%s`)\n' \
+              "$RUN_ID" "$RUN_ATTEMPT"
+            printf -- '- Multi-arch OCI digest: `%s`\n' \
+              "$(jq --raw-output .images.generic.digest "$candidate")"
+            printf -- '- Status: experimental prerelease; real-device acceptance continues after publication.\n'
+          } > main-release-notes.md
+          {
+            printf 'amd64_image=%s\n' \
+              "$(jq --raw-output .images.amd64.name "$candidate")"
+            printf 'amd64_runtime_digest=%s\n' \
+              "$(jq --raw-output .images.amd64.runtime_digest "$candidate")"
+            printf 'amd64_stage_digest=%s\n' \
+              "$(jq --raw-output .images.amd64.stage_digest "$candidate")"
+            printf 'arm64_image=%s\n' \
+              "$(jq --raw-output .images.aarch64.name "$candidate")"
+            printf 'arm64_runtime_digest=%s\n' \
+              "$(jq --raw-output .images.aarch64.runtime_digest "$candidate")"
+            printf 'arm64_stage_digest=%s\n' \
+              "$(jq --raw-output .images.aarch64.stage_digest "$candidate")"
+            printf 'generic_digest=%s\n' \
+              "$(jq --raw-output .images.generic.digest "$candidate")"
+            printf 'image=%s\n' \
+              "$(jq --raw-output .images.generic.name "$candidate")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Reject conflicting tag or Release before registry mutation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ steps.artifact.outputs.source_sha }}
+        run: |
+          set -Eeuo pipefail
+          temporary_directory=$(mktemp -d)
+          cleanup_metadata_preflight() {
+            rm -rf -- "$temporary_directory"
+          }
+          trap cleanup_metadata_preflight EXIT
+          tag_exists=false
+          if gh api "/repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_VERSION}" \
+            > "${temporary_directory}/tag-ref.json" \
+            2> "${temporary_directory}/tag-error.txt"; then
+            tag_exists=true
+            jq --exit-status '.object.type == "tag"' \
+              "${temporary_directory}/tag-ref.json" >/dev/null
+            tag_object=$(jq --raw-output .object.sha \
+              "${temporary_directory}/tag-ref.json")
+            gh api "/repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" \
+              > "${temporary_directory}/tag-object.json"
+            jq --exit-status \
+              --arg message "$(cat main-release-tag-message.txt)" \
+              --arg source "$SOURCE_SHA" \
+              --arg tag "$RELEASE_VERSION" '
+                .tag == $tag
+                and .message == $message
+                and .object.type == "commit"
+                and .object.sha == $source
+              ' "${temporary_directory}/tag-object.json" >/dev/null
+          else
+            grep -Fq '(HTTP 404)' "${temporary_directory}/tag-error.txt"
+          fi
+          if gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_VERSION}" \
+            > "${temporary_directory}/release.json" \
+            2> "${temporary_directory}/release-error.txt"; then
+            [[ $tag_exists == true ]]
+            jq --exit-status \
+              --arg body "$(cat main-release-notes.md)" \
+              --arg source "$SOURCE_SHA" \
+              --arg tag "$RELEASE_VERSION" \
+              --arg title "Antigravity for Home Assistant ${RELEASE_VERSION}" '
+                .tag_name == $tag
+                and .target_commitish == $source
+                and .name == $title
+                and .body == $body
+                and .draft == false
+                and .prerelease == true
+              ' "${temporary_directory}/release.json" >/dev/null
+          else
+            grep -Fq '(HTTP 404)' "${temporary_directory}/release-error.txt"
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
+        with:
+          version: v0.32.1
+
+      - name: Require public anonymous exact Candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash .github/scripts/anonymous-candidate-preflight.sh \
+            "${{ steps.candidate.outputs.image }}" \
+            "${{ steps.candidate.outputs.generic_digest }}" \
+            "${{ steps.candidate.outputs.amd64_image }}" \
+            "${{ steps.candidate.outputs.amd64_stage_digest }}" \
+            "${{ steps.candidate.outputs.arm64_image }}" \
+            "${{ steps.candidate.outputs.arm64_stage_digest }}" \
+            .github/scripts/release_contract.py
+
+      - name: Log in to GHCR for exact promotion
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ github.token }}
+
+      - name: Carbon-copy numeric architecture and generic tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -Eeuo pipefail
+          bash .github/scripts/release-oci.sh ensure-tag \
+            "${{ steps.candidate.outputs.amd64_image }}:${RELEASE_VERSION}" \
+            "${{ steps.candidate.outputs.amd64_image }}@${{ steps.candidate.outputs.amd64_stage_digest }}" \
+            "${{ steps.candidate.outputs.amd64_stage_digest }}"
+          bash .github/scripts/release-oci.sh ensure-tag \
+            "${{ steps.candidate.outputs.arm64_image }}:${RELEASE_VERSION}" \
+            "${{ steps.candidate.outputs.arm64_image }}@${{ steps.candidate.outputs.arm64_stage_digest }}" \
+            "${{ steps.candidate.outputs.arm64_stage_digest }}"
+          # The generic tag is deliberately published last.
+          bash .github/scripts/release-oci.sh ensure-tag \
+            "${{ steps.candidate.outputs.image }}:${RELEASE_VERSION}" \
+            "${{ steps.candidate.outputs.image }}@${{ steps.candidate.outputs.generic_digest }}" \
+            "${{ steps.candidate.outputs.generic_digest }}"
+
+      - name: Verify promoted numeric image anonymously
+        env:
+          AMD64_IMAGE: ${{ steps.candidate.outputs.amd64_image }}
+          AMD64_STAGE_DIGEST: ${{ steps.candidate.outputs.amd64_stage_digest }}
+          AMD64_RUNTIME_DIGEST: ${{ steps.candidate.outputs.amd64_runtime_digest }}
+          ARM64_IMAGE: ${{ steps.candidate.outputs.arm64_image }}
+          ARM64_STAGE_DIGEST: ${{ steps.candidate.outputs.arm64_stage_digest }}
+          ARM64_RUNTIME_DIGEST: ${{ steps.candidate.outputs.arm64_runtime_digest }}
+          GENERIC_DIGEST: ${{ steps.candidate.outputs.generic_digest }}
+          IMAGE: ${{ steps.candidate.outputs.image }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -Eeuo pipefail
+          anonymous_config=$(mktemp -d)
+          temporary_directory=$(mktemp -d)
+          cleanup_anonymous_verification() {
+            rm -rf -- "$anonymous_config" "$temporary_directory"
+          }
+          trap cleanup_anonymous_verification EXIT
+          printf '{}\n' > "${anonymous_config}/config.json"
+          export DOCKER_CONFIG=$anonymous_config
+          docker buildx imagetools inspect --raw \
+            "${IMAGE}:${RELEASE_VERSION}" > "${temporary_directory}/index.json"
+          result=$(python3 .github/scripts/release_contract.py index \
+            --manifest "${temporary_directory}/index.json" \
+            --expected-arch amd64 \
+            --expected-arch aarch64 \
+            --expected-digest "$GENERIC_DIGEST")
+          [[ $(jq --raw-output .amd64 <<< "$result") == \
+            "$AMD64_RUNTIME_DIGEST" ]]
+          [[ $(jq --raw-output .aarch64 <<< "$result") == \
+            "$ARM64_RUNTIME_DIGEST" ]]
+          for binding in \
+            "${AMD64_IMAGE}:${RELEASE_VERSION}|${AMD64_STAGE_DIGEST}" \
+            "${ARM64_IMAGE}:${RELEASE_VERSION}|${ARM64_STAGE_DIGEST}"; do
+            reference=${binding%%|*}
+            expected=${binding##*|}
+            raw_file="${temporary_directory}/$(printf '%s' "$reference" | \
+              sha256sum | cut -d ' ' -f 1).json"
+            docker buildx imagetools inspect --raw "$reference" > "$raw_file"
+            [[ sha256:$(sha256sum "$raw_file" | cut -d ' ' -f 1) == \
+              "$expected" ]]
+          done
+          docker pull --platform linux/amd64 \
+            "${IMAGE}@${GENERIC_DIGEST}"
+          docker pull --platform linux/arm64 \
+            "${IMAGE}@${GENERIC_DIGEST}"
+
+      - name: Create or verify annotated numeric tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          RUN_ID: ${{ inputs.candidate_run_id }}
+          SOURCE_SHA: ${{ steps.artifact.outputs.source_sha }}
+        run: |
+          set -Eeuo pipefail
+          temporary_directory=$(mktemp -d)
+          cleanup_tag_files() {
+            rm -rf -- "$temporary_directory"
+          }
+          trap cleanup_tag_files EXIT
+          if gh api "/repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_VERSION}" \
+            > "${temporary_directory}/tag-ref.json" \
+            2> "${temporary_directory}/tag-error.txt"; then
+            jq --exit-status '.object.type == "tag"' \
+              "${temporary_directory}/tag-ref.json" >/dev/null
+            tag_object=$(jq --raw-output .object.sha \
+              "${temporary_directory}/tag-ref.json")
+            gh api "/repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" \
+              > "${temporary_directory}/tag-object.json"
+            jq --exit-status \
+              --arg message "$(cat main-release-tag-message.txt)" \
+              --arg source "$SOURCE_SHA" \
+              --arg tag "$RELEASE_VERSION" '
+                .tag == $tag
+                and .message == $message
+                and .object.type == "commit"
+                and .object.sha == $source
+              ' "${temporary_directory}/tag-object.json" >/dev/null
+          else
+            grep -Fq '(HTTP 404)' "${temporary_directory}/tag-error.txt"
+            tag_object=$(gh api --method POST \
+              "/repos/${GITHUB_REPOSITORY}/git/tags" \
+              --field tag="$RELEASE_VERSION" \
+              --field message="$(cat main-release-tag-message.txt)" \
+              --field object="$SOURCE_SHA" \
+              --field type=commit \
+              --jq .sha)
+            [[ $tag_object =~ ^[0-9a-f]{40}$ ]]
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/git/refs" \
+              --field ref="refs/tags/${RELEASE_VERSION}" \
+              --field sha="$tag_object" >/dev/null
+          fi
+
+      - name: Create or verify GitHub prerelease
+        env:
+          CANDIDATE_DIGEST: ${{ steps.candidate.outputs.generic_digest }}
+          CANDIDATE_SOURCE: ${{ steps.artifact.outputs.source_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          RUN_ID: ${{ inputs.candidate_run_id }}
+        run: |
+          set -Eeuo pipefail
+          release_json=$(mktemp)
+          release_error=$(mktemp)
+          cleanup_release_files() {
+            rm -f -- "$release_error" "$release_json"
+          }
+          trap cleanup_release_files EXIT
+          verify_release() {
+            jq --exit-status \
+              --arg body "$(cat main-release-notes.md)" \
+              --arg source "$CANDIDATE_SOURCE" \
+              --arg tag "$RELEASE_VERSION" \
+              --arg title "Antigravity for Home Assistant ${RELEASE_VERSION}" '
+                .tag_name == $tag
+                and .target_commitish == $source
+                and .name == $title
+                and .body == $body
+                and .draft == false
+                and .prerelease == true
+              ' "$1" >/dev/null
+          }
+          if gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_VERSION}" \
+            > "$release_json" 2> "$release_error"; then
+            verify_release "$release_json"
+          else
+            grep -Fq '(HTTP 404)' "$release_error"
+            gh release create "$RELEASE_VERSION" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --target "$CANDIDATE_SOURCE" \
+              --prerelease \
+              --title "Antigravity for Home Assistant ${RELEASE_VERSION}" \
+              --notes-file main-release-notes.md
+            gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_VERSION}" \
+              > "$release_json"
+            verify_release "$release_json"
+          fi
+
+      - name: Publish release summary
+        env:
+          GENERIC_DIGEST: ${{ steps.candidate.outputs.generic_digest }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ steps.artifact.outputs.source_sha }}
+        run: |
+          # shellcheck disable=SC2016
+          {
+            echo '## Numeric App release published'
+            echo
+            printf -- '- Version: `%s`\n' "$RELEASE_VERSION"
+            printf -- '- Candidate source: `%s`\n' "$SOURCE_SHA"
+            printf -- '- Exact generic digest: `%s`\n' "$GENERIC_DIGEST"
+            echo '- HAOS can now resolve the App version to the matching GHCR tag.'
+          } >> "$GITHUB_STEP_SUMMARY"
