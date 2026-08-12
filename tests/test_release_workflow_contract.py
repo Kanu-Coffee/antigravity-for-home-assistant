@@ -2447,9 +2447,15 @@ def test_workflows_encode_exact_release_invariants() -> None:
     assert build.count("suite: telegram-isolation") == 2
     assert build.count("suite: public-v1") == 1
     assert "public-v1) exec bash tests/public-v1-upgrade-smoke.sh" in build
-    assert "Fetch exact public v1 source tag for migration rehearsal" in build
+    assert "Build exact public v1 source image for migration rehearsal" in build
     assert "refs/tags/v1.0.4:refs/tags/v1.0.4" in build
     assert "aba6805e8bf1f32e68976a67a46536c3ca362af8" in build
+    assert "git archive v1.0.4 | tar --extract" in build
+    assert "--tag antigravity-for-home-assistant:public-v1.0.4-local" in build
+    assert (
+        "antigravity-for-home-assistant:public-v1.0.4-local \"$image\" ;;"
+        in build
+    )
     assert "telegram-isolation) exec bash tests/telegram-isolation-smoke.sh" in build
     assert build.count("suite: update") == 2
     assert "- telegram-isolation" in ci

@@ -315,7 +315,7 @@ MAX_IMAGE_SIZE_BYTES=$(jq --exit-status --raw-output \
   "$PERFORMANCE_BUDGET") \
   || fail 'image size budget is missing'
 (( IMAGE_SIZE_BYTES <= MAX_IMAGE_SIZE_BYTES )) \
-  || fail 'candidate image size exceeded its fixed budget'
+  || fail "candidate image size ${IMAGE_SIZE_BYTES} exceeded its fixed budget ${MAX_IMAGE_SIZE_BYTES}"
 
 docker volume create "$DATA_VOLUME" >/dev/null
 docker volume create "$CONFIG_VOLUME" >/dev/null

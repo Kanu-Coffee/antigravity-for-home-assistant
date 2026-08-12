@@ -94,6 +94,7 @@ def test_release_thresholds_provenance_and_closure_are_fail_closed() -> None:
         'MAX_AVERAGE_CPU_PERCENT=',
         'MAX_PEAK_RSS_BYTES=',
         'MAX_IMAGE_SIZE_BYTES=',
+        'candidate image size ${IMAGE_SIZE_BYTES} exceeded its fixed budget ${MAX_IMAGE_SIZE_BYTES}',
         'for ((restart_index = 1; restart_index <= 20; restart_index += 1))',
         '[[ $(docker image inspect --format \'{{.Id}}\' "$IMAGE") == "$IMAGE_ID" ]]',
         '.provenance.candidate_image_id = $image_id',
