@@ -37,6 +37,7 @@ const APPROVAL_TTL_MS = 2 * 60 * 1000;
 const MAX_QUEUED_PER_REQUESTER = 4;
 const MAX_ACTIVE_RUNS = 2;
 const MAX_TELEGRAM_CHUNKS = 8;
+const AUTHORIZATION_RECHECK_MS = 2_000;
 
 const ACCESS_MODES = new Set(["read_only", "confirm_changes", "autonomous"]);
 const pendingApprovals = new Map();
@@ -308,6 +309,26 @@ function isAuthorized(config, messageLike, { pairingLookup = isPaired } = {}) {
   } catch {
     return false;
   }
+}
+
+function hasStaticAuthorization(config) {
+  return config.allowedUsers.size > 0 && config.allowedChats.size > 0;
+}
+
+async function waitForTelegramAuthorization(config, {
+  pairingBootstrap = hasPairingBootstrap,
+  wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+} = {}) {
+  if (hasStaticAuthorization(config)) return "static";
+  if (pairingBootstrap()) return "local_pairing";
+  audit("waiting_for_authorization", {
+    reason: "static_allowlists_or_local_pairing_required",
+  });
+  while (!pairingBootstrap()) {
+    await wait(AUTHORIZATION_RECHECK_MS);
+  }
+  audit("authorization_ready", { method: "local_pairing" });
+  return "local_pairing";
 }
 
 function chunkText(text, maxLen = 4096) {
@@ -1643,10 +1664,7 @@ async function main() {
     audit("disabled");
     return;
   }
-  const staticAuthorizationConfigured = config.allowedUsers.size > 0 && config.allowedChats.size > 0;
-  if (!staticAuthorizationConfigured && !hasPairingBootstrap()) {
-    throw new Error("Telegram requires both static allowlists or one local pairing token/authorization");
-  }
+  await waitForTelegramAuthorization(config);
   const brokerHealth = await sendBrokerRequest("health", {});
   if (brokerHealth?.status !== "ready") throw new Error("change broker is not ready");
   await telegramApi(config.botToken, "deleteWebhook", { drop_pending_updates: false }, 15_000);
@@ -1689,6 +1707,7 @@ export {
   safeError,
   terminalExecutionResult,
   waitForExecution,
+  waitForTelegramAuthorization,
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

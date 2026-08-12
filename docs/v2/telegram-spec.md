@@ -22,6 +22,12 @@ bridge 시작 조건은 다음을 모두 만족해야 한다.
 3. static allowlist 또는 유효한 local pairing identity가 하나 이상 존재
 4. App init과 readonly/proposal broker가 ready
 
+1~2가 충족됐지만 3이 아직 충족되지 않으면 bridge는 Bot API에 접속하거나 종료하지
+않고 bounded local authorization state만 주기적으로 다시 확인한다. 이 대기 상태는
+한 번만 정제해 기록하며 S6 restart loop를 만들지 않는다. local pairing 생성은 같은
+프로세스에서 감지하고, static option 변경은 App 재시작 뒤 반영한다. authorization
+state의 type/mode/schema가 안전하지 않으면 대기하지 않고 fail closed 한다.
+
 인증 key는 Telegram numeric ID를 decimal string으로 정규화한
 `(user_id, chat_id)` 쌍이다. username, phone, display name, message text와 forwarded
 sender는 인증에 사용하지 않는다.

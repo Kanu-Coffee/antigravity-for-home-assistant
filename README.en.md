@@ -125,6 +125,10 @@ once, so treat it as a secret. Manage authorizations with
 `ha-telegram-pair revoke AUTHORIZATION_ID`. A PIN, automatic deep link, and
 `/unpair` are not part of the v2 contract.
 
+If Telegram was enabled first, the bridge does not contact the Bot API. It
+waits quietly in `waiting_for_authorization`. Creating a pairing in the same
+App terminal is detected without an App restart.
+
 ### Three operating modes
 
 | Mode | Reads | Change proposals |

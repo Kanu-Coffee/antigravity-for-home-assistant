@@ -120,6 +120,10 @@ Telegram에서 `/start TOKEN`을 보냅니다. token은 한 번만 표시되고 
 `ha-telegram-pair revoke AUTHORIZATION_ID`로 관리합니다. PIN, 자동 deep link,
 `/unpair`는 v2 계약이 아닙니다.
 
+Telegram을 먼저 활성화했더라도 bridge는 Bot API에 연결하지 않고
+`waiting_for_authorization` 상태로 조용히 대기합니다. 같은 App 터미널에서 pairing을
+생성하면 App을 재시작하지 않아도 이를 감지해 연결을 계속합니다.
+
 ### 세 가지 동작 모드
 
 | 모드 | 조회 | 변경 proposal |

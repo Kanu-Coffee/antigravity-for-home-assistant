@@ -50,7 +50,7 @@ def test_public_v1_upgrade_rehearsal_is_source_and_candidate_bound(
         "/data/antigravity-ha/migration/native-files-state.json",
         "/data/antigravity-ha/migration/managed-plugin.json",
         ".antigravity-ha-managed.json",
-        '.applied_versions == ["2.0.0"]',
+        '.applied_versions == ["2.0.1"]',
         'antigravity-real plugin validate',
         "settings_hash_before",
         "mcp_hash_before",

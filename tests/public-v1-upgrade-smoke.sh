@@ -735,8 +735,8 @@ assert_managed_plugin_contract() {
     and .schema == 1
     and .owner == "antigravity-for-home-assistant"
     and .plugin == "home-assistant"
-    and .installed_version == "2.0.0"
-    and .applied_versions == ["2.0.0"]
+    and .installed_version == "2.0.1"
+    and .applied_versions == ["2.0.1"]
   ' "${marker}" >/dev/null \
     || fail 'the v2 managed plugin ownership marker is invalid'
   container_exec "${container}" /bin/bash -ceu '

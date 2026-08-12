@@ -2,6 +2,16 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.0.1] - 2026-08-12
+
+### Fixed
+
+- Keep an enabled Telegram bridge quietly fail-closed while it waits for both
+  static allowlists or a new local private pairing, instead of exiting into an
+  unbounded S6 restart and fatal-log loop.
+- Detect a newly created local pairing without restarting the App; no Bot API
+  request is made before an authorization bootstrap exists.
+
 ## [2.0.0] - 2026-08-11
 
 ### Added
@@ -36,7 +46,7 @@ All notable changes to this App are documented in this file.
 ### Release status
 
 - Local amd64 full image suites and QEMU arm64 packaging/Telegram-isolation evidence exist, while real HAOS amd64/aarch64 install/update, AppArmor enforcement, live Telegram/OAuth, rollback, native updater, public candidate visibility, and post-publish repository installation remain **NOT RUN**.
-- The release evidence template therefore remains fail-closed and the v2 release is **PARTIAL**. No numeric `2.0.0` image or GitHub Release is claimed by this changelog entry.
+- The release evidence template therefore remains fail-closed and the v2 release is **PARTIAL**. The numeric `2.0.0` image and prerelease were subsequently published from the exact automated Candidate; post-publish real-device acceptance remains separate.
 
 ## [1.0.4] - 2026-08-08
 

@@ -246,6 +246,11 @@ ha-telegram-pair revoke AUTHORIZATION_ID
 Handle list output and authorization IDs only where needed. v2 has no
 log-generated automatic deep link, six-digit PIN, or Telegram `/unpair` command.
 
+If Telegram was enabled first, the bridge does not contact the Bot API. It
+waits quietly in `waiting_for_authorization`. Creating a pairing in the same
+App terminal is detected without an App restart. Restart the App after changing
+the static lists so Supervisor applies the new options.
+
 ### Modes and change policy
 
 | Operation | `read_only` | `confirm_changes` | `autonomous` |
@@ -502,6 +507,9 @@ without the user's explicit current confirmation.
 ### Telegram does not respond
 
 - Check `telegram_enabled`, bot token format, and whether the App restarted.
+- If the log says `waiting_for_authorization`, do not keep restarting. Configure
+  both static lists or complete local pairing. Save `telegram_enabled: false`
+  when Telegram is not in use.
 - For static authorization, check the intersection of both user and chat lists.
 - For pairing, check TTL, one-time consumption, and `ha-telegram-pair list`.
 - Use `/status` and App logs to inspect queue, worker, and broker health.

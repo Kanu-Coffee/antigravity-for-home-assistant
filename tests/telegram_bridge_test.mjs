@@ -25,6 +25,7 @@ import {
   renderCancellationResult,
   runAntigravityPrompt,
   safeError,
+  waitForTelegramAuthorization,
 } from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs";
 import {
   loadBridgeState,
@@ -114,6 +115,39 @@ const incompleteStatic = loadRuntimeConfig({
   telegram_allowed_user_ids: ["100"],
 });
 assert.equal(isAuthorized(incompleteStatic, { from: { id: 100 }, chat: { id: -200 } }), false);
+let unexpectedPairingCheck = false;
+assert.equal(await waitForTelegramAuthorization(config, {
+  pairingBootstrap: () => {
+    unexpectedPairingCheck = true;
+    return false;
+  },
+  wait: async () => assert.fail("static authorization must not wait"),
+}), "static");
+assert.equal(unexpectedPairingCheck, false);
+let pairingChecks = 0;
+const authorizationWaits = [];
+assert.equal(await waitForTelegramAuthorization(incompleteStatic, {
+  pairingBootstrap: () => {
+    pairingChecks += 1;
+    return pairingChecks === 3;
+  },
+  wait: async (milliseconds) => authorizationWaits.push(milliseconds),
+}), "local_pairing");
+assert.deepEqual(authorizationWaits, [2_000]);
+assert.equal(pairingChecks, 3);
+assert.equal(await waitForTelegramAuthorization(incompleteStatic, {
+  pairingBootstrap: () => true,
+  wait: async () => assert.fail("existing pairing must not wait"),
+}), "local_pairing");
+await assert.rejects(
+  waitForTelegramAuthorization(incompleteStatic, {
+    pairingBootstrap: () => {
+      throw new Error("unsafe Telegram authorization state");
+    },
+    wait: async () => {},
+  }),
+  /unsafe Telegram authorization state/u,
+);
 assert.throws(() => loadRuntimeConfig({ telegram_enabled: true, telegram_bot_token: "" }));
 assert.equal(requesterKey("100", "-200"), "100:-200");
 assert.equal(proposalDisposition("read_only", "low"), "read_only");

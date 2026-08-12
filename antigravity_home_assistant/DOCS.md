@@ -242,6 +242,11 @@ ha-telegram-pair revoke AUTHORIZATION_ID
 `list` 결과와 authorization ID도 필요한 범위에서만 다루세요. v2에는 로그가
 자동 생성하는 deep link, 6자리 PIN 또는 Telegram `/unpair` 명령이 없습니다.
 
+Telegram을 먼저 활성화했더라도 bridge는 Bot API에 연결하지 않고
+`waiting_for_authorization` 상태로 조용히 대기합니다. 같은 App 터미널에서 pairing을
+생성하면 App 재시작 없이 이를 감지해 연결합니다. 정적 목록을 나중에 바꾼 경우에는
+App 옵션 적용을 위해 재시작합니다.
+
 ### 모드와 변경 정책
 
 | 작업 | `read_only` | `confirm_changes` | `autonomous` |
@@ -484,6 +489,9 @@ global `mcp_config.json`은 없을 때 빈 `mcpServers` 기본본만 생성하�
 ### Telegram 응답 없음
 
 - `telegram_enabled`, bot token 형식과 App 재시작 여부를 확인합니다.
+- `waiting_for_authorization`이면 재시작을 반복하지 말고 두 정적 목록을 모두
+  설정하거나 local pairing을 완료합니다. Telegram을 쓰지 않으면
+  `telegram_enabled: false`로 저장합니다.
 - 정적 방식이면 user와 chat 두 목록의 교집합인지 확인합니다.
 - pairing 방식이면 TTL, 한 번 소비 여부와 `ha-telegram-pair list`를 확인합니다.
 - `/status`와 App 로그에서 queue/worker/broker 상태를 확인합니다.

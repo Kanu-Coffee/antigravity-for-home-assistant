@@ -106,6 +106,21 @@ def test_telegram_service_depends_on_init(addon_root: Path) -> None:
     assert "AGY_CLI_DISABLE_AUTO_UPDATE=true" in runtime
     assert "telegram-bridge.mjs" in runtime
     assert "s6-svwait" not in run
+    bridge = (
+        addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
+    ).read_text(encoding="utf-8")
+    assert 'audit("waiting_for_authorization"' in bridge
+    assert "await waitForTelegramAuthorization(config)" in bridge
+    assert bridge.index("await waitForTelegramAuthorization(config)") < bridge.index(
+        'sendBrokerRequest("health"'
+    )
+    assert bridge.index("await waitForTelegramAuthorization(config)") < bridge.index(
+        'telegramApi(config.botToken, "deleteWebhook"'
+    )
+    assert (
+        'throw new Error("Telegram requires both static allowlists or one local '
+        'pairing token/authorization")' not in bridge
+    )
 
 
 def test_telegram_bridge_has_no_legacy_shell_or_pairing_surface(addon_root: Path) -> None:
