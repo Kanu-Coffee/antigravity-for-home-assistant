@@ -107,6 +107,8 @@ fi
   && $CANDIDATE_STAGE_DIGEST =~ ^sha256:[0-9a-f]{64}$ ]] \
   || { usage; exit 64; }
 command -v docker >/dev/null 2>&1 || { echo 'docker is required for release mode' >&2; exit 1; }
+docker buildx version >/dev/null 2>&1 \
+  || { echo 'Docker Buildx is required for stable OCI image-size measurement' >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo 'jq is required for release mode' >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo 'python3 is required for release mode' >&2; exit 1; }
 command -v timeout >/dev/null 2>&1 || { echo 'GNU timeout is required for release mode' >&2; exit 1; }
@@ -118,7 +120,6 @@ docker image inspect "$IMAGE" >/dev/null 2>&1 \
 
 IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$IMAGE")
 IMAGE_ARCHITECTURE=$(docker image inspect --format '{{.Architecture}}' "$IMAGE")
-IMAGE_SIZE_BYTES=$(docker image inspect --format '{{.Size}}' "$IMAGE")
 IMAGE_REVISION=$(docker image inspect --format \
   '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE")
 IMAGE_SOURCE_ROOTFS=$(docker image inspect --format \
@@ -129,8 +130,9 @@ mapfile -t IMAGE_REPOSITORY_DIGESTS < <(docker image inspect --format \
   || { echo 'candidate image has no immutable sha256 image ID' >&2; exit 1; }
 [[ $IMAGE_ARCHITECTURE =~ ^(amd64|arm64)$ ]] \
   || { echo 'candidate image architecture is unsupported' >&2; exit 1; }
-[[ $IMAGE_SIZE_BYTES =~ ^[1-9][0-9]*$ ]] \
-  || { echo 'candidate image size is invalid' >&2; exit 1; }
+IMAGE_REPOSITORY=${IMAGE%@*}
+[[ $IMAGE_REPOSITORY != "$IMAGE" && -n $IMAGE_REPOSITORY ]] \
+  || { echo 'candidate image must use an exact registry digest' >&2; exit 1; }
 STAGE_DIGEST_BOUND=false
 for repository_digest in "${IMAGE_REPOSITORY_DIGESTS[@]}"; do
   if [[ $repository_digest == *@"$CANDIDATE_STAGE_DIGEST" ]]; then
@@ -152,9 +154,27 @@ STATS_AFTER_SOAK=${WORK_DIRECTORY}/stats-after-soak.json
 STATS_AFTER_RESTARTS=${WORK_DIRECTORY}/stats-after-restarts.json
 IMAGE_SOURCE_MANIFEST=${WORK_DIRECTORY}/source-rootfs-manifest.json
 IMAGE_VERIFICATION=${WORK_DIRECTORY}/source-image-verification.json
+RUNTIME_MANIFEST=${WORK_DIRECTORY}/runtime-manifest.json
 COMPONENT_STDOUT=${WORK_DIRECTORY}/component-stdout.log
 COMPONENT_STDERR=${WORK_DIRECTORY}/component-stderr.log
 RESTART_DURATIONS='[]'
+
+docker buildx imagetools inspect --raw \
+  "${IMAGE_REPOSITORY}@${CANDIDATE_LEAF_DIGEST}" > "$RUNTIME_MANIFEST" \
+  || { echo 'could not read the exact runtime leaf manifest' >&2; exit 1; }
+[[ sha256:$(sha256sum "$RUNTIME_MANIFEST" | cut -d ' ' -f 1) == \
+  "$CANDIDATE_LEAF_DIGEST" ]] \
+  || { echo 'runtime leaf manifest digest differs from the candidate binding' >&2; exit 1; }
+IMAGE_SIZE_BYTES=$(jq --exit-status --raw-output '
+  select(.mediaType == "application/vnd.oci.image.manifest.v1+json")
+  | select(.config.size | type == "number" and . > 0)
+  | select(.layers | type == "array" and length > 0)
+  | select(all(.layers[]; .size | type == "number" and . > 0))
+  | [.config.size, (.layers[].size)] | add
+' "$RUNTIME_MANIFEST") \
+  || { echo 'runtime leaf manifest has invalid size descriptors' >&2; exit 1; }
+[[ $IMAGE_SIZE_BYTES =~ ^[1-9][0-9]*$ ]] \
+  || { echo 'candidate OCI compressed image size is invalid' >&2; exit 1; }
 
 cleanup() {
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true

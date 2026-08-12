@@ -79,7 +79,9 @@ def test_release_thresholds_provenance_and_closure_are_fail_closed() -> None:
 
     for fragment in (
         '[[ -n $IMAGE && -n $EVIDENCE \\',
+        'Docker Buildx is required for stable OCI image-size measurement',
         '[[ $IMAGE_ID =~ ^sha256:[0-9a-f]{64}$ ]]',
+        'candidate image must use an exact registry digest',
         '--candidate-image-id "$IMAGE_ID"',
         '--candidate-leaf-digest "$CANDIDATE_LEAF_DIGEST"',
         '--candidate-stage-digest "$CANDIDATE_STAGE_DIGEST"',
@@ -94,6 +96,10 @@ def test_release_thresholds_provenance_and_closure_are_fail_closed() -> None:
         'MAX_AVERAGE_CPU_PERCENT=',
         'MAX_PEAK_RSS_BYTES=',
         'MAX_IMAGE_SIZE_BYTES=',
+        'docker buildx imagetools inspect --raw',
+        'runtime leaf manifest digest differs from the candidate binding',
+        'application/vnd.oci.image.manifest.v1+json',
+        '[.config.size, (.layers[].size)] | add',
         'candidate image size ${IMAGE_SIZE_BYTES} exceeded its fixed budget ${MAX_IMAGE_SIZE_BYTES}',
         'for ((restart_index = 1; restart_index <= 20; restart_index += 1))',
         '[[ $(docker image inspect --format \'{{.Id}}\' "$IMAGE") == "$IMAGE_ID" ]]',

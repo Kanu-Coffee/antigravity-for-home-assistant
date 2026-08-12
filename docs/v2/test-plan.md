@@ -654,6 +654,12 @@ image 600,000,000 bytes, candidate cgroup peak RSS 201,326,592 bytes, 평균 CPU
 상한을 넘으면 release harness는 nonzero로 끝나며 `closure_eligible: false`인 실패
 증거만 남긴다.
 
+image size는 Docker daemon의 backend별 `.Size` 값이 아니라 exact runtime leaf OCI
+manifest의 config descriptor와 모든 compressed layer descriptor `size` 합으로
+측정한다. harness는 raw manifest bytes의 SHA-256이 candidate runtime leaf digest와
+같은지 먼저 검증한다. 따라서 containerd/classic image store가 각각 압축·비압축 크기를
+보고하는 차이로 budget 결과가 바뀌지 않는다.
+
 `tests/performance-durability-soak.sh`는 두 모드를 명시적으로 분리한다. 기본
 `--mode contract`는 CI에서 2초 soak, 1초 동시 장애와 broker 3회 restart로 fixture와
 증거 schema만 검사하며 JSON의 `closure_eligible`은 항상 `false`다. 이 결과로
