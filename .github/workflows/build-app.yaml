@@ -417,6 +417,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Fetch exact public v1 source tag for migration rehearsal
+        if: matrix.suite == 'public-v1'
+        run: |
+          set -Eeuo pipefail
+          git fetch --force --depth=1 origin \
+            refs/tags/v1.0.4:refs/tags/v1.0.4
+          [[ $(git rev-parse 'v1.0.4^{commit}') == \
+            aba6805e8bf1f32e68976a67a46536c3ca362af8 ]]
+
       - name: Log in to pull private candidate
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
         with:
