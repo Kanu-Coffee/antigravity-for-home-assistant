@@ -417,14 +417,22 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Fetch exact public v1 source tag for migration rehearsal
+      - name: Build exact public v1 source image for migration rehearsal
         if: matrix.suite == 'public-v1'
         run: |
           set -Eeuo pipefail
           git fetch --force --depth=1 origin \
             refs/tags/v1.0.4:refs/tags/v1.0.4
-          [[ $(git rev-parse 'v1.0.4^{commit}') == \
+          v1_revision=$(git rev-parse 'v1.0.4^{commit}')
+          [[ $v1_revision == \
             aba6805e8bf1f32e68976a67a46536c3ca362af8 ]]
+          v1_source=$(mktemp -d)
+          git archive v1.0.4 | tar --extract --directory "$v1_source"
+          docker build \
+            --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=${v1_revision}" \
+            --tag antigravity-for-home-assistant:public-v1.0.4-local \
+            "$v1_source/antigravity_home_assistant"
 
       - name: Log in to pull private candidate
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
@@ -460,7 +468,8 @@ jobs:
             managed-auth) exec bash tests/managed-auth-smoke.sh "$image" ;;
             managed-plugin) exec bash tests/managed-plugin-update-smoke.sh "$image" ;;
             memory) exec bash tests/memory-smoke.sh "$image" ;;
-            public-v1) exec bash tests/public-v1-upgrade-smoke.sh "$image" ;;
+            public-v1) exec bash tests/public-v1-upgrade-smoke.sh \
+              antigravity-for-home-assistant:public-v1.0.4-local "$image" ;;
             telegram-isolation) exec bash tests/telegram-isolation-smoke.sh "$image" ;;
             update) exec bash tests/update-smoke.sh "$image" ;;
             user-files) exec bash tests/user-files-update-smoke.sh "$image" ;;
