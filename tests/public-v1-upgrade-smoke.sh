@@ -51,6 +51,7 @@ declare -a CREATED_CONTAINERS=()
 declare -a CREATED_VOLUMES=()
 TEMPORARY_DIRECTORY=''
 CANDIDATE_VERIFIED_FILES=''
+CANDIDATE_APP_VERSION=''
 declare -a SENSITIVE_CANARIES=(
   "${MAPPING_MARKER}"
   "${PRESERVE_MARKER}"
@@ -121,6 +122,24 @@ image_label() {
   local label=$2
   run_bounded docker image inspect --format \
     "{{ index .Config.Labels \"${label}\" }}" "${image_id}"
+}
+
+read_source_app_version() {
+  python3 - "${REPOSITORY_ROOT}/antigravity_home_assistant/config.yaml" <<'PYTHON'
+import re
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+matches = re.findall(
+    r'^version: "([0-9]+\.[0-9]+\.[0-9]+)"$',
+    config_path.read_text(encoding="utf-8"),
+    flags=re.MULTILINE,
+)
+if len(matches) != 1:
+    raise SystemExit("App config must contain exactly one numeric version")
+print(matches[0])
+PYTHON
 }
 
 resolve_image_id() {
@@ -723,7 +742,8 @@ assert_managed_plugin_contract() {
   mcp_hash_before=$(container_hash "${container}" "${mcp}")
   mcp_metadata_before=$(file_observation "${container}" "${mcp}")
   assert_file_contract "${container}" "${marker}" 600
-  container_exec "${container}" jq --exit-status '
+  container_exec "${container}" jq --exit-status \
+    --arg candidate_version "${CANDIDATE_APP_VERSION}" '
     type == "object"
     and ((keys | sort) == [
       "applied_versions",
@@ -735,8 +755,8 @@ assert_managed_plugin_contract() {
     and .schema == 1
     and .owner == "antigravity-for-home-assistant"
     and .plugin == "home-assistant"
-    and .installed_version == "2.0.1"
-    and .applied_versions == ["2.0.1"]
+    and .installed_version == $candidate_version
+    and .applied_versions == [$candidate_version]
   ' "${marker}" >/dev/null \
     || fail 'the v2 managed plugin ownership marker is invalid'
   container_exec "${container}" /bin/bash -ceu '
@@ -1031,11 +1051,12 @@ MAPPING_FIXTURE
     /data/home/.gemini/config/mcp_config.json 600
   assert_file_contract "${MAPPING_V2_CONTAINER}" \
     /data/antigravity-ha/migration/native-files-state.json 600
-  container_exec "${MAPPING_V2_CONTAINER}" jq --exit-status '
+  container_exec "${MAPPING_V2_CONTAINER}" jq --exit-status \
+    --arg candidate_version "${CANDIDATE_APP_VERSION}" '
     type == "object"
     and ((keys | sort) == ["applied", "managed", "schema"])
     and .schema == 2
-    and .applied == {settings:["2.0.0"],mcp:[]}
+    and .applied == {settings:[$candidate_version],mcp:[]}
     and ((.managed | keys) == ["settings"])
     and ((.managed.settings | keys | sort) == ["keys", "permission_rules"])
     and (.managed.settings.keys | length > 0)
@@ -1338,6 +1359,10 @@ main() {
   command -v sha256sum >/dev/null 2>&1 || fail 'sha256sum is required'
   command -v timeout >/dev/null 2>&1 || fail 'timeout is required'
 
+  CANDIDATE_APP_VERSION=$(read_source_app_version) \
+    || fail 'could not derive the candidate App version from config.yaml'
+  readonly CANDIDATE_APP_VERSION
+
   assert_candidate_source_checkout
   assert_public_v1_revision
   TEMPORARY_DIRECTORY=$(mktemp -d \
@@ -1353,8 +1378,9 @@ main() {
     "${EXPECTED_V1_REVISION}" ]] \
     || fail 'legacy image is not bound to the requested public v1.0.4 commit'
   verify_public_v1_source_binding "${V1_IMAGE_ID}" "${EXPECTED_V1_REVISION}"
-  [[ $(image_label "${CANDIDATE_IMAGE_ID}" io.hass.version) == 2.0.0 ]] \
-    || fail 'candidate image is not Home Assistant App version 2.0.0'
+  [[ $(image_label "${CANDIDATE_IMAGE_ID}" io.hass.version) == \
+    "${CANDIDATE_APP_VERSION}" ]] \
+    || fail "candidate image is not Home Assistant App version ${CANDIDATE_APP_VERSION}"
   [[ $(image_label "${CANDIDATE_IMAGE_ID}" org.opencontainers.image.revision) == \
     "${EXPECTED_CANDIDATE_REVISION}" ]] \
     || fail 'candidate revision label does not match the requested source commit'

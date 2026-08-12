@@ -26,6 +26,10 @@ def test_public_v1_upgrade_rehearsal_is_source_and_candidate_bound(
         "source worktree is dirty",
         "assert_candidate_source_checkout",
         "EXPECTED_CANDIDATE_REVISION does not match the source HEAD",
+        "read_source_app_version",
+        'config_path.read_text(encoding="utf-8")',
+        '--arg candidate_version "${CANDIDATE_APP_VERSION}"',
+        '.applied == {settings:[$candidate_version],mcp:[]}',
         "org.opencontainers.image.revision",
         "io.antigravity-ha.source-rootfs-sha256",
         '--root "${SOURCE_ROOTFS_DIRECTORY}"',
@@ -50,7 +54,8 @@ def test_public_v1_upgrade_rehearsal_is_source_and_candidate_bound(
         "/data/antigravity-ha/migration/native-files-state.json",
         "/data/antigravity-ha/migration/managed-plugin.json",
         ".antigravity-ha-managed.json",
-        '.applied_versions == ["2.0.1"]',
+        ".installed_version == $candidate_version",
+        ".applied_versions == [$candidate_version]",
         'antigravity-real plugin validate',
         "settings_hash_before",
         "mcp_hash_before",
@@ -98,6 +103,7 @@ def test_public_v1_upgrade_rehearsal_is_source_and_candidate_bound(
     assert '"${V1_IMAGE}" >/dev/null' not in smoke
     assert '"${CANDIDATE_IMAGE}" >/dev/null' not in smoke
     assert "settings_and_mcp_byte_preserved" not in smoke
+    assert re.search(r"(?<!v)2\.0\.[0-9]+", smoke) is None
 
 
 def test_public_v1_runtime_scan_only_allows_native_cli_log_links(
