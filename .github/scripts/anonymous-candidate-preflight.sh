@@ -53,5 +53,11 @@ for reference in \
   docker buildx imagetools inspect --raw "$reference" \
     > "${temporary_directory}/$(printf '%s' "$reference" | sha256sum | cut -d ' ' -f 1).json"
 done
-docker pull --platform linux/amd64 "${image}@${index_digest}"
-docker pull --platform linux/arm64 "${image}@${index_digest}"
+candidate_ref="${image}@${index_digest}"
+docker pull --platform linux/amd64 "$candidate_ref"
+# Docker stores a digest reference in one local image slot. Remove only that
+# exact runner-local reference before resolving the same multi-arch index for
+# the other platform, otherwise Docker reports "cannot overwrite digest".
+docker image rm --force "$candidate_ref"
+docker pull --platform linux/arm64 "$candidate_ref"
+docker image rm --force "$candidate_ref"

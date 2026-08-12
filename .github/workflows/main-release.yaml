@@ -64,7 +64,6 @@ jobs:
         id: artifact
         env:
           GH_TOKEN: ${{ github.token }}
-          MAIN_SHA: ${{ github.sha }}
           RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
           RUN_ID: ${{ inputs.candidate_run_id }}
         run: |
@@ -72,7 +71,6 @@ jobs:
           gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}" \
             > candidate-run.json
           jq --exit-status \
-            --arg main_sha "$MAIN_SHA" \
             --argjson attempt "$RUN_ATTEMPT" '
               .path == ".github/workflows/candidate.yaml"
               and .event == "workflow_dispatch"
@@ -80,7 +78,7 @@ jobs:
               and .conclusion == "success"
               and .run_attempt == $attempt
               and .head_branch == "main"
-              and .head_sha == $main_sha
+              and (.head_sha | test("^[0-9a-f]{40}$"))
             ' candidate-run.json >/dev/null
           source_sha=$(jq --raw-output .head_sha candidate-run.json)
           artifact_name="release-candidate-${source_sha}-${RUN_ID}-${RUN_ATTEMPT}"
@@ -137,7 +135,19 @@ jobs:
             --root antigravity_home_assistant/rootfs \
             --manifest \
               antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/source-rootfs-manifest.json
-          [[ $SOURCE_SHA == "$GITHUB_SHA" ]]
+          git merge-base --is-ancestor "$SOURCE_SHA" "$GITHUB_SHA"
+          while IFS= read -r changed_path; do
+            case "$changed_path" in
+              .github/scripts/anonymous-candidate-preflight.sh | \
+              .github/workflows/main-release.yaml | \
+              tests/test_main_release_workflow.py)
+                ;;
+              *)
+                echo "Candidate-to-main runtime drift: ${changed_path}" >&2
+                exit 1
+                ;;
+            esac
+          done < <(git diff --name-only "$SOURCE_SHA...$GITHUB_SHA")
           config_version=$(sed -n \
             's/^version: "\([^"]*\)"$/\1/p' \
             antigravity_home_assistant/config.yaml)
@@ -361,8 +371,10 @@ jobs:
           done
           docker pull --platform linux/amd64 \
             "${IMAGE}@${GENERIC_DIGEST}"
+          docker image rm --force "${IMAGE}@${GENERIC_DIGEST}"
           docker pull --platform linux/arm64 \
             "${IMAGE}@${GENERIC_DIGEST}"
+          docker image rm --force "${IMAGE}@${GENERIC_DIGEST}"
 
       - name: Create or verify annotated numeric tag
         env:

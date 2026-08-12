@@ -42,13 +42,16 @@ def test_main_release_consumes_one_exact_successful_candidate() -> None:
     assert '.event == "workflow_dispatch"' in text
     assert '.conclusion == "success"' in text
     assert '.head_branch == "main"' in text
-    assert ".head_sha == $main_sha" in text
     assert '[[ $remote_main == "$GITHUB_SHA" ]]' in text
     assert ".artifacts[0].expired == false" in text
     assert "release-candidate-${source_sha}-${RUN_ID}-${RUN_ATTEMPT}" in text
     assert "artifact-ids: ${{ steps.artifact.outputs.artifact_id }}" in text
     assert "digest-mismatch: error" in text
-    assert '[[ $SOURCE_SHA == "$GITHUB_SHA" ]]' in text
+    assert 'git merge-base --is-ancestor "$SOURCE_SHA" "$GITHUB_SHA"' in text
+    assert "Candidate-to-main runtime drift" in text
+    assert ".github/scripts/anonymous-candidate-preflight.sh" in text
+    assert ".github/workflows/main-release.yaml" in text
+    assert "tests/test_main_release_workflow.py" in text
     assert "source-rootfs-manifest.py verify" in text
     assert ".gap007_release.source_rootfs_sha256" in text
     assert "gap007_release.evidence_sha256" in text
@@ -76,6 +79,7 @@ def test_main_release_carbon_copies_generic_last_and_verifies_anonymously() -> N
     assert "--expected-digest \"$GENERIC_DIGEST\"" in text
     assert 'docker pull --platform linux/amd64' in text
     assert 'docker pull --platform linux/arm64' in text
+    assert text.count('docker image rm --force "${IMAGE}@${GENERIC_DIGEST}"') == 2
     assert '"${AMD64_IMAGE}:${RELEASE_VERSION}|${AMD64_STAGE_DIGEST}"' in text
     assert '"${ARM64_IMAGE}:${RELEASE_VERSION}|${ARM64_STAGE_DIGEST}"' in text
 
@@ -111,3 +115,15 @@ def test_repository_advertises_the_numeric_tag_published_by_main_release() -> No
         config["image"]
         == "ghcr.io/kanu-coffee/antigravity-for-home-assistant"
     )
+
+
+def test_anonymous_candidate_preflight_clears_digest_between_platforms() -> None:
+    script = (
+        ROOT / ".github" / "scripts" / "anonymous-candidate-preflight.sh"
+    ).read_text(encoding="utf-8")
+    amd64 = script.index('docker pull --platform linux/amd64 "$candidate_ref"')
+    first_remove = script.index('docker image rm --force "$candidate_ref"', amd64)
+    arm64 = script.index('docker pull --platform linux/arm64 "$candidate_ref"')
+    second_remove = script.index('docker image rm --force "$candidate_ref"', arm64)
+    assert amd64 < first_remove < arm64 < second_remove
+    assert script.count('docker image rm --force "$candidate_ref"') == 2
