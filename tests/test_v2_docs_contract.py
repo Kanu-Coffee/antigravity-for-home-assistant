@@ -599,7 +599,8 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
     gap006 = next(line for line in gaps.splitlines() if line.startswith("| GAP-006 |"))
     assert "`OPEN`" in gap006 and "HA-008" in gap006
     assert "HA-005" not in gap006
-    assert "| GAP-007 | `IN_PROGRESS`" in gaps
+    gap007 = next(line for line in gaps.splitlines() if line.startswith("| GAP-007 |"))
+    assert "`OPEN`" in gap007 and "non-blocking advisory" in gap007
 
     assert literal_assignment(contract_path, "HA005_REPORT_SCHEMA") == (
         "antigravity-ha-ha005-acceptance/v1"

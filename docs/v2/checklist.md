@@ -185,7 +185,7 @@
 | M5-02 | `PARTIAL` | long polling, static user/chat allowlist와 bounded metrics | Bot API/metric component tests PASS; live Bot API TODO |
 | M5-03 | `PARTIAL` | local-only pairing create/list/revoke | pairing security suite PASS; HAOS operator flow TODO |
 | M5-04 | `PARTIAL` | input normalization과 shell-free print worker | injection/argv/stdin suite PASS; live conversation TODO |
-| M5-05 | `PARTIAL` | per-chat queue, session, cancel와 timeout | component PASS; historical local 30분 soak baseline, current Candidate artifact/live HAOS Telegram TODO |
+| M5-05 | `PARTIAL` | per-chat queue, session, cancel와 timeout | 짧은 CI/component와 historical local 30분 baseline PASS; 장시간 진단은 수동 advisory이며 live HAOS Telegram TODO |
 | M5-06 | `PARTIAL` | stream-json parser와 Telegram chunking | parser/output suite PASS; live Telegram formatting TODO |
 | M5-07 | `PARTIAL` | typed proposal와 broker-generated human-reviewable confirmation preview | local secret-safe diff + replay/cross-chat PASS; HAOS Telegram E2E TODO |
 | M5-08 | `PARTIAL` | 세 access mode와 high-risk matrix | local full policy suite PASS; HAOS E2E TODO |

@@ -158,7 +158,6 @@ jobs:
           python3 ../.github/scripts/release_contract.py finalize \
             --candidate candidate.json \
             --manual manual-haos-evidence.json \
-            --gap007-evidence gap007-release.json \
             --haos-gates-dir haos-gates \
             --candidate-artifact-digest "$ARTIFACT_DIGEST" \
             --actor "$GITHUB_ACTOR" \
@@ -190,7 +189,6 @@ jobs:
             release-evidence/release-evidence.json
             release-evidence/candidate.json
             release-evidence/candidate-index.json
-            release-evidence/gap007-release.json
             release-evidence/manual-haos-evidence.json
             release-evidence/haos-gates/*.json
             release-evidence/candidate-repository/

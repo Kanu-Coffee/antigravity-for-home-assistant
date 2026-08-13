@@ -636,11 +636,14 @@ AppArmor detach, complain 전환 또는 root/다른 실행 프로필 권한 변�
 
 ## 9. 성능과 내구성
 
-- idle container memory/CPU와 image size budget을 release별 추적한다.
-- 2 global workers, chat별 queue 4에서 30분 soak를 수행한다.
-- Core, Bot API, browser와 memory 장애를 동시에 15분 주입해 backoff와 복구를 본다.
-- 1,000 entity 규모 catalog와 긴 로그에서 bounded memory/output를 확인한다.
-- rapid restart 20회에서 migration, socket, lock과 zombie child 누수가 없어야 한다.
+- 일반 CI는 2 global workers, chat별 queue 4, bounded queue/cancel, backoff recovery,
+  1,000 entity와 긴 로그의 bounded output을 짧고 결정론적인 fixture로 검사한다.
+- 30분 soak, 15분 동시 장애, broker/candidate restart 20회와 장시간 resource 측정은
+  누수나 복구 회귀가 의심될 때만 수동으로 수행한다.
+- 장시간 결과는 진단 및 budget 기준 수립 자료이며 Candidate, finalize, Builder,
+  numeric tag 또는 post-publish release의 필수 gate가 아니다.
+- 실제 HAOS에서의 장시간 운용, live Bot API network interruption, Supervisor/Core
+  reconnect와 App 재시작 내구성은 별도 실기기 검증으로 남긴다.
 
 고정 budget은 [performance-budget.json](performance-budget.json)의 기계 판독 가능한
 값을 사용한다. 기준은 SHA-256
@@ -648,11 +651,11 @@ AppArmor detach, complain 전환 또는 root/다른 실행 프로필 권한 변�
 baseline evidence다. 이 측정의 image 558,690,739 bytes, host component peak RSS
 104,890,368 bytes, candidate idle 약 47,815,066 bytes와 idle CPU 0.00%를 근거로
 image 600,000,000 bytes, candidate cgroup peak RSS 201,326,592 bytes, 평균 CPU 5.0%를
-상한으로 고정했다. image에는 약 7.4% 증가 여유를, RSS에는 baseline component peak의
+수동 진단 상한으로 고정했다. image에는 약 7.4% 증가 여유를, RSS에는 baseline component peak의
 약 1.9배를 부여하며, CPU 상한은 baseline의 낮은 부하보다 충분히 크지만 runaway를
 탐지한다. budget 파일의 limit 또는 baseline digest가 빠지거나 달라지거나 측정값이
-상한을 넘으면 release harness는 nonzero로 끝나며 `closure_eligible: false`인 실패
-증거만 남긴다.
+상한을 넘으면 수동 harness는 nonzero로 끝나며 `closure_eligible: false`인 실패
+증거만 남긴다. 이 실패 자체는 자동 release blocker가 아니다.
 
 image size는 Docker daemon의 backend별 `.Size` 값이 아니라 exact runtime leaf OCI
 manifest의 config descriptor와 모든 compressed layer descriptor `size` 합으로
@@ -666,8 +669,9 @@ manifest의 config descriptor와 모든 compressed layer descriptor `size` 합�
 GAP-007을 닫지 않는다. 외부 HA나 Bot API는 호출하지 않으며 browser 장애도
 loopback fixture로 제한한다.
 
-GAP-007 local 해제에는 새 candidate를 대상으로 다음 opt-in 명령을 실제 wall-clock으로
-완료해야 한다.
+장시간 진단이 필요하면 조사할 exact image를 대상으로 다음 opt-in 명령을 운영자가
+직접 실행한다. CLI의 `release` mode 이름은 기존 full-duration evidence 형식을 유지하기
+위한 것이며 자동 release gate를 뜻하지 않는다.
 
 ```bash
 tests/performance-durability-soak.sh \
@@ -690,8 +694,9 @@ origin 문자열만으로는 PASS할 수 없다. PASS JSON에는 immutable image
 migration state digest, socket/journal/lock/zombie 검사와 고정 resource budget 측정이
 있어야 한다.
 긴 로그·prompt·credential·실제 entity/chat ID는 evidence에 넣지 않는다. 장시간
-component PASS와 candidate restart PASS가 모두 있어야 `closure_eligible: true`이며,
-이는 실제 HAOS와 live Bot gate를 대신하지 않는다.
+component PASS와 candidate restart PASS가 모두 있어야 기존 evidence schema의
+`closure_eligible: true`가 되지만, 이 값은 release 진행 권한이나 자동 gate PASS를
+뜻하지 않는다. 또한 실제 HAOS와 live Bot 검증을 대신하지 않는다.
 
 위 baseline run은 candidate revision label이 없고 host source workload를 사용했으므로
 budget 수립 입력일 뿐 GAP-007 해제 증거가 아니다. 별도의 source-bound candidate
@@ -701,16 +706,14 @@ release run은 source `ae8b0bc4fdd042bdb84c55a1767d619d9adc734f`, source-rootfs
 sanitized evidence SHA-256은
 `2c2b3fe0cb0aa2522722e192323bdb0e0a291f5d99193df603eace003dc7f8f9`이며 local
 historical result로만 유지한다. 원본 evidence bytes/immutable URI가 보존돼 있지
-않고 현재 source/runtime이 다르므로 GAP-007을 닫지 않는다. current exact
-Candidate에서 다시 실행한 원본 JSON과 digest가 immutable artifact에 보존돼야
-한다. 실제 HAOS와 live Bot API는 여전히 별도 gate다.
+않고 현재 source/runtime이 다르므로 GAP-007을 닫지 않는다. 같은 장시간 검사를
+current Candidate마다 되풀이할 의무는 없다. 실제 HAOS와 live Bot API는 여전히 별도
+실기기 검증이다.
 
-공식 Candidate build는 위 release mode를 exact amd64 staging digest에서 자동 실행하고
-runtime leaf digest, source revision, source-rootfs digest와 evidence file SHA-256을
-`candidate.json` 및 immutable candidate artifact에 함께 기록한다. finalize artifact도
-원본 `gap007-release.json`을 보존한다. numeric tag Builder는 promotion 전에
-`release_contract.py`로 원본 hash, exact stage/leaf/source, schema, duration, packaged
-module origin, restart와 resource budget을 다시 검증한다. candidate image는 stopped
+공식 Candidate와 release workflow는 이 30분 mode를 자동 실행하지 않으며
+`gap007-release.json`, `gap007_release` binding 또는 장시간 PASS를 입력·artifact·tag
+계약으로 요구하지 않는다. 수동 진단이 명시적으로 요청된 경우에만 exact image와
+source에 묶인 evidence를 별도로 보존한다. 수동 harness에서 candidate image는 stopped
 container의 `docker export`를 host Python으로 읽어 embedded manifest aggregate와 각
 regular root-owned entry의 normalized mode/size/SHA-256를 image binary와 독립적으로
 검증한다. build context는 manifest entry와 manifest 자체 외 rootfs file을 거부하므로
@@ -718,10 +721,11 @@ Git-ignored canary도 COPY될 수 없다. `source-rootfs-manifest.py create`는 
 부모 디렉터리 traversal과 각 file만 열어 주는 `.dockerignore`를 함께 생성하고, `verify`는
 allowlist drift와 wildcard 추가를 fail closed한다. 따라서 ignored/unmanifested rootfs
 비밀은 Docker daemon으로 context가 전송되기 전에 client allowlist에서 제외되며,
-Dockerfile의 manifest/count/digest 검사는 그 다음 독립 방어선이다. 이 검증 또는 evidence가
-없거나 candidate와 다르면 numeric image tag를 만들 수 없다.
+Dockerfile의 manifest/count/digest 검사는 그 다음 독립 방어선이다. 이 검증은 수동
+결과의 신뢰 경계이며, 해당 장시간 evidence가 없다는 이유로 numeric image tag 생성을
+막지 않는다.
 
-release harness는 시작과 종료 모두 repository 전체가 clean인지 확인하고 HEAD가 image
+수동 harness는 시작과 종료 모두 repository 전체가 clean인지 확인하고 HEAD가 image
 revision label과 같은 경우에만 host의 harness를 candidate container로 복사한다. dirty
 또는 untracked harness로 생성한 결과는 `closure_eligible` evidence가 될 수 없다.
 packaged component는 GNU `timeout`의 40분 wall-clock, TERM과 30초 kill-after 경계 안에서

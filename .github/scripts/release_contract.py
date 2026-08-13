@@ -234,17 +234,6 @@ UTC_TIMESTAMP_RE = re.compile(
     r"[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])"
     r"T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z\Z"
 )
-GAP007_BASELINE_EVIDENCE_SHA256 = (
-    "sha256:b2cb64cac2c5f12c61d4a779c06a4bca1307799e485086d9512974e231d51d09"
-)
-GAP007_LIMITS = {
-    "max_average_cpu_percent": 5.0,
-    "max_peak_rss_bytes": 201326592,
-    "max_image_size_bytes": 600000000,
-}
-GAP007_MODULE_PATH = "/usr/local/share/antigravity-ha/telegram-bridge.mjs"
-
-
 class ContractError(RuntimeError):
     """A release input does not satisfy the fail-closed contract."""
 
@@ -404,11 +393,10 @@ def validate_candidate(candidate: Any) -> dict[str, Any]:
             "images",
             "haos_rehearsal",
             "automated_gates",
-            "gap007_release",
         },
         "candidate record keys are not exact",
     )
-    require(candidate.get("schema") == "antigravity-ha-release-candidate/v1", "wrong candidate schema")
+    require(candidate.get("schema") == "antigravity-ha-release-candidate/v2", "wrong candidate schema")
     validate_version(candidate.get("version"))
     source_sha = validate_source_sha(candidate.get("source_sha"))
     run_id = validate_run_number(candidate.get("run_id"), "candidate run ID")
@@ -472,244 +460,13 @@ def validate_candidate(candidate: Any) -> dict[str, Any]:
         gates
         == {
             "exact_digest_smoke": "PASS",
-            "gap007_performance_durability": "PASS",
             "native_arm64_full_feasible": "PASS",
             "source_quality": "PASS",
             "spdx_leaf_sbom": "PASS",
         },
         "automated candidate gates are incomplete",
     )
-    gap007 = candidate.get("gap007_release")
-    require(
-        isinstance(gap007, dict)
-        and set(gap007)
-        == {
-            "schema",
-            "evidence_sha256",
-            "source_sha",
-            "amd64_stage_digest",
-            "amd64_runtime_digest",
-            "candidate_image_id",
-            "source_rootfs_sha256",
-        },
-        "GAP-007 candidate binding is incomplete",
-    )
-    require(
-        gap007.get("schema") == "antigravity-ha-gap007-binding/v1",
-        "wrong GAP-007 candidate binding schema",
-    )
-    validate_digest(gap007.get("evidence_sha256"), "GAP-007 evidence digest")
-    validate_digest(gap007.get("candidate_image_id"), "GAP-007 candidate image ID")
-    validate_digest(
-        gap007.get("source_rootfs_sha256"), "GAP-007 source-rootfs digest"
-    )
-    require(gap007.get("source_sha") == source_sha, "GAP-007 source differs from candidate")
-    require(
-        gap007.get("amd64_stage_digest") == images["amd64"]["stage_digest"],
-        "GAP-007 amd64 staging digest differs from candidate",
-    )
-    require(
-        gap007.get("amd64_runtime_digest") == images["amd64"]["runtime_digest"],
-        "GAP-007 amd64 leaf digest differs from candidate",
-    )
     return candidate
-
-
-def validate_gap007_release(
-    candidate: dict[str, Any],
-    evidence: Any,
-    evidence_sha256: str,
-) -> dict[str, Any]:
-    require(isinstance(evidence, dict), "GAP-007 evidence is not an object")
-    require(
-        set(evidence)
-        == {
-            "schema_version",
-            "requirement_id",
-            "mode",
-            "scope",
-            "closure_eligible",
-            "result",
-            "started_at_utc",
-            "finished_at_utc",
-            "actual_elapsed_seconds",
-            "threshold_policy",
-            "provenance",
-            "telegram",
-            "failure_injection",
-            "bounded_io",
-            "rapid_restart",
-            "resources",
-            "sanitization",
-            "remaining_gap",
-        },
-        "GAP-007 evidence keys are not exact",
-    )
-    binding = candidate["gap007_release"]
-    require(
-        evidence_sha256 == binding["evidence_sha256"],
-        "GAP-007 evidence file hash differs from candidate",
-    )
-    require(evidence.get("schema_version") == 1, "wrong GAP-007 evidence schema")
-    require(evidence.get("requirement_id") == "GAP-007", "wrong GAP-007 requirement")
-    require(evidence.get("mode") == "release", "GAP-007 evidence is not release mode")
-    require(evidence.get("result") == "PASS", "GAP-007 evidence did not pass")
-    require(evidence.get("closure_eligible") is True, "GAP-007 evidence cannot close the gate")
-    require(
-        evidence.get("threshold_policy")
-        == {
-            "duration_override_supported": False,
-            "override_detected": False,
-            "release_soak_seconds": 1800,
-            "release_outage_seconds": 900,
-            "release_restart_count": 20,
-        },
-        "GAP-007 threshold policy is stale",
-    )
-    require(
-        isinstance(evidence.get("actual_elapsed_seconds"), (int, float))
-        and evidence["actual_elapsed_seconds"] >= 1800,
-        "GAP-007 total elapsed time is too short",
-    )
-
-    provenance = evidence.get("provenance")
-    require(isinstance(provenance, dict), "GAP-007 provenance is missing")
-    require(
-        provenance.get("git_commit") == candidate["source_sha"]
-        and provenance.get("candidate_revision") == candidate["source_sha"],
-        "GAP-007 source differs from candidate",
-    )
-    require(
-        provenance.get("candidate_stage_digest")
-        == candidate["images"]["amd64"]["stage_digest"],
-        "GAP-007 amd64 staging digest differs from candidate",
-    )
-    require(
-        provenance.get("candidate_leaf_digest")
-        == candidate["images"]["amd64"]["runtime_digest"],
-        "GAP-007 amd64 leaf digest differs from candidate",
-    )
-    require(
-        provenance.get("candidate_image_id") == binding["candidate_image_id"],
-        "GAP-007 candidate image ID differs from candidate record",
-    )
-    require(
-        provenance.get("source_rootfs_sha256")
-        == binding["source_rootfs_sha256"],
-        "GAP-007 source-rootfs differs from candidate record",
-    )
-    require(
-        provenance.get("source_tree_stable") is True,
-        "GAP-007 source-rootfs was not stable",
-    )
-    source_image = provenance.get("source_image_verification")
-    require(
-        isinstance(source_image, dict)
-        and set(source_image)
-        == {
-            "schema",
-            "image_id",
-            "revision",
-            "source_rootfs_sha256",
-            "verified_files",
-        },
-        "GAP-007 independent source-image verification is missing",
-    )
-    require(
-        source_image.get("schema")
-        == "antigravity-ha-source-image-verification/v1"
-        and source_image.get("image_id") == binding["candidate_image_id"]
-        and source_image.get("revision") == candidate["source_sha"]
-        and source_image.get("source_rootfs_sha256")
-        == binding["source_rootfs_sha256"]
-        and isinstance(source_image.get("verified_files"), int)
-        and source_image["verified_files"] > 0,
-        "GAP-007 source image, manifest, OCI labels, and source are not bound",
-    )
-    require(
-        provenance.get("module_origin") == "packaged_image"
-        and provenance.get("telegram_bridge_module_path") == GAP007_MODULE_PATH,
-        "GAP-007 did not exercise the packaged Telegram state machine",
-    )
-    require(
-        provenance.get("candidate_architecture") == "amd64",
-        "GAP-007 candidate architecture is not amd64",
-    )
-
-    telegram = evidence.get("telegram", {})
-    require(
-        telegram.get("required_elapsed_seconds") == 1800
-        and telegram.get("actual_elapsed_seconds", 0) >= 1800,
-        "GAP-007 Telegram soak threshold was not met",
-    )
-    failure = evidence.get("failure_injection", {})
-    require(
-        failure.get("required_elapsed_seconds") == 900
-        and failure.get("actual_elapsed_seconds", 0) >= 900,
-        "GAP-007 outage threshold was not met",
-    )
-    require(
-        failure.get("backoff_implementation") == "packaged_telegram_bridge"
-        and failure.get("backoff_reset_after_recovery") is True
-        and failure.get("external_calls") == 0,
-        "GAP-007 packaged backoff or isolation evidence is invalid",
-    )
-    require(
-        evidence.get("bounded_io", {}).get("indexed_entities") == 1000,
-        "GAP-007 bounded entity fixture is incomplete",
-    )
-    restart = evidence.get("rapid_restart", {})
-    candidate_restart = restart.get("candidate_container", {})
-    require(
-        restart.get("required_count") == 20
-        and restart.get("completed_count") == 20
-        and candidate_restart.get("required_count") == 20
-        and candidate_restart.get("completed_count") == 20,
-        "GAP-007 restart threshold was not met",
-    )
-    require(
-        candidate_restart.get("pending_journal_count") == 0
-        and candidate_restart.get("zombie_process_count") == 0
-        and candidate_restart.get("stale_socket_count") == 0,
-        "GAP-007 restart durability checks did not pass",
-    )
-
-    measured = evidence.get("resources", {}).get("candidate_budget", {})
-    require(
-        isinstance(measured, dict) and measured,
-        "GAP-007 resource budget is missing",
-    )
-    require(
-        measured.get("baseline_evidence_sha256")
-        == GAP007_BASELINE_EVIDENCE_SHA256,
-        "GAP-007 performance baseline is stale",
-    )
-    require(
-        measured.get("limits") == GAP007_LIMITS and measured.get("result") == "PASS",
-        "GAP-007 resource budget is missing or stale",
-    )
-    observed = measured.get("observed", {})
-    for name, maximum in GAP007_LIMITS.items():
-        observed_name = name.removeprefix("max_")
-        value = observed.get(observed_name)
-        require(
-            isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and 0 <= value <= maximum,
-            f"GAP-007 observed resource exceeds {name}",
-        )
-    sanitization = evidence.get("sanitization", {})
-    require(
-        sanitization
-        == {
-            "external_calls": 0,
-            "contains_credentials": False,
-            "contains_entity_or_chat_identifiers": False,
-            "contains_raw_logs_or_prompts": False,
-        },
-        "GAP-007 evidence sanitization record is invalid",
-    )
-    return evidence
 
 
 def validate_manual(candidate: dict[str, Any], manual: Any) -> dict[str, Any]:
@@ -1721,10 +1478,8 @@ def command_candidate(args: argparse.Namespace) -> None:
     require(generic["index_digest"] == args.generic_digest, "candidate index digest mismatch")
     require(generic["amd64"] == args.amd64_runtime_digest, "candidate amd64 leaf mismatch")
     require(generic["aarch64"] == args.aarch64_runtime_digest, "candidate arm64 leaf mismatch")
-    gap007_evidence = load_json(args.gap007_evidence)
-    gap007_provenance = gap007_evidence.get("provenance", {})
     candidate = {
-        "schema": "antigravity-ha-release-candidate/v1",
+        "schema": "antigravity-ha-release-candidate/v2",
         "version": args.version,
         "source_sha": args.source_sha,
         "run_id": validate_run_number(args.run_id, "candidate run ID"),
@@ -1758,29 +1513,12 @@ def command_candidate(args: argparse.Namespace) -> None:
         },
         "automated_gates": {
             "exact_digest_smoke": "PASS",
-            "gap007_performance_durability": "PASS",
             "native_arm64_full_feasible": "PASS",
             "source_quality": "PASS",
             "spdx_leaf_sbom": "PASS",
         },
-        "gap007_release": {
-            "schema": "antigravity-ha-gap007-binding/v1",
-            "evidence_sha256": digest_file(args.gap007_evidence),
-            "source_sha": args.source_sha,
-            "amd64_stage_digest": args.amd64_stage_digest,
-            "amd64_runtime_digest": args.amd64_runtime_digest,
-            "candidate_image_id": gap007_provenance.get("candidate_image_id"),
-            "source_rootfs_sha256": gap007_provenance.get(
-                "source_rootfs_sha256"
-            ),
-        },
     }
     validate_candidate(candidate)
-    validate_gap007_release(
-        candidate,
-        gap007_evidence,
-        digest_file(args.gap007_evidence),
-    )
     write_json(args.output, candidate)
 
 
@@ -1791,11 +1529,6 @@ def command_manual(args: argparse.Namespace) -> None:
 
 def command_finalize(args: argparse.Namespace) -> None:
     candidate = validate_candidate(load_json(args.candidate))
-    validate_gap007_release(
-        candidate,
-        load_json(args.gap007_evidence),
-        digest_file(args.gap007_evidence),
-    )
     manual = validate_manual(candidate, load_json(args.manual))
     haos_gate_evidence = validate_haos_gate_directory(
         candidate,
@@ -1870,11 +1603,6 @@ def command_release(args: argparse.Namespace) -> None:
         == evidence["haos_gate_evidence"],
         "embedded HAOS gate report digest differs from release evidence",
     )
-    validate_gap007_release(
-        candidate,
-        load_json(args.gap007_evidence),
-        digest_file(args.gap007_evidence),
-    )
     require(candidate["version"] == args.version, "tag version differs from evidence")
     require(candidate["source_sha"] == args.source_sha, "tag commit differs from evidence")
     require(candidate["run_id"] == validate_run_number(args.candidate_run_id, "candidate run ID"), "candidate run ID differs from tag")
@@ -1910,11 +1638,6 @@ def command_notes(args: argparse.Namespace) -> None:
         == evidence["haos_gate_evidence"],
         "embedded HAOS gate report digest differs from release evidence",
     )
-    validate_gap007_release(
-        candidate,
-        load_json(args.gap007_evidence),
-        digest_file(args.gap007_evidence),
-    )
     images = candidate["images"]
     notes = f"""# Antigravity for Home Assistant {candidate['version']}
 
@@ -1933,9 +1656,8 @@ uses native Antigravity settings/plugins, and applies conservative migration mod
 Back up the App data first; rollback can require restoring the matching migration backup.
 
 The attached release evidence binds the exact candidate, both leaf SPDX documents,
-the fixed-duration GAP-007 amd64 performance/durability gate, native arm64 automated
-smoke, and the required sanitized HAOS rehearsals. Post-publish anonymous install/update
-verification remains a separate release acceptance gate.
+native arm64 automated smoke, and the required sanitized HAOS rehearsals. Post-publish
+anonymous install/update verification remains a separate release acceptance gate.
 """
     args.output.write_text(notes, encoding="utf-8")
 
@@ -1957,7 +1679,6 @@ def build_parser() -> argparse.ArgumentParser:
     candidate.add_argument("--manifest", type=Path, required=True)
     candidate.add_argument("--rehearsal-repository-manifest", type=Path, required=True)
     candidate.add_argument("--rehearsal-repository-archive", type=Path, required=True)
-    candidate.add_argument("--gap007-evidence", type=Path, required=True)
     candidate.add_argument("--output", type=Path, required=True)
     candidate.set_defaults(handler=command_candidate)
 
@@ -2021,7 +1742,6 @@ def build_parser() -> argparse.ArgumentParser:
     finalize.add_argument("--candidate", type=Path, required=True)
     finalize.add_argument("--manual", type=Path, required=True)
     finalize.add_argument("--candidate-artifact-digest", required=True)
-    finalize.add_argument("--gap007-evidence", type=Path, required=True)
     finalize.add_argument("--haos-gates-dir", type=Path, required=True)
     finalize.add_argument("--actor", required=True)
     finalize.add_argument("--run-id", required=True)
@@ -2031,7 +1751,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     release = commands.add_parser("release")
     release.add_argument("--evidence", type=Path, required=True)
-    release.add_argument("--gap007-evidence", type=Path, required=True)
     release.add_argument("--haos-gates-dir", type=Path, required=True)
     for name in ("version", "source-sha", "candidate-run-id", "candidate-run-attempt", "evidence-run-id", "evidence-run-attempt"):
         release.add_argument(f"--{name}", required=True)
@@ -2040,7 +1759,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     notes = commands.add_parser("notes")
     notes.add_argument("--evidence", type=Path, required=True)
-    notes.add_argument("--gap007-evidence", type=Path, required=True)
     notes.add_argument("--haos-gates-dir", type=Path, required=True)
     notes.add_argument("--output", type=Path, required=True)
     notes.set_defaults(handler=command_notes)

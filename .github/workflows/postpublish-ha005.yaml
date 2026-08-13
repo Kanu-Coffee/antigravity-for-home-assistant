@@ -169,7 +169,6 @@ jobs:
           set -Eeuo pipefail
           python3 .github/scripts/release_contract.py release \
             --evidence release-evidence/release-evidence.json \
-            --gap007-evidence release-evidence/gap007-release.json \
             --haos-gates-dir release-evidence/haos-gates \
             --version "$RELEASE_VERSION" \
             --source-sha "${{ steps.release.outputs.source_sha }}" \

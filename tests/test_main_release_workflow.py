@@ -37,6 +37,9 @@ def test_main_release_is_manual_main_only_and_minimally_authorized() -> None:
 
 def test_main_release_consumes_one_exact_successful_candidate() -> None:
     _, text = _workflow()
+    assert "gap007" not in text.lower()
+    assert "performance-durability-soak" not in text
+    assert 'antigravity-ha-release-candidate/v2' in text
     assert '.path == ".github/workflows/candidate.yaml"' in text
     assert "/attempts/${RUN_ATTEMPT}" in text
     assert '.event == "workflow_dispatch"' in text
@@ -55,13 +58,10 @@ def test_main_release_consumes_one_exact_successful_candidate() -> None:
     assert "tests/test_release_workflow_contract.py" in text
     assert "tests/test_main_release_workflow.py" in text
     assert "source-rootfs-manifest.py verify" in text
-    assert ".gap007_release.source_rootfs_sha256" in text
-    assert "gap007_release.evidence_sha256" in text
     assert "--manifest release-candidate/candidate-index.json" in text
     assert "Reject conflicting tag or Release before registry mutation" in text
     for gate in (
         "exact_digest_smoke",
-        "gap007_performance_durability",
         "native_arm64_full_feasible",
         "source_quality",
         "spdx_leaf_sbom",

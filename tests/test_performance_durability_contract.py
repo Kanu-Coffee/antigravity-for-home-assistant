@@ -19,6 +19,8 @@ HARNESS = ROOT / "tests/performance-durability-soak.mjs"
 WRAPPER = ROOT / "tests/performance-durability-soak.sh"
 WORKFLOW = ROOT / ".github/workflows/ci.yaml"
 GAP_REGISTER = ROOT / "docs/v2/gap-register.md"
+TEST_PLAN = ROOT / "docs/v2/test-plan.md"
+CHECKLIST = ROOT / "docs/v2/checklist.md"
 BUDGET = ROOT / "docs/v2/performance-budget.json"
 EVIDENCE_CONTRACT_PATH = ROOT / ".github/scripts/gap007_evidence_contract.py"
 
@@ -377,7 +379,7 @@ def test_duration_override_is_rejected_before_contract_execution() -> None:
     assert "overrides are forbidden" in result.stderr
 
 
-def test_short_ci_contract_does_not_replace_current_candidate_release_evidence() -> None:
+def test_short_ci_contract_is_mandatory_but_long_soak_is_manual_advisory() -> None:
     workflow = read(WORKFLOW)
     assert "tests/performance-durability-soak.sh" in workflow
     assert "--mode contract" in workflow
@@ -392,13 +394,25 @@ def test_short_ci_contract_does_not_replace_current_candidate_release_evidence()
     gap_row = next(
         line for line in gap_register.splitlines() if line.startswith("| GAP-007 |")
     )
-    assert "`IN_PROGRESS`" in gap_row
-    assert "current exact Candidate" in gap_row
-    assert "contract 결과이므로 해제 증거가 아니다" in gap_register
+    assert "`OPEN`" in gap_row
+    assert "non-blocking advisory" in gap_row
+    assert "Candidate·finalize·tag·release를 차단하지 않는다" in gap_row
+    assert "일반 CI에서 계속 실행" in gap_register
     assert (
         "2c2b3fe0cb0aa2522722e192323bdb0e0a291f5d99193df603eace003dc7f8f9"
         in gap_register
     )
     assert "immutable URI가 보존돼 있지 않고" in gap_register
-    assert "공식 candidate/release workflow" in gap_register
-    assert "실제 HAOS와 live Bot API 게이트를 대신하지 않는다" in gap_register
+    assert "수동 진단 도구" in gap_register
+    assert "gap007_release" in gap_register
+    assert "원본 JSON이나 `gap007_release` binding이 없어도 릴리스는 진행" in gap_register
+    assert "실제 HAOS와 live Bot API 검증을 대신하지 않으며" in gap_register
+
+    test_plan = read(TEST_PLAN)
+    assert "자동 release gate를 뜻하지 않는다" in test_plan
+    assert "공식 Candidate와 release workflow는 이 30분 mode를 자동 실행하지 않으며" in test_plan
+    assert "해당 장시간 evidence가 없다는 이유로 numeric image tag 생성을" in test_plan
+
+    checklist = read(CHECKLIST)
+    m505 = next(line for line in checklist.splitlines() if line.startswith("| M5-05 |"))
+    assert "장시간 진단은 수동 advisory" in m505

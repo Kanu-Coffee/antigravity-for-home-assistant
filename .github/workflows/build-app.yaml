@@ -566,67 +566,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  gap007-release:
-    name: Exact amd64 performance and durability release gate
-    if: inputs.candidate
-    needs:
-      - prepare
-      - assemble-candidate
-    runs-on: ubuntu-24.04
-    timeout-minutes: 75
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - name: Check out exact candidate source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Log in to pull the exact private amd64 candidate
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ github.token }}
-
-      - name: Run fixed-duration GAP-007 against the exact amd64 stage and leaf
-        env:
-          AMD64_IMAGE: ghcr.io/kanu-coffee/amd64-antigravity-for-home-assistant
-          AMD64_RUNTIME_DIGEST: ${{ needs.assemble-candidate.outputs.amd64_runtime_digest }}
-          AMD64_STAGE_DIGEST: ${{ needs.assemble-candidate.outputs.amd64_stage_digest }}
-        run: |
-          set -Eeuo pipefail
-          candidate_ref="${AMD64_IMAGE}@${AMD64_STAGE_DIGEST}"
-          docker pull --platform linux/amd64 "$candidate_ref"
-          tests/performance-durability-soak.sh \
-            --mode release \
-            --image "$candidate_ref" \
-            --candidate-stage-digest "$AMD64_STAGE_DIGEST" \
-            --candidate-leaf-digest "$AMD64_RUNTIME_DIGEST" \
-            --evidence gap007-release.json >/dev/null
-          jq --exit-status \
-            --arg leaf "$AMD64_RUNTIME_DIGEST" \
-            --arg source "$GITHUB_SHA" \
-            --arg stage "$AMD64_STAGE_DIGEST" '
-              .requirement_id == "GAP-007"
-              and .mode == "release"
-              and .result == "PASS"
-              and .closure_eligible == true
-              and .provenance.git_commit == $source
-              and .provenance.candidate_revision == $source
-              and .provenance.candidate_stage_digest == $stage
-              and .provenance.candidate_leaf_digest == $leaf
-            ' gap007-release.json >/dev/null
-
-      - name: Upload run-attempt-bound GAP-007 release evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
-        with:
-          name: candidate-gap007-${{ github.run_id }}-${{ github.run_attempt }}
-          path: gap007-release.json
-          if-no-files-found: error
-          retention-days: 14
-
   package-candidate:
     name: Package immutable automated candidate evidence
     if: inputs.candidate
@@ -636,7 +575,6 @@ jobs:
       - exact-digest-smoke
       - candidate-public-preflight
       - candidate-sbom
-      - gap007-release
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -701,7 +639,6 @@ jobs:
             --rehearsal-repository-manifest candidate-repository-manifest.json \
             --rehearsal-repository-archive haos-candidate-repository.zip \
             --manifest candidate-index.json \
-            --gap007-evidence gap007-release.json \
             --output candidate.json
           python3 .github/scripts/release_contract.py haos-report-templates \
             --candidate candidate.json \
@@ -725,7 +662,6 @@ jobs:
           path: |
             candidate.json
             candidate-index.json
-            gap007-release.json
             haos-report-templates/
             antigravity-for-home-assistant-amd64.spdx.json
             antigravity-for-home-assistant-arm64.spdx.json

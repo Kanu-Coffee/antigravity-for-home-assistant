@@ -76,7 +76,7 @@ def _valid_index() -> dict[str, object]:
 def _candidate() -> dict[str, object]:
     source = "a" * 40
     candidate = {
-        "schema": "antigravity-ha-release-candidate/v1",
+        "schema": "antigravity-ha-release-candidate/v2",
         "version": "2.0.0",
         "source_sha": source,
         "run_id": 101,
@@ -109,120 +109,12 @@ def _candidate() -> dict[str, object]:
         },
         "automated_gates": {
             "exact_digest_smoke": "PASS",
-            "gap007_performance_durability": "PASS",
             "native_arm64_full_feasible": "PASS",
             "source_quality": "PASS",
             "spdx_leaf_sbom": "PASS",
         },
     }
-    gap007 = _gap007(candidate)
-    candidate["gap007_release"] = {
-        "schema": "antigravity-ha-gap007-binding/v1",
-        "evidence_sha256": _digest(_gap007_bytes(candidate)),
-        "source_sha": source,
-        "amd64_stage_digest": candidate["images"]["amd64"]["stage_digest"],
-        "amd64_runtime_digest": candidate["images"]["amd64"]["runtime_digest"],
-        "candidate_image_id": gap007["provenance"]["candidate_image_id"],
-        "source_rootfs_sha256": gap007["provenance"]["source_rootfs_sha256"],
-    }
     return candidate
-
-
-def _gap007(candidate: dict[str, object]) -> dict[str, object]:
-    source = candidate["source_sha"]
-    amd64 = candidate["images"]["amd64"]
-    return {
-        "schema_version": 1,
-        "requirement_id": "GAP-007",
-        "mode": "release",
-        "scope": "local_candidate_release_fixture",
-        "result": "PASS",
-        "closure_eligible": True,
-        "started_at_utc": "2026-08-12T00:00:00Z",
-        "finished_at_utc": "2026-08-12T00:32:00Z",
-        "actual_elapsed_seconds": 1920,
-        "threshold_policy": {
-            "duration_override_supported": False,
-            "override_detected": False,
-            "release_soak_seconds": 1800,
-            "release_outage_seconds": 900,
-            "release_restart_count": 20,
-        },
-        "provenance": {
-            "git_commit": source,
-            "candidate_revision": source,
-            "candidate_stage_digest": amd64["stage_digest"],
-            "candidate_leaf_digest": amd64["runtime_digest"],
-            "candidate_image_id": _digest("candidate-config"),
-            "candidate_architecture": "amd64",
-            "source_rootfs_sha256": _digest("source-rootfs"),
-            "source_tree_stable": True,
-            "source_image_verification": {
-                "schema": "antigravity-ha-source-image-verification/v1",
-                "image_id": _digest("candidate-config"),
-                "revision": source,
-                "source_rootfs_sha256": _digest("source-rootfs"),
-                "verified_files": 123,
-            },
-            "module_origin": "packaged_image",
-            "telegram_bridge_module_path": CONTRACT.GAP007_MODULE_PATH,
-        },
-        "telegram": {
-            "required_elapsed_seconds": 1800,
-            "actual_elapsed_seconds": 1800,
-        },
-        "failure_injection": {
-            "required_elapsed_seconds": 900,
-            "actual_elapsed_seconds": 900,
-            "backoff_implementation": "packaged_telegram_bridge",
-            "backoff_reset_after_recovery": True,
-            "external_calls": 0,
-        },
-        "bounded_io": {"indexed_entities": 1000},
-        "rapid_restart": {
-            "required_count": 20,
-            "completed_count": 20,
-            "candidate_container": {
-                "required_count": 20,
-                "completed_count": 20,
-                "pending_journal_count": 0,
-                "zombie_process_count": 0,
-                "stale_socket_count": 0,
-            },
-        },
-        "resources": {
-            "candidate_budget": {
-                "baseline_evidence_sha256": (
-                    CONTRACT.GAP007_BASELINE_EVIDENCE_SHA256
-                ),
-                "limits": CONTRACT.GAP007_LIMITS,
-                "observed": {
-                    "average_cpu_percent": 1.0,
-                    "peak_rss_bytes": 150_000_000,
-                    "image_size_bytes": 570_000_000,
-                },
-                "result": "PASS",
-            }
-        },
-        "sanitization": {
-            "external_calls": 0,
-            "contains_credentials": False,
-            "contains_entity_or_chat_identifiers": False,
-            "contains_raw_logs_or_prompts": False,
-        },
-        "remaining_gap": "local GAP-007 complete; HAOS-specific gates remain separate",
-    }
-
-
-def _gap007_bytes(candidate: dict[str, object]) -> bytes:
-    return (
-        json.dumps(_gap007(candidate), sort_keys=True, separators=(",", ":"))
-        + "\n"
-    ).encode()
-
-
-def _write_gap007(path: Path, candidate: dict[str, object]) -> None:
-    path.write_bytes(_gap007_bytes(candidate))
 
 
 def _manual(
@@ -567,6 +459,76 @@ def test_oci_index_accepts_only_exact_runtime_descriptors(
         CONTRACT.validate_index_document(detached, ("amd64", "aarch64"))
 
 
+def test_candidate_cli_emits_v2_without_long_soak_input(tmp_path: Path) -> None:
+    source = "a" * 40
+    manifest = tmp_path / "candidate-index.json"
+    manifest.write_text(
+        json.dumps(_valid_index(), separators=(",", ":")), encoding="utf-8"
+    )
+    repository_manifest = tmp_path / "candidate-repository-manifest.json"
+    repository_archive = tmp_path / "haos-candidate-repository.zip"
+    repository_manifest.write_text("{}\n", encoding="utf-8")
+    repository_archive.write_bytes(b"fixture archive")
+    output = tmp_path / "candidate.json"
+
+    result = _run(
+        [
+            "python3",
+            str(CONTRACT_PATH),
+            "candidate",
+            "--version",
+            "2.0.0",
+            "--source-sha",
+            source,
+            "--run-id",
+            "101",
+            "--run-attempt",
+            "2",
+            "--candidate-tag",
+            f"candidate-{source}-101-2",
+            "--generic-image",
+            "ghcr.io/kanu-coffee/antigravity-for-home-assistant",
+            "--generic-digest",
+            _digest(manifest.read_bytes()),
+            "--amd64-image",
+            "ghcr.io/kanu-coffee/amd64-antigravity-for-home-assistant",
+            "--amd64-stage-digest",
+            _digest("amd64-stage"),
+            "--amd64-runtime-digest",
+            _digest("amd64"),
+            "--aarch64-image",
+            "ghcr.io/kanu-coffee/aarch64-antigravity-for-home-assistant",
+            "--aarch64-stage-digest",
+            _digest("arm64-stage"),
+            "--aarch64-runtime-digest",
+            _digest("arm64"),
+            "--rehearsal-version",
+            "2.0.0-candidate.101.2",
+            "--rehearsal-digest",
+            _digest(manifest.read_bytes()),
+            "--rehearsal-repository-manifest",
+            str(repository_manifest),
+            "--rehearsal-repository-archive",
+            str(repository_archive),
+            "--manifest",
+            str(manifest),
+            "--output",
+            str(output),
+        ]
+    )
+    assert result.returncode == 0, result.stderr
+    candidate = json.loads(output.read_text(encoding="utf-8"))
+    assert candidate["schema"] == "antigravity-ha-release-candidate/v2"
+    assert set(candidate["automated_gates"]) == {
+        "exact_digest_smoke",
+        "native_arm64_full_feasible",
+        "source_quality",
+        "spdx_leaf_sbom",
+    }
+    assert "gap007_release" not in candidate
+    CONTRACT.validate_candidate(candidate)
+
+
 def test_manual_and_tag_release_binding_fail_closed(tmp_path: Path) -> None:
     candidate = _candidate()
     manual = _manual(candidate, _digest("report"))
@@ -614,8 +576,6 @@ def test_manual_and_tag_release_binding_fail_closed(tmp_path: Path) -> None:
         CONTRACT.validate_release_evidence(invalid_actor)
     evidence_path = tmp_path / "release-evidence.json"
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
-    gap007_path = tmp_path / "gap007-release.json"
-    _write_gap007(gap007_path, candidate)
     result = _run(
         [
             "python3",
@@ -623,8 +583,6 @@ def test_manual_and_tag_release_binding_fail_closed(tmp_path: Path) -> None:
             "release",
             "--evidence",
             str(evidence_path),
-            "--gap007-evidence",
-            str(gap007_path),
             "--haos-gates-dir",
             str(haos_gate_dir),
             "--version",
@@ -662,9 +620,6 @@ def test_release_and_notes_reject_tampered_embedded_haos_gate(
     }
     evidence_path = tmp_path / "release-evidence.json"
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
-    gap007_path = tmp_path / "gap007-release.json"
-    _write_gap007(gap007_path, candidate)
-
     tampered_gate = haos_gate_dir / "telegram_modes.json"
     tampered_gate.write_bytes(tampered_gate.read_bytes() + b"\n")
     release_result = _run(
@@ -674,8 +629,6 @@ def test_release_and_notes_reject_tampered_embedded_haos_gate(
             "release",
             "--evidence",
             str(evidence_path),
-            "--gap007-evidence",
-            str(gap007_path),
             "--haos-gates-dir",
             str(haos_gate_dir),
             "--version",
@@ -702,8 +655,6 @@ def test_release_and_notes_reject_tampered_embedded_haos_gate(
             "notes",
             "--evidence",
             str(evidence_path),
-            "--gap007-evidence",
-            str(gap007_path),
             "--haos-gates-dir",
             str(haos_gate_dir),
             "--output",
@@ -714,29 +665,43 @@ def test_release_and_notes_reject_tampered_embedded_haos_gate(
     assert "embedded HAOS gate report digest differs" in notes_result.stderr
 
 
-def test_gap007_release_binding_rejects_hash_leaf_source_and_budget_drift() -> None:
-    candidate = _candidate()
-    evidence = _gap007(candidate)
-    evidence_sha256 = candidate["gap007_release"]["evidence_sha256"]
-    CONTRACT.validate_gap007_release(candidate, evidence, evidence_sha256)
+def test_long_gap007_is_not_an_automated_release_gate() -> None:
+    contract = CONTRACT_PATH.read_text()
+    build = (ROOT / ".github/workflows/build-app.yaml").read_text()
+    candidate = (ROOT / ".github/workflows/candidate.yaml").read_text()
+    builder = (ROOT / ".github/workflows/builder.yaml").read_text()
+    main_release = (ROOT / ".github/workflows/main-release.yaml").read_text()
+    postpublish = (
+        ROOT / ".github/workflows/postpublish-ha005.yaml"
+    ).read_text()
+    public_install = (
+        ROOT / ".github/workflows/postpublish-public-install.yaml"
+    ).read_text()
 
-    with pytest.raises(CONTRACT.ContractError, match="file hash"):
-        CONTRACT.validate_gap007_release(candidate, evidence, _digest("stale"))
+    for automated_surface in (
+        contract,
+        build,
+        candidate,
+        builder,
+        main_release,
+        postpublish,
+        public_install,
+    ):
+        assert "--gap007-evidence" not in automated_surface
+        assert "gap007-release.json" not in automated_surface
+        assert "gap007_performance_durability" not in automated_surface
+    assert "gap007-release:" not in build
+    assert "Exact amd64 performance and durability release gate" not in build
 
-    stale_leaf = json.loads(json.dumps(evidence))
-    stale_leaf["provenance"]["candidate_leaf_digest"] = _digest("foreign-leaf")
-    with pytest.raises(CONTRACT.ContractError, match="leaf digest"):
-        CONTRACT.validate_gap007_release(candidate, stale_leaf, evidence_sha256)
+    legacy_schema = _candidate()
+    legacy_schema["schema"] = "antigravity-ha-release-candidate/v1"
+    with pytest.raises(CONTRACT.ContractError, match="wrong candidate schema"):
+        CONTRACT.validate_candidate(legacy_schema)
 
-    stale_source = json.loads(json.dumps(evidence))
-    stale_source["provenance"]["git_commit"] = "b" * 40
-    with pytest.raises(CONTRACT.ContractError, match="source differs"):
-        CONTRACT.validate_gap007_release(candidate, stale_source, evidence_sha256)
-
-    no_budget = json.loads(json.dumps(evidence))
-    no_budget["resources"].pop("candidate_budget")
-    with pytest.raises(CONTRACT.ContractError, match="budget"):
-        CONTRACT.validate_gap007_release(candidate, no_budget, evidence_sha256)
+    legacy_binding = _candidate()
+    legacy_binding["gap007_release"] = {}
+    with pytest.raises(CONTRACT.ContractError, match="keys are not exact"):
+        CONTRACT.validate_candidate(legacy_binding)
 
 
 def test_annotated_tag_parser_binds_source_runs_and_archive(
@@ -2516,19 +2481,17 @@ def test_workflows_encode_exact_release_invariants() -> None:
     assert "CANDIDATE_DIGEST: ${{ needs.assemble-candidate.outputs.generic_digest }}" in build
     assert '"${IMAGE}@${CANDIDATE_DIGEST}"' in build
     assert "size >= 16777216" in build
-    assert "Exact amd64 performance and durability release gate" in build
+    assert "Exact amd64 performance and durability release gate" not in build
     assert "Create exact HAOS rehearsal tag without rebuilding" in build
     assert "Require anonymous HAOS rehearsal image access" in build
     assert "candidate_repository.py create" in build
     assert "candidate-repository-manifest.json" in build
-    assert "--candidate-stage-digest \"$AMD64_STAGE_DIGEST\"" in build
-    assert "--candidate-leaf-digest \"$AMD64_RUNTIME_DIGEST\"" in build
-    assert "--gap007-evidence gap007-release.json" in build
-    assert "gap007_performance_durability" in CONTRACT_PATH.read_text()
-    assert "release-evidence/gap007-release.json" in candidate
+    assert "--gap007-evidence" not in build
+    assert "gap007_performance_durability" not in CONTRACT_PATH.read_text()
+    assert "release-evidence/gap007-release.json" not in candidate
     assert "release-evidence/haos-gates/*.json" in candidate
     assert "--haos-gates-dir haos-gates" in candidate
-    assert "--gap007-evidence release-evidence/gap007-release.json" in builder
+    assert "--gap007-evidence" not in builder
     assert "--haos-gates-dir release-evidence/haos-gates" in builder
     assert "release-evidence/haos-gates/*.json" in builder
     assert "Validate and preserve candidate-bound HAOS gate report" in haos_evidence
@@ -2688,7 +2651,6 @@ def test_candidate_attempt_policy_is_atomic_and_fail_closed() -> None:
         "candidate-arch-digest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}",
         "candidate-index-${{ github.run_id }}-${{ github.run_attempt }}",
         "candidate-sbom-${{ github.run_id }}-${{ github.run_attempt }}",
-        "candidate-gap007-${{ github.run_id }}-${{ github.run_attempt }}",
     ):
         assert artifact_name in build
     assert (

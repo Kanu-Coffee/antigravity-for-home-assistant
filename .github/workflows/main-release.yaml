@@ -159,14 +159,13 @@ jobs:
             --arg version "$RELEASE_VERSION" \
             --argjson run_attempt "$RUN_ATTEMPT" \
             --argjson run_id "$RUN_ID" '
-              .schema == "antigravity-ha-release-candidate/v1"
+              .schema == "antigravity-ha-release-candidate/v2"
               and .source_sha == $source
               and .version == $version
               and .run_id == $run_id
               and .run_attempt == $run_attempt
               and .automated_gates == {
                 "exact_digest_smoke": "PASS",
-                "gap007_performance_durability": "PASS",
                 "native_arm64_full_feasible": "PASS",
                 "source_quality": "PASS",
                 "spdx_leaf_sbom": "PASS"
@@ -175,15 +174,6 @@ jobs:
               and (.images.amd64.stage_digest | test("^sha256:[0-9a-f]{64}$"))
               and (.images.aarch64.stage_digest | test("^sha256:[0-9a-f]{64}$"))
             ' "$candidate" >/dev/null
-          current_rootfs=$(jq --raw-output .source_rootfs_sha256 \
-            antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/source-rootfs-manifest.json)
-          [[ $(jq --raw-output .gap007_release.source_rootfs_sha256 \
-            "$candidate") == "$current_rootfs" ]]
-          [[ $(jq --raw-output .gap007_release.source_sha "$candidate") == \
-            "$SOURCE_SHA" ]]
-          [[ sha256:$(sha256sum release-candidate/gap007-release.json | \
-            cut -d ' ' -f 1) == \
-            $(jq --raw-output .gap007_release.evidence_sha256 "$candidate") ]]
           index_result=$(python3 .github/scripts/release_contract.py index \
             --manifest release-candidate/candidate-index.json \
             --expected-arch amd64 \
