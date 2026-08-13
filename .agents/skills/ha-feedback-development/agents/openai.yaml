@@ -1,0 +1,4 @@
+interface:
+  display_name: "HA Feedback Development"
+  short_description: "Validate App feedback locally without live HAOS access"
+  default_prompt: "Investigate this App bug or feature locally and prepare a sanitized feedback report without external submission."

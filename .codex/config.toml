@@ -1,0 +1,11 @@
+# Trusted-project configuration for source development only. The server runs in
+# an isolated App image and Codex exposes only its two read-only tools.
+[mcp_servers.ha_memory_development]
+command = "/bin/bash"
+args = ["tools/development/ha-memory-mcp"]
+cwd = "."
+required = false
+startup_timeout_sec = 20
+tool_timeout_sec = 30
+enabled_tools = ["memory_search", "memory_status"]
+default_tools_approval_mode = "auto"

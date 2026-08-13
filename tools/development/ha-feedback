@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly IMAGE="ghcr.io/kanu-coffee/antigravity-for-home-assistant@sha256:1f4b996b8eb1e7f4028a5f5ac8383a79da550af4cd826f8ad9611ea607b33e91"
+
+usage() {
+  echo "usage: tools/development/ha-feedback collect bug|feature --input <0600-json-file>" >&2
+  echo "       tools/development/ha-feedback validate|render <report-path>" >&2
+}
+
+if (($# == 0)); then
+  usage
+  exit 64
+fi
+case "$1" in
+  collect)
+    if (($# != 4)) || [[ $2 != bug && $2 != feature ]] || [[ $3 != --input ]]; then
+      usage
+      exit 64
+    fi
+    ;;
+  validate | render)
+    if (($# != 2)); then
+      usage
+      exit 64
+    fi
+    ;;
+  github)
+    echo "GitHub operations are disabled in host development test mode" >&2
+    exit 77
+    ;;
+  *)
+    echo "host development feedback supports only collect, validate, and render" >&2
+    exit 64
+    ;;
+esac
+
+repository_root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "ha-feedback must run inside the Antigravity source checkout" >&2
+  exit 69
+}
+core="$repository_root/antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/ha-feedback.mjs"
+[[ -f $core && ! -L $core ]] || {
+  echo "image-managed feedback source is unavailable or unsafe" >&2
+  exit 69
+}
+
+docker_bin="docker"
+state_root="$repository_root/.codex-log/ha-feedback"
+if [[ ${ANTIGRAVITY_HA_DEV_TEST_MODE:-0} == 1 ]]; then
+  docker_bin="${ANTIGRAVITY_HA_DEV_DOCKER_BIN:-docker}"
+  state_root="${ANTIGRAVITY_HA_DEV_FEEDBACK_STATE_ROOT:-$state_root}"
+elif [[ -n ${ANTIGRAVITY_HA_DEV_DOCKER_BIN:-} || -n ${ANTIGRAVITY_HA_DEV_FEEDBACK_STATE_ROOT:-} ]]; then
+  echo "development overrides require ANTIGRAVITY_HA_DEV_TEST_MODE=1" >&2
+  exit 64
+fi
+
+old_umask="$(umask)"
+umask 077
+ensure_private_directory() {
+  local directory="$1"
+  if [[ -L $directory || ( -e $directory && ! -d $directory ) ]]; then
+    echo "unsafe development feedback state path" >&2
+    exit 73
+  fi
+  if [[ ! -e $directory ]]; then
+    mkdir -m 0700 -- "$directory"
+  fi
+  if [[ $(stat -c '%u' -- "$directory") != "$(id -u)" ]]; then
+    echo "development feedback state must be owned by the current user" >&2
+    exit 73
+  fi
+  if [[ $(stat -c '%a' -- "$directory") != 700 ]]; then
+    chmod 0700 -- "$directory"
+  fi
+}
+ensure_private_directory "$(dirname -- "$state_root")"
+ensure_private_directory "$state_root"
+ensure_private_directory "$state_root/reports"
+ensure_private_directory "$state_root/github-disabled"
+ensure_private_directory "$state_root/previews"
+ensure_private_directory "$state_root/home"
+umask "$old_umask"
+
+container_arguments=("$1")
+mount_arguments=()
+if [[ $1 == collect ]]; then
+  input_path="$(realpath -e -- "$4")" || {
+    echo "feedback input does not exist" >&2
+    exit 66
+  }
+  input_metadata="$(stat -Lc '%F:%a:%u:%h' -- "$input_path")"
+  [[ ! -L $4 && $input_metadata == "regular file:600:$(id -u):1" ]] || {
+    echo "feedback input must be a private, single-link 0600 file owned by the current user" >&2
+    exit 65
+  }
+  container_arguments+=("$2" --input "$input_path")
+  mount_arguments+=(--mount "type=bind,src=${input_path},dst=${input_path},readonly")
+else
+  report_path="$(realpath -e -- "$2")" || {
+    echo "managed feedback report does not exist" >&2
+    exit 66
+  }
+  case "$report_path" in
+    "$state_root" | "$state_root"/*) ;;
+    *)
+      echo "managed feedback report must be inside the development state directory" >&2
+      exit 65
+      ;;
+  esac
+  container_arguments+=("$report_path")
+fi
+
+exec "$docker_bin" run --rm \
+  --pull never \
+  --network none \
+  --read-only \
+  --cap-drop ALL \
+  --security-opt no-new-privileges:true \
+  --pids-limit 64 \
+  --memory 384m \
+  --cpus 1 \
+  --user "$(id -u):$(id -g)" \
+  --mount "type=bind,src=${core},dst=/development/ha-feedback.mjs,readonly" \
+  --mount "type=bind,src=${state_root},dst=${state_root}" \
+  "${mount_arguments[@]}" \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=32m \
+  --entrypoint /usr/bin/env \
+  "$IMAGE" \
+  -i \
+  HOME="$state_root/home" \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  LANG=C.UTF-8 \
+  HA_FEEDBACK_TEST_MODE=1 \
+  HA_FEEDBACK_REPORT_ROOT="$state_root/reports" \
+  HA_FEEDBACK_GH_CONFIG_DIR="$state_root/github-disabled" \
+  HA_FEEDBACK_GH_BIN="$state_root/github-unavailable" \
+  HA_FEEDBACK_PREVIEW_ROOT="$state_root/previews" \
+  /usr/bin/node /development/ha-feedback.mjs "${container_arguments[@]}"

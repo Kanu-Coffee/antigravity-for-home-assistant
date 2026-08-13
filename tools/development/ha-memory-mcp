@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly IMAGE="ghcr.io/kanu-coffee/antigravity-for-home-assistant@sha256:1f4b996b8eb1e7f4028a5f5ac8383a79da550af4cd826f8ad9611ea607b33e91"
+readonly DEFAULT_VOLUME="antigravity-ha-development-memory"
+
+if (($# != 0)); then
+  echo "usage: tools/development/ha-memory-mcp" >&2
+  exit 64
+fi
+
+docker_bin="docker"
+memory_volume="$DEFAULT_VOLUME"
+if [[ ${ANTIGRAVITY_HA_DEV_TEST_MODE:-0} == 1 ]]; then
+  docker_bin="${ANTIGRAVITY_HA_DEV_DOCKER_BIN:-docker}"
+  memory_volume="${ANTIGRAVITY_HA_DEV_MEMORY_VOLUME:-$DEFAULT_VOLUME}"
+elif [[ -n ${ANTIGRAVITY_HA_DEV_DOCKER_BIN:-} || -n ${ANTIGRAVITY_HA_DEV_MEMORY_VOLUME:-} ]]; then
+  echo "development test overrides require ANTIGRAVITY_HA_DEV_TEST_MODE=1" >&2
+  exit 64
+fi
+
+if [[ ! $memory_volume =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$ ]]; then
+  echo "invalid development memory volume name" >&2
+  exit 64
+fi
+
+exec "$docker_bin" run --rm --interactive \
+  --pull never \
+  --network none \
+  --read-only \
+  --cap-drop ALL \
+  --security-opt no-new-privileges:true \
+  --pids-limit 64 \
+  --memory 256m \
+  --cpus 1 \
+  --env HA_TELEGRAM_USER_ID=1 \
+  --env HA_TELEGRAM_CHAT_ID=1 \
+  --mount "type=volume,src=${memory_volume},dst=/data,volume-nocopy" \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m \
+  --entrypoint /usr/local/bin/ha-memory-mcp \
+  "$IMAGE"
