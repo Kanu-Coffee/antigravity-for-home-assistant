@@ -168,7 +168,6 @@ def test_feedback_user_surfaces_use_the_native_slash_command(
     rootfs: Path,
 ) -> None:
     surfaces = [
-        repository_root / "AGENTS.md",
         repository_root / "SUPPORT.md",
         repository_root / "docs/examples.ko.md",
         repository_root / "docs/examples.en.md",

@@ -14,7 +14,5 @@ Thumbs.db
 app_log.txt
 telegram_msg.txt
 
-# Host-only Codex development state. The tracked template lives under
-# tools/development and is installed explicitly for a source checkout.
-/AGENTS.override.md
+# Host-only Codex development state.
 /.codex-log/

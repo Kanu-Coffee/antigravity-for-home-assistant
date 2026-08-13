@@ -1,9 +1,10 @@
 # Local source-development setup
 
-The root `AGENTS.md` intentionally describes Antigravity running inside the live
-Home Assistant App. A host Codex checkout does not have `/config`, `/data`, a
-Supervisor token, or the image-installed commands, so it must not claim those
-runtime capabilities.
+The root `AGENTS.md` describes this host source checkout. A host Codex session
+does not have `/config`, `/data`, a Supervisor token, or the image-installed
+commands, so it must not claim those runtime capabilities. The guidance shipped
+inside the App is the separate rootfs file at
+`antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/AGENTS.md`.
 
 The older Codex for Home Assistant project followed the same fundamental model:
 memory and feedback were exercised inside built images and fixture-based smoke
@@ -19,21 +20,19 @@ Requirements are Git, Docker, and Node.js. From the repository root, run:
 tools/development/setup install
 ```
 
-The command changes no system configuration. It:
+The command changes no Codex instructions or system configuration. It:
 
-- installs the tracked host template as an ignored `AGENTS.override.md`;
 - populates Docker's image cache with a digest-pinned public 2.0.2 App image;
 - creates a dedicated Docker volume for development memory; and
 - probes the MCP over standard input/output with networking disabled.
 
-It does not modify the runtime `AGENTS.md`, global Git settings,
-`~/.codex/config.toml`, system binaries, or Home Assistant data. An existing
-different or symbolic-link override is rejected instead of overwritten. Run
-`tools/development/setup check` later to revalidate the setup.
+It does not modify either `AGENTS.md`, global Git settings,
+`~/.codex/config.toml`, system binaries, or Home Assistant data. Run
+`tools/development/setup check` later to revalidate the development tools.
 
 Start a **new Codex session** in the trusted repository after installation.
-Codex discovers project `.codex/config.toml`, project skills, and instruction
-overrides at session startup.
+Codex discovers the root `AGENTS.md`, project `.codex/config.toml`, and project
+skills at session startup.
 
 ## Development memory
 

@@ -11,15 +11,17 @@ import tomllib
 from pathlib import Path
 
 
-RUNTIME_GUIDANCE = "AGENTS.md"
-HOST_OVERRIDE = "tools/development/host-AGENTS.override.md"
+DEVELOPMENT_GUIDANCE = "AGENTS.md"
+RUNTIME_GUIDANCE = (
+    "antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/AGENTS.md"
+)
 DEVELOPMENT_FILES = {
+    DEVELOPMENT_GUIDANCE,
     ".codex/config.toml",
     "tools/development/setup",
     "tools/development/ha-memory-mcp",
     "tools/development/ha-feedback",
     "tools/development/memory-mcp-probe.mjs",
-    HOST_OVERRIDE,
     ".agents/skills/ha-feedback-development/SKILL.md",
     "docs/local-development.md",
 }
@@ -55,15 +57,31 @@ def test_host_development_assets_are_complete_and_executable(
         assert mode & stat.S_IXUSR, f"{relative_path} is not executable"
 
 
-def test_runtime_guidance_is_preserved_and_host_override_is_local(
+def test_host_and_runtime_guidance_are_explicitly_separated(
     repository_root: Path,
 ) -> None:
+    development = _read(repository_root, DEVELOPMENT_GUIDANCE)
     runtime = _read(repository_root, RUNTIME_GUIDANCE)
-    override = _read(repository_root, HOST_OVERRIDE)
     ignore = _read(repository_root, ".gitignore")
 
-    # The tracked root guidance deliberately describes the live App artifact.
-    # Development setup must not weaken or relabel that runtime contract.
+    normalized_development = " ".join(development.split()).lower()
+    for fragment in (
+        "host development",
+        "not running inside",
+        "live home assistant app",
+        "tools/development/ha-feedback",
+        "memory_search",
+        "memory_status",
+        "rootfs/usr/local/share/antigravity-ha/agents.md",
+    ):
+        assert fragment in normalized_development
+    for forbidden_claim in (
+        "write all of `/config`",
+        "production administrator access",
+        "/data/antigravity-ha-memory/memory.sqlite3",
+    ):
+        assert forbidden_claim not in development
+
     for fragment in (
         "runs inside a live Home Assistant App",
         "Treat that access as production administrator access",
@@ -75,34 +93,9 @@ def test_runtime_guidance_is_preserved_and_host_override_is_local(
         assert fragment in runtime
     assert "tools/development" not in runtime
     assert "host development" not in runtime.lower()
-
-    normalized_override = " ".join(override.split()).lower()
-    for fragment in (
-        "host development",
-        "not running inside",
-        "home assistant app",
-        "tools/development/ha-feedback",
-        "memory_search",
-        "memory_status",
-    ):
-        assert fragment in normalized_override
-    for forbidden_claim in (
-        "write all of `/config`",
-        "production administrator access",
-    ):
-        assert forbidden_claim not in override
-
-    assert re.search(r"(?m)^/AGENTS\.override\.md$", ignore)
-    assert not (repository_root / "AGENTS.override.md").is_symlink()
-
-    ignored = subprocess.run(
-        ["git", "check-ignore", "--quiet", "AGENTS.override.md"],
-        cwd=repository_root,
-        check=False,
-        capture_output=True,
-        timeout=10,
-    )
-    assert ignored.returncode == 0, "the generated host override must remain untracked"
+    assert "AGENTS.override.md" not in ignore
+    assert not (repository_root / "AGENTS.override.md").exists()
+    assert not (repository_root / "tools/development/host-AGENTS.override.md").exists()
 
 
 def test_project_codex_config_enables_only_read_only_memory_tools(
@@ -143,8 +136,7 @@ def test_setup_is_repository_scoped(repository_root: Path) -> None:
     for required in (
         "check",
         "install",
-        "host-AGENTS.override.md",
-        "AGENTS.override.md",
+        "AGENTS.md",
         "memory-mcp-probe.mjs",
     ):
         assert required in setup
@@ -156,6 +148,7 @@ def test_setup_is_repository_scoped(repository_root: Path) -> None:
         "git config --global",
     ):
         assert forbidden not in setup
+    assert "AGENTS.override.md" not in setup
     assert set(PINNED_IMAGE.findall(setup)) == set(PINNED_IMAGE.findall(memory))
 
 
@@ -451,7 +444,7 @@ def test_development_docker_override_requires_explicit_test_mode(
     assert not override_marker.exists(), "test-only Docker override escaped test mode"
 
 
-def test_setup_installs_an_ignored_override_idempotently(
+def test_setup_prepares_tools_without_creating_instruction_files(
     repository_root: Path,
     tmp_path: Path,
 ) -> None:
@@ -475,8 +468,6 @@ def test_setup_installs_an_ignored_override_idempotently(
     )
 
     setup = checkout / "tools/development/setup"
-    template = checkout / HOST_OVERRIDE
-    expected = template.read_bytes()
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
     docker_marker = tmp_path / "docker-was-called"
@@ -502,16 +493,10 @@ def test_setup_installs_an_ignored_override_idempotently(
             timeout=10,
         )
         assert result.returncode == 0, result.stderr
-        assert (checkout / "AGENTS.override.md").read_bytes() == expected
-
-    ignored = subprocess.run(
-        ["git", "check-ignore", "--quiet", "AGENTS.override.md"],
-        cwd=checkout,
-        check=False,
-        capture_output=True,
-        timeout=10,
-    )
-    assert ignored.returncode == 0
+        assert not (checkout / "AGENTS.override.md").exists()
+        assert (checkout / "AGENTS.md").read_bytes() == (
+            repository_root / "AGENTS.md"
+        ).read_bytes()
 
     invalid = subprocess.run(
         [str(setup), "unknown"],
@@ -562,7 +547,8 @@ def test_local_development_documentation_states_the_boundary(
     ).lower()
     for fragment in (
         "tools/development/setup",
-        "agents.override.md",
+        "root `agents.md`",
+        "rootfs/usr/local/share/antigravity-ha/agents.md",
         "new codex session",
         "memory_search",
         "memory_status",

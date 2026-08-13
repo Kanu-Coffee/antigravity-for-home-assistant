@@ -28,10 +28,8 @@ repository_root="$(git -C "$script_directory" rev-parse --show-toplevel 2>/dev/n
   exit 69
 }
 
-template="$script_directory/host-AGENTS.override.md"
-override="$repository_root/AGENTS.override.md"
 probe="$script_directory/memory-mcp-probe.mjs"
-[[ -f $template && -f $probe && -f $repository_root/.codex/config.toml ]] || {
+[[ -f $probe && -f $repository_root/AGENTS.md && -f $repository_root/.codex/config.toml ]] || {
   echo "development setup assets are incomplete" >&2
   exit 69
 }
@@ -46,40 +44,16 @@ elif [[ -n ${ANTIGRAVITY_HA_DEV_DOCKER_BIN:-} ]]; then
   exit 64
 fi
 
-verify_override() {
-  [[ -f $override && ! -L $override ]] || {
-    echo "AGENTS.override.md is missing or unsafe; run setup install" >&2
-    return 1
-  }
-  cmp --silent -- "$template" "$override" || {
-    echo "AGENTS.override.md differs from the reviewed host template" >&2
-    return 1
-  }
-  git -C "$repository_root" check-ignore --quiet AGENTS.override.md || {
-    echo "AGENTS.override.md must remain ignored" >&2
-    return 1
-  }
-}
-
 if [[ $command_name == install ]]; then
-  if [[ -e $override || -L $override ]]; then
-    verify_override || {
-      echo "refusing to overwrite an existing host override" >&2
-      exit 73
-    }
-  else
-    install -m 0600 -- "$template" "$override"
-  fi
   "$docker_bin" pull "$IMAGE" >/dev/null
   "$docker_bin" volume create "$MEMORY_VOLUME" >/dev/null
   if ((test_mode == 0)); then
     node "$probe" >/dev/null
   fi
-  echo "Host development setup installed. Start a new Codex session in this repository."
+  echo "Host development tools installed. Start a new Codex session to load project MCP changes."
   exit 0
 fi
 
-verify_override
 "$docker_bin" image inspect "$IMAGE" >/dev/null
 "$docker_bin" volume inspect "$MEMORY_VOLUME" >/dev/null
 node "$probe"

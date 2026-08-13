@@ -19,8 +19,8 @@ v1 evidence, not current implementation instructions.
 
 For a host Codex checkout, first follow the
 [local source-development setup](docs/local-development.md). The root
-`AGENTS.md` remains the live App contract; the setup installs an ignored host
-override and isolated development helpers without changing that artifact.
+`AGENTS.md` is the source-development contract; the App receives its separate
+runtime guidance from the image rootfs.
 
 1. Fork and clone the repository, then create a focused branch.
 2. Make the smallest change that satisfies the canonical contract.
