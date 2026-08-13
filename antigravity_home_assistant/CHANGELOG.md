@@ -2,6 +2,26 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.0.2] - 2026-08-13
+
+### Fixed
+
+- Keep Telegram startup inside the bridge when `deleteWebhook` or `getMe`
+  encounters a transient DNS, transport, timeout, rate-limit, or upstream
+  failure. The bridge now uses bounded exponential backoff instead of entering
+  an S6 restart and fatal-log loop; non-retryable 4xx responses remain
+  fail-closed.
+- Preserve a bounded, allowlisted Telegram transport code without logging the
+  Bot API URL, token, or underlying error message.
+- Hold non-retryable Telegram 4xx failures in one fail-closed process state so
+  S6 cannot turn an invalid or revoked Bot token into a request and log loop.
+- Separate `ha-memoryd` stdout and stderr so Node SQLite warnings can no longer
+  hide the structured Home Assistant failure reason behind the generic
+  `ha_unavailable` code. Raw diagnostics remain private and the last-known-good
+  memory catalog remains unchanged while retrying.
+- Keep the temporary structured memory diagnostic under a dedicated AppArmor
+  path in `/run`; Telegram profiles cannot read or modify it.
+
 ## [2.0.1] - 2026-08-12
 
 ### Fixed

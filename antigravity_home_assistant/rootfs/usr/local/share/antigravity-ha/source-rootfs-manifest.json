@@ -93,8 +93,8 @@
     {
       "mode": "0755",
       "path": "/etc/s6-overlay/s6-rc.d/ha-memoryd/run",
-      "sha256": "sha256:f940823a057873409bc7c318cd378f66096496b0b16b5e6c8e187afdcca0568b",
-      "size": 2751
+      "sha256": "sha256:3589841038d1c08d8890ce4b35bafc189231a50e2ff3d58b5f141513519ea9cd",
+      "size": 3485
     },
     {
       "mode": "0644",
@@ -777,8 +777,8 @@
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/telegram-bridge.mjs",
-      "sha256": "sha256:1424a0a34aea41d338cc3c5039ac980e7e4455b426b4b7787230897de7fa49d0",
-      "size": 59772
+      "sha256": "sha256:9a072decab26ffc5bdfe5499fabe746bd19c02dc7149d9240cb83194deb829d0",
+      "size": 62148
     },
     {
       "mode": "0644",
@@ -812,5 +812,5 @@
     }
   ],
   "schema": "antigravity-ha-source-rootfs/v1",
-  "source_rootfs_sha256": "sha256:d5d7d785b1e4035c49d6bbc358dda4afb08836ce11584d6153b526c09a0f6796"
+  "source_rootfs_sha256": "sha256:1c94bf0ebe45ecc47d994a5a53196b6ead8d001833bab59c7e8585c1e0a58004"
 }

@@ -6,13 +6,24 @@ unset SUPERVISOR_TOKEN
 
 readonly REFRESH_SECONDS=900
 readonly MAX_RETRY_SECONDS=300
+readonly MAX_REFRESH_DIAGNOSTIC_BYTES=16384
 retry_seconds=30
 
+refresh_stderr_file=$(mktemp /run/antigravity-ha/.ha-memoryd-stderr.XXXXXX)
+readonly refresh_stderr_file
+
+cleanup() {
+  rm -f -- "${refresh_stderr_file}"
+}
+
+trap cleanup EXIT
+chmod 0600 "${refresh_stderr_file}"
 trap 'exit 0' TERM INT
 
 while true; do
   refresh_output=
-  if refresh_output=$(/usr/local/bin/ha-memory refresh --if-stale 300 2>&1); then
+  if refresh_output=$(/usr/local/bin/ha-memory refresh --if-stale 300 \
+    2>"${refresh_stderr_file}"); then
     refresh_warning_count=0
     if parsed_warning_count=$(printf '%s' "${refresh_output}" \
       | jq --exit-status --raw-output \
@@ -29,20 +40,31 @@ while true; do
     else
       bashio::log.info 'Home Assistant memory catalog refresh completed'
     fi
+    : >"${refresh_stderr_file}"
     unset refresh_warning_count
     retry_seconds=30
     sleep "${REFRESH_SECONDS}" &
   else
     refresh_reason=
-    if parsed_reason=$(printf '%s' "${refresh_output}" \
-      | jq --exit-status --raw-output \
-        'if type == "object" and (.reason | type) == "string" then .reason
-         elif type == "object" and (.error | type) == "string" then .error
-         else empty end' \
-        2>/dev/null); then
-      refresh_reason=${parsed_reason}
+    diagnostic_bytes=
+    if diagnostic_bytes=$(stat --format='%s' -- "${refresh_stderr_file}" 2>/dev/null) \
+      && [[ "${diagnostic_bytes}" =~ ^[0-9]+$ ]] \
+      && (( diagnostic_bytes <= MAX_REFRESH_DIAGNOSTIC_BYTES )); then
+      if parsed_reason=$(jq --exit-status --raw-output --raw-input --slurp \
+        '[split("\n")[]
+          | fromjson?
+          | select(type == "object")
+          | if (.reason | type) == "string" then .reason
+            elif (.error | type) == "string" then .error
+            else empty end]
+         | select(length == 1)
+         | .[0]' \
+        "${refresh_stderr_file}" 2>/dev/null); then
+        refresh_reason=${parsed_reason}
+      fi
     fi
-    unset parsed_reason refresh_output
+    : >"${refresh_stderr_file}"
+    unset diagnostic_bytes parsed_reason refresh_output
     case "${refresh_reason}" in
       ha_token_unavailable|\
       ha_ws_runtime_unavailable|\
@@ -60,6 +82,7 @@ while true; do
       ha_command_related_failed|\
       ha_command_failed|\
       ha_snapshot_incomplete|\
+      invalid_snapshot|\
       database_busy|\
       database_corrupt|\
       invalid_schema|\

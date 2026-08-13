@@ -410,7 +410,13 @@ broker policy와 Home Assistant API precondition을 통과해야 한다. command
 - long poll timeout은 30초, HTTP request timeout은 45초다.
 - 429의 `retry_after`를 상한 60초 안에서 따르고, 5xx/network 오류는 jittered
   exponential backoff를 사용한다.
-- 401/403은 token 오류로 bridge를 fail closed하고 반복 요청하지 않는다.
+- 시작 단계의 `deleteWebhook`과 `getMe`도 timeout, 429, 5xx, network 오류를 같은
+  bounded backoff로 bridge process 안에서 재시도한다. 일시적인 Telegram 연결 실패로
+  S6 service가 즉시 재시작되는 loop를 만들지 않는다.
+- 401/403을 포함한 retry 불가능한 4xx token/policy 오류는 `connect_blocked`를 한 번
+  기록하고 bridge process를 살아 있는 fail-closed 대기 상태로 둔다. 같은 설정으로
+  Bot API 요청이나 S6 restart를 반복하지 않으며, 운영자가 App 옵션을 고쳐 다시
+  시작해야 한다.
 - message 전송 실패나 execute 응답 유실이 mutation을 재실행하게 해서는 안 된다.
   실행 결과는 `execute_status`로 durable proposal idempotency record에서 조회한다.
   durable result 알림이 실패한 update는 ack하지 않고, 재수신 때 같은 record를 조회해
@@ -418,6 +424,10 @@ broker policy와 Home Assistant API precondition을 통과해야 한다. command
 - Telegram 장애가 Ingress, SSH, memory와 browser service를 중단하지 않는다.
 
 ## TG-012 — 로깅과 관측
+
+시작 연결 재시도는 `connect_retry`와 고정 `reason_class`, 다음 대기 시간만 기록한다.
+network 진단은 DNS/socket/TLS/Undici의 사전 허용된 `transport_code` 또는 `unknown`만
+기록하며 token, Bot API URL, 내부 cause message는 기록하지 않는다.
 
 기본 metric:
 

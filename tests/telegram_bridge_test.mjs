@@ -8,9 +8,11 @@ import {
   buildAgyArgs,
   cancelRequesterWork,
   chunkText,
+  connectTelegram,
   dispatchNormalizedUpdate,
   dispatchUpdateBatch,
   enqueueRequester,
+  holdTelegramFailClosed,
   isAuthorized,
   loadRuntimeConfig,
   metricsSnapshot,
@@ -25,6 +27,7 @@ import {
   renderCancellationResult,
   runAntigravityPrompt,
   safeError,
+  telegramTransportErrorCode,
   waitForTelegramAuthorization,
 } from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs";
 import {
@@ -54,6 +57,123 @@ const config = loadRuntimeConfig({
   telegram_allowed_chat_ids: ["-200"],
   telegram_access_mode: "confirm_changes",
 });
+const transportCanary = "SECRET_TRANSPORT_DETAIL_CANARY";
+const connectErrorFixtures = [
+  {
+    error: Object.assign(new TypeError("fetch failed"), {
+      cause: { code: "EAI_AGAIN", message: transportCanary },
+    }),
+    reasonClass: "network",
+    retryDelay: 2_000,
+    transportCode: "EAI_AGAIN",
+  },
+  {
+    error: Object.assign(new Error("timed out"), { name: "AbortError" }),
+    reasonClass: "timeout",
+    retryDelay: 2_000,
+  },
+  {
+    error: Object.assign(new Error("rate limited"), { status: 429, retryAfter: 7 }),
+    reasonClass: "4xx",
+    retryDelay: 7_000,
+  },
+  {
+    error: Object.assign(new Error("upstream unavailable"), { status: 503 }),
+    reasonClass: "5xx",
+    retryDelay: 2_000,
+  },
+];
+for (const fixture of connectErrorFixtures) {
+  const methods = [];
+  const waits = [];
+  const events = [];
+  let failed = false;
+  const bot = await connectTelegram(config, {
+    api: async (_botToken, method) => {
+      methods.push(method);
+      if (!failed) {
+        failed = true;
+        throw fixture.error;
+      }
+      return method === "getMe" ? { id: 42 } : true;
+    },
+    wait: async (milliseconds) => waits.push(milliseconds),
+    backoff: new TelegramPollBackoff({ jitter: () => 0 }),
+    auditEvent: (event, fields) => events.push({ event, ...fields }),
+  });
+  assert.deepEqual(bot, { id: 42 });
+  assert.deepEqual(methods, ["deleteWebhook", "deleteWebhook", "getMe"]);
+  assert.deepEqual(waits, [fixture.retryDelay]);
+  assert.equal(events[0].event, "connect_retry");
+  assert.equal(events[0].reason_class, fixture.reasonClass);
+  assert.equal(events[0].retry_in_seconds, Math.ceil(fixture.retryDelay / 1_000));
+  assert.equal(events[0].transport_code, fixture.transportCode);
+  assert.equal(events.at(-1).event, "connected");
+  assert.equal(JSON.stringify(events).includes(transportCanary), false);
+  assert.equal(JSON.stringify(events).includes(config.botToken), false);
+}
+assert.equal(telegramTransportErrorCode(connectErrorFixtures[0].error), "EAI_AGAIN");
+assert.equal(telegramTransportErrorCode({ code: transportCanary }), "unknown");
+
+const getMeMethods = [];
+const getMeWaits = [];
+let getMeFailed = false;
+await connectTelegram(config, {
+  api: async (_botToken, method) => {
+    getMeMethods.push(method);
+    if (method === "getMe" && !getMeFailed) {
+      getMeFailed = true;
+      throw Object.assign(new TypeError("fetch failed"), {
+        cause: { code: "ENETUNREACH" },
+      });
+    }
+    return method === "getMe" ? { id: 43 } : true;
+  },
+  wait: async (milliseconds) => getMeWaits.push(milliseconds),
+  backoff: new TelegramPollBackoff({ jitter: () => 0 }),
+  auditEvent: () => {},
+});
+assert.deepEqual(getMeMethods, ["deleteWebhook", "getMe", "deleteWebhook", "getMe"]);
+assert.deepEqual(getMeWaits, [2_000]);
+
+for (const status of [400, 401, 403, 404]) {
+  const permanentCalls = [];
+  const permanentWaits = [];
+  const permanentEvents = [];
+  let permanentHolds = 0;
+  const permanentError = Object.assign(new Error(`HTTP ${status}`), { status });
+  await assert.rejects(connectTelegram(config, {
+    api: async (_botToken, method) => {
+      permanentCalls.push(method);
+      throw permanentError;
+    },
+    wait: async (milliseconds) => permanentWaits.push(milliseconds),
+    backoff: new TelegramPollBackoff({ jitter: () => 0 }),
+    auditEvent: (event, fields) => permanentEvents.push({ event, ...fields }),
+    hold: async () => { permanentHolds += 1; },
+  }), (error) => error === permanentError);
+  assert.deepEqual(permanentCalls, ["deleteWebhook"]);
+  assert.deepEqual(permanentWaits, []);
+  assert.equal(permanentHolds, 1);
+  assert.deepEqual(permanentEvents, [{
+    event: "connect_blocked",
+    reason_class: "4xx",
+    status,
+  }]);
+}
+const holdSentinel = new Error("hold test complete");
+const holdWaits = [];
+await assert.rejects(holdTelegramFailClosed({
+  wait: async (milliseconds) => {
+    holdWaits.push(milliseconds);
+    if (holdWaits.length === 3) throw holdSentinel;
+  },
+}), (error) => error === holdSentinel);
+assert.deepEqual(holdWaits, [
+  60 * 60 * 1_000,
+  60 * 60 * 1_000,
+  60 * 60 * 1_000,
+]);
 resetMetricsForTest();
 assert.deepEqual(Object.keys(metricsSnapshot()).sort(), [
   "approvals_total",

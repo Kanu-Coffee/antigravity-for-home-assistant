@@ -38,6 +38,25 @@ const MAX_QUEUED_PER_REQUESTER = 4;
 const MAX_ACTIVE_RUNS = 2;
 const MAX_TELEGRAM_CHUNKS = 8;
 const AUTHORIZATION_RECHECK_MS = 2_000;
+const TELEGRAM_PERMANENT_HOLD_MS = 60 * 60 * 1_000;
+const TELEGRAM_TRANSPORT_ERROR_CODES = Object.freeze([
+  "CERT_HAS_EXPIRED",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+  "ETIMEDOUT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
 
 const ACCESS_MODES = new Set(["read_only", "confirm_changes", "autonomous"]);
 const pendingApprovals = new Map();
@@ -167,16 +186,38 @@ function jobResultClass(error) {
   return "error";
 }
 
+function telegramTransportErrorCode(error) {
+  const code = [error?.code, error?.cause?.code]
+    .find((candidate) => TELEGRAM_TRANSPORT_ERROR_CODES.includes(candidate));
+  return code ?? "unknown";
+}
+
 function classifyApiError(error) {
   if (error?.name === "AbortError") return "timeout";
   if (Number.isInteger(error?.status)) {
     if (error.status >= 400 && error.status < 500) return "4xx";
     if (error.status >= 500 && error.status < 600) return "5xx";
   }
-  if (error instanceof TypeError || ["ECONNRESET", "ENETUNREACH", "ETIMEDOUT"].includes(error?.code)) {
+  if (error instanceof TypeError || telegramTransportErrorCode(error) !== "unknown") {
     return "network";
   }
   return "other";
+}
+
+function isTransientTelegramApiError(error) {
+  const errorClass = classifyApiError(error);
+  return error?.status === 429 || ["5xx", "network", "timeout"].includes(errorClass);
+}
+
+function isPermanentTelegramApiError(error) {
+  return Number.isInteger(error?.status) &&
+    error.status >= 400 && error.status < 500 && error.status !== 429;
+}
+
+async function holdTelegramFailClosed({
+  wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+} = {}) {
+  while (true) await wait(TELEGRAM_PERMANENT_HOLD_MS);
 }
 
 function queuedJobCount() {
@@ -404,6 +445,45 @@ async function telegramApi(botToken, method, body = {}, timeoutMs = 30_000) {
     throw error;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function connectTelegram(config, {
+  api = telegramApi,
+  wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  backoff = new TelegramPollBackoff(),
+  auditEvent = audit,
+  hold = holdTelegramFailClosed,
+} = {}) {
+  while (true) {
+    try {
+      await api(config.botToken, "deleteWebhook", { drop_pending_updates: false }, 15_000);
+      const bot = await api(config.botToken, "getMe", {}, 15_000);
+      backoff.reset();
+      auditEvent("connected", { bot: opaqueId(bot.id), mode: config.accessMode });
+      return bot;
+    } catch (error) {
+      if (isPermanentTelegramApiError(error)) {
+        auditEvent("connect_blocked", {
+          reason_class: "4xx",
+          status: error.status,
+        });
+        await hold();
+        throw error;
+      }
+      if (!isTransientTelegramApiError(error)) throw error;
+      const errorClass = classifyApiError(error);
+      const retryDelay = backoff.nextDelay(error);
+      const fields = {
+        reason_class: errorClass,
+        retry_in_seconds: Math.ceil(retryDelay / 1_000),
+      };
+      if (errorClass === "network") {
+        fields.transport_code = telegramTransportErrorCode(error);
+      }
+      auditEvent("connect_retry", fields);
+      await wait(retryDelay);
+    }
   }
 }
 
@@ -1667,9 +1747,7 @@ async function main() {
   await waitForTelegramAuthorization(config);
   const brokerHealth = await sendBrokerRequest("health", {});
   if (brokerHealth?.status !== "ready") throw new Error("change broker is not ready");
-  await telegramApi(config.botToken, "deleteWebhook", { drop_pending_updates: false }, 15_000);
-  const bot = await telegramApi(config.botToken, "getMe", {}, 15_000);
-  audit("connected", { bot: opaqueId(bot.id), mode: config.accessMode });
+  await connectTelegram(config);
   const metricsTimer = setInterval(() => audit("metrics", metricsSnapshot()), 60_000);
   metricsTimer.unref();
   await pollUpdateBatches(config);
@@ -1681,12 +1759,14 @@ export {
   buildAgyArgs,
   cancelRequesterWork,
   chunkText,
+  connectTelegram,
   createApproval,
   dispatchNormalizedUpdate,
   dispatchRegisteredUpdates,
   dispatchUpdateBatch,
   enqueueRequester,
   extractString,
+  holdTelegramFailClosed,
   inspectProposal,
   isAuthorized,
   loadRuntimeConfig,
@@ -1706,6 +1786,7 @@ export {
   runAntigravityPrompt,
   safeError,
   terminalExecutionResult,
+  telegramTransportErrorCode,
   waitForExecution,
   waitForTelegramAuthorization,
 };

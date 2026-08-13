@@ -136,7 +136,9 @@ def test_memory_runtime_is_packaged_with_node_sqlite(
         )
 
 
-def test_memory_daemon_is_optional_to_terminal_and_ssh(rootfs: Path) -> None:
+def test_memory_daemon_is_optional_to_terminal_and_ssh(
+    addon_root: Path, rootfs: Path
+) -> None:
     s6_root = rootfs / "etc/s6-overlay/s6-rc.d"
     user_bundle = s6_root / "user/contents.d"
     memory_service = s6_root / "ha-memoryd"
@@ -149,6 +151,13 @@ def test_memory_daemon_is_optional_to_terminal_and_ssh(rootfs: Path) -> None:
     assert run_script.startswith("#!/command/with-contenv bashio\n")
     assert "/usr/local/bin/ha-memory" in run_script
     assert ">/dev/null 2>&1" not in run_script
+    assert "refresh --if-stale 300 2>&1" not in run_script
+    assert '2>"${refresh_stderr_file}"' in run_script
+    assert "mktemp /run/antigravity-ha/.ha-memoryd-stderr.XXXXXX" in run_script
+    assert "MAX_REFRESH_DIAGNOSTIC_BYTES=16384" in run_script
+    assert "fromjson?" in run_script
+    assert "select(length == 1)" in run_script
+    assert ': >"${refresh_stderr_file}"' in run_script
     assert "jq --exit-status --raw-output" in run_script
     assert ".reason" in run_script
     assert ".error" in run_script
@@ -157,6 +166,7 @@ def test_memory_daemon_is_optional_to_terminal_and_ssh(rootfs: Path) -> None:
     assert "ha_token_unavailable" in run_script
     assert "ha_auth_rejected" in run_script
     assert "ha_command_automation_config_failed" in run_script
+    assert "invalid_snapshot" in run_script
     assert "database_busy" in run_script
     assert "database_corrupt" in run_script
     assert "refresh_reason=ha_unavailable" in run_script
@@ -170,6 +180,89 @@ def test_memory_daemon_is_optional_to_terminal_and_ssh(rootfs: Path) -> None:
 
     for service in ("ttyd", "sshd"):
         assert not (s6_root / service / "dependencies.d/ha-memoryd").exists()
+
+    apparmor = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
+    diagnostic_path = "/run/antigravity-ha/.ha-memoryd-stderr.*"
+    main_profile = re.search(
+        r"profile antigravity_home_assistant flags=.*?\{(?P<body>.*?)\n\}",
+        apparmor,
+        re.DOTALL,
+    )
+    memory_profile = re.search(
+        r"profile antigravity_home_assistant-memory flags=.*?\{(?P<body>.*?)\n\}",
+        apparmor,
+        re.DOTALL,
+    )
+    telegram_profiles = re.findall(
+        r"profile antigravity_home_assistant-telegram(?:-worker)? flags=.*?\{(?P<body>.*?)\n\}",
+        apparmor,
+        re.DOTALL,
+    )
+    assert main_profile and f"{diagnostic_path} rwk," in main_profile.group("body")
+    assert memory_profile and f"{diagnostic_path} w," in memory_profile.group("body")
+    assert len(telegram_profiles) == 2
+    assert all(
+        f"deny {diagnostic_path} rwklm," in profile
+        for profile in telegram_profiles
+    )
+
+
+def test_memory_daemon_preserves_one_bounded_json_reason_from_noisy_stderr(
+    rootfs: Path, tmp_path: Path
+) -> None:
+    run_script = (
+        rootfs / "etc/s6-overlay/s6-rc.d/ha-memoryd/run"
+    ).read_text(encoding="utf-8")
+    diagnostic_canary = "RAW_DIAGNOSTIC_CANARY"
+    fake_memory = tmp_path / "ha-memory"
+    fake_memory.write_text(
+        "#!/bin/bash\n"
+        f"printf '%s\\n' '(node:42) ExperimentalWarning: {diagnostic_canary}' >&2\n"
+        "printf '%s\\n' "
+        "'{\"error\":\"ha_unavailable\",\"reason\":\"ha_transport_failed\","
+        "\"message\":\"bounded\"}' >&2\n"
+        "exit 69\n",
+        encoding="utf-8",
+    )
+    fake_memory.chmod(0o755)
+
+    runnable = run_script.replace(
+        "#!/command/with-contenv bashio",
+        "#!/usr/bin/env bash",
+        1,
+    ).replace(
+        "unset SUPERVISOR_TOKEN",
+        "unset SUPERVISOR_TOKEN\n"
+        "bashio::log.warning() { command printf '%s\\n' \"$*\"; }\n"
+        "bashio::log.info() { command printf '%s\\n' \"$*\"; }",
+        1,
+    ).replace(
+        "/run/antigravity-ha/.ha-memoryd-stderr.XXXXXX",
+        str(tmp_path / ".ha-memoryd-stderr.XXXXXX"),
+        1,
+    ).replace(
+        "/usr/local/bin/ha-memory",
+        str(fake_memory),
+        1,
+    ).replace(
+        'sleep "${retry_seconds}" &',
+        "exit 0",
+        1,
+    )
+    runnable_path = tmp_path / "ha-memoryd-run"
+    runnable_path.write_text(runnable, encoding="utf-8")
+
+    completed = subprocess.run(
+        ["bash", str(runnable_path)],
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=True,
+    )
+    assert "(ha_transport_failed)" in completed.stdout
+    assert diagnostic_canary not in completed.stdout
+    assert diagnostic_canary not in completed.stderr
+    assert not list(tmp_path.glob(".ha-memoryd-stderr.*"))
 
 
 def test_init_bootstraps_only_the_local_memory_database(rootfs: Path) -> None:

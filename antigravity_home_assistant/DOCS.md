@@ -494,6 +494,11 @@ global `mcp_config.json`은 없을 때 빈 `mcpServers` 기본본만 생성하�
   `telegram_enabled: false`로 저장합니다.
 - 정적 방식이면 user와 chat 두 목록의 교집합인지 확인합니다.
 - pairing 방식이면 TTL, 한 번 소비 여부와 `ha-telegram-pair list`를 확인합니다.
+- `connect_retry`이면 bridge는 종료되지 않고 제한된 backoff로 Telegram 연결을
+  재시도합니다. `transport_code`가 있으면 DNS, 경로 또는 TLS 문제를 구분하는
+  안전한 코드이며 token이나 원문 오류는 기록되지 않습니다.
+- `connect_blocked`이면 Bot token 또는 요청 정책을 확인하고 App 옵션을 고친 뒤
+  다시 시작합니다. 같은 4xx 요청은 자동 반복하지 않습니다.
 - `/status`와 App 로그에서 queue/worker/broker 상태를 확인합니다.
 - 변경 preview가 달라졌거나 만료되었다면 새 요청으로 다시 승인합니다.
 
@@ -503,6 +508,9 @@ global `mcp_config.json`은 없을 때 빈 `mcpServers` 기본본만 생성하�
   의도된 상태일 수 있습니다.
 - browser option을 바꾼 뒤 App과 browser session을 새로 시작합니다.
 - `ha-memory status`에서 `empty`, `degraded`, `stale`을 구분합니다.
+- memory refresh 경고의 괄호 안 reason은 원문이 아닌 제한된 진단 코드입니다.
+  기존 catalog를 삭제하지 말고 `ha-memory refresh --force` 결과와 같은 시각의
+  Core 로그로 원인을 좁힙니다.
 - browser 또는 memory 장애가 발생해도 recovery용 Web UI/SSH까지 임의로
   초기화하지 않습니다.
 

@@ -512,6 +512,11 @@ without the user's explicit current confirmation.
   when Telegram is not in use.
 - For static authorization, check the intersection of both user and chat lists.
 - For pairing, check TTL, one-time consumption, and `ha-telegram-pair list`.
+- `connect_retry` means the bridge remains alive and retries Telegram with a
+  bounded backoff. When present, `transport_code` is a safe DNS, route, or TLS
+  classification; the token and raw transport error are never logged.
+- `connect_blocked` means the Bot token or request policy must be corrected in
+  App options before restarting. The same 4xx request is not retried.
 - Use `/status` and App logs to inspect queue, worker, and broker health.
 - If a change preview changed or expired, submit a new request and approve again.
 
@@ -521,6 +526,9 @@ without the user's explicit current confirmation.
   intentional option state.
 - Restart the App and browser session after changing the browser option.
 - Use `ha-memory status` to distinguish `empty`, `degraded`, and `stale`.
+- The reason in parentheses on a memory refresh warning is a bounded diagnostic
+  code, not raw output. Keep the existing catalog and correlate
+  `ha-memory refresh --force` with Core logs from the same time.
 - Do not reset recovery Web UI/SSH merely because browser or memory failed.
 
 ### Configuration change fails

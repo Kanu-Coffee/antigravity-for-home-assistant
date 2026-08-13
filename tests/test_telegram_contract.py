@@ -115,8 +115,22 @@ def test_telegram_service_depends_on_init(addon_root: Path) -> None:
         'sendBrokerRequest("health"'
     )
     assert bridge.index("await waitForTelegramAuthorization(config)") < bridge.index(
-        'telegramApi(config.botToken, "deleteWebhook"'
+        "await connectTelegram(config)"
     )
+    assert bridge.index('sendBrokerRequest("health"') < bridge.index(
+        "await connectTelegram(config)"
+    )
+    assert 'api(config.botToken, "deleteWebhook"' in bridge
+    assert 'api(config.botToken, "getMe"' in bridge
+    assert 'auditEvent("connect_retry", fields)' in bridge
+    assert 'auditEvent("connect_blocked"' in bridge
+    assert "if (isPermanentTelegramApiError(error))" in bridge
+    assert "await hold()" in bridge
+    assert "while (true) await wait(TELEGRAM_PERMANENT_HOLD_MS)" in bridge
+    assert 'if (!isTransientTelegramApiError(error)) throw error' in bridge
+    assert 'fields.transport_code = telegramTransportErrorCode(error)' in bridge
+    assert '"EAI_AGAIN"' in bridge
+    assert '"UNABLE_TO_VERIFY_LEAF_SIGNATURE"' in bridge
     assert (
         'throw new Error("Telegram requires both static allowlists or one local '
         'pairing token/authorization")' not in bridge
