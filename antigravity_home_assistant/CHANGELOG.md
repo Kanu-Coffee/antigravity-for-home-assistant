@@ -2,6 +2,14 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.0.6] - 2026-08-15
+
+### Changed
+
+- Roll forward the Telegram headless response-delivery and conversation-reuse
+  corrections in a new immutable App version so Home Assistant OS detects the
+  update from affected installations.
+
 ## [2.0.5] - 2026-08-14
 
 ### Fixed

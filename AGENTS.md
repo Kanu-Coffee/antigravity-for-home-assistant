@@ -45,5 +45,10 @@ Keep host-development evidence separate from real HAOS evidence.
 - Rootfs changes require regeneration and verification of the source-rootfs
   manifest. Host-only `.codex`, `.agents`, `tools/development`, tests, and docs do
   not require an App image rebuild unless they change packaging inputs.
+- For every completed App change authorized for HAOS delivery, use a previously
+  unpublished App version greater than the latest published version; the minimum
+  bump is PATCH +1. Update every release-version binding and publish the matching
+  immutable image, numeric tag, and release. Never hand off a deployable App
+  change under an already published version.
 - Keep the repository on its intended Git workflow, stage only task files, and
   never discard user changes with destructive Git commands.

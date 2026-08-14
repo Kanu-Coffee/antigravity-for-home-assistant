@@ -7,7 +7,7 @@ name: Main release
       version:
         description: Numeric App version already present on main
         required: true
-        default: "2.0.5"
+        default: "2.0.6"
         type: string
       candidate_run_id:
         description: Successful Candidate build run ID
