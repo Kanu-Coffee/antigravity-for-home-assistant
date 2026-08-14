@@ -509,6 +509,9 @@ global `mcp_config.json`은 없을 때 빈 `mcpServers` 기본본만 생성하�
 - `request_failed`의 `reason_class=authentication_required`이면 Bot pairing을
   반복하지 말고 신뢰하는 App 웹 터미널 또는 SSH에서 `ha-telegram-login`을
   실행합니다.
+- `reason_class=headless_read_denied`이면 headless AI의 비허용 파일 읽기가 차단된
+  것입니다. 정상 질문에서 반복되면 사용자 settings를 편집하거나 `read_file(*)`를
+  추가하지 말고 App을 최신 버전으로 업데이트한 뒤 재시작합니다.
 - `reason_class=runtime_integrity_failed`이면 worker의 여러 격리 preflight 중 하나가
   실패한 것입니다. 특정 파일 문제로 단정하거나 자동 복구·요청 재시도를 하지 말고
   App을 재시작합니다. 계속 실패하면 비밀값을 제외한 App 로그를 확인합니다.
@@ -516,6 +519,7 @@ global `mcp_config.json`은 없을 때 빈 `mcpServers` 기본본만 생성하�
   status가 정상이어도 별도 native OAuth가 완료됐다는 뜻은 아닙니다.
 - native CLI log, OAuth URL, token, prompt 원문을 지원 자료로 올리지 말고 특정
   credential 경로를 추정·수동 편집·HOME 사이 복사하지 않습니다.
+- `--dangerously-skip-permissions`와 광범위한 file-read 허용은 사용하지 않습니다.
 - 변경 preview가 달라졌거나 만료되었다면 새 요청으로 다시 승인합니다.
 
 ### Browser 또는 memory 문제

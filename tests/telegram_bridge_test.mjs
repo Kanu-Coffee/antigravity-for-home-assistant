@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import {
   ANTIGRAVITY_AUTH_REQUIRED_MARKER,
+  ANTIGRAVITY_HEADLESS_PERMISSION_MARKER,
   AntigravityWorkerError,
   BoundedByteMatcher,
   TELEGRAM_WORKER_INTEGRITY_MARKER,
@@ -71,6 +72,10 @@ assert.equal(
   "Error: authentication required. Run 'antigravity-real' to log in, then retry.",
 );
 assert.equal(
+  ANTIGRAVITY_HEADLESS_PERMISSION_MARKER.toString("utf8"),
+  'a tool required the "read_file" permission that headless mode cannot prompt for, so it was auto-denied.',
+);
+assert.equal(
   TELEGRAM_WORKER_INTEGRITY_MARKER.toString("utf8"),
   "ha-telegram-worker: isolated native configuration is unavailable",
 );
@@ -91,6 +96,23 @@ nearAuthMarker.push(Buffer.from(
   "utf8",
 ));
 assert.equal(nearAuthMarker.matched, false);
+const permissionMarkerMatcher = new BoundedByteMatcher(
+  ANTIGRAVITY_HEADLESS_PERMISSION_MARKER,
+);
+const permissionMarkerSplit = 17;
+permissionMarkerMatcher.push(Buffer.concat([
+  Buffer.alloc(4 * 1024 * 1024, 0x79),
+  ANTIGRAVITY_HEADLESS_PERMISSION_MARKER.subarray(0, permissionMarkerSplit),
+]));
+assert.equal(permissionMarkerMatcher.matched, false);
+assert.ok(
+  permissionMarkerMatcher.bufferedBytes < ANTIGRAVITY_HEADLESS_PERMISSION_MARKER.length,
+);
+permissionMarkerMatcher.push(
+  ANTIGRAVITY_HEADLESS_PERMISSION_MARKER.subarray(permissionMarkerSplit),
+);
+assert.equal(permissionMarkerMatcher.matched, true);
+assert.equal(permissionMarkerMatcher.bufferedBytes, 0);
 assert.throws(() => new BoundedByteMatcher(Buffer.alloc(0)), /non-empty bytes/u);
 
 const transportCanary = "SECRET_TRANSPORT_DETAIL_CANARY";
@@ -312,7 +334,10 @@ assert.equal(proposalDisposition("autonomous", "low"), "autonomous_policy");
 assert.equal(proposalDisposition("autonomous", "high"), "human_confirmation");
 
 const planArgs = buildAgyArgs("plan", true);
-assert.deepEqual(planArgs.slice(0, 3), ["--print", "--output-format", "stream-json"]);
+assert.deepEqual(planArgs.slice(0, 2), ["--output-format", "stream-json"]);
+assert.equal(planArgs.includes("--print"), false);
+assert.equal(planArgs.includes("-p"), false);
+assert.equal(planArgs.includes("--prompt"), false);
 assert.equal(planArgs.includes("--json-schema"), true);
 assert.equal(planArgs.includes("ha-telegram"), true);
 assert.equal(planArgs.includes("--disable-slash-commands"), true);
@@ -324,11 +349,15 @@ assert.equal(buildAgyArgs("execute", false).includes("accept-edits"), false);
 assert.equal(buildAgyArgs("execute", false).includes("plan"), true);
 
 const stream = [
-  JSON.stringify({ type: "init", conversation_id: "conversation.fixture-1" }),
-  JSON.stringify({ type: "step_update", tool_info: { output: "secret tool output" } }),
+  JSON.stringify({ event: "init", conversation_id: "conversation.fixture-1" }),
+  JSON.stringify({ event: "step_update", tool_info: { output: "secret tool output" } }),
   JSON.stringify({
-    type: "result",
-    result: JSON.stringify({ response: "최종 응답", proposal_ids: [] }),
+    event: "result",
+    result: {
+      conversation_id: "conversation.fixture-1",
+      status: "SUCCESS",
+      response: `${JSON.stringify({ response: "최종 응답", proposal_ids: [] })}\n`,
+    },
   }),
 ].join("\n");
 assert.deepEqual(parseStreamResult(stream), {
@@ -336,21 +365,71 @@ assert.deepEqual(parseStreamResult(stream), {
   proposalIds: [],
   conversationId: "conversation.fixture-1",
 });
+assert.throws(
+  () => parseStreamResult([
+    JSON.stringify({ event: "init", conversation_id: "conversation.failed" }),
+    JSON.stringify({
+      event: "result",
+      result: {
+        conversation_id: "conversation.failed",
+        status: "ERROR",
+        response: JSON.stringify({ response: "must not escape", proposal_ids: [] }),
+      },
+    }),
+  ].join("\n")),
+  /did not report success/u,
+);
+assert.throws(
+  () => parseStreamResult([
+    JSON.stringify({ event: "init", conversation_id: "conversation.expected" }),
+    JSON.stringify({
+      event: "result",
+      result: {
+        conversation_id: "conversation.swapped",
+        status: "SUCCESS",
+        response: JSON.stringify({ response: "must not escape", proposal_ids: [] }),
+      },
+    }),
+  ].join("\n")),
+  /changed the conversation identifier/u,
+);
+assert.throws(
+  () => parseStreamResult([
+    JSON.stringify({ event: "init", conversation_id: "conversation.extra" }),
+    JSON.stringify({
+      event: "result",
+      result: {
+        conversation_id: "conversation.extra",
+        status: "SUCCESS",
+        response: JSON.stringify({
+          response: "must not escape",
+          proposal_ids: [],
+          unexpected: true,
+        }),
+      },
+    }),
+  ].join("\n")),
+  /managed schema/u,
+);
 assert.throws(() => parseStreamResult("not json\n"), /invalid JSON/u);
 assert.throws(
-  () => parseStreamResult(`${JSON.stringify({ type: "unexpected" })}\n`),
+  () => parseStreamResult(`${JSON.stringify({ event: "unexpected" })}\n`),
   /before init/u,
 );
 const unknownTypeCanary = "future_SECRET_TYPE_a";
 const unknownRawCanary = "SECRET_RAW_NDJSON_CANARY";
 const ignoredMetricBefore = metricsSnapshot().stream_events_ignored_total.unknown_type;
 assert.deepEqual(parseStreamResult([
-  JSON.stringify({ type: "init", conversation_id: "conversation.future" }),
-  JSON.stringify({ type: unknownTypeCanary, raw: unknownRawCanary }),
-  JSON.stringify({ type: "future_SECRET_TYPE_b", nested: { raw: unknownRawCanary } }),
+  JSON.stringify({ event: "init", conversation_id: "conversation.future" }),
+  JSON.stringify({ event: unknownTypeCanary, raw: unknownRawCanary }),
+  JSON.stringify({ event: "future_SECRET_TYPE_b", nested: { raw: unknownRawCanary } }),
   JSON.stringify({
-    type: "result",
-    result: JSON.stringify({ response: "future compatible", proposal_ids: [] }),
+    event: "result",
+    result: {
+      conversation_id: "conversation.future",
+      status: "SUCCESS",
+      response: JSON.stringify({ response: "future compatible", proposal_ids: [] }),
+    },
   }),
 ].join("\n")), {
   response: "future compatible",
@@ -362,44 +441,60 @@ assert.deepEqual(Object.keys(ignoredMetric), ["unknown_type"]);
 assert.equal(ignoredMetric.unknown_type, ignoredMetricBefore + 2);
 assert.equal(JSON.stringify(metricsSnapshot()).includes(unknownTypeCanary), false);
 assert.equal(JSON.stringify(metricsSnapshot()).includes(unknownRawCanary), false);
-for (const invalidEvent of [{}, { type: 7 }]) {
+for (const invalidEvent of [{}, { event: 7 }, { type: "init" }]) {
   assert.throws(
     () => parseStreamResult([
-      JSON.stringify({ type: "init", conversation_id: "conversation.invalid-type" }),
+      JSON.stringify({ event: "init", conversation_id: "conversation.invalid-type" }),
       JSON.stringify(invalidEvent),
       JSON.stringify({
-        type: "result",
-        result: JSON.stringify({ response: "invalid", proposal_ids: [] }),
+        event: "result",
+        result: {
+          conversation_id: "conversation.invalid-type",
+          status: "SUCCESS",
+          response: JSON.stringify({ response: "invalid", proposal_ids: [] }),
+        },
       }),
     ].join("\n")),
-    /missing or malformed event type/u,
+    /missing or malformed event discriminator/u,
   );
 }
 assert.throws(
   () => parseStreamResult(`${JSON.stringify({
-    type: "result",
-    result: JSON.stringify({ response: "missing init", proposal_ids: [] }),
+    event: "result",
+    result: {
+      conversation_id: "conversation.missing-init",
+      status: "SUCCESS",
+      response: JSON.stringify({ response: "missing init", proposal_ids: [] }),
+    },
   })}\n`),
   /valid init sequence/u,
 );
 assert.throws(
   () => parseStreamResult([
-    JSON.stringify({ type: "step_update" }),
-    JSON.stringify({ type: "init", conversation_id: "conversation.late" }),
+    JSON.stringify({ event: "step_update" }),
+    JSON.stringify({ event: "init", conversation_id: "conversation.late" }),
     JSON.stringify({
-      type: "result",
-      result: JSON.stringify({ response: "late init", proposal_ids: [] }),
+      event: "result",
+      result: {
+        conversation_id: "conversation.late",
+        status: "SUCCESS",
+        response: JSON.stringify({ response: "late init", proposal_ids: [] }),
+      },
     }),
   ].join("\n")),
   /before init/u,
 );
 assert.throws(
   () => parseStreamResult([
-    JSON.stringify({ type: "init", conversation_id: "conversation.one" }),
-    JSON.stringify({ type: "init", conversation_id: "conversation.two" }),
+    JSON.stringify({ event: "init", conversation_id: "conversation.one" }),
+    JSON.stringify({ event: "init", conversation_id: "conversation.two" }),
     JSON.stringify({
-      type: "result",
-      result: JSON.stringify({ response: "duplicate init", proposal_ids: [] }),
+      event: "result",
+      result: {
+        conversation_id: "conversation.two",
+        status: "SUCCESS",
+        response: JSON.stringify({ response: "duplicate init", proposal_ids: [] }),
+      },
     }),
   ].join("\n")),
   /invalid init sequence/u,
@@ -410,12 +505,16 @@ assert.throws(
 );
 assert.throws(
   () => parseStreamResult([
-    JSON.stringify({ type: "init", conversation_id: "conversation.terminal" }),
+    JSON.stringify({ event: "init", conversation_id: "conversation.terminal" }),
     JSON.stringify({
-      type: "result",
-      result: JSON.stringify({ response: "done", proposal_ids: [] }),
+      event: "result",
+      result: {
+        conversation_id: "conversation.terminal",
+        status: "SUCCESS",
+        response: JSON.stringify({ response: "done", proposal_ids: [] }),
+      },
     }),
-    JSON.stringify({ type: "future_after_terminal" }),
+    JSON.stringify({ event: "future_after_terminal" }),
   ].join("\n")),
   /after the terminal result/u,
 );
@@ -746,12 +845,16 @@ const payload = {
   argv: process.argv.slice(2),
 };
 process.stdout.write(JSON.stringify({
-  type: "init",
+  event: "init",
   conversation_id: "conversation.fixture-1",
 }) + "\\n");
 process.stdout.write(JSON.stringify({
-  type: "result",
-  result: JSON.stringify({ response: JSON.stringify(payload), proposal_ids: [] }),
+  event: "result",
+  result: {
+    conversation_id: "conversation.fixture-1",
+    status: "SUCCESS",
+    response: JSON.stringify({ response: JSON.stringify(payload), proposal_ids: [] }),
+  },
 }) + "\\n");
 `, "utf8");
   process.env.SUPERVISOR_TOKEN = "must-not-be-inherited";
@@ -818,6 +921,142 @@ process.exitCode = 1;
     assert.equal(authFailure.message.includes(forbidden), false);
     assert.equal(authFailureMessage.includes(forbidden), false);
   }
+
+  const permissionFailureFake = join(fixtureDir, "permission-failure-agy.mjs");
+  await writeFile(permissionFailureFake, `
+for await (const _chunk of process.stdin) { /* drain stdin */ }
+const marker = ${JSON.stringify(ANTIGRAVITY_HEADLESS_PERMISSION_MARKER.toString("utf8"))};
+process.stderr.write("jetski: synthetic diagnostic — " + marker.slice(0, 21));
+await new Promise((resolve) => setImmediate(resolve));
+process.stderr.write(marker.slice(21) + "\\n${stderrCanary}\\n");
+`, "utf8");
+  let permissionFailure;
+  try {
+    await runAntigravityPrompt("private permission prompt canary", {
+      binary: process.execPath,
+      prefixArgs: [permissionFailureFake],
+      cwd: fixtureDir,
+      timeoutMs: 5_000,
+      requester: { user_id: "100", chat_id: "-200" },
+    });
+    assert.fail("headless permission-denied worker unexpectedly succeeded");
+  } catch (error) {
+    permissionFailure = error;
+  }
+  assert.ok(permissionFailure instanceof AntigravityWorkerError);
+  assert.equal(permissionFailure.reasonClass, "headless_read_denied");
+  assert.equal(requestFailureReason(permissionFailure), "headless_read_denied");
+  assert.equal(workerStatusSnapshot(), "headless_read_denied");
+  assert.equal(renderWorkerStatus(), "파일 읽기 권한 차단");
+  const permissionFailureMessage = renderRequestFailure(permissionFailure);
+  assert.match(permissionFailureMessage, /최신 버전/u);
+  for (const forbidden of [
+    stderrCanary,
+    "private permission prompt canary",
+    ANTIGRAVITY_HEADLESS_PERMISSION_MARKER.toString("utf8"),
+    "jetski",
+    "read_file",
+  ]) {
+    assert.equal(permissionFailure.message.includes(forbidden), false);
+    assert.equal(permissionFailureMessage.includes(forbidden), false);
+  }
+
+  const permissionMarkerWithSuccessFake = join(
+    fixtureDir,
+    "permission-marker-success-agy.mjs",
+  );
+  await writeFile(permissionMarkerWithSuccessFake, `
+for await (const _chunk of process.stdin) { /* drain stdin */ }
+process.stderr.write(${JSON.stringify(ANTIGRAVITY_HEADLESS_PERMISSION_MARKER.toString("utf8"))});
+process.stdout.write(JSON.stringify({
+  event: "init",
+  conversation_id: "conversation.permission-success",
+}) + "\\n");
+process.stdout.write(JSON.stringify({
+  event: "result",
+  result: {
+    conversation_id: "conversation.permission-success",
+    status: "SUCCESS",
+    response: JSON.stringify({ response: "safe response", proposal_ids: [] }),
+  },
+}) + "\\n");
+`, "utf8");
+  const permissionMarkerSuccess = await runAntigravityPrompt(
+    "permission marker success fixture",
+    {
+      binary: process.execPath,
+      prefixArgs: [permissionMarkerWithSuccessFake],
+      cwd: fixtureDir,
+      timeoutMs: 5_000,
+      requester: { user_id: "100", chat_id: "-200" },
+    },
+  );
+  assert.equal(permissionMarkerSuccess.response, "safe response");
+  assert.equal(workerStatusSnapshot(), "ready");
+
+  const permissionMarkerNonzeroFake = join(
+    fixtureDir,
+    "permission-marker-nonzero-agy.mjs",
+  );
+  await writeFile(permissionMarkerNonzeroFake, `
+for await (const _chunk of process.stdin) { /* drain stdin */ }
+process.stderr.write(${JSON.stringify(ANTIGRAVITY_HEADLESS_PERMISSION_MARKER.toString("utf8"))});
+process.exitCode = 2;
+`, "utf8");
+  await assert.rejects(
+    runAntigravityPrompt("permission marker nonzero fixture", {
+      binary: process.execPath,
+      prefixArgs: [permissionMarkerNonzeroFake],
+      cwd: fixtureDir,
+      timeoutMs: 5_000,
+      requester: { user_id: "100", chat_id: "-200" },
+    }),
+    (error) => error instanceof AntigravityWorkerError &&
+      error.reasonClass === "worker_failed",
+  );
+
+  const permissionMarkerMalformedFake = join(
+    fixtureDir,
+    "permission-marker-malformed-agy.mjs",
+  );
+  await writeFile(permissionMarkerMalformedFake, `
+for await (const _chunk of process.stdin) { /* drain stdin */ }
+process.stderr.write(${JSON.stringify(ANTIGRAVITY_HEADLESS_PERMISSION_MARKER.toString("utf8"))});
+process.stdout.write("not-json\\n");
+`, "utf8");
+  await assert.rejects(
+    runAntigravityPrompt("permission marker malformed fixture", {
+      binary: process.execPath,
+      prefixArgs: [permissionMarkerMalformedFake],
+      cwd: fixtureDir,
+      timeoutMs: 5_000,
+      requester: { user_id: "100", chat_id: "-200" },
+    }),
+    /invalid JSON/u,
+  );
+  assert.equal(workerStatusSnapshot(), "worker_failed");
+
+  const emptySuccessFake = join(fixtureDir, "empty-success-agy.mjs");
+  await writeFile(emptySuccessFake, `
+for await (const _chunk of process.stdin) { /* drain stdin */ }
+process.stderr.write("${stderrCanary}\\n");
+`, "utf8");
+  let emptySuccessFailure;
+  try {
+    await runAntigravityPrompt("empty success fixture", {
+      binary: process.execPath,
+      prefixArgs: [emptySuccessFake],
+      cwd: fixtureDir,
+      timeoutMs: 5_000,
+      requester: { user_id: "100", chat_id: "-200" },
+    });
+    assert.fail("empty successful worker unexpectedly succeeded");
+  } catch (error) {
+    emptySuccessFailure = error;
+  }
+  assert.ok(emptySuccessFailure instanceof AntigravityWorkerError);
+  assert.equal(emptySuccessFailure.reasonClass, "worker_failed");
+  assert.equal(emptySuccessFailure.message.includes(stderrCanary), false);
 
   const integrityFailureFake = join(fixtureDir, "integrity-failure-agy.mjs");
   await writeFile(integrityFailureFake, `
@@ -941,10 +1180,14 @@ while (true) {
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
-process.stdout.write(JSON.stringify({ type: "init", conversation_id: "conversation." + id }) + "\\n");
+process.stdout.write(JSON.stringify({ event: "init", conversation_id: "conversation." + id }) + "\\n");
 process.stdout.write(JSON.stringify({
-  type: "result",
-  result: JSON.stringify({ response: id, proposal_ids: [] }),
+  event: "result",
+  result: {
+    conversation_id: "conversation." + id,
+    status: "SUCCESS",
+    response: JSON.stringify({ response: id, proposal_ids: [] }),
+  },
 }) + "\\n");
 `, "utf8");
   const slotRun = (id, options = {}) => runAntigravityPrompt(id, {

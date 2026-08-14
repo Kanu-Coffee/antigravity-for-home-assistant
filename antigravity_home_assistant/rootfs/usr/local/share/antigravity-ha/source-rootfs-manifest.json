@@ -15,8 +15,8 @@
     {
       "mode": "0644",
       "path": "/etc/antigravity/telegram-settings.json",
-      "sha256": "sha256:0fb992ae315963db9b7bfba29df39b0a6daa46caaf3dea2ee21d8cbd9075d94c",
-      "size": 2049
+      "sha256": "sha256:d12c17ef6a9cd14f6ae6790935682c9109ed2e2d3dccd5af6fb8f6f991de6de5",
+      "size": 2431
     },
     {
       "mode": "0644",
@@ -777,8 +777,8 @@
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/telegram-bridge.mjs",
-      "sha256": "sha256:ba6c9b839e0f80f79eec248601ef493a91cd012d6415437fc1d563b4c12a4ec6",
-      "size": 67813
+      "sha256": "sha256:78dc2e9de9fe7e2b10f73160e031dd525dcc301e656963ae71a2bce5bd896208",
+      "size": 69192
     },
     {
       "mode": "0644",
@@ -812,5 +812,5 @@
     }
   ],
   "schema": "antigravity-ha-source-rootfs/v1",
-  "source_rootfs_sha256": "sha256:c4d8a8ba2935a22bf0280d3eebb369ddb4a5d3d11fe52640a17ddcda777f859c"
+  "source_rootfs_sha256": "sha256:24734605c990a8811fa123d64c3a06be8c59d9b96def3252f2a8d695b0b086b2"
 }

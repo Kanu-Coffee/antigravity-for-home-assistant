@@ -6,6 +6,8 @@ import os
 import stat
 import subprocess
 
+import yaml
+
 
 def test_telegram_options_in_config_yaml(addon_config: dict) -> None:
     options = addon_config.get("options", {})
@@ -156,6 +158,7 @@ def test_telegram_bridge_has_no_legacy_shell_or_pairing_surface(addon_root: Path
         "PAIR_INFO",
         "pin_code",
         "pairToken",
+        "--dangerously-skip-permissions",
         'approval_policy="never"',
         'sandbox_mode="danger-full-access"',
     )
@@ -175,7 +178,15 @@ def test_telegram_bridge_has_no_legacy_shell_or_pairing_surface(addon_root: Path
     assert '"--output-format"' in bridge
     assert '"stream-json"' in bridge
     assert '"--json-schema"' in bridge
+    assert '"--print"' not in bridge
+    assert '"--prompt"' not in bridge
     assert 'child.stdin.end(`${prompt}\\n`)' in bridge
+    assert 'event?.event === "init"' in bridge
+    assert 'event?.event === "result"' in bridge
+    assert "event?.type" not in bridge
+    assert 'event.result.status !== "SUCCESS"' in bridge
+    assert "event.result.conversation_id !== conversationId" in bridge
+    assert "parseTerminalResponse(event.result.response)" in bridge
     assert "telegram_allowed_user_ids" in bridge
     assert "confirm_changes" in bridge
     assert 'sendBrokerRequest("inspect"' in bridge
@@ -276,6 +287,35 @@ def test_telegram_native_home_is_bootstrapped_and_fail_closed(
     assert "`device_test`" in telegram_agent
     assert "always-restore/fresh-verify" in telegram_agent
     telegram_permissions = telegram_settings_value["permissions"]
+    managed_plugin_target = (
+        "/data/antigravity-ha/telegram-home/.gemini/config/plugins/"
+        "home-assistant"
+    )
+    managed_plugin_source = (
+        rootfs
+        / "usr/local/share/antigravity-ha/plugins/home-assistant"
+    )
+    agent_frontmatter = telegram_agent.split("---\n", maxsplit=2)[1]
+    declared_skills = yaml.safe_load(agent_frontmatter)["skills"]
+    assert declared_skills == [
+        "skills/ha-change-proposal",
+        "skills/home-assistant-operations",
+        "skills/ha-memory",
+    ]
+    expected_skill_read_rules = set()
+    for relative_skill in declared_skills:
+        assert relative_skill.startswith("skills/")
+        skill_file = f"{relative_skill}/SKILL.md"
+        assert (managed_plugin_source / skill_file).is_file()
+        expected_skill_read_rules.add(
+            f"read_file({managed_plugin_target}/{skill_file})"
+        )
+    assert {
+        rule
+        for rule in telegram_permissions["allow"]
+        if rule.startswith("read_file(")
+    } == expected_skill_read_rules
+    assert "read_file(*)" not in telegram_permissions["allow"]
     for rule in (
         "mcp(ha_change/ha_change_propose)",
         "mcp(ha_read/ha_read_registry)",

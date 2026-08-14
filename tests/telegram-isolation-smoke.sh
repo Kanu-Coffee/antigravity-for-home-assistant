@@ -65,6 +65,12 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       .toolPermission == \"request-review\" and
       .allowNonWorkspaceAccess == false and
       (.permissions.ask | length == 0) and
+      ([.permissions.allow[] | select(startswith(\"read_file(\"))] == [
+        \"read_file(/data/antigravity-ha/telegram-home/.gemini/config/plugins/home-assistant/skills/ha-change-proposal/SKILL.md)\",
+        \"read_file(/data/antigravity-ha/telegram-home/.gemini/config/plugins/home-assistant/skills/ha-memory/SKILL.md)\",
+        \"read_file(/data/antigravity-ha/telegram-home/.gemini/config/plugins/home-assistant/skills/home-assistant-operations/SKILL.md)\"
+      ]) and
+      (.permissions.allow | index(\"read_file(*)\") == null) and
       (.permissions.allow | index(\"mcp(ha_change/ha_change_propose)\") != null) and
       (.permissions.allow | index(\"mcp(ha_read/ha_read_registry)\") != null) and
       (.permissions.allow | index(\"mcp(ha_validate/ha_validate_config)\") != null) and
@@ -136,7 +142,6 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
     set +e
     printf "canary\n" | HOME=/data/home AGY_CLI_DISABLE_AUTO_UPDATE=true \
       timeout 12s /usr/local/libexec/antigravity-real \
-        --print \
         --output-format stream-json \
         --print-timeout 5s \
         --agent ha-telegram \
@@ -161,7 +166,6 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       HA_TELEGRAM_USER_ID=123456789 \
       HA_TELEGRAM_CHAT_ID=-123456789 \
       timeout 12s /usr/local/libexec/ha-telegram-worker \
-        --print \
         --output-format stream-json \
         --print-timeout 5s \
         --agent ha-telegram \
@@ -199,7 +203,6 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       HA_TELEGRAM_USER_ID=123456789 \
       HA_TELEGRAM_CHAT_ID=-123456789 \
       timeout 12s /usr/local/libexec/ha-telegram-worker \
-        --print \
         --output-format stream-json \
         --print-timeout 5s \
         --agent ha-telegram \
@@ -276,7 +279,8 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       AGY_CLI_DISABLE_AUTO_UPDATE=true \
       HA_TELEGRAM_USER_ID=123456789 \
       HA_TELEGRAM_CHAT_ID=-123456789 \
-      /usr/local/libexec/ha-telegram-worker --print >/dev/null 2>/dev/null
+      /usr/local/libexec/ha-telegram-worker \
+        --output-format stream-json >/dev/null 2>/dev/null
     tamper_status=$?
     set -e
     [[ "${tamper_status}" == 70 ]]
@@ -299,6 +303,165 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       || { printf "isolated worker accepted a global rules directory (status %s)\n" \
         "${rule_tamper_status}" >&2; exit 1; }
   ' || fail 'native 1.1.11 HOME/workspace isolation canary failed'
+
+docker run --rm --platform "$TEST_PLATFORM" --network none \
+  --tmpfs /data:rw,nosuid,nodev,noexec,mode=0755 \
+  --tmpfs /run:rw,nosuid,nodev,noexec,mode=0755 \
+  --entrypoint /bin/bash "${IMAGE}" -ceu '
+    /usr/local/libexec/ha-telegram-home-bootstrap --runtime
+
+    settings_with_provider=$(mktemp)
+    settings_home_temporary=$(mktemp \
+      /data/antigravity-ha/telegram-home/.gemini/antigravity-cli/.settings.XXXXXX)
+    jq ".modelProvider = \"gemini\"" \
+      /etc/antigravity/telegram-settings.json > "${settings_with_provider}"
+    install -m 0644 "${settings_with_provider}" \
+      /etc/antigravity/telegram-settings.json
+    install -m 0600 "${settings_with_provider}" \
+      "${settings_home_temporary}"
+    mv -f -- "${settings_home_temporary}" \
+      /data/antigravity-ha/telegram-home/.gemini/antigravity-cli/settings.json
+
+    mock_log=$(mktemp)
+    native_stdout=$(mktemp)
+    native_stderr=$(mktemp)
+    mock_pid=
+    cleanup_mock() {
+      if [[ -n "${mock_pid}" ]] && kill -0 "${mock_pid}" 2>/dev/null; then
+        kill "${mock_pid}" 2>/dev/null || true
+        wait "${mock_pid}" 2>/dev/null || true
+      fi
+    }
+    trap cleanup_mock EXIT
+
+    /usr/bin/node - > "${mock_log}" 2>&1 <<\NODE &
+const http = require("node:http");
+
+function sendJson(response, status, value) {
+  const body = JSON.stringify(value);
+  response.writeHead(status, {
+    "content-type": "application/json",
+    "content-length": Buffer.byteLength(body),
+  });
+  response.end(body);
+}
+
+const server = http.createServer((request, response) => {
+  let body = "";
+  request.setEncoding("utf8");
+  request.on("data", (chunk) => {
+    body += chunk;
+  });
+  request.on("end", () => {
+    if (request.method !== "POST") {
+      sendJson(response, 200, {});
+      return;
+    }
+
+    let flattened = "";
+    try {
+      flattened = JSON.stringify(JSON.parse(body));
+    } catch {
+      sendJson(response, 400, { error: "invalid synthetic request" });
+      return;
+    }
+    const pathname = new URL(request.url, "http://127.0.0.1").pathname;
+    process.stdout.write(`${JSON.stringify({
+      kind: "request",
+      pathname,
+      stdin_sentinel: flattened.includes("TELEGRAM_NATIVE_STDIN_SENTINEL"),
+      output_format_literal: flattened.includes("--output-format"),
+    })}\n`);
+
+    if (pathname.includes("countTokens")) {
+      sendJson(response, 200, { totalTokens: 1 });
+      return;
+    }
+    const answer = JSON.stringify({
+      response: "MOCK_RESPONSE_OK",
+      proposal_ids: [],
+    });
+    const event = {
+      candidates: [{
+        content: { parts: [{ text: answer }], role: "model" },
+        finishReason: "STOP",
+        index: 0,
+      }],
+      usageMetadata: {
+        promptTokenCount: 1,
+        candidatesTokenCount: 1,
+        totalTokenCount: 2,
+      },
+      modelVersion: "synthetic-model",
+    };
+    const payload = `data: ${JSON.stringify(event)}\n\n`;
+    response.writeHead(200, {
+      "content-type": "text/event-stream",
+      "content-length": Buffer.byteLength(payload),
+    });
+    response.end(payload);
+  });
+});
+
+server.listen(18787, "127.0.0.1", () => {
+  process.stdout.write(`${JSON.stringify({ kind: "ready" })}\n`);
+});
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => server.close(() => process.exit(0)));
+}
+NODE
+    mock_pid=$!
+
+    for _ in $(seq 1 100); do
+      grep -Fq "\"kind\":\"ready\"" "${mock_log}" && break
+      kill -0 "${mock_pid}" 2>/dev/null \
+        || { printf "synthetic Gemini endpoint stopped during startup\n" >&2; exit 1; }
+      sleep 0.05
+    done
+    grep -Fq "\"kind\":\"ready\"" "${mock_log}"
+
+    cd /usr/local/share/antigravity-ha/telegram-workspace
+    printf "%s\n" "TELEGRAM_NATIVE_STDIN_SENTINEL" | /usr/bin/env -i \
+      AGY_CLI_DISABLE_AUTO_UPDATE=true \
+      GEMINI_API_KEY=synthetic-telegram-canary \
+      GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:18787 \
+      HOME=/data/antigravity-ha/telegram-home \
+      HA_TELEGRAM_USER_ID=123456789 \
+      HA_TELEGRAM_CHAT_ID=-123456789 \
+      LANG=C.UTF-8 \
+      LC_ALL=C.UTF-8 \
+      PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+      TERM=dumb \
+      NO_COLOR=1 \
+      timeout 20s /usr/local/libexec/ha-telegram-worker \
+        --output-format stream-json \
+        --print-timeout 10s \
+        --json-schema /usr/local/share/antigravity-ha/telegram-result-schema.json \
+        --agent ha-telegram \
+        --mode plan \
+        --disable-slash-commands \
+        --sandbox \
+        > "${native_stdout}" 2> "${native_stderr}"
+
+    kill "${mock_pid}" 2>/dev/null || true
+    wait "${mock_pid}" 2>/dev/null || true
+    mock_pid=
+    [[ ! -s "${native_stderr}" ]]
+    jq -s -e "
+      length >= 2 and
+      (.[0].event == \"init\") and
+      (.[-1].event == \"result\") and
+      (.[-1].result.status == \"SUCCESS\") and
+      ([.[] | select(.event == \"init\")] | length == 1) and
+      ([.[] | select(.event == \"result\")] | length == 1) and
+      ([.[] | (.event | type)] | all(. == \"string\"))
+    " "${native_stdout}" >/dev/null
+    jq -s -e "
+      ([.[] | select(.kind == \"request\")] | length) > 0 and
+      any(.[]; .kind == \"request\" and .stdin_sentinel == true) and
+      all(.[]; .kind != \"request\" or .output_format_literal == false)
+    " "${mock_log}" >/dev/null
+  ' || fail 'native 1.1.11 stdin stream-json canary failed'
 
 printf 'telegram isolation smoke passed for Antigravity %s\n' \
   "${EXPECTED_VERSION}"

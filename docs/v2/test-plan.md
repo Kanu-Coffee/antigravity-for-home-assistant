@@ -120,8 +120,8 @@ candidate와 HAOS evidence가 생기기 전에는 관련 마일스톤을 `VERIFI
 | AG-006 | duplicate plugin | global/staged/workspace 이름 충돌 시 fail closed |
 | AG-007 | MCP discovery | `ha_change`, `ha_memory`, `ha_read`, `ha_validate`, `playwright` 다섯 managed server가 secret env 없이 발견 |
 | AG-008 | OAuth persistence | login 후 restart/update에서 native session 보존 |
-| AG-009 | print stdin | prompt가 argv/log에 없고 stdin으로 처리 |
-| AG-010 | stream parser | init/progress/result, invalid JSON, unknown event, size limit |
+| AG-009 | print stdin | 값 없는 `--print` 없이 pipe된 prompt가 argv/log에 없고 stdin으로 처리 |
+| AG-010 | stream parser | top-level `event`, init/progress/SUCCESS result, conversation binding, invalid JSON, unknown event, size limit |
 | AG-011 | headless permissions | settings policy와 sandbox가 print mode에서도 적용 |
 | AG-012 | forbidden flags | skip-permissions와 Telegram override 거부 |
 | AG-013 | Telegram customization isolation | user global/workspace plugin·agent·rule·MCP가 인증 전후 worker에서 실행·노출되지 않음 |
@@ -211,7 +211,7 @@ current amd64 image와 current-source QEMU aarch64 packaging canary는 이 경�
 - static allowlist 교집합과 ID canonicalization
 - local pairing entropy/TTL/single-use/revoke와 unauthorized response
 - `$()`, backtick, quotes, newline, leading dash, Unicode와 oversized input
-- shell false, exact argv와 stdin prompt
+- shell false, `--print` 없는 exact argv와 stdin prompt
 - actual 1.1.11에서 user global stdio MCP pre/post-auth launch 거부와
   user/workspace plugin·agent·rule·MCP discovery 격리
 - per-chat FIFO, global concurrency, queue overflow, cancel와 timeout

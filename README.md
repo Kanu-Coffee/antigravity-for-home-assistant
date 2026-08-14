@@ -140,9 +140,9 @@ Telegram을 먼저 활성화했더라도 bridge는 Bot API에 연결하지 않�
 
 현재 최소 broker는 device safety metadata가 없는 모든 HA `service_call`을 고위험으로
 재분류하므로 `autonomous`에서도 사람 확인이 필요합니다. restart, update, restore,
-delete는 아직 지원하지 않고 fail closed합니다. Telegram worker는
-`agy --print --output-format stream-json --mode plan`으로 proposal만 만들며, shell이나
-공유 tmux에 명령을 주입하지 않습니다.
+delete는 아직 지원하지 않고 fail closed합니다. Telegram worker는 pipe된 stdin으로
+질문을 받고 `agy --output-format stream-json --mode plan`으로 proposal만 만들며,
+shell이나 공유 tmux에 명령을 주입하지 않습니다.
 
 ## 안전 기본값
 

@@ -296,7 +296,7 @@ first-run OAuth가 가능한 controlling TTY에서 `agy`를 실행하고 안내�
 새 bridge는 shell 없이 argv array로 다음 실행을 만든다.
 
 ```text
-ha-telegram-worker --print --output-format stream-json --print-timeout 5m --json-schema <managed> --agent ha-telegram --mode plan --sandbox --disable-slash-commands
+ha-telegram-worker --output-format stream-json --print-timeout 5m --json-schema <managed> --agent ha-telegram --mode plan --sandbox --disable-slash-commands
 ```
 
 - `cwd`는 `/usr/local/share/antigravity-ha/telegram-workspace`다.
@@ -304,6 +304,8 @@ ha-telegram-worker --print --output-format stream-json --print-timeout 5m --json
   settings/MCP/plugin, owner/mode/symlink/content와 unknown customization 부재를 매
   실행 검증한다.
 - prompt는 UTF-8 stdin으로 전달하고 argv, environment, log file에 넣지 않는다.
+- 1.1.11은 pipe된 non-TTY stdin에서 print mode를 자동 선택한다. 값 없는
+  `--print`/`-p`는 다음 argv를 prompt로 소비하므로 bridge argv에 넣지 않는다.
 - stdout은 NDJSON 전용, stderr는 비밀 정화된 진단 전용이다.
 - exit code 0과 terminal `result` event가 모두 있어야 성공이다.
 - `--continue`는 다른 대화를 잘못 선택할 수 있어 bridge에서 사용하지 않는다.
@@ -323,8 +325,12 @@ wrapper와 bridge는 다음 인수를 거부한다.
 
 ## 8. structured output parser
 
-parser는 한 줄에 JSON object 하나인 NDJSON만 받는다. 알려진 1.1.11 event type과
-terminal result만 사용자 응답으로 변환한다. unknown event는 안전하게 무시하고
+parser는 한 줄에 JSON object 하나인 NDJSON만 받는다. 알려진 1.1.11 top-level
+`event` discriminator와 terminal result만 사용자 응답으로 변환한다. 정상 순서는
+`event: "init"`, 0개 이상의 `event: "step_update"`, 단 하나의
+`event: "result"`다. terminal object는 init과 같은 conversation ID,
+`result.status == "SUCCESS"`, JSON schema 응답을 담은 `result.response`를 모두
+충족해야 한다. unknown event는 안전하게 무시하고
 비밀 정화된 metric을 남기되 전체 raw line은 기록하지 않는다.
 
 다음 조건은 job 실패다.

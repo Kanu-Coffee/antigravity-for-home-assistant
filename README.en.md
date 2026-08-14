@@ -147,9 +147,9 @@ App terminal is detected without an App restart.
 The minimal broker currently reclassifies every HA `service_call` as high risk
 because device safety metadata is unavailable, so a human must confirm even in
 `autonomous`. Restart, update, restore, and delete operations are not yet
-supported and fail closed. The Telegram worker uses
-`agy --print --output-format stream-json --mode plan` only to create proposals;
-it never injects commands into a shell or shared tmux session.
+supported and fail closed. The Telegram worker receives the prompt through piped
+stdin and uses `agy --output-format stream-json --mode plan` only to create
+proposals; it never injects commands into a shell or shared tmux session.
 
 ## Secure defaults
 

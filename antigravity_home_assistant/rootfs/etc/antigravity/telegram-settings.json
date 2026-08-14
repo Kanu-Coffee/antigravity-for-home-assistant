@@ -8,6 +8,9 @@
   "showTips": false,
   "permissions": {
     "allow": [
+      "read_file(/data/antigravity-ha/telegram-home/.gemini/config/plugins/home-assistant/skills/ha-change-proposal/SKILL.md)",
+      "read_file(/data/antigravity-ha/telegram-home/.gemini/config/plugins/home-assistant/skills/ha-memory/SKILL.md)",
+      "read_file(/data/antigravity-ha/telegram-home/.gemini/config/plugins/home-assistant/skills/home-assistant-operations/SKILL.md)",
       "mcp(ha_change/ha_change_propose)",
       "mcp(ha_memory/memory_search)",
       "mcp(ha_memory/memory_show)",

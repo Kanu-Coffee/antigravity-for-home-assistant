@@ -2,6 +2,20 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.0.5] - 2026-08-14
+
+### Fixed
+
+- Keep Telegram prompts on non-TTY stdin and let Antigravity 1.1.11 select
+  print mode automatically, avoiding the value-taking `--print` flag consuming
+  the following worker argument as the prompt.
+- Parse Antigravity 1.1.11's actual top-level `event` stream discriminator and
+  require a matching conversation ID, successful terminal status, and exact
+  managed response schema before replying to Telegram.
+- Allow reads of only the three image-managed Telegram skill instruction files
+  needed by the headless agent, and classify the exact empty-output permission
+  denial without exposing raw stderr or broadly bypassing tool permissions.
+
 ## [2.0.4] - 2026-08-14
 
 ### Fixed

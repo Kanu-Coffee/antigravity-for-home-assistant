@@ -529,6 +529,9 @@ without the user's explicit current confirmation.
 - If `request_failed` has `reason_class=authentication_required`, do not repeat
   Bot pairing. Run `ha-telegram-login` from a trusted App Web terminal or SSH
   session.
+- `reason_class=headless_read_denied` means a non-allowlisted headless file read
+  was blocked. If it repeats for an ordinary question, do not edit user settings
+  or add `read_file(*)`; update to the latest App version and restart.
 - `reason_class=runtime_integrity_failed` means one of several worker isolation
   preflights failed. Do not infer a particular file fault or automatically
   repair/retry the request. Restart the App, then inspect sanitized App logs if
@@ -537,6 +540,7 @@ without the user's explicit current confirmation.
   result. A working help or status command does not prove native OAuth is ready.
 - Never upload native CLI logs, OAuth URLs, tokens, or raw prompts. Do not guess,
   manually edit, or copy a credential path between HOME directories.
+- Never use `--dangerously-skip-permissions` or a broad file-read grant.
 - If a change preview changed or expired, submit a new request and approve again.
 
 ### Browser or memory fails

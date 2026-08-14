@@ -323,12 +323,16 @@ const holdMs = Number.parseInt(process.argv[2], 10);
 for await (const _chunk of process.stdin) { /* drain stdin */ }
 setTimeout(() => {
   process.stdout.write(JSON.stringify({
-    type: "init",
+    event: "init",
     conversation_id: "conversation.gap007-fixture",
   }) + "\\n");
   process.stdout.write(JSON.stringify({
-    type: "result",
-    result: JSON.stringify({ response: "fixture complete", proposal_ids: [] }),
+    event: "result",
+    result: {
+      conversation_id: "conversation.gap007-fixture",
+      status: "SUCCESS",
+      response: JSON.stringify({ response: "fixture complete", proposal_ids: [] }),
+    },
   }) + "\\n");
 }, holdMs);
 `, { encoding: "utf8", mode: 0o600 });

@@ -43,12 +43,17 @@ const ANTIGRAVITY_AUTH_REQUIRED_MARKER = Buffer.from(
   "Error: authentication required. Run 'antigravity-real' to log in, then retry.",
   "utf8",
 );
+const ANTIGRAVITY_HEADLESS_PERMISSION_MARKER = Buffer.from(
+  'a tool required the "read_file" permission that headless mode cannot prompt for, so it was auto-denied.',
+  "utf8",
+);
 const TELEGRAM_WORKER_INTEGRITY_MARKER = Buffer.from(
   "ha-telegram-worker: isolated native configuration is unavailable",
   "utf8",
 );
 const WORKER_FAILURE_REASONS = Object.freeze([
   "authentication_required",
+  "headless_read_denied",
   "runtime_integrity_failed",
   "worker_failed",
 ]);
@@ -188,6 +193,7 @@ class AntigravityWorkerError extends Error {
     }
     const messages = {
       authentication_required: "Antigravity worker authentication is required",
+      headless_read_denied: "Antigravity headless file read was denied",
       runtime_integrity_failed: "Antigravity worker runtime integrity check failed",
       worker_failed: "Antigravity worker exited unsuccessfully",
     };
@@ -282,6 +288,8 @@ function renderRequestFailure(error) {
   switch (requestFailureReason(error)) {
     case "authentication_required":
       return "Telegram 전용 Antigravity 로그인이 필요합니다. App 웹 터미널 또는 SSH에서 ha-telegram-login을 실행한 뒤 다시 시도하세요.";
+    case "headless_read_denied":
+      return "Telegram AI의 허용되지 않은 파일 읽기가 차단되었습니다. 정상 질문에서 발생했다면 App을 최신 버전으로 업데이트하고 재시작하세요.";
     case "runtime_integrity_failed":
       return "Telegram 전용 AI 실행 환경의 무결성 검증에 실패했습니다. App을 재시작한 뒤 다시 시도하세요. 계속 실패하면 App 로그를 확인하세요.";
     default:
@@ -302,6 +310,7 @@ function renderWorkerStatus() {
     not_checked: "아직 확인되지 않음",
     ready: "최근 요청 정상",
     authentication_required: "Telegram 전용 로그인 필요 (ha-telegram-login)",
+    headless_read_denied: "파일 읽기 권한 차단",
     runtime_integrity_failed: "격리 실행 환경 무결성 오류",
     worker_failed: "최근 요청 실패",
   };
@@ -622,7 +631,6 @@ async function sendMessage(botToken, chatId, text, extra = {}) {
 
 function buildAgyArgs(_mode = "plan", sandboxEnabled = true, conversationId = null) {
   const args = [
-    "--print",
     "--output-format",
     "stream-json",
     "--print-timeout",
@@ -659,24 +667,25 @@ function extractString(value, depth = 0) {
   return "";
 }
 
-function extractStructuredResult(value, depth = 0) {
-  if (depth > 5 || value === null || value === undefined) return null;
-  if (typeof value === "string") {
-    try {
-      return extractStructuredResult(JSON.parse(value), depth + 1);
-    } catch {
-      return null;
-    }
+function parseTerminalResponse(value) {
+  if (typeof value !== "string") {
+    throw new Error("Antigravity terminal response was not JSON text");
   }
-  if (typeof value !== "object" || Array.isArray(value)) return null;
-  if (typeof value.response === "string" && Array.isArray(value.proposal_ids)) return value;
-  for (const key of ["structured_output", "structuredOutput", "result", "output", "content"]) {
-    if (Object.hasOwn(value, key)) {
-      const found = extractStructuredResult(value[key], depth + 1);
-      if (found) return found;
-    }
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("Antigravity terminal response contained invalid JSON");
   }
-  return null;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) ||
+      JSON.stringify(Object.keys(parsed).sort()) !==
+        JSON.stringify(["proposal_ids", "response"])) {
+    throw new Error("Antigravity terminal response did not match the managed schema");
+  }
+  if (typeof parsed.response !== "string" || !Array.isArray(parsed.proposal_ids)) {
+    throw new Error("Antigravity terminal response did not match the managed schema");
+  }
+  return parsed;
 }
 
 function decodeStreamUtf8(stdout) {
@@ -712,11 +721,10 @@ function parseStreamResult(stream) {
     if (terminalSeen) {
       throw new Error("Antigravity stream contained an event after the terminal result");
     }
-    if (typeof event?.type !== "string" || event.type.length === 0) {
-      throw new Error("Antigravity stream contained a missing or malformed event type");
+    if (typeof event?.event !== "string" || event.event.length === 0) {
+      throw new Error("Antigravity stream contained a missing or malformed event discriminator");
     }
-    const knownEventType = /^(?:init|result)$/u.test(event.type) ||
-      /^(?:step|tool)(?:_|$)/u.test(event.type);
+    const knownEventType = /^(?:init|step_update|result)$/u.test(event.event);
     if (!knownEventType) {
       if (initEvents !== 1) {
         throw new Error("Antigravity unknown event arrived before init");
@@ -724,7 +732,7 @@ function parseStreamResult(stream) {
       incrementBounded(metricState.streamEventsIgnored, "unknown_type");
       continue;
     }
-    if (event?.type === "init") {
+    if (event?.event === "init") {
       initEvents += 1;
       if (initEvents !== 1) {
         throw new Error("Antigravity stream contained an invalid init sequence");
@@ -735,18 +743,21 @@ function parseStreamResult(stream) {
       }
       conversationId = candidate;
     }
-    if (event?.type === "result") {
+    if (event?.event === "result") {
       if (initEvents !== 1) {
         throw new Error("Antigravity terminal result arrived outside a valid init sequence");
       }
+      if (typeof event.result !== "object" || event.result === null ||
+          Array.isArray(event.result) || event.result.status !== "SUCCESS") {
+        throw new Error("Antigravity terminal result did not report success");
+      }
+      if (event.result.conversation_id !== conversationId) {
+        throw new Error("Antigravity terminal result changed the conversation identifier");
+      }
       terminalSeen = true;
       resultEvents += 1;
-      result = extractStructuredResult(event);
-    } else if (
-      typeof event?.type === "string" &&
-      /^(?:step(?:_|$)|tool(?:_|$))/u.test(event.type) &&
-      initEvents !== 1
-    ) {
+      result = parseTerminalResponse(event.result.response);
+    } else if (event?.event === "step_update" && initEvents !== 1) {
       throw new Error("Antigravity progress event arrived before init");
     }
   }
@@ -894,9 +905,13 @@ async function runAntigravityPrompt(prompt, {
     let stdoutBytes = 0;
     let currentLineBytes = 0;
     const authRequiredMatcher = new BoundedByteMatcher(ANTIGRAVITY_AUTH_REQUIRED_MARKER);
+    const headlessPermissionMatcher = new BoundedByteMatcher(
+      ANTIGRAVITY_HEADLESS_PERMISSION_MARKER,
+    );
     const runtimeIntegrityMatcher = new BoundedByteMatcher(TELEGRAM_WORKER_INTEGRITY_MARKER);
     child.stderr.on("data", (chunk) => {
       authRequiredMatcher.push(chunk);
+      headlessPermissionMatcher.push(chunk);
       runtimeIntegrityMatcher.push(chunk);
     });
     child.stdin.on("error", () => {});
@@ -953,6 +968,13 @@ async function runAntigravityPrompt(prompt, {
         : code === 1 && authRequiredMatcher.matched
           ? "authentication_required"
           : "worker_failed";
+      workerRuntimeStatus = reasonClass;
+      throw new AntigravityWorkerError(reasonClass);
+    }
+    if (stdoutBytes === 0) {
+      const reasonClass = headlessPermissionMatcher.matched
+        ? "headless_read_denied"
+        : "worker_failed";
       workerRuntimeStatus = reasonClass;
       throw new AntigravityWorkerError(reasonClass);
     }
@@ -1914,6 +1936,7 @@ async function main() {
 export {
   ACCESS_MODES,
   ANTIGRAVITY_AUTH_REQUIRED_MARKER,
+  ANTIGRAVITY_HEADLESS_PERMISSION_MARKER,
   TELEGRAM_WORKER_INTEGRITY_MARKER,
   AntigravityWorkerError,
   BoundedByteMatcher,

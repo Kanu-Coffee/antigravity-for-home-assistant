@@ -159,7 +159,6 @@ bridge는 Node `spawn`과 `shell: false`를 사용한다.
 
 ```text
 argv = [
-  "--print",
   "--output-format", "stream-json",
   "--print-timeout", "5m",
   "--mode", "plan",
@@ -169,6 +168,10 @@ argv = [
 cwd = "/usr/local/share/antigravity-ha/telegram-workspace"
 stdin = normalized prompt
 ```
+
+Antigravity 1.1.11은 non-TTY stdin이 pipe되면 print mode를 자동 선택한다. 값 없는
+`--print`/`-p`는 boolean switch가 아니라 다음 argv를 prompt 값으로 소비하므로 넣지
+않는다. 이 규칙으로 prompt는 argv나 environment에 노출되지 않고 stdin에만 남는다.
 
 재개할 verified binding이 있으면 App이 보관한 값만
 `--conversation <opaque-id>`로 추가한다. prompt에서 CLI flag, environment, model,
@@ -185,6 +188,11 @@ customization surface만 초기화한다. fixed settings, 빈 global MCP와 단�
 `home-assistant` plugin을 설치하고 symlink/owner/mode/content를 매 실행 전 확인한다.
 사용자 agent/skill/hook/plugin, HOME/workspace AGENTS/GEMINI와 `/config/.agents`는 worker
 경계 밖이다. 변조 또는 unknown customization이 있으면 worker는 exit 70으로 닫힌다.
+headless agent가 manifest에 선언된 skill을 활성화할 때 필요한 file read는 설치된
+관리형 plugin의 `ha-change-proposal`, `ha-memory`, `home-assistant-operations` 세
+`SKILL.md` 절대경로만 allow한다. `read_file(*)`, plugin directory 전체, Telegram
+HOME, OAuth·conversation 자료와 사용자 경로는 허용하지 않는다. 세 파일은 매 실행 전
+image source와 exact 비교되고 worker AppArmor에서는 write가 거부된다.
 
 actual Antigravity 1.1.11 canary는 shared `/data/home` positive control에서 user global
 stdio MCP가 Google OAuth 인증 완료 전 실행됨을 재현했다. 같은 marker와
@@ -200,6 +208,12 @@ stdout NDJSON 총량은 4 MiB, 단일 line은 256 KiB로 제한한다. 최종 �
 Unicode-safe 분할한다. 초과 결과는 local raw output을 보존하지 않고 요약 실패를
 보고한다.
 
+pinned 1.1.11 stream의 top-level discriminator는 `type`이 아니라 `event`다. init과
+terminal result는 같은 conversation ID여야 하며, terminal은
+`result.status == "SUCCESS"`와 관리형 schema JSON을 담은 `result.response`를 모두
+충족해야 한다. legacy `type`, 실패 status, 다른 conversation ID와 recursive
+fallback payload는 거부한다.
+
 pinned 1.1.11 worker의 stderr는 원문을 저장·로그·회신하지 않는다. bridge는
 `Error: authentication required. Run 'antigravity-real' to log in, then retry.`라는
 고정 byte marker만 marker 길이 미만의 tail을 유지하는 bounded streaming matcher로
@@ -210,12 +224,16 @@ preflight 세부 항목을 추정하지 않고 `runtime_integrity_failed`로 분
 native exit 70을 포함한 나머지 nonzero는 `worker_failed`다. 인증 필요 응답은 내부
 executable 대신 trusted local TTY의 `ha-telegram-login`을 안내한다. 무결성 실패는
 자동 bootstrap 또는 동일 prompt 재시도 없이 App 재시작과 정제된 로그 확인만 안내한다.
+exit 0, stdout 0 byte와 pinned headless auto-denial marker가 정확히 함께 있을 때만
+`headless_read_denied`로 분류한다. marker가 있어도 nonzero, malformed
+nonempty stream 또는 정상 terminal result이면 이 분류를 적용하지 않는다. stderr의
+마지막 줄이나 tool target은 저장·로그·회신하지 않는다.
 
 `/status`의 transport 정상은 Bot API command가 bridge에서 처리된다는 뜻일 뿐이다.
 별도 AI worker 상태는 App 시작 뒤 `아직 확인되지 않음`에서 시작해 완료된 최근
-worker 결과만 `ready`, `authentication_required`, `runtime_integrity_failed` 또는
-`worker_failed`로 갱신한다. 이 상태에는 identifier, prompt, stderr 또는 credential
-자료를 넣지 않는다.
+worker 결과만 `ready`, `authentication_required`, `headless_read_denied`,
+`runtime_integrity_failed` 또는 `worker_failed`로 갱신한다. 이 상태에는 identifier,
+prompt, stderr 또는 credential 자료를 넣지 않는다.
 
 ## TG-008 — proposal schema
 

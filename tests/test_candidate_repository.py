@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / ".github/scripts/candidate_repository.py"
 SOURCE = "a" * 40
 DIGEST = "sha256:" + "b" * 64
-VERSION = "2.0.4-candidate.101.2"
+VERSION = "2.0.5-candidate.101.2"
 IMAGE = "ghcr.io/kanu-coffee/antigravity-for-home-assistant"
 
 
@@ -72,13 +72,13 @@ def test_candidate_repository_derives_source_version_from_candidate(
     shutil.copytree(ROOT / "antigravity_home_assistant", source_app)
     source_config = source_app / "config.yaml"
     source_text = source_config.read_text(encoding="utf-8")
-    assert source_text.count('version: "2.0.4"') == 1
+    assert source_text.count('version: "2.0.5"') == 1
     source_config.write_text(
-        source_text.replace('version: "2.0.4"', 'version: "2.0.5"'),
+        source_text.replace('version: "2.0.5"', 'version: "2.0.6"'),
         encoding="utf-8",
     )
 
-    candidate_version = "2.0.5-candidate.101.2"
+    candidate_version = "2.0.6-candidate.101.2"
     repository, manifest_path = _create(
         tmp_path,
         app_directory=source_app,
@@ -101,7 +101,7 @@ def test_candidate_repository_derives_source_version_from_candidate(
         "--source-sha",
         SOURCE,
         "--version",
-        "2.0.4-candidate.101.2",
+        "2.0.5-candidate.101.2",
         "--image",
         IMAGE,
         "--digest",
