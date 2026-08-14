@@ -42,7 +42,8 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   /usr/local/libexec/ha-telegram-runtime Px -> antigravity_home_assistant-telegram,
   /usr/local/bin/ha-telegram-pair Px -> antigravity_home_assistant-telegram-admin,
   /usr/local/bin/ha-telegram-login Px -> antigravity_home_assistant-telegram-login,
-  /usr/local/bin/{agy,antigravity,antigravity-user-files-update,ha-antigravity,ha-antigravity-login,tmux-session-shell,ttyd,web-terminal-entrypoint} rix,
+  /usr/local/bin/{agy,antigravity,antigravity-user-files-update,ha-antigravity,ha-antigravity-login,tmux-session-shell,ttyd} rix,
+  /usr/local/bin/web-terminal-entrypoint Px -> antigravity_home_assistant-shell,
 
   # Supervisor-aware helpers enter the only profile that can read the runtime
   # credential. Playwright uses a narrower bootstrap and then drops that access.
@@ -379,6 +380,7 @@ profile antigravity_home_assistant-init flags=(attach_disconnected,mediate_delet
   /usr/lib/** rm,
   /usr/local/bin/** rix,
   /usr/local/bin/{ha-memory,ha-memory-mcp} Px -> antigravity_home_assistant-memory,
+  /usr/local/bin/web-terminal-entrypoint Px -> antigravity_home_assistant-shell,
   /usr/local/lib/** r,
   /usr/local/libexec/** rix,
   /usr/local/share/** r,
@@ -1429,7 +1431,9 @@ profile antigravity_home_assistant-shell flags=(attach_disconnected,mediate_dele
   /usr/lib/** rm,
   /usr/lib/openssh/sftp-server rix,
   /usr/local/bin/** r,
-  /usr/local/bin/{agy,antigravity,antigravity-user-files-update,gh,ha-antigravity,ha-antigravity-login,tmux-session-shell} rix,
+  /usr/local/bin/{agy,antigravity,antigravity-user-files-update,gh,ha-antigravity,ha-antigravity-login,tmux-session-shell,web-terminal-entrypoint} rix,
+  /usr/local/bin/ha-telegram-pair Px -> antigravity_home_assistant-telegram-admin,
+  /usr/local/bin/ha-telegram-login Px -> antigravity_home_assistant-telegram-login,
   /usr/local/bin/{ha-addon-logs,ha-api,ha-browser-auth-ensure,ha-browser-auth-refresh,ha-browser-auth-remove,ha-browser-auth-setup,ha-browser-auth-status,ha-browser-network-info,ha-browser-user-create,ha-browser-user-remove-password,ha-config-check,ha-core-logs,ha-feedback,supervisor-api} Px -> antigravity_home_assistant-ha-helper,
   /usr/local/bin/{ha-memory,ha-memory-mcp} Px -> antigravity_home_assistant-memory,
   /usr/local/bin/ha-playwright-mcp Px -> antigravity_home_assistant-playwright-bootstrap,

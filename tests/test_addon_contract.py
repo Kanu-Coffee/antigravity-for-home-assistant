@@ -383,6 +383,14 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
         "antigravity_home_assistant-init,"
     ) in main_profile
     assert (
+        "/usr/local/bin/web-terminal-entrypoint Px -> "
+        "antigravity_home_assistant-shell,"
+    ) in init_profile
+    assert (
+        "/usr/local/bin/web-terminal-entrypoint Px -> "
+        "antigravity_home_assistant-shell,"
+    ) in main_profile
+    assert (
         "/usr/local/libexec/ha-sshd-runtime rPx,"
     ) in main_profile
     assert (
@@ -439,6 +447,17 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
     )
     assert "deny /config/** rwklm," in telegram_admin_profile
     assert "network" not in telegram_admin_profile
+    assert (
+        "/usr/local/bin/ha-telegram-pair Px -> "
+        "antigravity_home_assistant-telegram-admin,"
+    ) in shell_profile
+    assert (
+        "/usr/local/bin/ha-telegram-login Px -> "
+        "antigravity_home_assistant-telegram-login,"
+    ) in shell_profile
+    assert (
+        "tmux-session-shell,web-terminal-entrypoint} rix,"
+    ) in shell_profile
     assert "/data/antigravity-ha/telegram-home/** rwkl," in (
         telegram_login_profile
     )

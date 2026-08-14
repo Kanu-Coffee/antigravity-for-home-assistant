@@ -174,9 +174,9 @@ if ! (
 fi
 
 # The 1.1.11 discovery probe serializes settings and removes only three values
-# that equal its native defaults. Accept exactly that semantic normalization,
-# reject every other customization change, then restore the explicit App-owned
-# file so the worker can enforce a byte-exact preflight on every launch.
+# that equal its native defaults. The shared authority admits only the explicit
+# App-owned source or that exact semantic normalization. Restore the explicit
+# file after discovery so every freshly bootstrapped runtime starts canonical.
 if [[ -L "${CLI_ROOT}/settings.json" || ! -f "${CLI_ROOT}/settings.json" \
   || "$(stat -c '%u:%a' -- "${CLI_ROOT}/settings.json")" != '0:600' \
   || -L "${CONFIG_ROOT}/mcp_config.json" || ! -f "${CONFIG_ROOT}/mcp_config.json" \
@@ -188,27 +188,17 @@ if [[ -L "${CLI_ROOT}/settings.json" || ! -f "${CLI_ROOT}/settings.json" \
   exit 1
 fi
 
-settings_expected=$(mktemp /run/antigravity-ha/.telegram-settings-expected.XXXXXX)
-settings_observed=$(mktemp /run/antigravity-ha/.telegram-settings-observed.XXXXXX)
 plugin_expected=$(mktemp -d /run/antigravity-ha/.telegram-plugin-expected.XXXXXX)
-if ! jq --exit-status --sort-keys '
-    (if .toolPermission == "request-review" then del(.toolPermission) else . end)
-    | (if .allowNonWorkspaceAccess == false then del(.allowNonWorkspaceAccess) else . end)
-    | (if .permissions.ask == [] then del(.permissions.ask) else . end)
-  ' "${SETTINGS_SOURCE}" > "${settings_expected}" \
-  || ! jq --exit-status --sort-keys . \
-    "${CLI_ROOT}/settings.json" > "${settings_observed}" \
+if ! antigravity_ha_telegram_settings_match \
+    "${SETTINGS_SOURCE}" "${CLI_ROOT}/settings.json" \
   || ! antigravity_ha_stage_telegram_plugin \
     "${PLUGIN_SOURCE}" "${plugin_expected}" \
-  || ! cmp -s "${settings_expected}" "${settings_observed}" \
   || ! cmp -s "${MCP_SOURCE}" "${CONFIG_ROOT}/mcp_config.json" \
   || ! diff -qr "${plugin_expected}" "${PLUGIN_TARGET}" >/dev/null; then
-  rm -f -- "${settings_expected}" "${settings_observed}"
   rm -rf -- "${plugin_expected}"
   printf 'ha-telegram-home-bootstrap: managed customization changed during validation\n' >&2
   exit 1
 fi
-rm -f -- "${settings_expected}" "${settings_observed}"
 rm -rf -- "${plugin_expected}"
 install_managed_file "${SETTINGS_SOURCE}" "${CLI_ROOT}/settings.json"
 if ! cmp -s "${SETTINGS_SOURCE}" "${CLI_ROOT}/settings.json"; then

@@ -172,6 +172,9 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
     negative_status=$?
     set -e
 
+    [[ "${negative_status}" == 1 ]] \
+      || { printf "first isolated unauthenticated worker returned status %s\n" \
+        "${negative_status}" >&2; exit 1; }
     [[ ! -e /tmp/user-global-mcp-launched.isolated ]] \
       || { printf "isolated worker launched the interactive global MCP (status %s)\n" \
         "${negative_status}" >&2; exit 1; }
@@ -181,6 +184,89 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
     [[ "$(sha256sum /data/home/.gemini/config/mcp_config.json)" \
       == "${user_mcp_before}" ]]
 
+    telegram_settings=/data/antigravity-ha/telegram-home/.gemini/antigravity-cli/settings.json
+    [[ ! -L "${telegram_settings}" ]]
+    [[ "$(stat -c "%u:%h:%a" "${telegram_settings}")" == "0:1:600" ]]
+    ! cmp -s /etc/antigravity/telegram-settings.json "${telegram_settings}"
+    . /usr/local/lib/antigravity-ha/telegram-plugin.sh
+    antigravity_ha_telegram_settings_match \
+      /etc/antigravity/telegram-settings.json "${telegram_settings}"
+
+    set +e
+    printf "repeat canary\n" | \
+      HOME=/data/antigravity-ha/telegram-home \
+      AGY_CLI_DISABLE_AUTO_UPDATE=true \
+      HA_TELEGRAM_USER_ID=123456789 \
+      HA_TELEGRAM_CHAT_ID=-123456789 \
+      timeout 12s /usr/local/libexec/ha-telegram-worker \
+        --print \
+        --output-format stream-json \
+        --print-timeout 5s \
+        --agent ha-telegram \
+        --mode plan \
+        --sandbox \
+        --disable-slash-commands \
+        >/dev/null 2>/dev/null
+    repeated_negative_status=$?
+    set -e
+    [[ "${repeated_negative_status}" == 1 ]] \
+      || { printf "normalized settings rejected with status %s\n" \
+        "${repeated_negative_status}" >&2; exit 1; }
+
+    reject_settings_fixture() {
+      local name=$1
+      local fixture=$2
+      local temporary status
+      temporary=$(mktemp \
+        /data/antigravity-ha/telegram-home/.gemini/antigravity-cli/.settings-tamper.XXXXXX)
+      case "${fixture}" in
+        __explicit_sorted__)
+          jq --sort-keys . \
+            /etc/antigravity/telegram-settings.json > "${temporary}"
+          ;;
+        __invalid_json__)
+          printf "%s\n" "{\"altScreenMode\":" > "${temporary}"
+          ;;
+        *)
+          jq "
+            del(.toolPermission, .allowNonWorkspaceAccess, .permissions.ask)
+            | ${fixture}
+          " /etc/antigravity/telegram-settings.json > "${temporary}"
+          ;;
+      esac
+      chmod 0600 "${temporary}"
+      mv -f -- "${temporary}" "${telegram_settings}"
+      set +e
+      HOME=/data/antigravity-ha/telegram-home \
+        AGY_CLI_DISABLE_AUTO_UPDATE=true \
+        HA_TELEGRAM_USER_ID=123456789 \
+        HA_TELEGRAM_CHAT_ID=-123456789 \
+        /usr/local/libexec/ha-telegram-worker --version \
+        >/dev/null 2>/dev/null
+      status=$?
+      set -e
+      [[ "${status}" == 70 ]] \
+        || { printf "worker accepted unsafe settings fixture %s (status %s)\n" \
+          "${name}" "${status}" >&2; exit 1; }
+    }
+
+    reject_settings_fixture \
+      "arbitrary explicit serialization" "__explicit_sorted__"
+    reject_settings_fixture \
+      "unsafe tool permission" ".toolPermission = \"always-proceed\""
+    reject_settings_fixture \
+      "unsafe workspace access" ".allowNonWorkspaceAccess = true"
+    reject_settings_fixture \
+      "nonempty review queue" ".permissions.ask = [\"command(*)\"]"
+    reject_settings_fixture \
+      "unknown customization" ".unexpectedCustomization = true"
+    reject_settings_fixture \
+      "missing policy" "del(.permissions.deny)"
+    reject_settings_fixture \
+      "missing managed setting" "del(.showTips)"
+    reject_settings_fixture "invalid JSON" "__invalid_json__"
+
+    /usr/local/libexec/ha-telegram-home-bootstrap --runtime
     printf "%s\n" \
       "{\"mcpServers\":{\"isolated_tamper_marker\":{\"command\":\"/usr/bin/node\",\"args\":[\"/tmp/telegram-isolation-marker.mjs\",\"/tmp/isolated-tamper-launched\"]}}}" \
       > /data/antigravity-ha/telegram-home/.gemini/config/mcp_config.json

@@ -407,7 +407,9 @@ def test_web_terminal_uses_tmux_and_returns_to_shell(rootfs: Path) -> None:
     )
 
     assert "export TERM=xterm-256color" in entrypoint
+    assert '[[ "$1" != --background ]]' in entrypoint
     assert 'new-session -A -s "${session_name}" -c /config' in entrypoint
+    assert 'new-session -d -s "${session_name}" -c /config' in entrypoint
     assert session_shell.startswith("#!/usr/bin/env bash\n")
     assert "antigravity_ha_config_true" in session_shell
     assert "web_terminal_auto_start_antigravity" in session_shell
@@ -546,4 +548,5 @@ def test_init_starts_background_tmux(rootfs: Path) -> None:
     init_script = (rootfs / "usr/local/bin/antigravity-ha-init").read_text(
         encoding="utf-8"
     )
-    assert 'tmux -u new-session -d -s "${session_name}"' in init_script
+    assert "/usr/local/bin/web-terminal-entrypoint --background" in init_script
+    assert 'tmux -u new-session -d -s "${session_name}"' not in init_script

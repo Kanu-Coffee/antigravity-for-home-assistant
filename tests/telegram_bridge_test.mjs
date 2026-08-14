@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  ANTIGRAVITY_AUTH_REQUIRED_MARKER,
+  AntigravityWorkerError,
+  BoundedByteMatcher,
+  TELEGRAM_WORKER_INTEGRITY_MARKER,
   TelegramPollBackoff,
   buildAgyArgs,
   cancelRequesterWork,
@@ -24,11 +28,16 @@ import {
   requesterKey,
   resetMetricsForTest,
   resetUpdateRuntimeForTest,
+  resetWorkerStatusForTest,
   renderCancellationResult,
+  renderRequestFailure,
+  renderWorkerStatus,
+  requestFailureReason,
   runAntigravityPrompt,
   safeError,
   telegramTransportErrorCode,
   waitForTelegramAuthorization,
+  workerStatusSnapshot,
 } from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs";
 import {
   loadBridgeState,
@@ -57,6 +66,33 @@ const config = loadRuntimeConfig({
   telegram_allowed_chat_ids: ["-200"],
   telegram_access_mode: "confirm_changes",
 });
+assert.equal(
+  ANTIGRAVITY_AUTH_REQUIRED_MARKER.toString("utf8"),
+  "Error: authentication required. Run 'antigravity-real' to log in, then retry.",
+);
+assert.equal(
+  TELEGRAM_WORKER_INTEGRITY_MARKER.toString("utf8"),
+  "ha-telegram-worker: isolated native configuration is unavailable",
+);
+const authMarkerMatcher = new BoundedByteMatcher(ANTIGRAVITY_AUTH_REQUIRED_MARKER);
+const authMarkerSplit = Math.floor(ANTIGRAVITY_AUTH_REQUIRED_MARKER.length / 2);
+authMarkerMatcher.push(Buffer.concat([
+  Buffer.alloc(4 * 1024 * 1024, 0x78),
+  ANTIGRAVITY_AUTH_REQUIRED_MARKER.subarray(0, authMarkerSplit),
+]));
+assert.equal(authMarkerMatcher.matched, false);
+assert.ok(authMarkerMatcher.bufferedBytes < ANTIGRAVITY_AUTH_REQUIRED_MARKER.length);
+authMarkerMatcher.push(ANTIGRAVITY_AUTH_REQUIRED_MARKER.subarray(authMarkerSplit));
+assert.equal(authMarkerMatcher.matched, true);
+assert.equal(authMarkerMatcher.bufferedBytes, 0);
+const nearAuthMarker = new BoundedByteMatcher(ANTIGRAVITY_AUTH_REQUIRED_MARKER);
+nearAuthMarker.push(Buffer.from(
+  "Error: authentication failed or timed out",
+  "utf8",
+));
+assert.equal(nearAuthMarker.matched, false);
+assert.throws(() => new BoundedByteMatcher(Buffer.alloc(0)), /non-empty bytes/u);
+
 const transportCanary = "SECRET_TRANSPORT_DETAIL_CANARY";
 const connectErrorFixtures = [
   {
@@ -719,6 +755,9 @@ process.stdout.write(JSON.stringify({
 }) + "\\n");
 `, "utf8");
   process.env.SUPERVISOR_TOKEN = "must-not-be-inherited";
+  resetWorkerStatusForTest();
+  assert.equal(workerStatusSnapshot(), "not_checked");
+  assert.equal(renderWorkerStatus(), "아직 확인되지 않음");
   const malicious = "literal $(touch /tmp/telegram-pwned) `id` ; echo nope";
   const result = await runAntigravityPrompt(malicious, {
     binary: process.execPath,
@@ -736,6 +775,136 @@ process.stdout.write(JSON.stringify({
   assert.equal(payload.argv.includes(malicious), false);
   assert.equal(payload.argv.includes("--output-format"), true);
   assert.equal(payload.argv.includes("--conversation"), true);
+  assert.equal(workerStatusSnapshot(), "ready");
+  assert.equal(renderWorkerStatus(), "최근 요청 정상");
+
+  const stderrCanary = "SECRET_STDERR_BEARER_URL_PROMPT_CANARY";
+  const authFailureFake = join(fixtureDir, "auth-failure-agy.mjs");
+  await writeFile(authFailureFake, `
+for await (const _chunk of process.stdin) { /* drain stdin */ }
+const marker = ${JSON.stringify(ANTIGRAVITY_AUTH_REQUIRED_MARKER.toString("utf8"))};
+process.stderr.write(marker.slice(0, 19));
+await new Promise((resolve) => setImmediate(resolve));
+process.stderr.write(marker.slice(19) + "\\n${stderrCanary}\\n");
+process.exitCode = 1;
+`, "utf8");
+  let authFailure;
+  try {
+    await runAntigravityPrompt("private auth prompt canary", {
+      binary: process.execPath,
+      prefixArgs: [authFailureFake],
+      cwd: fixtureDir,
+      timeoutMs: 5_000,
+      requester: { user_id: "100", chat_id: "-200" },
+    });
+    assert.fail("authentication-required worker unexpectedly succeeded");
+  } catch (error) {
+    authFailure = error;
+  }
+  assert.ok(authFailure instanceof AntigravityWorkerError);
+  assert.equal(authFailure.reasonClass, "authentication_required");
+  assert.equal(requestFailureReason(authFailure), "authentication_required");
+  assert.equal(workerStatusSnapshot(), "authentication_required");
+  assert.equal(renderWorkerStatus(), "Telegram 전용 로그인 필요 (ha-telegram-login)");
+  const authFailureMessage = renderRequestFailure(authFailure);
+  assert.match(authFailureMessage, /ha-telegram-login/u);
+  for (const forbidden of [
+    stderrCanary,
+    "private auth prompt canary",
+    ANTIGRAVITY_AUTH_REQUIRED_MARKER.toString("utf8"),
+    "antigravity-real",
+    "https://",
+  ]) {
+    assert.equal(authFailure.message.includes(forbidden), false);
+    assert.equal(authFailureMessage.includes(forbidden), false);
+  }
+
+  const integrityFailureFake = join(fixtureDir, "integrity-failure-agy.mjs");
+  await writeFile(integrityFailureFake, `
+for await (const _chunk of process.stdin) { /* drain stdin */ }
+const marker = ${JSON.stringify(TELEGRAM_WORKER_INTEGRITY_MARKER.toString("utf8"))};
+process.stderr.write(marker.slice(0, 23));
+await new Promise((resolve) => setImmediate(resolve));
+process.stderr.write(marker.slice(23) + "\\n${stderrCanary}\\n");
+process.exitCode = 70;
+`, "utf8");
+  let integrityFailure;
+  try {
+    await runAntigravityPrompt("private integrity prompt canary", {
+      binary: process.execPath,
+      prefixArgs: [integrityFailureFake],
+      cwd: fixtureDir,
+      timeoutMs: 5_000,
+      requester: { user_id: "100", chat_id: "-200" },
+    });
+    assert.fail("integrity-failed worker unexpectedly succeeded");
+  } catch (error) {
+    integrityFailure = error;
+  }
+  assert.ok(integrityFailure instanceof AntigravityWorkerError);
+  assert.equal(integrityFailure.reasonClass, "runtime_integrity_failed");
+  assert.equal(requestFailureReason(integrityFailure), "runtime_integrity_failed");
+  assert.equal(workerStatusSnapshot(), "runtime_integrity_failed");
+  assert.equal(renderWorkerStatus(), "격리 실행 환경 무결성 오류");
+  const integrityFailureMessage = renderRequestFailure(integrityFailure);
+  assert.match(integrityFailureMessage, /App을 재시작/u);
+  assert.equal(integrityFailureMessage.includes(stderrCanary), false);
+
+  const nativeExit70Fake = join(fixtureDir, "native-exit-70-agy.mjs");
+  await writeFile(nativeExit70Fake, `
+for await (const _chunk of process.stdin) { /* drain stdin */ }
+process.stderr.write("native failure without the worker preflight marker\\n${stderrCanary}\\n");
+process.exitCode = 70;
+`, "utf8");
+  let nativeExit70Failure;
+  try {
+    await runAntigravityPrompt("private native exit 70 canary", {
+      binary: process.execPath,
+      prefixArgs: [nativeExit70Fake],
+      cwd: fixtureDir,
+      timeoutMs: 5_000,
+      requester: { user_id: "100", chat_id: "-200" },
+    });
+    assert.fail("marker-free native exit 70 unexpectedly succeeded");
+  } catch (error) {
+    nativeExit70Failure = error;
+  }
+  assert.ok(nativeExit70Failure instanceof AntigravityWorkerError);
+  assert.equal(nativeExit70Failure.reasonClass, "worker_failed");
+  assert.equal(requestFailureReason(nativeExit70Failure), "worker_failed");
+  assert.equal(renderRequestFailure(nativeExit70Failure).includes(stderrCanary), false);
+
+  const genericFailureFake = join(fixtureDir, "generic-failure-agy.mjs");
+  await writeFile(genericFailureFake, `
+for await (const _chunk of process.stdin) { /* drain stdin */ }
+process.stderr.write("Error: authentication failed or timed out\\n${stderrCanary}\\n");
+process.exitCode = 1;
+`, "utf8");
+  let genericFailure;
+  try {
+    await runAntigravityPrompt("private generic prompt canary", {
+      binary: process.execPath,
+      prefixArgs: [genericFailureFake],
+      cwd: fixtureDir,
+      timeoutMs: 5_000,
+      requester: { user_id: "100", chat_id: "-200" },
+    });
+    assert.fail("generic failed worker unexpectedly succeeded");
+  } catch (error) {
+    genericFailure = error;
+  }
+  assert.ok(genericFailure instanceof AntigravityWorkerError);
+  assert.equal(genericFailure.reasonClass, "worker_failed");
+  assert.equal(requestFailureReason(genericFailure), "worker_failed");
+  assert.equal(workerStatusSnapshot(), "worker_failed");
+  assert.equal(renderWorkerStatus(), "최근 요청 실패");
+  assert.equal(
+    renderRequestFailure(genericFailure),
+    "요청을 완료하지 못했습니다. App 로그를 확인하세요.",
+  );
+  assert.equal(renderRequestFailure(genericFailure).includes(stderrCanary), false);
+  assert.equal(requestFailureReason(new Error("fixture timed out")), "timeout");
+  assert.equal(requestFailureReason(new Error(stderrCanary)), "request_failed");
 
   const invalidUtf8Fake = join(fixtureDir, "invalid-utf8-agy.mjs");
   await writeFile(invalidUtf8Fake, `

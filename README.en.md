@@ -125,6 +125,13 @@ once, so treat it as a secret. Manage authorizations with
 `ha-telegram-pair revoke AUTHORIZATION_ID`. A PIN, automatic deep link, and
 `/unpair` are not part of the v2 contract.
 
+Bot pairing authorizes only Telegram user/chat access; it does not replace
+native OAuth for the dedicated Telegram Antigravity identity. `/start`, `/help`,
+`/status`, `/new`, and `/cancel` are local control commands handled directly by
+the bridge, not AI prompts. If a natural-language request reports that login is
+required, run `ha-telegram-login` from a trusted App terminal instead of finding
+or copying credential files.
+
 If Telegram was enabled first, the bridge does not contact the Bot API. It
 waits quietly in `waiting_for_authorization`. Creating a pairing in the same
 App terminal is detected without an App restart.

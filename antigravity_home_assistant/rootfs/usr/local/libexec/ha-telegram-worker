@@ -45,7 +45,8 @@ for path in "${CLI_ROOT}/settings.json" "${CONFIG_ROOT}/mcp_config.json"; do
     && "$(stat -c '%u:%h:%a' -- "${path}")" == '0:1:600' ]] || fail_closed
 done
 
-cmp -s "${SETTINGS_SOURCE}" "${CLI_ROOT}/settings.json" || fail_closed
+antigravity_ha_telegram_settings_match \
+  "${SETTINGS_SOURCE}" "${CLI_ROOT}/settings.json" || fail_closed
 cmp -s "${MCP_SOURCE}" "${CONFIG_ROOT}/mcp_config.json" || fail_closed
 [[ ! -L "${PLUGIN_TARGET}" && -d "${PLUGIN_TARGET}" ]] || fail_closed
 plugin_expected=$(mktemp -d /tmp/.telegram-plugin-expected.XXXXXX)

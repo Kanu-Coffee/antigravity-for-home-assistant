@@ -39,6 +39,24 @@ const MAX_ACTIVE_RUNS = 2;
 const MAX_TELEGRAM_CHUNKS = 8;
 const AUTHORIZATION_RECHECK_MS = 2_000;
 const TELEGRAM_PERMANENT_HOLD_MS = 60 * 60 * 1_000;
+const ANTIGRAVITY_AUTH_REQUIRED_MARKER = Buffer.from(
+  "Error: authentication required. Run 'antigravity-real' to log in, then retry.",
+  "utf8",
+);
+const TELEGRAM_WORKER_INTEGRITY_MARKER = Buffer.from(
+  "ha-telegram-worker: isolated native configuration is unavailable",
+  "utf8",
+);
+const WORKER_FAILURE_REASONS = Object.freeze([
+  "authentication_required",
+  "runtime_integrity_failed",
+  "worker_failed",
+]);
+const REQUEST_FAILURE_REASONS = Object.freeze([
+  ...WORKER_FAILURE_REASONS,
+  "request_failed",
+  "timeout",
+]);
 const TELEGRAM_TRANSPORT_ERROR_CODES = Object.freeze([
   "CERT_HAS_EXPIRED",
   "DEPTH_ZERO_SELF_SIGNED_CERT",
@@ -115,6 +133,69 @@ const metricState = {
 };
 
 const PROCESS_SALT = randomBytes(32);
+let workerRuntimeStatus = "not_checked";
+
+class BoundedByteMatcher {
+  constructor(needle) {
+    if (!Buffer.isBuffer(needle) || needle.length === 0) {
+      throw new Error("bounded matcher needle must be non-empty bytes");
+    }
+    this.needle = Buffer.from(needle);
+    this.tail = Buffer.alloc(0);
+    this.matched = false;
+  }
+
+  push(chunk) {
+    if (this.matched) return;
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    if (bytes.length === 0) return;
+    if (bytes.indexOf(this.needle) !== -1) {
+      this.matched = true;
+      this.tail = Buffer.alloc(0);
+      return;
+    }
+    const tailLimit = this.needle.length - 1;
+    if (this.tail.length > 0 && tailLimit > 0) {
+      const boundary = Buffer.concat([
+        this.tail,
+        bytes.subarray(0, Math.min(bytes.length, tailLimit)),
+      ]);
+      if (boundary.indexOf(this.needle) !== -1) {
+        this.matched = true;
+        this.tail = Buffer.alloc(0);
+        return;
+      }
+    }
+    if (tailLimit === 0) {
+      this.tail = Buffer.alloc(0);
+    } else if (bytes.length >= tailLimit) {
+      this.tail = Buffer.from(bytes.subarray(bytes.length - tailLimit));
+    } else {
+      const combined = Buffer.concat([this.tail, bytes]);
+      this.tail = Buffer.from(combined.subarray(Math.max(0, combined.length - tailLimit)));
+    }
+  }
+
+  get bufferedBytes() {
+    return this.tail.length;
+  }
+}
+
+class AntigravityWorkerError extends Error {
+  constructor(reasonClass) {
+    if (!WORKER_FAILURE_REASONS.includes(reasonClass)) {
+      throw new Error("Antigravity worker failure reason is not allowlisted");
+    }
+    const messages = {
+      authentication_required: "Antigravity worker authentication is required",
+      runtime_integrity_failed: "Antigravity worker runtime integrity check failed",
+      worker_failed: "Antigravity worker exited unsuccessfully",
+    };
+    super(messages[reasonClass]);
+    this.name = "AntigravityWorkerError";
+    this.reasonClass = reasonClass;
+  }
+}
 
 function safeError(error) {
   const text = error instanceof Error ? error.message : String(error);
@@ -184,6 +265,47 @@ function jobResultClass(error) {
   if (error instanceof RequestCancelledError) return "cancelled";
   if (/timed out/u.test(error instanceof Error ? error.message : "")) return "timeout";
   return "error";
+}
+
+function requestFailureReason(error) {
+  let reasonClass = "request_failed";
+  if (error instanceof AntigravityWorkerError &&
+      WORKER_FAILURE_REASONS.includes(error.reasonClass)) {
+    reasonClass = error.reasonClass;
+  } else if (/timed out/u.test(error instanceof Error ? error.message : "")) {
+    reasonClass = "timeout";
+  }
+  return REQUEST_FAILURE_REASONS.includes(reasonClass) ? reasonClass : "request_failed";
+}
+
+function renderRequestFailure(error) {
+  switch (requestFailureReason(error)) {
+    case "authentication_required":
+      return "Telegram 전용 Antigravity 로그인이 필요합니다. App 웹 터미널 또는 SSH에서 ha-telegram-login을 실행한 뒤 다시 시도하세요.";
+    case "runtime_integrity_failed":
+      return "Telegram 전용 AI 실행 환경의 무결성 검증에 실패했습니다. App을 재시작한 뒤 다시 시도하세요. 계속 실패하면 App 로그를 확인하세요.";
+    default:
+      return "요청을 완료하지 못했습니다. App 로그를 확인하세요.";
+  }
+}
+
+function workerStatusSnapshot() {
+  return workerRuntimeStatus;
+}
+
+function resetWorkerStatusForTest() {
+  workerRuntimeStatus = "not_checked";
+}
+
+function renderWorkerStatus() {
+  const descriptions = {
+    not_checked: "아직 확인되지 않음",
+    ready: "최근 요청 정상",
+    authentication_required: "Telegram 전용 로그인 필요 (ha-telegram-login)",
+    runtime_integrity_failed: "격리 실행 환경 무결성 오류",
+    worker_failed: "최근 요청 실패",
+  };
+  return descriptions[workerRuntimeStatus] ?? descriptions.worker_failed;
 }
 
 function telegramTransportErrorCode(error) {
@@ -771,7 +893,12 @@ async function runAntigravityPrompt(prompt, {
     let oversized = false;
     let stdoutBytes = 0;
     let currentLineBytes = 0;
-    child.stderr.resume();
+    const authRequiredMatcher = new BoundedByteMatcher(ANTIGRAVITY_AUTH_REQUIRED_MARKER);
+    const runtimeIntegrityMatcher = new BoundedByteMatcher(TELEGRAM_WORKER_INTEGRITY_MARKER);
+    child.stderr.on("data", (chunk) => {
+      authRequiredMatcher.push(chunk);
+      runtimeIntegrityMatcher.push(chunk);
+    });
     child.stdin.on("error", () => {});
     child.stdout.on("data", (chunk) => {
       if (oversized) return;
@@ -797,22 +924,46 @@ async function runAntigravityPrompt(prompt, {
     child.stdin.end(`${prompt}\n`);
     let closeResult;
     try {
-      closeResult = await new Promise((resolve, reject) => {
-        child.once("error", reject);
-        child.once("close", (exitCode, exitSignal) => resolve({ code: exitCode, signal: exitSignal }));
-      });
+      try {
+        closeResult = await new Promise((resolve, reject) => {
+          child.once("error", reject);
+          child.once("close", (exitCode, exitSignal) => resolve({ code: exitCode, signal: exitSignal }));
+        });
+      } catch {
+        workerRuntimeStatus = "worker_failed";
+        throw new AntigravityWorkerError("worker_failed");
+      }
     } finally {
       clearTimeout(timer);
     }
-    const { code, signal: exitSignal } = closeResult;
+    const { code } = closeResult;
     activeChildren.delete(runId);
     throwIfSignalCancelled(signal);
-    if (oversized) throw new Error("Antigravity output exceeded the safe limit");
-    if (timedOut) throw new Error("Antigravity request timed out");
-    if (code !== 0) {
-      throw new Error(`Antigravity exited unsuccessfully (${code ?? exitSignal ?? "unknown"})`);
+    if (oversized) {
+      workerRuntimeStatus = "worker_failed";
+      throw new Error("Antigravity output exceeded the safe limit");
     }
-    const parsed = parseStreamResult(Buffer.concat(stdoutChunks, stdoutBytes));
+    if (timedOut) {
+      workerRuntimeStatus = "worker_failed";
+      throw new Error("Antigravity request timed out");
+    }
+    if (code !== 0) {
+      const reasonClass = code === 70 && runtimeIntegrityMatcher.matched
+        ? "runtime_integrity_failed"
+        : code === 1 && authRequiredMatcher.matched
+          ? "authentication_required"
+          : "worker_failed";
+      workerRuntimeStatus = reasonClass;
+      throw new AntigravityWorkerError(reasonClass);
+    }
+    let parsed;
+    try {
+      parsed = parseStreamResult(Buffer.concat(stdoutChunks, stdoutBytes));
+    } catch (error) {
+      workerRuntimeStatus = "worker_failed";
+      throw error;
+    }
+    workerRuntimeStatus = "ready";
     return parsed;
   } finally {
     signal?.removeEventListener("abort", abortWorker);
@@ -1452,7 +1603,11 @@ async function handleMessage(config, message) {
     }
     if (paired) {
       audit("pairing_completed", { chat: opaqueId(chatId), user: opaqueId(userId) });
-      await sendMessage(config.botToken, chatId, "이 사용자와 채팅이 연결되었습니다. /help로 사용법을 확인하세요.");
+      await sendMessage(
+        config.botToken,
+        chatId,
+        "Telegram 사용자 인증이 완료되었습니다. Bot pairing은 별도 Antigravity OAuth 로그인이 아닙니다. AI 로그인이 필요하면 App 웹 터미널 또는 SSH에서 ha-telegram-login을 실행하세요. /help로 사용법을 확인할 수 있습니다.",
+      );
       return;
     }
   }
@@ -1464,13 +1619,13 @@ async function handleMessage(config, message) {
   }
   if (startCommand || text === "/help") {
     await sendMessage(config.botToken, chatId,
-      `Antigravity for Home Assistant\n모드: ${config.accessMode}\n/new 새 대화\n/status 상태 확인\n/cancel 현재 작업 취소\n변경은 broker 정책과 현재 모드에 따라 별도 승인됩니다.`);
+      `Antigravity for Home Assistant\n모드: ${config.accessMode}\n/new 새 대화\n/status Telegram 연결과 최근 AI worker 상태 확인\n/cancel 현재 작업 취소\nBot pairing과 Telegram 전용 Antigravity OAuth는 별도입니다. 변경은 broker 정책과 현재 모드에 따라 별도 승인됩니다.`);
     return;
   }
   if (text === "/status") {
     const key = requesterKey(userId, chatId);
     await sendMessage(config.botToken, chatId,
-      `Telegram bridge 정상\n접근 모드: ${config.accessMode}\n활성/대기 작업: ${chatQueues.get(key)?.queued ?? 0}`);
+      `Telegram transport: 연결 정상\nAI worker 최근 상태: ${renderWorkerStatus()}\n접근 모드: ${config.accessMode}\n활성/대기 작업: ${chatQueues.get(key)?.queued ?? 0}`);
     return;
   }
   if (text === "/cancel") {
@@ -1496,8 +1651,11 @@ async function handleMessage(config, message) {
       completion = ticket.cancelled ? "cancelled" : jobResultClass(error);
       if (error instanceof RequestCancelledError || ticket.cancelled) return;
       if (error instanceof ExecutionResultDeliveryError) throw error;
-      audit("request_failed", { chat: opaqueId(chatId), error: safeError(error) });
-      await sendMessage(config.botToken, chatId, "요청을 완료하지 못했습니다. App 로그를 확인하세요.");
+      audit("request_failed", {
+        chat: opaqueId(chatId),
+        reason_class: requestFailureReason(error),
+      });
+      await sendMessage(config.botToken, chatId, renderRequestFailure(error));
     } finally {
       incrementBounded(metricState.jobsCompleted, completion);
     }
@@ -1755,6 +1913,10 @@ async function main() {
 
 export {
   ACCESS_MODES,
+  ANTIGRAVITY_AUTH_REQUIRED_MARKER,
+  TELEGRAM_WORKER_INTEGRITY_MARKER,
+  AntigravityWorkerError,
+  BoundedByteMatcher,
   TelegramPollBackoff,
   buildAgyArgs,
   cancelRequesterWork,
@@ -1781,14 +1943,19 @@ export {
   requesterKey,
   resetMetricsForTest,
   resetUpdateRuntimeForTest,
+  resetWorkerStatusForTest,
   replaySealedUpdateSpool,
   renderCancellationResult,
+  renderRequestFailure,
+  renderWorkerStatus,
+  requestFailureReason,
   runAntigravityPrompt,
   safeError,
   terminalExecutionResult,
   telegramTransportErrorCode,
   waitForExecution,
   waitForTelegramAuthorization,
+  workerStatusSnapshot,
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

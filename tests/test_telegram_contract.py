@@ -307,9 +307,11 @@ def test_telegram_native_home_is_bootstrapped_and_fail_closed(
     assert "PLUGIN_TARGET=${CONFIG_ROOT}/plugins/home-assistant" in bootstrap
     assert "--login" in bootstrap and "--runtime" in bootstrap
     assert "native OAuth backend is not inferred" in bootstrap
-    assert 'if .toolPermission == "request-review"' in bootstrap
-    assert 'if .allowNonWorkspaceAccess == false' in bootstrap
-    assert 'if .permissions.ask == []' in bootstrap
+    assert 'if .toolPermission == "request-review"' in plugin_deriver
+    assert 'if .allowNonWorkspaceAccess == false' in plugin_deriver
+    assert 'if .permissions.ask == []' in plugin_deriver
+    assert "antigravity_ha_telegram_settings_match" in plugin_deriver
+    assert "antigravity_ha_telegram_settings_match" in bootstrap
     assert 'install_managed_file "${SETTINGS_SOURCE}"' in bootstrap
     assert 'antigravity_ha_stage_telegram_plugin \\' in bootstrap
     assert '"${PLUGIN_SOURCE}" "${plugin_temporary}"' in bootstrap
@@ -319,12 +321,17 @@ def test_telegram_native_home_is_bootstrapped_and_fail_closed(
     assert "TELEGRAM_HOME=/data/antigravity-ha/telegram-home" in worker
     assert '[[ "$(pwd -P)" == "${SAFE_WORKSPACE}" ]]' in worker
     assert '/usr/bin/flock --shared 9' in worker
+    assert "antigravity_ha_telegram_settings_match" in worker
+    assert "/usr/local/libexec/ha-telegram-home-bootstrap" not in worker
     assert 'cmp -s "${MCP_SOURCE}"' in worker
     assert 'antigravity_ha_stage_telegram_plugin \\' in worker
     assert 'diff -qr "${plugin_expected}" "${PLUGIN_TARGET}"' in worker
     assert 'diff -qr "${PLUGIN_SOURCE}" "${PLUGIN_TARGET}"' not in worker
     assert '"${CONFIG_ROOT}/rules"' in worker
     assert 'exec /usr/local/libexec/antigravity-real "$@"' in worker
+    assert worker.rstrip().endswith(
+        'exec /usr/local/libexec/antigravity-real "$@"'
+    )
 
     assert login.splitlines()[:3] == [
         "#!/bin/bash -p",

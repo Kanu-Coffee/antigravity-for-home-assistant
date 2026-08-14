@@ -120,6 +120,12 @@ Telegram에서 `/start TOKEN`을 보냅니다. token은 한 번만 표시되고 
 `ha-telegram-pair revoke AUTHORIZATION_ID`로 관리합니다. PIN, 자동 deep link,
 `/unpair`는 v2 계약이 아닙니다.
 
+Bot pairing은 Telegram의 user/chat 접근만 승인하며 Telegram 전용 Antigravity
+identity의 native OAuth를 대신하지 않습니다. `/start`, `/help`, `/status`, `/new`,
+`/cancel`은 AI prompt가 아니라 bridge가 직접 처리하는 로컬 제어 명령입니다.
+자연어 요청에서 로그인 필요 안내가 나오면 credential 파일을 찾거나 복사하지 말고
+신뢰하는 App 터미널에서 `ha-telegram-login`을 실행하세요.
+
 Telegram을 먼저 활성화했더라도 bridge는 Bot API에 연결하지 않고
 `waiting_for_authorization` 상태로 조용히 대기합니다. 같은 App 터미널에서 pairing을
 생성하면 App을 재시작하지 않아도 이를 감지해 연결을 계속합니다.

@@ -1,6 +1,7 @@
-#!/command/with-contenv bashio
-# shellcheck shell=bash
+#!/bin/bash -p
 set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
+unset ANTIGRAVITY_TOKEN
 
 # shellcheck source=/dev/null
 . /usr/local/lib/antigravity-ha/environment.sh
@@ -12,11 +13,34 @@ set -Eeuo pipefail
 # contract before tmux validates the outer terminal capabilities.
 export TERM=xterm-256color
 
+background=false
+case "$#" in
+  0) ;;
+  1)
+    if [[ "$1" != --background ]]; then
+      printf 'Usage: web-terminal-entrypoint [--background]\n' >&2
+      exit 64
+    fi
+    background=true
+    ;;
+  *)
+    printf 'Usage: web-terminal-entrypoint [--background]\n' >&2
+    exit 64
+    ;;
+esac
+
 session_name=$(antigravity_ha_config_string 'tmux_session_name' 'antigravity-ha')
 if [[ ! "${session_name}" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then
-  bashio::log.fatal 'Invalid tmux session name'
+  printf 'web-terminal-entrypoint: invalid tmux session name\n' >&2
   exit 1
 fi
 
 cd /config
+if [[ "${background}" == true ]]; then
+  if tmux has-session -t "${session_name}" 2>/dev/null; then
+    exit 0
+  fi
+  exec tmux -u new-session -d -s "${session_name}" -c /config \
+    /usr/local/bin/tmux-session-shell
+fi
 exec tmux -u new-session -A -s "${session_name}" -c /config /usr/local/bin/tmux-session-shell

@@ -206,6 +206,11 @@ Run `ha-telegram-login` from a trusted local Ingress/SSH controlling TTY to
 complete native first-run OAuth for the separate Telegram identity. Do not copy
 the interactive HOME credentials or guess undocumented credential paths.
 
+Bot pairing authenticates only Telegram user/chat access; it does not complete
+this separate native OAuth. `/start`, `/help`, `/status`, `/new`, and `/cancel`
+are local control commands handled directly by the bridge without running AI.
+Only natural-language text is sent to the Antigravity worker.
+
 ### Create a bot
 
 1. Run `/newbot` with [@BotFather](https://t.me/botfather) in Telegram.
@@ -499,7 +504,9 @@ without the user's explicit current confirmation.
 ### OAuth fails
 
 - Confirm the Web terminal or SSH session provides a controlling TTY.
-- Run `ha-antigravity-login` again and follow the Google flow shown by the CLI.
+- Run `ha-antigravity-login` for the default interactive identity or
+  `ha-telegram-login` for the dedicated Telegram identity, then follow the
+  Google flow shown by the CLI.
 - Do not use nonexistent login/status subcommands or arbitrary API-key
   environment variables.
 - Never print or manually edit the OAuth directory.
@@ -519,7 +526,17 @@ without the user's explicit current confirmation.
   allows 1.5 seconds per address attempt without forcibly disabling IPv6.
 - `connect_blocked` means the Bot token or request policy must be corrected in
   App options before restarting. The same 4xx request is not retried.
-- Use `/status` and App logs to inspect queue, worker, and broker health.
+- If `request_failed` has `reason_class=authentication_required`, do not repeat
+  Bot pairing. Run `ha-telegram-login` from a trusted App Web terminal or SSH
+  session.
+- `reason_class=runtime_integrity_failed` means one of several worker isolation
+  preflights failed. Do not infer a particular file fault or automatically
+  repair/retry the request. Restart the App, then inspect sanitized App logs if
+  it continues.
+- `/status` distinguishes Telegram transport from the most recent AI worker
+  result. A working help or status command does not prove native OAuth is ready.
+- Never upload native CLI logs, OAuth URLs, tokens, or raw prompts. Do not guess,
+  manually edit, or copy a credential path between HOME directories.
 - If a change preview changed or expired, submit a new request and approve again.
 
 ### Browser or memory fails

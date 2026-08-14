@@ -59,6 +59,9 @@ ha-telegram-pair revoke <authorization-id>
   regular single-link file에 원자적으로 저장한다.
 - 기존 v1 pairing/session 파일은 신뢰하거나 자동 import하지 않는다.
 
+pairing은 Telegram user/chat의 Bot 접근만 승인한다. 전용 Antigravity identity의
+native OAuth와는 별도이며, pairing 성공을 model worker 인증 성공으로 표현하지 않는다.
+
 ## TG-004 — 명령 표면
 
 | 명령 | 동작 |
@@ -66,11 +69,12 @@ ha-telegram-pair revoke <authorization-id>
 | `/start` | 인증된 사용자에게 사용법과 현재 mode 표시 |
 | `/new` | 현재 user/chat conversation binding 폐기 |
 | `/cancel` | queued/planning/approval 취소 요청; durable 실행은 상태 추적 지속 |
-| `/status` | mode, active/queued 수, degraded capability만 표시 |
+| `/status` | Telegram transport, 최근 AI worker 상태, mode, active/queued 수만 표시 |
 | `/help` | 지원 명령과 보안 경계 표시 |
 
 일반 text는 Antigravity prompt로 처리한다. `/mode`, `/shell`, `/exec`, raw MCP tool
 호출과 App option 변경 명령은 제공하지 않는다.
+이 표의 명령은 bridge가 직접 처리하며 Antigravity worker를 실행하지 않는다.
 
 ## TG-005 — 입력 정규화
 
@@ -195,6 +199,23 @@ stdout NDJSON 총량은 4 MiB, 단일 line은 256 KiB로 제한한다. 최종 �
 32 KiB까지 허용해 Telegram 4096-character 경계에 맞춰 최대 8개 message로
 Unicode-safe 분할한다. 초과 결과는 local raw output을 보존하지 않고 요약 실패를
 보고한다.
+
+pinned 1.1.11 worker의 stderr는 원문을 저장·로그·회신하지 않는다. bridge는
+`Error: authentication required. Run 'antigravity-real' to log in, then retry.`라는
+고정 byte marker만 marker 길이 미만의 tail을 유지하는 bounded streaming matcher로
+판정한다. exit 1과 이 marker가 모두 있으면 `authentication_required`로 분류한다.
+exit 70은 worker wrapper의 고정 byte marker인
+`ha-telegram-worker: isolated native configuration is unavailable`까지 함께 있을 때만
+preflight 세부 항목을 추정하지 않고 `runtime_integrity_failed`로 분류한다. marker 없는
+native exit 70을 포함한 나머지 nonzero는 `worker_failed`다. 인증 필요 응답은 내부
+executable 대신 trusted local TTY의 `ha-telegram-login`을 안내한다. 무결성 실패는
+자동 bootstrap 또는 동일 prompt 재시도 없이 App 재시작과 정제된 로그 확인만 안내한다.
+
+`/status`의 transport 정상은 Bot API command가 bridge에서 처리된다는 뜻일 뿐이다.
+별도 AI worker 상태는 App 시작 뒤 `아직 확인되지 않음`에서 시작해 완료된 최근
+worker 결과만 `ready`, `authentication_required`, `runtime_integrity_failed` 또는
+`worker_failed`로 갱신한다. 이 상태에는 identifier, prompt, stderr 또는 credential
+자료를 넣지 않는다.
 
 ## TG-008 — proposal schema
 
@@ -433,6 +454,10 @@ broker policy와 Home Assistant API precondition을 통과해야 한다. command
 network 진단은 DNS/socket/TLS/Undici의 사전 허용된 `transport_code` 또는 `unknown`만
 기록하며 token, Bot API URL, 내부 cause message는 기록하지 않는다.
 
+worker 요청 실패는 `request_failed`와 코드에 고정된 `reason_class`만 기록한다.
+stderr, exit 원문, prompt, OAuth URL/token과 추정 credential path는 log field가
+아니다.
+
 기본 metric:
 
 ```text
@@ -465,6 +490,10 @@ reason/result/status class만 허용하며 재시작 시 0부터 시작한다. �
 - 세 mode와 모든 고위험 작업의 확인 행렬이 자동 테스트를 통과한다.
 - timeout/cancel/restart 뒤 child와 capability가 남지 않는다.
 - token/prompt/raw output canary가 App log, Telegram reply와 artifact에 없다.
+- split stderr marker와 대용량 stderr에서도 matcher state가 bounded이고 원문을
+  남기지 않으며 exit 1+exact marker, exit 70, 나머지 실패가 서로 오인되지 않는다.
+- pairing/local command/transport 정상과 별도 native OAuth·AI worker 상태를 혼동하지
+  않고 인증 필요 시 `ha-telegram-login`만 안전하게 안내한다.
 - 실제 1.1.11의 `--agent ha-telegram`에서 user global stdio MCP가 인증 전후 실행되지
   않고 user/workspace plugin·agent·rule·MCP가 worker를 확장하지 않는다.
 - 실제 HAOS에서 조회, 확인 변경, rollback과 Bot API 장애 복구를 검증한다.

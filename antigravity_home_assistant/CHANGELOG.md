@@ -2,6 +2,18 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.0.4] - 2026-08-14
+
+### Fixed
+
+- Classify only the native Antigravity authentication-required signature as a
+  Telegram OAuth failure and return an actionable `ha-telegram-login` message;
+  keep all other worker failures bounded and free of raw stderr.
+- Accept Antigravity 1.1.11's known-safe normalization of the image-managed
+  Telegram settings while continuing to reject any other policy drift.
+- Route web-terminal and SSH sessions into the ordinary shell AppArmor profile,
+  with narrow transitions for Telegram pairing and dedicated OAuth login.
+
 ## [2.0.3] - 2026-08-14
 
 ### Fixed

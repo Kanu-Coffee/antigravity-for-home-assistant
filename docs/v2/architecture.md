@@ -252,12 +252,13 @@ auth 경로는 이 선택의 영향을 받지 않는다.
 않는다.
 
 SSH daemon은 `/usr/local/libexec/ha-sshd-runtime`이 `Px`로 전환한 별도 top-level
-실행 프로필에서
-host private key와 `authorized_keys`만 read한다. 인증된 shell은 root 계정 shell인
-`ha-ssh-session`을 통해 ordinary shell 전용 profile로 명시 전환하며 external SFTP
-server도 같은 profile로 전환한다. ttyd의 tmux session shell도 같은 launcher/profile을
-쓴다. 따라서 daemon-only key read와 native Antigravity OAuth Home이 일반 session
-shell로 상속되지 않고 private-key 및 다른 PID `/proc` 우회 deny가 유지된다.
+실행 프로필에서 host private key와 `authorized_keys`만 read한다. 인증된 shell은 root
+계정 shell인 `ha-ssh-session`을 통해 ordinary shell 전용 profile로 명시 전환하며
+external SFTP server도 같은 profile로 전환한다. init의 background session과 ttyd의
+attach 경로는 모두 `web-terminal-entrypoint`에서 ordinary shell profile로 먼저
+전환한 뒤 tmux server를 만든다. 따라서 tmux `run-shell` child와 pane의 session shell도
+같은 profile을 상속한다. daemon/init-only 권한과 native Antigravity OAuth Home이 일반
+session shell로 상속되지 않고 private-key 및 다른 PID `/proc` 우회 deny가 유지된다.
 
 ### 6.2 Telegram 작업
 

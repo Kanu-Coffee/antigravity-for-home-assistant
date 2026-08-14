@@ -1,5 +1,52 @@
 #!/bin/sh
 
+antigravity_ha_telegram_settings_match() {
+  if [ "$#" -ne 2 ] || [ ! -f "$1" ] || [ ! -f "$2" ]; then
+    return 64
+  fi
+
+  # The pinned Antigravity 1.1.11 binary serializes these three explicit safe
+  # defaults out of settings.json. Keep the image file explicit, but admit only
+  # its byte-exact form or that one known native-normalized semantic form.
+  if cmp -s -- "$1" "$2"; then
+    return 0
+  fi
+
+  antigravity_ha_settings_expected_temporary=$(mktemp \
+    /tmp/.telegram-settings-expected.XXXXXX) || return 1
+  antigravity_ha_settings_observed_temporary=$(mktemp \
+    /tmp/.telegram-settings-observed.XXXXXX) || {
+    rm -f -- "${antigravity_ha_settings_expected_temporary}"
+    unset antigravity_ha_settings_expected_temporary
+    return 1
+  }
+  if ! /usr/bin/jq --exit-status --sort-keys '
+      (if .toolPermission == "request-review" then del(.toolPermission) else . end)
+      | (if .allowNonWorkspaceAccess == false then del(.allowNonWorkspaceAccess) else . end)
+      | (if .permissions.ask == [] then del(.permissions.ask) else . end)
+    ' "$1" > "${antigravity_ha_settings_expected_temporary}" \
+    || ! /usr/bin/jq --exit-status --sort-keys . \
+      "$2" > "${antigravity_ha_settings_observed_temporary}" \
+    || ! cmp -s -- \
+      "${antigravity_ha_settings_expected_temporary}" \
+      "${antigravity_ha_settings_observed_temporary}"; then
+    rm -f -- \
+      "${antigravity_ha_settings_expected_temporary}" \
+      "${antigravity_ha_settings_observed_temporary}"
+    unset \
+      antigravity_ha_settings_expected_temporary \
+      antigravity_ha_settings_observed_temporary
+    return 1
+  fi
+  rm -f -- \
+    "${antigravity_ha_settings_expected_temporary}" \
+    "${antigravity_ha_settings_observed_temporary}"
+  unset \
+    antigravity_ha_settings_expected_temporary \
+    antigravity_ha_settings_observed_temporary
+  return 0
+}
+
 antigravity_ha_render_telegram_plugin_mcp() {
   if [ "$#" -ne 1 ]; then
     return 64
