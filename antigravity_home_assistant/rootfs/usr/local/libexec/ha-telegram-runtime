@@ -18,4 +18,6 @@ exec /usr/bin/env -i \
   LANG=C.UTF-8 \
   LC_ALL=C.UTF-8 \
   PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-  /usr/bin/node /usr/local/share/antigravity-ha/telegram-bridge.mjs
+  /usr/bin/node \
+  --network-family-autoselection-attempt-timeout=1500 \
+  /usr/local/share/antigravity-ha/telegram-bridge.mjs

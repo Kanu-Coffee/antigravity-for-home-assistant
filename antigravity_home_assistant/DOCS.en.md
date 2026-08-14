@@ -514,7 +514,9 @@ without the user's explicit current confirmation.
 - For pairing, check TTL, one-time consumption, and `ha-telegram-pair list`.
 - `connect_retry` means the bridge remains alive and retries Telegram with a
   bounded backoff. When present, `transport_code` is a safe DNS, route, or TLS
-  classification; the token and raw transport error are never logged.
+  classification; the token and raw transport error are never logged. For
+  high-latency dual-stack paths that repeatedly return `ETIMEDOUT`, the App
+  allows 1.5 seconds per address attempt without forcibly disabling IPv6.
 - `connect_blocked` means the Bot token or request policy must be corrected in
   App options before restarting. The same 4xx request is not retried.
 - Use `/status` and App logs to inspect queue, worker, and broker health.

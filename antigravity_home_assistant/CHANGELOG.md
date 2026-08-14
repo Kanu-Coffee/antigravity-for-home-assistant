@@ -2,6 +2,15 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.0.3] - 2026-08-14
+
+### Fixed
+
+- Raise the Telegram-only Node network-family address-attempt timeout from the
+  250ms runtime default to 1.5 seconds. This prevents a valid high-latency IPv4
+  connection from being abandoned just before completion when the following
+  IPv6 route is unavailable, while preserving dual-stack auto-selection.
+
 ## [2.0.2] - 2026-08-13
 
 ### Fixed

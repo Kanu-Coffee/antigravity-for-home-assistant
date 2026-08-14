@@ -123,6 +123,12 @@ PINNED_ANTIGRAVITY_VERSION=$(sed -n \
   --entrypoint /usr/local/libexec/antigravity-real "${IMAGE}" --version) \
   == "${PINNED_ANTIGRAVITY_VERSION}" ]] \
   || fail 'candidate image does not contain the pinned Antigravity version'
+[[ $(docker run --rm --platform "$TEST_PLATFORM" --network none \
+  --entrypoint /usr/bin/node "${IMAGE}" \
+  --network-family-autoselection-attempt-timeout=1500 \
+  -e 'process.stdout.write(String(require("node:net").getDefaultAutoSelectFamilyAttemptTimeout()))') \
+  == 1500 ]] \
+  || fail 'candidate Node runtime does not honor the Telegram family-attempt timeout'
 docker run --rm --platform "$TEST_PLATFORM" --network none \
   --entrypoint /bin/bash "${IMAGE}" -ceu '
     [[ "${AGY_CLI_DISABLE_AUTO_UPDATE:-}" == true ]]

@@ -496,7 +496,9 @@ global `mcp_config.json`은 없을 때 빈 `mcpServers` 기본본만 생성하�
 - pairing 방식이면 TTL, 한 번 소비 여부와 `ha-telegram-pair list`를 확인합니다.
 - `connect_retry`이면 bridge는 종료되지 않고 제한된 backoff로 Telegram 연결을
   재시도합니다. `transport_code`가 있으면 DNS, 경로 또는 TLS 문제를 구분하는
-  안전한 코드이며 token이나 원문 오류는 기록되지 않습니다.
+  안전한 코드이며 token이나 원문 오류는 기록되지 않습니다. `ETIMEDOUT`이 반복되는
+  고지연 dual-stack 환경을 위해 App은 주소별 연결 시도를 1.5초까지 허용하며 IPv6를
+  강제로 끄지는 않습니다.
 - `connect_blocked`이면 Bot token 또는 요청 정책을 확인하고 App 옵션을 고친 뒤
   다시 시작합니다. 같은 4xx 요청은 자동 반복하지 않습니다.
 - `/status`와 App 로그에서 queue/worker/broker 상태를 확인합니다.

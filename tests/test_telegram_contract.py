@@ -104,6 +104,12 @@ def test_telegram_service_depends_on_init(addon_root: Path) -> None:
         "unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN",
     ]
     assert "AGY_CLI_DISABLE_AUTO_UPDATE=true" in runtime
+    assert runtime.rstrip().endswith(
+        "  /usr/bin/node \\\n"
+        "  --network-family-autoselection-attempt-timeout=1500 \\\n"
+        "  /usr/local/share/antigravity-ha/telegram-bridge.mjs"
+    )
+    assert "--no-network-family-autoselection" not in runtime
     assert "telegram-bridge.mjs" in runtime
     assert "s6-svwait" not in run
     bridge = (

@@ -413,6 +413,10 @@ broker policy와 Home Assistant API precondition을 통과해야 한다. command
 - 시작 단계의 `deleteWebhook`과 `getMe`도 timeout, 429, 5xx, network 오류를 같은
   bounded backoff로 bridge process 안에서 재시도한다. 일시적인 Telegram 연결 실패로
   S6 service가 즉시 재시작되는 loop를 만들지 않는다.
+- Telegram 전용 Node process는 network-family auto-selection을 유지하되 각 주소의
+  연결 시도 제한을 1,500ms로 설정한다. Node 22 기본 250ms보다 긴 dual-stack 경로에서
+  정상 IPv4 TCP 연결이 완료되기 전에 다음 주소로 넘어가 전체 `ETIMEDOUT`이 되는
+  실패를 피하면서, IPv4 전용 강제나 IPv6 비활성화는 하지 않는다.
 - 401/403을 포함한 retry 불가능한 4xx token/policy 오류는 `connect_blocked`를 한 번
   기록하고 bridge process를 살아 있는 fail-closed 대기 상태로 둔다. 같은 설정으로
   Bot API 요청이나 S6 restart를 반복하지 않으며, 운영자가 App 옵션을 고쳐 다시

@@ -573,8 +573,8 @@
     {
       "mode": "0755",
       "path": "/usr/local/libexec/ha-telegram-runtime",
-      "sha256": "sha256:2b617e31920a6c7e42c67251f6522129acbed8ceaf87f812ca4556937716b524",
-      "size": 591
+      "sha256": "sha256:b081aa05085bdeeb122f3e945a859ff142806183ba29e84f89b70e2ea7616b8e",
+      "size": 651
     },
     {
       "mode": "0755",
@@ -812,5 +812,5 @@
     }
   ],
   "schema": "antigravity-ha-source-rootfs/v1",
-  "source_rootfs_sha256": "sha256:1c94bf0ebe45ecc47d994a5a53196b6ead8d001833bab59c7e8585c1e0a58004"
+  "source_rootfs_sha256": "sha256:8ad30433e403fd9d7fbf65c0f60f0284e067ffc721e0c9c28138d298fe563c34"
 }
