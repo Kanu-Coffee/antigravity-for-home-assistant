@@ -1006,7 +1006,7 @@ MAPPING_FIXTURE
     .[0] as $settings
     | .[1] as $state
     | ($settings
-      | (has("toolPermission") | not)
+      | .toolPermission == "request-review"
       and .enableTerminalSandbox == true
       and ((.permissions | keys | sort) == ["allow", "ask", "deny"])
       and ((.permissions.allow | length) == (.permissions.allow | unique | length))
