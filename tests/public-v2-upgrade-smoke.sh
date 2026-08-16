@@ -498,11 +498,11 @@ for retired_profile in \
   antigravity_home_assistant-memory-telegram \
   antigravity_home_assistant-playwright-bootstrap-telegram \
   antigravity_home_assistant-browser-telegram; do
-  if rg --fixed-strings --quiet "${retired_profile}" "${APPARMOR_SOURCE}"; then
+  if grep -Fq -- "${retired_profile}" "${APPARMOR_SOURCE}"; then
     fail "retired AppArmor profile remains: ${retired_profile}"
   fi
 done
-rg --fixed-strings --quiet \
+grep -Fq -- \
   'profile antigravity_home_assistant-change-proposal-client' \
   "${APPARMOR_SOURCE}" \
   || fail 'shared change-proposal AppArmor profile is missing'
