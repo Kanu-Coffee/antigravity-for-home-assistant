@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 import subprocess
@@ -60,7 +61,7 @@ def test_public_v1_upgrade_rehearsal_is_source_and_candidate_bound(
         "settings_hash_before",
         "mcp_hash_before",
         "native plugin validation changed user settings",
-        "ha-telegram",
+        'test ! -e "${plugin}/agents/ha-telegram"',
         "/data/antigravity-ha/quarantine/v1-telegram/",
         "test ! -L \"$path\"",
         "/data/home/.gemini/mcp_config.json",
@@ -115,7 +116,6 @@ def test_public_v1_runtime_scan_only_allows_native_cli_log_links(
     for required in (
         "validate_native_cli_log_link",
         "/data/home/.gemini/antigravity-cli/cli.log",
-        "/data/antigravity-ha/telegram-home/.gemini/antigravity-cli/cli.log",
         "^log/cli-[0-9]{8}_[0-9]{6}\\.log$",
         '"0:0:1:777:symbolic link"',
         "cli_root=${link_path%/cli.log}",
@@ -131,6 +131,7 @@ def test_public_v1_runtime_scan_only_allows_native_cli_log_links(
 
     assert "find -L" not in smoke
     assert "readlink -f" not in smoke
+    assert "/data/antigravity-ha/telegram-home" not in smoke
     assert "^0:0:1:[0-7]{3}:regular\\ file$" not in smoke
     assert "^0:0:1:(600|644|666):regular\\ file$" not in smoke
 
@@ -252,6 +253,14 @@ def test_user_file_update_has_fixed_scopes_and_private_recovery_state(
     assert "0o700" in helper
     assert "0o600" in helper
     assert "mergeManagedSettings(" in helper
+    assert "preparePreservePermissionMigration(" in helper
+    assert "hasLegacy206PermissionOwnership(" in helper
+    assert 'options.mode === "preserve"' in helper
+    assert 'permission_migration: permissionMigration' in helper
+    assert '"skipped_unowned"' in helper
+    assert '"skipped_ambiguous"' in helper
+    assert "replaceTopLevelJsonPropertyValue(" in helper
+    assert "A non-permission setting changed during migration" in helper
     assert "state.managed.settings = desiredOwnership" in helper
     assert "previouslyManaged.has(rule)" in helper
     assert "ensureFreshDefaults" not in helper
@@ -272,6 +281,77 @@ def test_user_file_update_has_fixed_scopes_and_private_recovery_state(
         '"/data/browser-auth"',
     ):
         assert excluded_path not in helper
+
+
+def test_public_2_0_6_preserve_permission_fixture_is_source_bound(
+    repository_root: Path,
+) -> None:
+    fixture_root = repository_root / "tests/fixtures"
+    settings_path = fixture_root / "public-2.0.6-preserve-settings.json"
+    state_path = fixture_root / "public-2.0.6-preserve-state.json"
+    source_path = fixture_root / "public-2.0.6-preserve-source.json"
+
+    settings_bytes = settings_path.read_bytes()
+    state_bytes = state_path.read_bytes()
+    source = json.loads(source_path.read_text(encoding="utf-8"))
+    settings = json.loads(settings_bytes)
+    state = json.loads(state_bytes)
+
+    assert source == {
+        "image": "ghcr.io/kanu-coffee/antigravity-for-home-assistant:2.0.6",
+        "image_digest": (
+            "sha256:4e7f33036f5214349ba43aeb50361924a33f6b6081051d7df88540bbbf2dbdc4"
+        ),
+        "source_revision": "8eb03cfa22bac2cc481f9c5ebab4c1a250d92cb2",
+        "options": {
+            "antigravity_tool_permission": "request-review",
+            "antigravity_terminal_sandbox": True,
+            "antigravity_user_files_update_mode": "preserve",
+        },
+        "settings_sha256": (
+            "ee34d8fd24909a90f1afafd4303dc5402571cf73105c8983a083a1101b25749c"
+        ),
+        "state_sha256": (
+            "78353795eadafcb552e8aeae049741d88fec378265bb133ac60e2950fd72e56c"
+        ),
+    }
+    assert hashlib.sha256(settings_bytes).hexdigest() == source["settings_sha256"]
+    assert hashlib.sha256(state_bytes).hexdigest() == source["state_sha256"]
+    assert "read_file(/data)" in settings["permissions"]["deny"]
+    assert "write_file(/data)" in settings["permissions"]["deny"]
+    assert "read_file(/config)" not in settings["permissions"]["allow"]
+    assert state["managed"]["settings"]["permission_rules"] == [
+        *settings["permissions"]["allow"],
+        *settings["permissions"]["ask"],
+        *settings["permissions"]["deny"],
+    ]
+
+
+def test_preserve_permission_migration_smoke_covers_atomic_fail_safe_paths(
+    repository_root: Path,
+) -> None:
+    smoke_path = repository_root / "tests/user-files-update-smoke.sh"
+    smoke = smoke_path.read_text(encoding="utf-8")
+    subprocess.run(["bash", "-n", str(smoke_path)], check=True)
+
+    for required in (
+        "public-2.0.6-preserve-settings.json",
+        "public-2.0.6-preserve-state.json",
+        "public 2.0.6 preserve permission migration failed",
+        'process.kill(process.pid, \\"SIGKILL\\")',
+        '.phase == "prepared"',
+        '.permission_migration == "applied"',
+        '.permission_migration == "already_applied"',
+        '.permission_migration == "skipped_unowned"',
+        '.permission_migration == "skipped_ambiguous"',
+        "preserve permission migration changed non-permission bytes",
+        'index("user(custom/allow)")',
+        'index("user(custom/ask)")',
+        'index("user(custom/deny)")',
+        'index("read_file(/data)") == null',
+        'index("write_file(/data)") == null',
+    ):
+        assert required in smoke
 
 
 def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
@@ -295,13 +375,11 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
     assert (plugin / "plugin.json").is_file()
     assert (plugin / "mcp_config.json").is_file()
     assert (plugin / "rules/home-assistant-safety.md").is_file()
-    assert (plugin / "agents/ha-telegram/agent.md").is_file()
     assert {
         path.relative_to(plugin).as_posix()
         for path in plugin.rglob("*")
         if path.is_file()
     } == {
-        "agents/ha-telegram/agent.md",
         "mcp_config.json",
         "plugin.json",
         "rules/home-assistant-safety.md",
@@ -341,9 +419,6 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
         assert server["args"] == []
         assert server["cwd"] == "/config"
         assert "env" not in server
-    telegram_agent = (plugin / "agents/ha-telegram/agent.md").read_text(
-        encoding="utf-8"
-    )
     proposal_skill = (plugin / "skills/ha-change-proposal/SKILL.md").read_text(
         encoding="utf-8"
     )
@@ -357,6 +432,31 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
     assert '"ha_validate"' in plugin_mcp
     assert "/usr/local/bin/ha-validate-mcp" in plugin_mcp
     assert "mcp(ha_change/ha_change_propose)" in helper
+    for native_file_rule in (
+        "read_file(/config)",
+        "write_file(/config)",
+        "read_file(/data/home/.gemini/config)",
+        "write_file(/data/home/.gemini/config)",
+        "read_file(/data/home/.gemini/antigravity-cli/agents)",
+        "write_file(/data/home/.gemini/antigravity-cli/agents)",
+        "read_file(/data/home/.gemini/antigravity-cli/plugins)",
+        "write_file(/data/home/.gemini/antigravity-cli/plugins)",
+        "read_file(/data/home/.gemini/antigravity-cli/skills)",
+        "write_file(/data/home/.gemini/antigravity-cli/skills)",
+        "read_file(/data/home/.gemini/GEMINI.md)",
+        "write_file(/data/home/.gemini/GEMINI.md)",
+        "read_file(/data/home/.gemini/antigravity-cli/settings.json)",
+        "write_file(/data/home/.gemini/antigravity-cli/settings.json)",
+    ):
+        assert f'"{native_file_rule}"' in helper
+    active_permissions = helper.split("const HA_PERMISSION_RULES =", 1)[1].split(
+        "const SHARED_NATIVE_FILE_RULE_SET =", 1
+    )[0]
+    assert '"read_file(/data)"' not in active_permissions
+    assert '"write_file(/data)"' not in active_permissions
+    assert 'const RETIRED_MANAGED_PERMISSION_RULES = new Set([' in helper
+    assert 'const REGISTERED_MANAGED_PERMISSION_RULES = new Set([' in helper
+    assert "!REGISTERED_MANAGED_PERMISSION_RULES.has(rule)" in helper
     for tool in (
         "ha_read_app_logs",
         "ha_read_config",
@@ -371,12 +471,6 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
     ):
         assert f'"{tool}"' in helper
     assert "mcp(ha_read/${tool})" in helper
-    assert "ha_change_propose" in telegram_agent
-    assert "`device_test`" in telegram_agent
-    assert "always-restore/fresh-verify" in telegram_agent
-    assert '`proposal_ids` to `[]`' in telegram_agent
-    assert "exactly that one broker-owned `proposal_id`" in telegram_agent
-    assert "run_command" not in telegram_agent
     assert "Do not supply or invent requester" in proposal_skill
     assert "process environment" in proposal_skill
     assert "Use `device_test`, never `service_call`" in proposal_skill
@@ -384,23 +478,8 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
     assert "`rollback_failed`/`in_doubt`" in proposal_skill
     assert "/ha-feedback bug <symptom>" in feedback_skill
     assert "$ha-feedback" not in feedback_skill
-    for tool in (
-        "ha_read_app_logs",
-        "ha_read_config",
-        "ha_read_core_logs",
-        "ha_read_history",
-        "ha_read_registry",
-        "ha_read_services",
-        "ha_read_state",
-        "ha_read_states",
-        "ha_read_system_info",
-        "ha_read_traces",
-    ):
-        assert f"`{tool}`" in telegram_agent
     for tool in ("ha_validate_config", "ha_verify_state"):
         assert f'"{tool}"' in helper
-        assert f"`{tool}`" in telegram_agent
-    assert "generic `ha-api`, `supervisor-api`" in telegram_agent
 
     assert 'const DEFAULT_SETTINGS_PATH = "/etc/antigravity/settings.json"' in helper
     assert 'const DEFAULT_MCP_CONFIG_PATH = "/etc/antigravity/mcp_config.json"' in helper
@@ -410,6 +489,10 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
         "command(sudo)",
         "command(rm -rf)",
         "write_file(.git/)",
+        "read_file(/config/secrets.yaml)",
+        "read_file(/config/.storage)",
+        "write_file(/config/secrets.yaml)",
+        "write_file(/config/.storage)",
     ):
         assert f'"{native_rule}"' in helper
     assert "managed-plugin-update.mjs" in init_script
@@ -424,6 +507,8 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
     assert "await copyVerifiedTree(TARGET, paths.backup, before)" in plugin_update
     assert "await rename(paths.stage, TARGET)" in plugin_update
     assert "await validateInstalledPostcondition" in plugin_update
+    assert 'runNative(["agent"])' not in plugin_update
+    assert "managed ha-telegram agent" not in plugin_update
     assert 'const MIGRATION_ROOT = join(APP_DATA_ROOT, "migration")' in plugin_update
     assert 'const BACKUP_ROOT = join(APP_DATA_ROOT, "backups")' in plugin_update
     assert 'AGY_CLI_DISABLE_AUTO_UPDATE: "true"' in plugin_update

@@ -22,9 +22,9 @@ name: HAOS evidence
           - haos_amd64_local_migration
           - local_migration_rollback
           - migration_modes
-          - oauth_isolation_persistence
+          - shared_runtime_persistence
           - native_updater_canary
-          - telegram_modes
+          - telegram_session_delivery
       report_json:
         description: Candidate-bound sanitized v1 JSON completed from haos-report-templates/<gate>.json; unchanged NOT_RUN template is rejected
         required: true

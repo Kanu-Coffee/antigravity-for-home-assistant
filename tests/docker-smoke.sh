@@ -113,8 +113,10 @@ seed_options() {
 }
 
 docker image inspect "${IMAGE}" >/dev/null 2>&1 || fail "image not found: ${IMAGE}"
-tests/telegram-isolation-smoke.sh "${IMAGE}" \
-  || fail 'Telegram native HOME isolation smoke failed'
+tests/public-v2-upgrade-smoke.sh "${IMAGE}" \
+  || fail 'Public 2.0.6 to candidate upgrade smoke failed'
+tests/telegram-shared-context-smoke.sh "${IMAGE}" \
+  || fail 'Telegram shared native context smoke failed'
 PINNED_ANTIGRAVITY_VERSION=$(sed -n \
   's/^ARG ANTIGRAVITY_VERSION=//p' antigravity_home_assistant/Dockerfile)
 [[ "${PINNED_ANTIGRAVITY_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
@@ -331,14 +333,15 @@ docker exec "${PUBLIC_CONTAINER}" test -f /data/browser-auth/managed-token \
 docker exec "${PUBLIC_CONTAINER}" /bin/bash -c '
   set -Eeuo pipefail
   export HOME=/data/home
-  /usr/local/libexec/antigravity-real agent | grep -Fxq ha-telegram
+  test ! -e \
+    /data/home/.gemini/config/plugins/home-assistant/agents/ha-telegram
   grep -Fq "http://127.0.0.1:8099/" \
     /data/home/.gemini/config/plugins/home-assistant/skills/ha-dashboard/SKILL.md
   grep -Fq memory_search \
     /data/home/.gemini/config/plugins/home-assistant/skills/ha-memory/SKILL.md
   grep -Fq memory_verify_change \
     /data/home/.gemini/config/plugins/home-assistant/skills/ha-memory/SKILL.md
-' || fail 'Antigravity did not discover the image-managed Home Assistant agent and skills'
+' || fail 'Antigravity shared profile did not contain the managed Home Assistant skills'
 
 NETWORK_INFO=$(docker exec "${PUBLIC_CONTAINER}" ha-browser-network-info) \
   || fail 'Home Assistant browser network diagnostics failed'
@@ -431,18 +434,17 @@ if grep -Fq -- "${SUPERVISOR_TOKEN}" "${MCP_OUTPUT_FILE}" || \
   fail 'Playwright MCP output disclosed a Home Assistant credential'
 fi
 cat "${MCP_OUTPUT_FILE}"
-TELEGRAM_MCP_POLICY_OUTPUT_FILE="${WORK_DIR}/playwright-mcp-telegram-policy.log"
+TELEGRAM_MCP_POLICY_OUTPUT_FILE="${WORK_DIR}/playwright-mcp-shared-policy.log"
 if ! docker exec \
   --workdir /config \
+  --env ANTIGRAVITY_HA_CHANNEL=telegram \
   --env HA_TELEGRAM_USER_ID=123456789 \
   --env HA_TELEGRAM_CHAT_ID=-100123456789 \
-  --env PLAYWRIGHT_MCP_SMOKE_EXPECT_TELEGRAM_READ_ONLY=1 \
   --env PLAYWRIGHT_MCP_SMOKE_POLICY_ONLY=1 \
-  --env PLAYWRIGHT_MCP_SMOKE_TELEGRAM_REDIRECT_URL=http://127.0.0.1:8099/security/redirect-outside \
   "${PUBLIC_CONTAINER}" \
   node /tmp/playwright_mcp_smoke.mjs /usr/local/bin/ha-playwright-mcp \
   > "${TELEGRAM_MCP_POLICY_OUTPUT_FILE}" 2>&1; then
-  fail 'Telegram Playwright MCP read-only policy smoke failed'
+  fail 'Telegram Playwright MCP shared policy smoke failed'
 fi
 if grep -Fq -- "${SUPERVISOR_TOKEN}" "${TELEGRAM_MCP_POLICY_OUTPUT_FILE}" || \
   grep -Fq -- "${BROWSER_TOKEN}" "${TELEGRAM_MCP_POLICY_OUTPUT_FILE}"; then

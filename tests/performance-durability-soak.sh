@@ -350,7 +350,6 @@ docker run --rm --interactive \
       telegram_bot_token: "",
       telegram_allowed_user_ids: [],
       telegram_allowed_chat_ids: [],
-      telegram_access_mode: "confirm_changes",
       authorized_keys: [],
       web_terminal_auto_start_antigravity: false,
       tmux_session_name: "antigravity-gap007",

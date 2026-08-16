@@ -1,5 +1,8 @@
 # addon_spec.md — Home Assistant App 계약
 
+> 역사 문서입니다. 2.0.7 option/schema와 Telegram 관리자 채널 계약은
+> [v2 product spec](../v2/product-spec.md)을 우선합니다.
+
 ## 1. 권장 저장소 구조
 
 ```text

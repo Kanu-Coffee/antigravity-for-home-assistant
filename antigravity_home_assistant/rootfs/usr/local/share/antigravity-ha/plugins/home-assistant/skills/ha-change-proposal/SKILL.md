@@ -1,6 +1,6 @@
 ---
 name: ha-change-proposal
-description: Create a bounded, short-lived Home Assistant change preview through the image-managed proposal-only MCP. Use for every mutation requested through the Telegram agent.
+description: Create a bounded, short-lived Home Assistant change preview through the image-managed proposal-only MCP. Use for broker-confirmed mutations requested through the authenticated Telegram transport.
 ---
 
 # Home Assistant change proposal

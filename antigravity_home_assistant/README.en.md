@@ -18,13 +18,14 @@ Use antigravity inside Home Assistant to inspect your setup and improve dashboar
 - Home Assistant Core API and Supervisor `manager` helpers
 - Shared `tmux` Web terminal that resumes after you close and reopen the browser
 - Public-key-only SSH for direct ChatGPT mobile Remote access to the bundled antigravity environment
+- An administrator-level Telegram primary channel using the same `/data/home`, `/config`, and global settings as the CLI
 - **OPEN WEB UI** in the Home Assistant mobile app or website
 - Headless Chromium checks for desktop/mobile dashboard layouts and console/network errors
 - Project-local verified memory for HA structure and user-stated aliases, purposes, and preferences
 - `/ha-feedback` for read-only app bug validation and structured feature proposals
 
 > [!WARNING]
-> This app is a powerful administrative tool that can directly change your Home Assistant configuration. Back up important data and review the plan and diff before changes. Never expose the SSH port directly to the internet.
+> This app is a powerful administrative tool that can directly change your Home Assistant configuration. Telegram is equivalent to the CLI as an administrator channel, so protect the bot token, authorized chats, and Telegram accounts. Back up important data, review plans and diffs, and never expose the SSH port directly to the internet.
 
 ## Quick start
 
@@ -33,6 +34,11 @@ Use antigravity inside Home Assistant to inspect your setup and improve dashboar
 3. Sign in once with `ha-antigravity-login`.
 4. Run `ha-antigravity`.
 5. Start with: “Inspect my current setup in read-only mode and do not change anything yet.”
+
+When enabled, Telegram uses the same OAuth, global plugins, agents, rules, MCP,
+and permission policy. Its first request keeps one conversation until `/new`,
+with approvals and replies continuing in that session. There is no separate
+Telegram sign-in or HOME.
 
 If you do not need SSH, leave `authorized_keys` empty. The Web UI will continue to work.
 

@@ -172,7 +172,7 @@ jobs:
           fi
 
   telegram-security-contracts:
-    name: Telegram isolation, queue, and broker contracts
+    name: Telegram shared context, session, delivery, and broker contracts
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -188,6 +188,7 @@ jobs:
         run: >-
           node --test
           tests/telegram_bridge_test.mjs
+          tests/telegram_bridge_session_delivery_test.mjs
           tests/telegram_broker_integration_test.mjs
           tests/telegram_pairing_test.mjs
           tests/telegram_state_test.mjs
@@ -311,7 +312,8 @@ jobs:
           - managed-auth
           - managed-plugin
           - memory
-          - telegram-isolation
+          - public-v2
+          - telegram-shared-context
           - update
           - user-files
     steps:
@@ -353,8 +355,11 @@ jobs:
             memory)
               exec bash tests/memory-smoke.sh antigravity-for-home-assistant:test
               ;;
-            telegram-isolation)
-              exec bash tests/telegram-isolation-smoke.sh antigravity-for-home-assistant:test
+            public-v2)
+              exec bash tests/public-v2-upgrade-smoke.sh antigravity-for-home-assistant:test
+              ;;
+            telegram-shared-context)
+              exec bash tests/telegram-shared-context-smoke.sh antigravity-for-home-assistant:test
               ;;
             update)
               exec bash tests/update-smoke.sh antigravity-for-home-assistant:test

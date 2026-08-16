@@ -17,7 +17,7 @@ App 실행 중 다른 version을 내려받거나 실행하면 version/digest pin
 AGY_CLI_DISABLE_AUTO_UPDATE=true
 ```
 
-이 값은 interactive wrapper, Telegram print worker, plugin validation/install과
+이 값은 interactive wrapper, Telegram shared-runtime invocation, plugin validation/install과
 startup/update smoke를 포함해 native binary에 도달하는 모든 `env -i`/child environment
 allowlist에 명시한다. 사용자 option, inherited environment 또는 native JSON settings로
 끄고 켤 수 없으며, wrapper가 받은 같은 이름의 사용자 값을 그대로 전달하지 않는다.
@@ -96,7 +96,8 @@ help
 
 ## 3. native 저장 경로
 
-대화형 App은 `HOME=/data/home`을 고정하므로 native 경로는 다음과 같다.
+Web/SSH/Telegram App은 `HOME=/data/home`과 project `/config`를 공유하므로 native
+경로는 다음과 같다.
 
 | 역할 | native 경로 |
 | --- | --- |
@@ -107,10 +108,10 @@ help
 | workspace MCP | `/config/.agents/mcp_config.json` |
 | workspace plugin | `/config/.agents/plugins/<plugin_name>/` 또는 `/config/_agents/plugins/<plugin_name>/` |
 
-Telegram은 위 global/workspace customization을 상속하지 않는다. 전용
-`HOME=/data/antigravity-ha/telegram-home`, image-managed safe cwd, fixed settings, 빈
-global MCP와 단일 managed `home-assistant` plugin을 사용한다. `ha-telegram-login`은
-trusted local controlling TTY에서 이 별도 HOME의 first-run OAuth만 수행한다.
+Telegram은 위 global/workspace plugin, agent, rule, MCP와 settings를 상속하고 사용자의
+관리 요청에 따라 수정할 수 있다. OAuth는 trusted local controlling TTY의
+`ha-antigravity-login`으로 한 번 수행하며 별도 Telegram HOME·login·bootstrap을 두지
+않는다.
 
 v2 App 관리형 `home-assistant` plugin은 global manually discovered 경로를
 canonical 배치로 사용한다. 같은 이름을 CLI staging 또는 workspace에 동시에
@@ -126,7 +127,22 @@ App이 소유한 key만 merge한다. 최소 관리 key는 다음과 같다.
 {
   "toolPermission": "request-review",
   "permissions": {
-    "allow": [],
+    "allow": [
+      "read_file(/config)",
+      "write_file(/config)",
+      "read_file(/data/home/.gemini/config)",
+      "write_file(/data/home/.gemini/config)",
+      "read_file(/data/home/.gemini/antigravity-cli/agents)",
+      "write_file(/data/home/.gemini/antigravity-cli/agents)",
+      "read_file(/data/home/.gemini/antigravity-cli/plugins)",
+      "write_file(/data/home/.gemini/antigravity-cli/plugins)",
+      "read_file(/data/home/.gemini/antigravity-cli/skills)",
+      "write_file(/data/home/.gemini/antigravity-cli/skills)",
+      "read_file(/data/home/.gemini/GEMINI.md)",
+      "write_file(/data/home/.gemini/GEMINI.md)",
+      "read_file(/data/home/.gemini/antigravity-cli/settings.json)",
+      "write_file(/data/home/.gemini/antigravity-cli/settings.json)"
+    ],
     "ask": [
       "command(*)",
       "mcp(home-assistant/*)"
@@ -134,11 +150,22 @@ App이 소유한 key만 merge한다. 최소 관리 key는 다음과 같다.
     "deny": [
       "command(sudo)",
       "command(rm -rf)",
-      "write_file(.git/)"
+      "write_file(.git/)",
+      "read_file(/config/secrets.yaml)",
+      "read_file(/config/.storage)",
+      "write_file(/config/secrets.yaml)",
+      "write_file(/config/.storage)"
     ]
   }
 }
 ```
+
+1.1.11의 directory target은 재귀이며 deny가 ask와 allow보다 우선한다. 그래서 위
+shared customization/workspace root는 Web/SSH/Telegram에 공통으로 허용하되 OAuth가
+있는 `.gemini` 전체를 wildcard로 열지 않고, `/config`의 secret·storage 경로는 native
+deny와 AppArmor deny를 함께 유지한다. 2.0.6의 `read_file(/data)`와
+`write_file(/data)`는 새 allow보다 우선하므로 managed ownership migration에서
+명시적으로 제거한다.
 
 `antigravity_tool_permission`은 `toolPermission`에 다음과 같이 1:1 매핑한다.
 
@@ -149,6 +176,11 @@ App이 소유한 key만 merge한다. 최소 관리 key는 다음과 같다.
 | `always-proceed` | `always-proceed` | native prompt를 줄이지만 AppArmor와 broker는 유지 |
 | `strict` | `strict` | 모든 non-read 작업을 확인 |
 
+1.1.11 `stream-json`은 native permission request를 외부 channel에 전달하고 승인 뒤
+같은 turn을 재개하는 입력 protocol이 없다. Telegram의 사람 확인은 관리형 HA broker
+proposal에만 제공하며, 그 밖의 ask rule은 Web/SSH TUI 또는 global permission 변경이
+필요하다. Telegram 전용 skip-permission이나 auto-approve 설정은 만들지 않는다.
+
 Antigravity 1.1.11은 system default와 같은 값을 저장하지 않는 sparse persistence를
 적용한다. 따라서 `agy agent`가 `request-review`를 읽으면 redundant
 `toolPermission` key를 제거할 수 있다. 이 경우에도 App이 생성한
@@ -157,9 +189,9 @@ Antigravity 1.1.11은 system default와 같은 값을 저장하지 않는 sparse
 같은 이유로 default `colorScheme: "terminal"` 대신 CLI가 왕복 보존하는 공식
 non-default `colorScheme: "tokyo night"`를 사용한다.
 
-1.1.11은 각 native CLI HOME의 `antigravity-cli/cli.log`를 같은 directory 아래
+1.1.11은 공유 native CLI HOME의 `antigravity-cli/cli.log`를 같은 directory 아래
 `log/cli-YYYYMMDD_HHMMSS.log`를 가리키는 상대 symlink로 만든다. public v1 update
-canary는 interactive와 격리 Telegram HOME의 이 exact 두 경로만 허용하며, link가
+canary는 `/data/home`의 이 exact 경로만 허용하며, link가
 root 소유이고 CLI root와 `log` parent가 모두 root 소유 real 0700 directory인지
 확인한다. clean v2가 만든 target은 root 소유, single-link regular 0600 file이다.
 public v1에서 그대로 보존된 target은 enclosing directory가 위 조건을 만족할 때만
@@ -173,9 +205,8 @@ settings는 file metadata와 공식 key의 semantic 보존을, global MCP는 byt
 permission precedence는 native 규칙대로 deny > ask > allow다. AppArmor deny와
 broker의 고위험 정책은 `always-proceed`로도 완화되지 않는다.
 
-`antigravity_terminal_sandbox=true`는 대화형 wrapper에 `--sandbox`를 추가한다.
-false는 이 CLI flag만 생략하며 AppArmor를 끄지 않는다. Telegram worker는
-option과 관계없이 `--sandbox`를 사용한다.
+`antigravity_terminal_sandbox=true`는 Web/SSH/Telegram wrapper에 `--sandbox`를
+추가한다. false는 세 표면에서 이 CLI flag만 생략하며 AppArmor를 끄지 않는다.
 
 ## 5. plugin 계약
 
@@ -183,8 +214,6 @@ image source는 다음 형태다.
 
 ```text
 /usr/local/share/antigravity-ha/plugins/home-assistant/
-├─ agents/
-│  └─ ha-telegram/agent.md
 ├─ plugin.json
 ├─ mcp_config.json
 ├─ rules/
@@ -293,26 +322,26 @@ first-run OAuth가 가능한 controlling TTY에서 `agy`를 실행하고 안내�
 
 ### 7.2 Telegram non-interactive
 
-새 bridge는 shell 없이 argv array로 다음 실행을 만든다.
+새 bridge는 shell 없이 CLI와 같은 wrapper 정책의 argv array를 만든다.
 
 ```text
-ha-telegram-worker --output-format stream-json --print-timeout 5m --json-schema <managed> --agent ha-telegram --mode plan --sandbox --disable-slash-commands
+/usr/local/bin/antigravity --output-format stream-json --print-timeout 5m --json-schema <managed> [--conversation <bound-id>]
 ```
 
-- `cwd`는 `/usr/local/share/antigravity-ha/telegram-workspace`다.
-- `HOME`은 `/data/antigravity-ha/telegram-home`이며 worker가 fixed
-  settings/MCP/plugin, owner/mode/symlink/content와 unknown customization 부재를 매
-  실행 검증한다.
+- `cwd`는 `/config`, `HOME`은 `/data/home`이며 native OAuth, global/workspace
+  plugin/agent/rule/MCP와 settings를 Web/SSH와 동일하게 사용한다.
+- 공유 launcher는 customization을 제거하거나 image-only inventory로 축소하지 않는다.
 - prompt는 UTF-8 stdin으로 전달하고 argv, environment, log file에 넣지 않는다.
 - 1.1.11은 pipe된 non-TTY stdin에서 print mode를 자동 선택한다. 값 없는
   `--print`/`-p`는 다음 argv를 prompt로 소비하므로 bridge argv에 넣지 않는다.
 - stdout은 NDJSON 전용, stderr는 비밀 정화된 진단 전용이다.
 - exit code 0과 terminal `result` event가 모두 있어야 성공이다.
 - `--continue`는 다른 대화를 잘못 선택할 수 있어 bridge에서 사용하지 않는다.
-- session 재개가 필요하면 검증된 per-user/per-chat conversation ID만
-  `--conversation <id>`로 전달한다.
-- Telegram worker는 항상 plan mode이며 직접 mutation을 수행하지 않는다.
-  typed proposal의 실행은 bridge와 change broker가 별도로 담당한다.
+- 최초 prompt 전에 검증된 per-user/per-chat conversation ID를 영속 결합하며 모든
+  후속 요청과 승인 callback에 `--conversation <id>`로 전달한다. 실행 실패는 새
+  ID를 만들지 않으며 `/new`만 rotation을 허용한다.
+- 권한은 별도 Telegram mode가 아니라 native global `toolPermission`, sandbox와
+  민감정보 option에서 온다. broker형 변경의 사람 확인은 같은 conversation에 묶는다.
 
 ### 7.3 금지 인수
 

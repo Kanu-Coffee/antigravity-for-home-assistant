@@ -17,24 +17,8 @@ if (( $# != 0 )); then
   exit 64
 fi
 
-telegram_user_present=0
-telegram_chat_present=0
-[[ -v HA_TELEGRAM_USER_ID ]] && telegram_user_present=1
-[[ -v HA_TELEGRAM_CHAT_ID ]] && telegram_chat_present=1
-telegram_read_only=0
-if (( telegram_user_present != telegram_chat_present )); then
-  printf 'ha-playwright-mcp: incomplete Telegram requester binding\n' >&2
-  exit 78
-elif (( telegram_user_present == 1 )); then
-  if [[ ! "${HA_TELEGRAM_USER_ID}" =~ ^[1-9][0-9]{0,19}$ ]] \
-    || [[ ! "${HA_TELEGRAM_CHAT_ID}" =~ ^-?[1-9][0-9]{0,19}$ ]]; then
-    printf 'ha-playwright-mcp: invalid Telegram requester binding\n' >&2
-    exit 78
-  fi
-  telegram_read_only=1
-fi
-
 unset \
+  ANTIGRAVITY_HA_CHANNEL \
   BASH_ENV \
   antigravity_HA_BROWSER_TOKEN_VALIDATED \
   ENV \
@@ -78,5 +62,4 @@ unset \
   ENV \
   NODE_OPTIONS \
   NODE_PATH
-export ANTIGRAVITY_HA_TELEGRAM_READ_ONLY="${telegram_read_only}"
 exec /usr/local/libexec/ha-playwright-runtime

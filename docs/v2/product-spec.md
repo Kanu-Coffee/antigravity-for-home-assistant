@@ -11,8 +11,9 @@ plugin을 제공한다. 사용자는 다음 세 표면에서 같은 `/config` �
 - 공개키 인증만 허용하는 App SSH endpoint
 - 인증·queue·승인 broker를 거치는 Telegram Bot
 
-Ingress와 SSH는 대화형 관리 표면이다. Telegram은 제한된 비대화형 운영
-표면이며 shell이나 tmux TUI를 중계하지 않는다.
+세 표면 모두 같은 관리자급 Antigravity 환경과 정책을 사용한다. Telegram은
+shell이나 tmux TUI를 중계하지 않는 transport adapter지만 격리된 identity 또는
+축소된 agent가 아니다.
 
 ## 2. 사용자 시나리오
 
@@ -27,7 +28,7 @@ Ingress 또는 SSH에서 공식 Antigravity OAuth 흐름을 완료한다. 인증
 사용자는 entity, device, area, automation, history, trace, Core/App 로그를 묻는다.
 기본값에서 Antigravity는 Recorder DB나 비밀 파일을 읽지 않고 HA plugin의 bounded
 API를 통해 관련 정보만 가져온다. 사용자가 진단용 민감정보 읽기를 명시적으로
-켜면 대화형 Antigravity에만 제한된 read-only profile을 적용한다.
+켜면 Web/SSH/Telegram Antigravity에 같은 제한된 read-only profile을 적용한다.
 
 ### US-003 설정 변경
 
@@ -40,9 +41,11 @@ Telegram broker의 첫 executable YAML 범위는 canonical input boolean include
 
 ### US-004 Telegram 조회와 변경
 
-허용된 사용자는 Bot에 자연어로 질문한다. 조회는 바로 응답하고, 변경은 선택한
-Telegram 모드에 따라 거부, 확인 대기 또는 저위험 자동 실행된다. 고위험 작업은
-모드와 관계없이 같은 사용자·채팅의 새 확인이 필요하다.
+허용된 사용자는 Bot에서 CLI와 같은 전역 plugin/agent/rule/MCP와 권한 정책으로
+자연어 요청을 보낸다. 첫 요청 전에 user/chat과 conversation ID를 영속 결합하고
+이후 대화·응답·승인을 같은 session에서 직렬 처리한다. 명시적인 `/new`만 새
+conversation을 만든다. 고위험 작업은 같은 conversation·사용자·채팅의 확인이
+필요하다.
 
 ### US-005 dashboard 검증
 
@@ -84,8 +87,8 @@ App은 기존 복구 표면을 유지하고 rollback 절차를 안내한다.
 
 - CLI version은 1.1.11에 고정하고 아키텍처별 artifact digest를 검증한다.
 - 사용자 명령은 `agy`와 `antigravity` alias를 제공한다.
-- 대화형 기본 `HOME`은 `/data/home`, 기본 작업 디렉터리는 `/config`다. Telegram은
-  별도 `/data/antigravity-ha/telegram-home`과 image-managed safe cwd를 사용한다.
+- Web/SSH/Telegram의 `HOME`은 `/data/home`, 작업 디렉터리는 `/config`다. 세 표면은
+  OAuth와 사용자 전역·workspace customization을 의도적으로 공유한다.
 - 설정과 extension은 [antigravity-contract.md](antigravity-contract.md)의 native
   JSON 경로만 사용한다.
 - 로그인은 공식 CLI OAuth 흐름만 사용한다. App option으로 임의 API token을
@@ -108,8 +111,9 @@ plugin은 다음 capability를 분리해 제공한다.
 - `playwright`: loopback dashboard 탐색, snapshot, screenshot, console, network
 - `ha_change_propose`: typed 변경 preview 생성
 
-Telegram model process에는 최종 실행 credential이나 raw Supervisor token을
-주지 않는다. 실제 변경은 승인 broker가 검증된 proposal만 수행한다.
+Telegram Antigravity는 CLI와 같은 `/config` 및 native 사용자 설정 권한을 가지지만
+raw Supervisor token을 직접 받지는 않는다. broker 기반 작업은 검증된 proposal과
+동일 conversation의 사람 확인을 사용한다.
 
 기존의 “HA용 AGENTS.md preset” 요구는 Antigravity native plugin의 image-managed
 `rules/`와 `skills/`로 구현한다. 루트 `AGENTS.md`는 저장소 개발자용이며 runtime
@@ -141,9 +145,12 @@ preset으로 복사하지 않는다. 사용자 `/config/AGENTS.md`와 다른 프
 
 - 기본은 꺼짐이며 기존 bridge 코드를 재사용하지 않는다.
 - 허용된 user ID와 chat ID의 교집합만 처리한다.
-- `read_only`, `confirm_changes`, `autonomous` 세 모드를 제공한다.
-- trusted local TTY의 `ha-telegram-login`으로 별도 identity의 native OAuth를
-  수행하고 대화형 credential/customization을 공유하지 않는다.
+- Telegram 전용 권한 mode를 두지 않고 global `antigravity_tool_permission`, sandbox와
+  민감정보 option을 Web/SSH와 동일하게 적용한다.
+- `ha-antigravity-login`의 `/data/home` OAuth, 전역 plugin/agent/rule/MCP와 `/config`
+  workspace customization을 공유하고 수정할 수 있다.
+- 첫 요청 전에 session binding을 영속화하고 `/new` 전까지 유지한다.
+- 답변은 전송 전에 암호화된 영속 outbox에 기록하고 Telegram 확인 뒤 제거한다.
 - 상세 계약은 [telegram-spec.md](telegram-spec.md)를 따른다.
 
 ### FR-008 비밀과 로그
@@ -154,11 +161,11 @@ preset으로 복사하지 않는다. 사용자 `/config/AGENTS.md`와 다른 프
 - 로그는 event type, opaque correlation ID, duration, result code만 기본 기록한다.
 - 사용자 prompt와 model raw output은 기본 기록하지 않는다.
 - AppArmor는 항상 enforce한다. `antigravity_sensitive_data_access`는 AppArmor를
-  끄지 않고 대화형 Antigravity의 top-level named `Px` 실행 프로필만 선택한다.
+  끄지 않고 Web/SSH/Telegram Antigravity의 top-level named `Px` 실행 프로필을 선택한다.
 - 기본 `false`는 `secrets.yaml`, `.storage`와 Recorder DB의 read/write를 모두
   거부한다. `true`는 이 세 종류의 진단용 read만 허용하고 write는 계속 거부한다.
-- Telegram, browser, memory와 broker에는 이 option을 적용하지 않는다. SSH key,
-  App token, backup, SSL private material과 cloud auth는 두 값 모두 계속 거부한다.
+- browser, memory와 broker에는 이 option을 적용하지 않는다. SSH key, App token,
+  backup, SSL private material과 cloud auth는 두 값 모두 계속 거부한다.
 
 ## 4. App 옵션 계약
 
@@ -169,7 +176,6 @@ telegram_enabled: false
 telegram_bot_token: ""
 telegram_allowed_user_ids: []
 telegram_allowed_chat_ids: []
-telegram_access_mode: confirm_changes
 antigravity_tool_permission: request-review
 antigravity_terminal_sandbox: true
 antigravity_sensitive_data_access: false
@@ -187,10 +193,9 @@ log_level: info
 | `telegram_bot_token` | secret App option. 로그나 진단 payload에서 제외 |
 | `telegram_allowed_user_ids` | Telegram numeric user ID allowlist |
 | `telegram_allowed_chat_ids` | Telegram numeric chat ID allowlist |
-| `telegram_access_mode` | `read_only`, `confirm_changes`, `autonomous` |
 | `antigravity_tool_permission` | Antigravity native `toolPermission`: `request-review`, `proceed-in-sandbox`, `always-proceed`, `strict` |
-| `antigravity_terminal_sandbox` | 대화형 CLI에 `--sandbox`를 적용할지 결정. Telegram 격리는 항상 적용 |
-| `antigravity_sensitive_data_access` | 기본 `false`. AppArmor는 유지한 채 대화형 child의 세 민감 경로 진단용 read-only 허용 여부 선택 |
+| `antigravity_terminal_sandbox` | Web/SSH/Telegram CLI에 `--sandbox`를 적용할지 결정 |
+| `antigravity_sensitive_data_access` | 기본 `false`. AppArmor는 유지한 채 Web/SSH/Telegram child의 세 민감 경로 진단용 read-only 허용 여부 선택 |
 | `antigravity_user_files_update_mode` | `preserve`, `refresh_managed`, `reset_v2` |
 | `home_assistant_browser_auto_auth` | 관리형 read-only browser identity 사용 여부 |
 | `web_terminal_auto_start_antigravity` | Ingress tmux 접속 시 CLI 자동 시작 여부 |
@@ -208,27 +213,31 @@ Supervisor pre-container update 검증과의 호환을 위해 schema만 v1의
 v2 user-facing mode가 아니며 첫 안전한 bootstrap 뒤 Supervisor self-options API를
 통해 `refresh_managed`로 정규화한다.
 
-`antigravity_sensitive_data_access=true`는 일반 shell, Telegram worker, browser,
-memory 또는 broker의 권한을 늘리지 않는다. AppArmor attach/enforce 상태, 모든
+2.0.6 이하의 `telegram_access_mode`는 Supervisor update migration이 발견할 수 있는
+legacy 입력이지만 2.0.7 runtime 권한 결정에는 사용하지 않는다. 안전한 bootstrap은
+이를 제거하고 Telegram도 global Antigravity 권한 option만 사용한다. Supervisor가
+schema-filtered `/data/options.json`과 persisted raw option을 분리하므로, 2.0.7은
+완료 marker가 없을 때 현재 검증된 전체 option을 self-options API에 한 번 다시 저장해
+local file에서 이미 보이지 않는 retired key도 persisted state에서 제거한다.
+
+`antigravity_sensitive_data_access=true`는 Web/SSH/Telegram Antigravity에 동일하게
+적용되지만 일반 shell, browser, memory 또는 broker의 권한을 늘리지 않는다.
+AppArmor attach/enforce 상태, 모든
 민감 경로의 write deny와 나머지 민감정보 deny는 option 값과 무관한 불변조건이다.
 
-## 5. Telegram 모드 계약
+## 5. Telegram session·권한 계약
 
-| 동작 | `read_only` | `confirm_changes` | `autonomous` |
-| --- | --- | --- | --- |
-| 상태·registry·로그 조회 | 허용 | 허용 | 허용 |
-| dashboard 관찰 | 허용 | 허용 | 허용 |
-| `/config` 또는 HA persistent 변경 | 거부 | 매번 확인 | 저위험만 자동 |
-| HA `service_call` | 거부 | 매번 확인 | 항상 확인 |
-| transient `device_test` | 거부 | 매번 확인 | 항상 확인 |
-| 고위험 동작 | 거부 | 항상 확인 | 항상 확인 |
-
-고위험 분류는 코드와 사용자 prompt가 낮출 수 없다. 자세한 목록과 확인
-state machine은 [security.md](security.md)와
-[telegram-spec.md](telegram-spec.md)에 고정한다.
-`device_test`는 persistent `service_call`과 다른 typed operation이다. 허용된 on/off
-entity의 fresh prior-state precondition, distinct test target, test-state fresh verify,
-always-run restore service와 fresh restore verify가 모두 필요하며 항상 high risk다.
+- 권한은 global `antigravity_tool_permission`, sandbox와 민감정보 option에서만 온다.
+- session key는 인증된 `(user_id, chat_id)`이며 최초 실행 전에 conversation ID를
+  영속 결합한다. 동일 key의 요청과 승인 callback은 직렬화한다.
+- `/new`가 아니면 conversation ID를 교체하거나 worker 실패를 이유로 자동 회전하지
+  않는다.
+- model 결과는 암호화된 영속 reply outbox에 먼저 기록하고 Telegram API가 전달을
+  확인한 뒤 제거한다. 429처럼 미전송이 명확한 오류만 bounded backoff로 재시도하고,
+  crash·network·timeout·5xx처럼 전달 여부가 모호하면 `/retry`까지 격리한다.
+- 고위험 분류는 global policy나 사용자 prompt가 낮출 수 없다. 자세한 목록과 확인
+  state machine은 [security.md](security.md)와
+  [telegram-spec.md](telegram-spec.md)에 고정한다.
 
 ## 6. 비기능 요구사항
 

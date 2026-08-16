@@ -93,7 +93,8 @@ Antigravity 명령이나 설정을 추정하지 않는다. 문서와 고정 bina
 
 - Antigravity 1.1.11의 native CLI, `settings.json`, MCP와 plugin 경로만 사용한다.
 - Ingress, 공개키 SSH와 Telegram에서 정의된 사용자 흐름이 동작한다.
-- Telegram 세 모드와 고위험 항상 확인 규칙이 우회 불가능하다.
+- Telegram이 CLI의 전역 환경·권한을 상속하고 `/new`까지 같은 session과 reply
+  outbox를 유지하며 고위험 항상 확인 규칙이 우회 불가능하다.
 - custom AppArmor가 항상 활성화되고 민감 경로 차단을 실제 HAOS에서 확인한다.
 - HA API, 로그, 메모리와 dashboard browser 기능이 최소권한 경계 안에서
   동작한다.

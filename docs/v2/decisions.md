@@ -39,9 +39,9 @@
 
 - 상태: `Accepted`
 - AppArmor를 끄는 option은 제공하지 않는다.
-- `antigravity_sensitive_data_access`는 interactive Antigravity child를 restricted와
+- `antigravity_sensitive_data_access`는 Web/SSH/Telegram Antigravity child를 restricted와
   sensitive-read profile 중 하나로 전환할 뿐이다.
-- sensitive-read도 지정된 세 진단 경로의 read-only만 허용하며 Telegram, broker,
+- sensitive-read도 지정된 세 진단 경로의 read-only만 허용하며 broker,
   browser와 memory 권한은 바꾸지 않는다.
 
 ## ADR-004 — Telegram bridge 전면 교체
@@ -49,8 +49,18 @@
 - 상태: `Accepted`
 - v1의 shell/tmux prompt runner, static PIN 노출과 interactive approval 전달 경로는
   migration하거나 fallback으로 남기지 않는다.
-- v2는 전용 native HOME과 safe cwd, user/chat 교집합, durable update ledger, typed
-  proposal과 분리된 coordinator broker만 사용한다.
+- 2.0.7부터 Telegram은 CLI와 동등한 관리자 주 채널이며 `/data/home`, `/config`,
+  OAuth, global/workspace plugin·agent·rule·MCP와 native permission을 공유한다.
+- Telegram 전용 `telegram_access_mode`, `ha-telegram-login`, HOME/bootstrap과 fixed
+  customization copy를 제거한다. legacy mode 값은 migration에서 무시·제거한다.
+- user/chat 교집합, 최초 실행 전 stable conversation binding, explicit `/new`,
+  per-session 직렬화, same-session approval과 암호화 reply outbox를 사용한다.
+- 설계 비교 기준은 Hermes의
+  [결정적 session key와 single-flight](https://github.com/NousResearch/hermes-agent/blob/7095e23eb2066fe9a2f93b99cdbfe0e2b5ece397/gateway/session.py#L1090-L1211),
+  [session-bound Telegram approval](https://github.com/NousResearch/hermes-agent/blob/7095e23eb2066fe9a2f93b99cdbfe0e2b5ece397/plugins/platforms/telegram/adapter.py#L6140-L6214),
+  grammY의 [session-key 기반 직렬화](https://github.com/grammyjs/runner/blob/fbe8cee2d41efb91c39ac104692f1ecdac4e014d/src/sequentialize.ts#L6-L89),
+  CCGram의 [Antigravity conversation 재개](https://github.com/alexei-led/ccgram/blob/b7088fd187c6984ee89843d0c5f19db59e123600/src/ccgram/providers/antigravity.py#L451-L465)다.
+  외부 코드를 이식하거나 dependency로 추가하지 않고 이 불변조건만 독립 구현한다.
 - 실제 HAOS OAuth·AppArmor·Bot API 수용 시험 전에는 `telegram_enabled=false`를
   기본값으로 유지한다.
 

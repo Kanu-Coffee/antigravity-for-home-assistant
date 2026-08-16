@@ -102,10 +102,14 @@ def test_current_supervisor_prevalidation_fixture(
             "App.update stores the new App config",
             "App.update finally restores the running App with App.start",
             "App.start calls App.write_options",
-            "App.write_options validates merged defaults and persisted options",
+            "App.write_options validates merged defaults and persisted options into the container options.json without replacing persisted raw options",
+            "POST self/options validates the full options body, replaces persisted options, and saves it",
             "App.start runs the container only after validation succeeds",
         ],
-        "unknown_option_behavior": "drop",
+        "unknown_option_behavior": {
+            "container_options_json": "drop",
+            "persisted_raw_options": "retain_until_full_self_options_post",
+        },
     }
     assert fixture["expected_container_init_reached"] is True
 
@@ -135,6 +139,8 @@ def test_current_supervisor_prevalidation_fixture(
             persisted,
             schema,
         )
+        assert persisted["telegram_access_mode"] == "autonomous"
+        assert "telegram_access_mode" not in prevalidated
         assert prevalidated["antigravity_user_files_update_mode"] == legacy_mode
         assert set(fixture["expected_dropped_keys"]).isdisjoint(prevalidated)
         for key in fixture["expected_current_default_keys"]:
@@ -147,6 +153,13 @@ def test_current_supervisor_prevalidation_fixture(
             **prevalidated,
             "antigravity_user_files_update_mode": "refresh_managed",
         }
+        persisted_after_full_post = _supervisor_write_options_model(
+            {},
+            normalized,
+            schema,
+        )
+        assert persisted_after_full_post == normalized
+        assert "telegram_access_mode" not in persisted_after_full_post
 
 
 def test_supervisor_options_migration_component_suite(
@@ -192,8 +205,18 @@ def test_migration_helper_has_fixed_private_request_boundary(
     assert 'HOME: "/nonexistent"' in helper
     assert "delete process.env.SUPERVISOR_TOKEN" in helper
     assert "process.argv.length !== 2" in helper
+    assert 'RETIRED_TELEGRAM_OPTION = "telegram_access_mode"' in helper
+    assert '"remove-telegram-access-mode@2.0.7"' in helper
+    assert "delete normalized[RETIRED_TELEGRAM_OPTION]" in helper
+    assert (
+        '"/data/antigravity-ha/migration/supervisor-options-2.0.7.json"'
+        in helper
+    )
+    assert "forceSanitizedPost: !scrubCompleted" in helper
+    assert "recordCompletion(completionPath, requiredUid)" in helper
+    assert "renameSync(stagedPath, path)" in helper
+    assert "fsyncPrivateDirectory(stateDirectory, requiredUid)" in helper
     assert "writeFileSync(optionsPath" not in helper
-    assert "renameSync" not in helper
     for injection_name in (
         "HTTP_PROXY",
         "HTTPS_PROXY",
@@ -247,9 +270,6 @@ def test_init_preserves_then_confines_supervisor_bootstrap_credential(
     first_external_index = init.index("rm -rf --", unset_index)
     user_files_index = init.index("/usr/local/bin/antigravity-user-files-update")
     plugin_index = init.index('"${MANAGED_PLUGIN_UPDATE}"')
-    telegram_index = init.index(
-        "/usr/local/libexec/ha-telegram-home-bootstrap --runtime"
-    )
     token_write_index = init.index(
         "printf '%s' \"${supervisor_credential_bootstrap}\""
     )
@@ -262,10 +282,16 @@ def test_init_preserves_then_confines_supervisor_bootstrap_credential(
     assert "export -n supervisor_credential_bootstrap" in init[
         unset_index:first_external_index
     ]
-    assert user_files_index < plugin_index < telegram_index < token_write_index
+    assert user_files_index < plugin_index < token_write_index
     assert token_write_index < bootstrap_unset_index < migration_index
     assert "${SUPERVISOR_TOKEN" not in init[unset_index + 1 :]
-    assert "legacy_user_files_mode_migration_pending=false" in init
+    assert "legacy_user_files_mode_migration_pending" not in init
+    assert '"${SUPERVISOR_OPTIONS_MIGRATION}"' in init
+    assert (
+        'if [[ "${supervisor_credential_available}" == true ]]; then' in init
+    )
+    assert "Skipped Supervisor option migration because no Supervisor credential" in init
+    assert "Removed or normalized deprecated App options" in init
     assert "persistence will retry on the next App start" in init
 
 

@@ -2,6 +2,23 @@
 set -Eeuo pipefail
 unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
 
+requester_environment=()
+if [[ -v ANTIGRAVITY_HA_CHANNEL || -v HA_TELEGRAM_USER_ID \
+  || -v HA_TELEGRAM_CHAT_ID ]]; then
+  if [[ "${ANTIGRAVITY_HA_CHANNEL:-}" != telegram \
+    || ! "${HA_TELEGRAM_USER_ID:-}" =~ ^[1-9][0-9]{0,19}$ \
+    || ! "${HA_TELEGRAM_CHAT_ID:-}" =~ ^-?[1-9][0-9]{0,19}$ ]]; then
+    printf 'antigravity: invalid Telegram requester binding\n' >&2
+    exit 78
+  fi
+  requester_environment=(
+    ANTIGRAVITY_HA_CHANNEL=telegram
+    "HA_TELEGRAM_USER_ID=${HA_TELEGRAM_USER_ID}"
+    "HA_TELEGRAM_CHAT_ID=${HA_TELEGRAM_CHAT_ID}"
+  )
+fi
+unset ANTIGRAVITY_HA_CHANNEL HA_TELEGRAM_USER_ID HA_TELEGRAM_CHAT_ID
+
 exec /usr/bin/env -i \
   AGY_CLI_DISABLE_AUTO_UPDATE=true \
   HOME=/data/home \
@@ -9,4 +26,5 @@ exec /usr/bin/env -i \
   LC_ALL=C.UTF-8 \
   PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
   TERM=xterm-256color \
+  "${requester_environment[@]}" \
   /usr/local/libexec/antigravity-real "$@"

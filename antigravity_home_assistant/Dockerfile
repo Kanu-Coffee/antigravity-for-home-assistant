@@ -4,7 +4,7 @@ FROM ${BUILD_FROM}
 
 ARG DEBIAN_SNAPSHOT=20260812T000000Z
 ARG BUILD_ARCH=amd64
-ARG BUILD_VERSION=2.0.6
+ARG BUILD_VERSION=2.0.7
 ARG SOURCE_REVISION=""
 ARG SOURCE_ROOTFS_SHA256=""
 ARG TARGETARCH
@@ -209,10 +209,6 @@ RUN manifest=/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
     && printf '%s\n' "${BUILD_VERSION}" > /usr/local/share/antigravity-ha/app-version \
     && find /usr/local/share/antigravity-ha/plugins -type d -exec chmod 0755 {} + \
     && find /usr/local/share/antigravity-ha/plugins -type f -exec chmod 0644 {} + \
-    && chown 0:0 /usr/local/share/antigravity-ha/telegram-workspace \
-      /usr/local/share/antigravity-ha/telegram-workspace/.antigravity-ha-managed \
-    && chmod 0555 /usr/local/share/antigravity-ha/telegram-workspace \
-    && chmod 0444 /usr/local/share/antigravity-ha/telegram-workspace/.antigravity-ha-managed \
     && chmod 0755 \
       /etc/s6-overlay/s6-rc.d/antigravity-ha-init/run \
       /etc/s6-overlay/s6-rc.d/ha-change-broker/run \
@@ -230,7 +226,6 @@ RUN manifest=/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
     && chmod 0644 \
       /etc/antigravity/mcp_config.json \
       /etc/antigravity/settings.json \
-      /etc/antigravity/telegram-settings.json \
       /etc/profile.d/antigravity-ha.sh \
       /usr/local/lib/antigravity-ha/api-client.sh \
       /usr/local/lib/antigravity-ha/browser-approval.sh \
@@ -257,7 +252,6 @@ RUN manifest=/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
       /usr/local/share/antigravity-ha/playwright-init-page.ts \
       /usr/local/share/antigravity-ha/playwright-mcp-proxy.mjs \
       /usr/local/share/antigravity-ha/playwright-mcp.json \
-      /usr/local/share/antigravity-ha/playwright-telegram-init-page.ts \
       /usr/local/share/antigravity-ha/source-rootfs-manifest.json \
       /usr/local/share/antigravity-ha/supervisor-credential-fd.mjs \
       /usr/local/share/antigravity-ha/supervisor-options-migrate.mjs \

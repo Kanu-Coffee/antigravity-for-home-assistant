@@ -12,9 +12,6 @@ configuration:
   telegram_allowed_chat_ids:
     name: 허용할 Telegram 채팅 ID
     description: 정적 인증에 사용할 Telegram 채팅 ID 목록입니다. 정적 인증은 채팅과 사용자 허용 목록이 모두 일치해야 하며, 비어 있으면 유효한 로컬 페어링 승인이 없는 한 차단됩니다.
-  telegram_access_mode:
-    name: Telegram 접근 모드
-    description: read_only는 변경을 차단하고, confirm_changes는 동일 채팅의 만료형 확인을 요구하며, autonomous도 고위험 작업에는 항상 확인을 요구합니다.
   authorized_keys:
     name: SSH 허용 공개키
     description: root 로그인을 허용할 OpenSSH 공개키입니다. 비밀번호 로그인은 항상 차단됩니다.
@@ -26,7 +23,7 @@ configuration:
     description: 브라우저 재접속 후 터미널을 복원하는 공유 세션 이름입니다.
   antigravity_tool_permission:
     name: Antigravity 도구 권한
-    description: Antigravity 네이티브 toolPermission 정책입니다. request-review가 안전한 기본값이며 always-proceed는 App 경계 안에서 가장 높은 자율성을 허용합니다.
+    description: Web, SSH와 Telegram이 공유하는 Antigravity 네이티브 toolPermission 정책입니다. request-review가 안전한 기본값이며 always-proceed는 App 경계 안에서 가장 높은 자율성을 허용합니다.
   antigravity_terminal_sandbox:
     name: Antigravity 터미널 샌드박스 사용
     description: 지원되는 환경에서 Antigravity의 명령 실행을 Linux 터미널 샌드박스 안으로 제한합니다.
@@ -34,9 +31,9 @@ configuration:
     name: 민감한 HA 데이터 진단 읽기 허용
     description: >-
       끄면 Antigravity가 secrets.yaml, .storage, Recorder 데이터베이스에
-      접근하지 못합니다. 켜도 대화형 Antigravity 자식 프로세스만 진단 목적으로
-      이 세 영역을 읽을 수 있고 쓰기는 계속 차단됩니다. Telegram, 브라우저,
-      메모리, App 토큰, SSH 키, 백업, SSL 및 클라우드 자격 증명은 항상
+      접근하지 못합니다. 켜면 Web, SSH와 Telegram Antigravity 자식 프로세스가
+      이 세 영역을 진단 목적으로 읽을 수 있고 쓰기는 계속 차단됩니다. 브라우저,
+      메모리, App 토큰, SSH 키, 백업, SSL 및 클라우드 자격 증명은 계속
       격리됩니다. 변경 후 App을 재시작하세요.
   antigravity_user_files_update_mode:
     name: Antigravity 사용자 파일 업데이트 방식

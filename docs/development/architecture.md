@@ -1,5 +1,9 @@
 # architecture.md — 시스템 아키텍처
 
+> 역사 문서입니다. 2.0.7의 Telegram은 CLI와 shared Home/project/policy를 사용하며
+> stable session과 encrypted reply outbox를 갖습니다. 현재 아키텍처는
+> [v2 architecture](../v2/architecture.md)를 따릅니다.
+
 ## 1. 컨텍스트
 
 ```text

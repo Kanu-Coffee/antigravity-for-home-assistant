@@ -1,5 +1,6 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
 
 if (( $# != 0 )); then
   printf 'ha-change-proposal-mcp: command-line arguments are not supported\n' >&2
@@ -8,6 +9,10 @@ fi
 
 telegram_user_id=${HA_TELEGRAM_USER_ID-}
 telegram_chat_id=${HA_TELEGRAM_CHAT_ID-}
+if [[ "${ANTIGRAVITY_HA_CHANNEL:-}" != telegram ]]; then
+  printf 'ha-change-proposal-mcp: invalid Telegram channel binding\n' >&2
+  exit 78
+fi
 if [[ ! "$telegram_user_id" =~ ^[1-9][0-9]{0,19}$ ]]; then
   printf 'ha-change-proposal-mcp: invalid Telegram user binding\n' >&2
   exit 78

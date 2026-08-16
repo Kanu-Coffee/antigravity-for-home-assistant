@@ -24,11 +24,13 @@ Antigravity native plugin으로 제공한다.
 2. Antigravity 1.1.11의 실제 CLI와 JSON 설정만 사용한다.
 3. 사용자 Home Assistant 설정과 기존 `/data` 상태가 명시한 migration 정책에
    따라 보존되며 실패 시 복구할 수 있다.
-4. Telegram은 허용된 사용자와 채팅만 처리하고, 모드별 변경 정책 및 고위험
-   항상 확인을 강제한다.
+4. Telegram은 허용된 사용자와 채팅만 처리하며 CLI의 OAuth·전역 customization·
+   native permission을 상속한다. `/new`까지 stable session과 same-session approval,
+   durable reply delivery를 유지하고 고위험 항상 확인을 강제한다.
 5. AppArmor는 항상 활성화된다. 민감정보 option이 꺼지면 보호 경로를 읽지
    못하고, 켜져도 명시한 Home Assistant 민감 설정과 Recorder 자료만 read-only로
-   허용하며 App·OAuth·SSH credential은 계속 차단한다.
+   허용한다. raw App·SSH credential은 계속 차단하고, 공유 native OAuth는
+   Antigravity 실행에만 사용하며 model output·로그·Telegram reply로 노출하지 않는다.
 6. HA API, 로그, 메모리와 브라우저 기능이 비밀을 model, 로그, artifact 또는
    Telegram으로 노출하지 않는다.
 7. amd64와 aarch64가 동일한 numeric tag와 GHCR multi-arch manifest로

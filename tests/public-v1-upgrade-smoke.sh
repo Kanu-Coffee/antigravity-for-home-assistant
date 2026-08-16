@@ -636,8 +636,7 @@ assert_no_canary_in_runtime_targets() {
       local target_path
       local target_contract
       case "$link_path" in
-        /data/home/.gemini/antigravity-cli/cli.log | \
-          /data/antigravity-ha/telegram-home/.gemini/antigravity-cli/cli.log)
+        /data/home/.gemini/antigravity-cli/cli.log)
           ;;
         *) return 1 ;;
       esac
@@ -728,7 +727,6 @@ assert_no_canary_in_runtime_targets() {
 
 assert_managed_plugin_contract() {
   local container=$1
-  local agent_output
   local plugin=/data/home/.gemini/config/plugins/home-assistant
   local marker=${plugin}/.antigravity-ha-managed.json
   local settings=/data/home/.gemini/antigravity-cli/settings.json
@@ -771,16 +769,8 @@ assert_managed_plugin_contract() {
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     /usr/local/libexec/antigravity-real plugin validate "${plugin}" \
     >/dev/null || fail 'the native Antigravity CLI rejected the installed plugin'
-  agent_output=$(container_exec "${container}" env -i \
-    AGY_CLI_DISABLE_AUTO_UPDATE=true \
-    HOME=/data/home \
-    LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8 \
-    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    /usr/local/libexec/antigravity-real agent) \
-    || fail 'the native Antigravity CLI could not discover installed agents'
-  grep -Fxq ha-telegram <<< "${agent_output}" \
-    || fail 'the native Antigravity CLI did not discover ha-telegram'
+  container_exec "${container}" test ! -e "${plugin}/agents/ha-telegram" \
+    || fail 'the retired Telegram-only agent was installed during upgrade'
   [[ $(container_hash "${container}" "${settings}") == \
     "${settings_hash_before}" \
     && $(file_observation "${container}" "${settings}") == \
@@ -1024,11 +1014,27 @@ MAPPING_FIXTURE
       and ((.permissions.deny | length) == (.permissions.deny | unique | length))
       and (.permissions.allow | index("mcp(ha_read/ha_read_state)") != null)
       and (.permissions.allow | index("mcp(playwright/browser_snapshot)") != null)
+      and (.permissions.allow | index("read_file(/config)") != null)
+      and (.permissions.allow | index("write_file(/config)") != null)
+      and (.permissions.allow | index("read_file(/data/home/.gemini/config)") != null)
+      and (.permissions.allow | index("write_file(/data/home/.gemini/config)") != null)
+      and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/agents)") != null)
+      and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/agents)") != null)
+      and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/plugins)") != null)
+      and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/plugins)") != null)
+      and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/skills)") != null)
+      and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/skills)") != null)
+      and (.permissions.allow | index("read_file(/data/home/.gemini/GEMINI.md)") != null)
+      and (.permissions.allow | index("write_file(/data/home/.gemini/GEMINI.md)") != null)
+      and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
+      and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
       and (.permissions.ask | index("command(*)") != null)
       and (.permissions.ask | index("mcp(home-assistant/*)") != null)
       and (.permissions.ask | index("mcp(playwright/browser_click)") != null)
       and (.permissions.deny | index("command(sudo)") != null)
       and (.permissions.deny | index("read_file(/config/secrets.yaml)") != null)
+      and (.permissions.deny | index("read_file(/data)") == null)
+      and (.permissions.deny | index("write_file(/data)") == null)
       and (has("browser_approval_policy") | not)
       and (has("antigravity_token") | not)
       and (has("home_assistant_browser_token") | not))

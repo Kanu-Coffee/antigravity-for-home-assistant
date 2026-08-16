@@ -238,8 +238,9 @@ def test_native_oauth_residual_risk_is_not_claimed_as_isolated() -> None:
     normalized = re.sub(r"\s+", " ", security)
     for fragment in (
         "Native OAuth 잔여 위험",
-        "`/data/home/**` read-write",
-        "완전한 token isolation로 표현하지 않는다",
+        "`HOME=/data/home`과 `/config`를 의도적으로 공유",
+        "global 및 workspace plugin·agent·rule·MCP 상속과 수정을 제품 계약",
+        "credential isolation 보장이 아니다",
         "release blocker",
     ):
         assert fragment in normalized, f"missing native OAuth residual-risk text: {fragment}"
@@ -265,7 +266,7 @@ def test_apparmor_docs_describe_discrete_px_profiles() -> None:
         )
 
 
-def test_telegram_isolation_canary_is_local_and_haos_gate_remains() -> None:
+def test_telegram_shared_context_inheritance_is_local_and_haos_gate_remains() -> None:
     documents = {
         name: re.sub(r"\s+", " ", read(V2 / name))
         for name in (
@@ -275,18 +276,42 @@ def test_telegram_isolation_canary_is_local_and_haos_gate_remains() -> None:
             "checklist.md",
         )
     }
-    for name, text in documents.items():
-        for fragment in (
-            "global",
-            "OAuth 인증 완료 전",
-            "/data/antigravity-ha/telegram-home",
-        ):
-            assert fragment in text, f"{name} omits Telegram isolation evidence: {fragment}"
+    expected_by_document = {
+        "security.md": (
+            "HOME=/data/home",
+            "/config",
+            "관리자 주 채널",
+            "global 및 workspace plugin·agent·rule·MCP",
+            "positive canary",
+        ),
+        "telegram-spec.md": (
+            "/data/home",
+            "/config",
+            "global/workspace plugin·agent·rule·MCP",
+            "`/new`",
+            "encrypted outbox",
+        ),
+        "test-plan.md": (
+            "shared `/data/home`·`/config`",
+            "positive inheritance",
+            "settings 수정 canary",
+            "실제 HAOS",
+        ),
+        "checklist.md": (
+            "`/data/home`, `/config`, OAuth",
+            "positive control",
+            "`/new`",
+            "reply outbox",
+        ),
+    }
+    for name, fragments in expected_by_document.items():
+        for fragment in fragments:
+            assert fragment in documents[name], (
+                f"{name} omits Telegram shared-context evidence: {fragment}"
+            )
+        assert "/data/antigravity-ha/telegram-home" not in documents[name]
+        assert "--agent ha-telegram" not in documents[name]
 
-    assert "--agent ha-telegram" in documents["security.md"]
-    assert "/config/.agents" in documents["security.md"]
-    assert "실행되지 않" in documents["security.md"]
-    assert "primary OAuth" in documents["telegram-spec.md"]
     assert "AG-013" in documents["test-plan.md"]
 
     checklist = documents["checklist.md"]
@@ -298,9 +323,9 @@ def test_telegram_isolation_canary_is_local_and_haos_gate_remains() -> None:
         ),
         None,
     )
-    assert row is not None, "missing Telegram customization-isolation milestone"
+    assert row is not None, "missing Telegram shared-customization milestone"
     assert "`PARTIAL`" in row and "`VERIFIED`" not in row
-    assert "release blocker" in checklist
+    assert "HAOS OAuth/AppArmor TODO" in row
 
 
 def test_architecture_matches_current_s6_and_runtime_socket_graph() -> None:
@@ -315,12 +340,14 @@ def test_architecture_matches_current_s6_and_runtime_socket_graph() -> None:
         "change-broker.sock",
         "browser gateway는 별도 s6 longrun이 아니다",
         "/etc/antigravity/settings.json",
-        ".antigravity-ha-managed",
+        "안전한 ownership marker",
         "/data/antigravity-ha/change-broker/",
         "/data/browser-auth/",
         "ha-sshd-runtime",
         "ha-ssh-session",
-        "telegram-plugin.sh",
+        "ha-telegram-runtime",
+        "Telegram은 별도 settings/plugin copy를 만들지 않고",
+        "공유 `/data/home`, `/config`, OAuth",
         "production transport ownership",
         "일반 `ha_read_*` 조회",
         "privileged mutation/browser-auth",
@@ -329,6 +356,8 @@ def test_architecture_matches_current_s6_and_runtime_socket_graph() -> None:
     assert "credential-broker (longrun)" not in architecture
     assert "gateway.sock" not in architecture
     assert "defaults/" not in architecture
+    assert "ha-telegram-worker" not in architecture
+    assert "telegram-plugin.sh" not in architecture
     assert '"target": "input_booleans.yaml"' in architecture
     assert '"targets"' not in architecture
 
@@ -466,10 +495,11 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
         "local_migration_rollback",
         "migration_modes",
         "native_updater_canary",
-        "oauth_isolation_persistence",
-        "telegram_modes",
+        "shared_runtime_persistence",
+        "telegram_session_delivery",
     }
     template = json.loads(read(V2 / "release-evidence-template.json"))
+    assert template["version"] == "2.0.7"
     assert set(template["gates"]) == expected_gates
     assert "HA-008" not in json.dumps(template, sort_keys=True)
     for gate in template["gates"].values():
@@ -491,7 +521,7 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
     assert gate_test_ids["haos_amd64_local_migration"][-1] == "HA-007"
     assert gate_test_ids["migration_modes"] == ["HA-007"]
     assert gate_test_ids["local_migration_rollback"] == ["HA-007"]
-    assert gate_test_ids["oauth_isolation_persistence"] == [
+    assert gate_test_ids["shared_runtime_persistence"] == [
         "HA-001",
         "HA-004",
         "HA-006",
@@ -502,6 +532,17 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
     migration_checks = gate_checks["haos_amd64_local_migration"]
     assert "oauth_browser_memory_persist_after_update" in migration_checks
     assert "native_updater_disabled_after_migration" in migration_checks
+    shared_runtime_checks = gate_checks["shared_runtime_persistence"]
+    assert "telegram_shared_identity_login" in shared_runtime_checks
+    assert "user_global_customization_inherited" in shared_runtime_checks
+    assert "user_global_customization_mutable" in shared_runtime_checks
+    assert "telegram_separate_identity_login" not in shared_runtime_checks
+    assert "user_global_mcp_absent_before_and_after_auth" not in shared_runtime_checks
+    telegram_delivery_checks = gate_checks["telegram_session_delivery"]
+    assert "explicit_new_only_session_rotation" in telegram_delivery_checks
+    assert "response_outbox_crash_recovery" in telegram_delivery_checks
+    assert "shared_customization_inherited" in telegram_delivery_checks
+    assert "telegram_home_customization_isolated" not in telegram_delivery_checks
 
     workflow = read(ROOT / ".github" / "workflows" / "haos-evidence.yaml")
     choice_block = workflow.split("      gate:", 1)[1].split("      report_json:", 1)[0]
@@ -942,7 +983,6 @@ def test_antigravity_contract_matches_managed_plugin_inventory() -> None:
         if path.is_file()
     }
     expected = {
-        "agents/ha-telegram/agent.md",
         "mcp_config.json",
         "plugin.json",
         "rules/home-assistant-safety.md",
@@ -956,6 +996,8 @@ def test_antigravity_contract_matches_managed_plugin_inventory() -> None:
     for relative in expected:
         assert relative.rsplit("/", maxsplit=1)[-1] in contract
     for stale in (
+        "agents/ha-telegram/agent.md",
+        "ha-telegram-worker",
         "│  ├─ safety.md",
         "│  ├─ memory.md",
         "│  └─ browser.md",

@@ -33,11 +33,11 @@
 | --- | --- | --- |
 | Ingress Web terminal | 대화형 Antigravity와 로컬 관리 | native permission + AppArmor |
 | 공개키 SSH | 신뢰하는 관리자의 원격 shell | native permission + AppArmor |
-| Telegram Bot | 제한된 비대화형 질문·proposal | read/proposal worker + 승인 broker |
+| Telegram Bot | 관리자급 Antigravity 주 채널 | native permission + AppArmor + 승인 broker |
 
-Ingress와 SSH는 같은 `/config` 프로젝트와 영속 Home을 사용합니다. Telegram은
-별도 `agy --print` worker를 사용하며 Web terminal의 shell이나 tmux 입력을
-중계하지 않습니다.
+Ingress, SSH와 Telegram은 같은 `/config` 프로젝트, `/data/home`, OAuth, 전역·
+workspace plugin/agent/rule/MCP와 권한 정책을 사용합니다. Telegram transport는
+Web terminal의 shell이나 tmux 입력을 중계하지 않지만 별도 격리 identity는 아닙니다.
 
 ## 설치
 
@@ -103,13 +103,13 @@ v2는 Antigravity 1.1.11의 native JSON/plugin 경로를 사용합니다.
 | global MCP settings | `/data/home/.gemini/config/mcp_config.json` |
 | App 관리 HA plugin | `/data/home/.gemini/config/plugins/home-assistant/` |
 | workspace MCP | `/config/.agents/mcp_config.json` |
-| Telegram 전용 native HOME | `/data/antigravity-ha/telegram-home/` |
+| Web/SSH/Telegram 공유 HOME | `/data/home/` |
 
 App은 기존의 알 수 없는 사용자 JSON key와 사용자 plugin을 보존하고 자신이 소유한
 key만 merge합니다. 프로젝트의 `/config/AGENTS.md`를 HA preset으로 자동 생성하거나
 덮어쓰지 않습니다. HA용 기본 규칙, skills와 MCP는 image-managed
-`home-assistant` plugin에 있습니다.
-Telegram worker는 위 대화형 global/workspace customization을 상속하지 않습니다.
+`home-assistant` plugin에 있습니다. Telegram에서 실행한 Antigravity도 이
+global/workspace customization을 상속하고 사용자 요청에 따라 수정할 수 있습니다.
 
 ## App 설정
 
@@ -120,7 +120,6 @@ telegram_enabled: false
 telegram_bot_token: ""
 telegram_allowed_user_ids: []
 telegram_allowed_chat_ids: []
-telegram_access_mode: confirm_changes
 authorized_keys: []
 web_terminal_auto_start_antigravity: false
 tmux_session_name: antigravity-ha
@@ -140,13 +139,12 @@ log_level: info
 | `telegram_bot_token` | `""` | BotFather secret token. 로그·이슈에 노출 금지 |
 | `telegram_allowed_user_ids` | `[]` | 허용할 numeric user ID 문자열 목록 |
 | `telegram_allowed_chat_ids` | `[]` | 허용할 numeric chat ID 문자열 목록 |
-| `telegram_access_mode` | `confirm_changes` | `read_only`, `confirm_changes`, `autonomous` |
 | `authorized_keys` | `[]` | SSH root 로그인을 허용할 OpenSSH 공개키 한 줄 목록 |
 | `web_terminal_auto_start_antigravity` | `false` | 새 tmux session에서 `agy`를 한 번 자동 시작 |
 | `tmux_session_name` | `antigravity-ha` | `[A-Za-z0-9._-]`로 된 1~64자 session 이름 |
 | `antigravity_tool_permission` | `request-review` | `request-review`, `proceed-in-sandbox`, `always-proceed`, `strict` |
-| `antigravity_terminal_sandbox` | `true` | 대화형 CLI에 native `--sandbox` 적용 여부 |
-| `antigravity_sensitive_data_access` | `false` | AppArmor를 유지한 채 대화형 child의 세 민감 경로 진단 read-only 허용 여부 |
+| `antigravity_terminal_sandbox` | `true` | Web/SSH/Telegram CLI에 native `--sandbox` 적용 여부 |
+| `antigravity_sensitive_data_access` | `false` | AppArmor를 유지한 채 Web/SSH/Telegram child의 세 민감 경로 진단 read-only 허용 여부 |
 | `antigravity_user_files_update_mode` | `preserve` | `preserve`, `refresh_managed`, `reset_v2`; 폐기 예정 migration-only `refresh_agents`, `refresh_all` |
 | `home_assistant_browser_auto_auth` | `true` | local-only read-only browser identity 자동 관리 |
 | `log_level` | `info` | `trace`, `debug`, `info`, `notice`, `warning`, `error`, `fatal` |
@@ -154,16 +152,18 @@ log_level: info
 App의 Network 설정 `22/tcp` host port 기본값은 `2224`입니다. JSON option이 아니며
 SSH를 사용하지 않으면 port를 비활성화할 수 있습니다.
 
-`always-proceed`는 native prompt를 줄이는 값일 뿐 AppArmor deny, Telegram
-위험도 재분류 또는 broker 확인을 약화하지 않습니다. terminal sandbox를 끄는 것도
-AppArmor를 끄지 않습니다.
+Telegram은 별도 mode를 사용하지 않고 `antigravity_tool_permission`,
+`antigravity_terminal_sandbox`, `antigravity_sensitive_data_access`를 Web/SSH와
+동일하게 따릅니다. `always-proceed`와 sandbox 해제도 AppArmor나 명시적인 고위험
+사람 확인을 끄지 않습니다.
 
 ### 설정 변경 후
 
-설정을 저장한 뒤 App을 재시작합니다. native settings, plugin, MCP, terminal
-profile 또는 Telegram mode를 바꿨다면 기존 Antigravity process를 끝내고 새 세션을
-시작합니다. 민감정보 옵션의 profile attach가 실패하면 넓은 권한으로 fallback하지
-않고 대화형 Antigravity 시작이 실패해야 합니다.
+설정을 저장한 뒤 App을 재시작합니다. native settings, plugin, MCP 또는 전역 권한
+profile을 바꿨다면 Web/SSH의 기존 Antigravity process를 끝내고 새로 시작합니다.
+Telegram binding은 재시작 뒤에도 유지되며 사용자가 `/new`를 보낼 때만 회전합니다.
+민감정보 옵션의 profile attach가 실패하면 넓은 권한으로 fallback하지
+않고 해당 Antigravity 실행이 실패해야 합니다.
 
 ## 접속 방법
 
@@ -193,19 +193,17 @@ port-forward하지 말고 신뢰하는 VPN 또는 mesh VPN을 사용하세요.
 ## Telegram
 
 > [!CAUTION]
-> actual Antigravity 1.1.11 local canary에서 공유 HOME의 global MCP launch를
-> 재현한 뒤, 전용 Telegram HOME/safe cwd worker에서는 같은 marker와
-> `/config/.agents` marker가 실행되지 않고 managed customization 변조가
-> fail-closed됨을 확인했습니다. 실제 HAOS OAuth 성공과 AppArmor enforce 전에는
-> `telegram_enabled: false`를 유지하세요.
+> Telegram은 CLI와 동등한 관리자 주 채널입니다. 허용된 사용자는 `/config`, OAuth와
+> 사용자가 만든 전역·workspace plugin/agent/rule/MCP 및 권한 설정을 읽고 수정할 수
+> 있습니다. bot token, 허용 chat과 Telegram 계정을 HA 관리자 credential처럼
+> 보호하세요. 실제 HAOS OAuth/AppArmor/Bot API 통합 E2E는 아직 `NOT RUN`입니다.
 
-신뢰하는 local Ingress/SSH TTY에서 `ha-telegram-login`을 실행해 별도 Telegram
-identity의 native first-run OAuth를 완료합니다. 대화형 HOME의 인증 자료를 복사하거나
-문서화되지 않은 credential 경로를 추정하지 않습니다.
+Web UI 또는 SSH에서 `ha-antigravity-login`으로 한 번 로그인합니다. Telegram도 같은
+`/data/home` identity를 사용하므로 별도 `ha-telegram-login`은 없습니다.
 
-Bot pairing은 Telegram user/chat 접근 인증일 뿐 이 별도 native OAuth를 완료하지
-않습니다. `/start`, `/help`, `/status`, `/new`, `/cancel`은 AI를 실행하지 않고 bridge가
-직접 처리하는 local control command이며, 자연어 text만 Antigravity worker로 갑니다.
+Bot pairing은 이 관리자 환경에 접근할 Telegram user/chat을 인증합니다. `/start`,
+`/help`, `/status`, `/new`, `/cancel`은 AI를 실행하지 않고 bridge가 직접 처리하는
+local control command이며, 자연어 text만 같은 Antigravity 환경으로 갑니다.
 
 ### Bot 생성
 
@@ -251,41 +249,48 @@ Telegram을 먼저 활성화했더라도 bridge는 Bot API에 연결하지 않�
 생성하면 App 재시작 없이 이를 감지해 연결합니다. 정적 목록을 나중에 바꾼 경우에는
 App 옵션 적용을 위해 재시작합니다.
 
-### 모드와 변경 정책
+### 권한과 변경 정책
 
-| 작업 | `read_only` | `confirm_changes` | `autonomous` |
-| --- | --- | --- | --- |
-| 상태·서비스·bounded 로그 조회 | 허용 | 허용 | 허용 |
-| dashboard 관찰 | 허용 | 허용 | 허용 |
-| 지원되는 `/config` 변경 | 거부 | 매번 확인 | broker 검증 저위험만 자동 |
-| HA `service_call` | 거부 | 매번 확인 | 매번 확인 |
-| restart/update/restore/delete | 거부 | 미지원·거부 | 미지원·거부 |
+Telegram 전용 `read_only`/`confirm_changes`/`autonomous` mode는 2.0.7에서 제거됐습니다.
+Web/SSH와 같은 native `antigravity_tool_permission` 및 sandbox/민감정보 설정을
+사용합니다. 2.0.6 이하에서 저장된 `telegram_access_mode`는 권한으로 사용하지 않는
+ignored migration input입니다. door lock, alarm, 안전 관련 heating/water, host/Core
+restart, backup restore, update, removal, credential·permission 변경처럼 별도 사람
+확인이 필요한 고위험 작업은 전역 tool policy로 낮출 수 없습니다.
 
-현재 최소 broker는 검증된 device safety metadata가 없으므로 모든
-`service_call`을 고위험으로 분류합니다. door lock, alarm, safety heating/water,
-host/Core restart, backup restore, update, removal, credential·permission 변경은
-prompt나 mode가 위험도를 낮출 수 없습니다.
+Antigravity 1.1.11의 `stream-json`에는 native 대화형 permission prompt를 Telegram에
+전달하고 같은 turn을 재개하는 protocol이 없습니다. 따라서 App이 관리하는 HA 변경은
+같은 session에 묶인 Telegram 승인 버튼을 사용하지만, global allow에 없는 임의 native
+tool은 `request-review`에서 비대화형 거부될 수 있습니다. 이 경우 별도 Telegram 정책으로
+우회하지 않으며 Web/SSH에서 검토하거나 전역 `antigravity_tool_permission`을 명시적으로
+조정합니다.
 
 ### 명령과 세션
 
 | 명령 | 동작 |
 | --- | --- |
 | `/start` | 인증 상태와 기본 안내 |
-| `/help` | 사용 가능한 명령과 현재 mode |
+| `/help` | 사용 가능한 명령과 현재 global permission |
 | `/status` | bridge와 현재 session 상태 |
+| `/retry` | 전달 여부가 불명확한 현재 session 응답을 명시적으로 재전송 |
 | `/new` | 해당 user·chat의 새 대화 시작 |
 | `/cancel` | 현재 queue 작업 취소 요청 |
 
 한 user·chat의 요청은 순서대로 처리되고 bounded queue, timeout과 응답 크기 제한을
-적용합니다. `/cancel`은 이미 외부에서 완료된 작업을 되돌리는 rollback 명령이
+적용합니다. 첫 요청은 실행 전에 conversation ID를 영속 결합하며, 이후 대화와
+승인은 같은 session을 재사용합니다. 오직 `/new`만 새 session을 생성합니다.
+Antigravity 결과는 Telegram 전송 전에 암호화된 영속 outbox에 기록되고 API가 전달을
+확인한 뒤 제거됩니다. 429처럼 미전송이 명확한 오류만 bounded backoff로 재시도하고,
+전달 여부가 모호하면 `/retry` 전까지 격리합니다. `/cancel`은 이미 외부에서 완료된 작업을 되돌리는 rollback 명령이
 아닙니다.
 
 ### 승인 보안
 
 Telegram model process는 raw Supervisor token이나 최종 실행 socket을 받지 않고
 typed proposal만 만듭니다. bridge는 broker에서 proposal을 다시 조회한 뒤 preview를
-보여 줍니다. 확인은 proposal ID, 같은 user·chat, preview digest와 짧은 TTL에
-묶입니다. 256-bit 일회용 capability와 idempotency key가 재사용·중복 실행을
+보여 줍니다. 확인은 proposal ID, 같은 conversation·user·chat, preview digest와
+짧은 TTL에 묶입니다. 승인 callback과 그 결과도 원 요청의 session에서 이어집니다.
+256-bit 일회용 capability와 idempotency key가 재사용·중복 실행을
 막습니다. preview나 precondition이 바뀌거나 확인이 만료되면 새 proposal이
 필요합니다.
 
@@ -392,17 +397,16 @@ transition)** 선택입니다.
 
 ### 계속 차단되는 항목
 
-옵션 값과 관계없이 Telegram worker, browser, memory, broker와 일반 shell에는
-민감 read 권한이 추가되지 않습니다. SSH private/host key, OAuth·App·browser·bot
-token, backup, `/config/ssl` private material, cloud auth와 broker capability는 각
-소유 process 외에는 계속 거부됩니다.
+옵션 값과 관계없이 browser, memory, broker와 일반 shell에는 민감 read 권한이
+추가되지 않습니다. Web/SSH/Telegram Antigravity는 이 옵션을 함께 적용받습니다.
+SSH private/host key, App·browser·bot token, backup, `/config/ssl` private material,
+cloud auth와 broker capability는 각 소유 process 외에는 계속 거부됩니다.
 
-native OAuth를 사용하는 대화형 Antigravity는 `/data/home`, Telegram worker는 별도
-`/data/antigravity-ha/telegram-home` read-write가 필요합니다. identity는 공유되지
-않지만 AppArmor는 각 owning process 안에서 정상 인증 read와 prompt/tool이 유도한
-credential read를 완전히 구분하지 못합니다. native permission, sandbox, shell-free
-worker, 별도 실행 프로필, output redaction과 broker가 추가 방어층이며 완전한 token
-isolation은 아닙니다. Telegram은 기본 OFF이며 실제 HAOS OAuth/AppArmor gate와 알려진
+Web/SSH/Telegram Antigravity는 `/data/home`과 `/config`를 의도적으로 공유합니다.
+따라서 AppArmor는 정상 OAuth·사용자 설정 접근과 Telegram prompt/tool이 유도한
+동일 접근을 구분하지 못합니다. 이는 격리 실패가 아니라 관리자 주 채널이라는 제품
+경계이며, exact user/chat 인증, native permission, sandbox, output redaction과 broker가
+추가 방어층입니다. Telegram은 기본 OFF이며 실제 HAOS OAuth/AppArmor gate와 알려진
 잔여 위험을 확인하세요.
 
 ## 업데이트, migration과 rollback
@@ -485,8 +489,8 @@ global `mcp_config.json`은 없을 때 빈 `mcpServers` 기본본만 생성하�
 ### OAuth 실패
 
 - Web terminal 또는 SSH가 controlling TTY인지 확인합니다.
-- 대화형 기본 identity는 `ha-antigravity-login`, Telegram 전용 identity는
-  `ha-telegram-login`을 실행해 CLI가 제시하는 Google 흐름을 따릅니다.
+- Web/SSH/Telegram 공유 identity는 `ha-antigravity-login`을 실행해 CLI가 제시하는
+  Google 흐름을 따릅니다.
 - 존재하지 않는 login/status subcommand나 임의 API key 환경변수를 사용하지
   않습니다.
 - OAuth 디렉터리를 출력하거나 수동 편집하지 않습니다.
@@ -507,18 +511,16 @@ global `mcp_config.json`은 없을 때 빈 `mcpServers` 기본본만 생성하�
 - `connect_blocked`이면 Bot token 또는 요청 정책을 확인하고 App 옵션을 고친 뒤
   다시 시작합니다. 같은 4xx 요청은 자동 반복하지 않습니다.
 - `request_failed`의 `reason_class=authentication_required`이면 Bot pairing을
-  반복하지 말고 신뢰하는 App 웹 터미널 또는 SSH에서 `ha-telegram-login`을
+  반복하지 말고 신뢰하는 App 웹 터미널 또는 SSH에서 `ha-antigravity-login`을
   실행합니다.
 - `reason_class=headless_read_denied`이면 headless AI의 비허용 파일 읽기가 차단된
   것입니다. 정상 질문에서 반복되면 사용자 settings를 편집하거나 `read_file(*)`를
   추가하지 말고 App을 최신 버전으로 업데이트한 뒤 재시작합니다.
-- `reason_class=runtime_integrity_failed`이면 worker의 여러 격리 preflight 중 하나가
-  실패한 것입니다. 특정 파일 문제로 단정하거나 자동 복구·요청 재시도를 하지 말고
-  App을 재시작합니다. 계속 실패하면 비밀값을 제외한 App 로그를 확인합니다.
-- `/status`는 Telegram transport와 최근 AI worker 결과를 구분해 표시합니다. help와
-  status가 정상이어도 별도 native OAuth가 완료됐다는 뜻은 아닙니다.
-- native CLI log, OAuth URL, token, prompt 원문을 지원 자료로 올리지 말고 특정
-  credential 경로를 추정·수동 편집·HOME 사이 복사하지 않습니다.
+- `/status`는 Telegram transport, 결합된 conversation과 최근 공유 AI runtime/outbox 결과를
+  구분해 표시합니다. help와 status가 정상이어도 공유 native OAuth가 완료됐다는
+  뜻은 아닙니다.
+- native CLI log, OAuth URL, token, prompt 원문을 지원 자료로 올리지 말고 공유 HOME의
+  credential 경로를 추정하거나 수동 편집하지 않습니다.
 - `--dangerously-skip-permissions`와 광범위한 file-read 허용은 사용하지 않습니다.
 - 변경 preview가 달라졌거나 만료되었다면 새 요청으로 다시 승인합니다.
 
@@ -552,7 +554,7 @@ parse를 대상으로 합니다. 다음은 generic 개발 환경의 성공만으
 - 양쪽 아키텍처의 native Antigravity OAuth와 plugin discovery
 - HAOS에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되는지
 - 공개 GHCR generic manifest와 per-arch digest의 실제 pull
-- 실제 dashboard, Telegram 세 mode, migration 세 mode와 rollback E2E
+- 실제 dashboard, Telegram shared-policy/session/outbox, migration 세 mode와 rollback E2E
 
 따라서 App은 experimental 상태를 유지합니다. 각 release의 CI, Builder, GHCR
 manifest와 HAOS acceptance 기록에서 해당 항목이 통과했는지 확인하세요. 문서의

@@ -2,6 +2,45 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.0.7] - 2026-08-17
+
+### Changed
+
+- Treat Telegram as a trusted primary Antigravity channel: it now uses the same
+  persistent `/data/home`, `/config` project, native OAuth identity, permission
+  policy, and user-managed global/workspace plugins, agents, rules, and MCP
+  configuration as Web terminal and SSH instead of maintaining a second
+  Telegram-only Antigravity installation and login flow.
+- Remove the channel-specific `telegram_access_mode` option. Telegram now follows
+  the global `antigravity_tool_permission`, `antigravity_terminal_sandbox`, and
+  `antigravity_sensitive_data_access` settings; a legacy value is accepted only
+  as ignored migration input. This is an intentional trust-model change while
+  the App remains experimental.
+- Adopt gateway invariants found in established bot implementations without
+  copying their code: one durable conversation per authorized user/chat, an
+  explicit `/new` rotation boundary, serialized per-session work, and outbound
+  delivery state that survives transient transport failures.
+- Bind a newly allocated conversation before its first Antigravity execution,
+  keep approvals attached to that same conversation, and persist encrypted
+  pending replies for bounded retry until Telegram acknowledges delivery.
+- Journal each validated Antigravity terminal result before proposal inspection
+  or execution, so crash recovery reuses the same model result instead of
+  creating another turn; make callback execution and reply delivery idempotent.
+- Preserve existing v2 local-pairing authorization during upgrade while
+  resetting only conversation IDs that belonged to the retired Telegram-only
+  HOME, so the first 2.0.7 request binds a valid shared-runtime conversation.
+- Migrate App-owned 2.0.6 permission rules even in `preserve` mode and normalize
+  the retired Supervisor option once, while leaving user-owned rules and other
+  settings unchanged.
+
+### Security
+
+- Document Telegram as an administrator-equivalent control plane. Pairing and
+  static allowlists remain access controls, but Telegram intentionally inherits
+  the same user customization and `/config` authority as the CLI; operators must
+  protect the bot account, token, authorized chats, and Telegram devices as
+  administrator credentials.
+
 ## [2.0.6] - 2026-08-15
 
 ### Changed

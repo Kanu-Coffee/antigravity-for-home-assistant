@@ -22,13 +22,7 @@ const EXTRA_EXPECT_SOURCE_IP =
 const EXTRA_EXPECT_UNAUTHENTICATED =
   process.env.PLAYWRIGHT_MCP_SMOKE_EXPECT_UNAUTHENTICATED === "1";
 const SCREENSHOT_DIR = process.env.PLAYWRIGHT_MCP_SMOKE_SCREENSHOT_DIR;
-const EXPECT_TELEGRAM_READ_ONLY =
-  process.env.PLAYWRIGHT_MCP_SMOKE_EXPECT_TELEGRAM_READ_ONLY === "1";
 const POLICY_ONLY = process.env.PLAYWRIGHT_MCP_SMOKE_POLICY_ONLY === "1";
-const CONFIGURED_TELEGRAM_REDIRECT_URL =
-  process.env.PLAYWRIGHT_MCP_SMOKE_TELEGRAM_REDIRECT_URL;
-const TELEGRAM_ORIGIN_POLICY_FIXTURE =
-  process.env.PLAYWRIGHT_MCP_SMOKE_TELEGRAM_ORIGIN_POLICY_FIXTURE === "1";
 const CHILD_ENV_OVERRIDES = JSON.parse(
   process.env.PLAYWRIGHT_MCP_SMOKE_CHILD_ENV ?? "{}",
 );
@@ -147,26 +141,6 @@ async function startFixtureServer({ port = 0, outsideRedirectUrl } = {}) {
     requests,
     server,
     url: `http://127.0.0.1:${address.port}/index.html`,
-  };
-}
-
-async function startOutsideOriginServer() {
-  const requests = [];
-  const server = createServer((request, response) => {
-    requests.push(request.url ?? "/");
-    response.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-    response.end("FORBIDDEN_ORIGIN_WAS_REACHED");
-  });
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  assert(address && typeof address === "object");
-  return {
-    requests,
-    server,
-    url: `http://127.0.0.1:${address.port}/forbidden`,
   };
 }
 
@@ -454,16 +428,7 @@ async function main() {
     );
   }
   const [command, ...args] = commandLine;
-  const outsideFixture = TELEGRAM_ORIGIN_POLICY_FIXTURE
-    ? await startOutsideOriginServer()
-    : null;
-  const fixture = await startFixtureServer({
-    port: TELEGRAM_ORIGIN_POLICY_FIXTURE ? 8099 : 0,
-    outsideRedirectUrl: outsideFixture?.url,
-  });
-  const telegramRedirectUrl = TELEGRAM_ORIGIN_POLICY_FIXTURE
-    ? "http://127.0.0.1:8099/security/redirect-outside"
-    : CONFIGURED_TELEGRAM_REDIRECT_URL;
+  const fixture = await startFixtureServer();
   const client = new StdioMcpClient(command, args);
   let closeTool;
 
@@ -501,73 +466,11 @@ async function main() {
       "browser_select_option",
       "browser_type",
     ];
-    if (EXPECT_TELEGRAM_READ_ONLY) {
-      for (const toolName of interactiveTools) {
-        assert(
-          !listedNames.has(toolName),
-          `Telegram read-only MCP surface exposed ${toolName}`,
-        );
-      }
-      await assert.rejects(
-        client.callTool({ name: "browser_click" }, { element: "unsafe", ref: "e1" }),
-        /not enabled: browser_click/,
+    for (const toolName of interactiveTools) {
+      assert(
+        listedNames.has(toolName),
+        `interactive MCP surface omitted ${toolName}`,
       );
-      const telegramNavigate = listed.tools.find(
-        (tool) => tool.name === "browser_navigate",
-      );
-      assert(telegramNavigate, "Telegram MCP omitted browser_navigate");
-      for (const forbiddenUrl of [
-        "http://127.0.0.1:7682/",
-        "http://localhost:8099/",
-        "https://127.0.0.1:8099/",
-        "http://operator@127.0.0.1:8099/",
-      ]) {
-        await assert.rejects(
-          client.callTool(telegramNavigate, { url: forbiddenUrl }),
-          /restricted to http:\/\/127\.0\.0\.1:8099\//,
-        );
-      }
-      if (telegramRedirectUrl) {
-        if (TELEGRAM_ORIGIN_POLICY_FIXTURE) {
-          const allowedResult = await client.callTool(telegramNavigate, {
-            url: "http://127.0.0.1:8099/index.html",
-          });
-          assert.equal(
-            allowedResult?.isError,
-            undefined,
-            `Telegram Playwright blocked its canonical gateway: ${resultText(allowedResult)}`,
-          );
-          assert(
-            resultText(allowedResult).includes(PAGE_MARKER),
-            "Telegram Playwright canonical gateway returned no fixture evidence",
-          );
-        }
-        let redirectBlocked = false;
-        try {
-          const redirectResult = await client.callTool(telegramNavigate, {
-            url: telegramRedirectUrl,
-          });
-          redirectBlocked = redirectResult?.isError === true;
-        } catch {
-          redirectBlocked = true;
-        }
-        assert(
-          redirectBlocked,
-          "Telegram Playwright followed a canonical-origin redirect outside the gateway",
-        );
-        assert.deepEqual(
-          outsideFixture?.requests ?? [],
-          [],
-          "Telegram Playwright transmitted a redirected request to a forbidden origin",
-        );
-      }
-    } else {
-      for (const toolName of interactiveTools) {
-        assert(
-          listedNames.has(toolName),
-          `interactive MCP surface omitted ${toolName}`,
-        );
-      }
     }
 
     if (POLICY_ONLY) {
@@ -575,8 +478,7 @@ async function main() {
         JSON.stringify({
           status: "passed",
           policyOnly: true,
-          telegramReadOnly: EXPECT_TELEGRAM_READ_ONLY,
-          redirectPolicyChecked: Boolean(telegramRedirectUrl),
+          sharedInteractivePolicy: true,
           listedTools: [...listedNames].sort(),
         }),
       );
@@ -915,13 +817,6 @@ async function main() {
     await new Promise((resolve, reject) => {
       fixture.server.close((error) => (error ? reject(error) : resolve()));
     });
-    if (outsideFixture) {
-      await new Promise((resolve, reject) => {
-        outsideFixture.server.close((error) =>
-          error ? reject(error) : resolve(),
-        );
-      });
-    }
   }
 }
 

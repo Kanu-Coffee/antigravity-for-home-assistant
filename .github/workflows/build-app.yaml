@@ -399,7 +399,8 @@ jobs:
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: managed-plugin}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: memory}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: public-v1}
-          - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: telegram-isolation}
+          - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: public-v2}
+          - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: telegram-shared-context}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: update}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: user-files}
           - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: browser-approval}
@@ -408,7 +409,7 @@ jobs:
           - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: managed-auth}
           - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: managed-plugin}
           - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: memory}
-          - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: telegram-isolation}
+          - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: telegram-shared-context}
           - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: update}
           - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: user-files}
     steps:
@@ -470,7 +471,8 @@ jobs:
             memory) exec bash tests/memory-smoke.sh "$image" ;;
             public-v1) exec bash tests/public-v1-upgrade-smoke.sh \
               antigravity-for-home-assistant:public-v1.0.4-local "$image" ;;
-            telegram-isolation) exec bash tests/telegram-isolation-smoke.sh "$image" ;;
+            public-v2) exec bash tests/public-v2-upgrade-smoke.sh "$image" ;;
+            telegram-shared-context) exec bash tests/telegram-shared-context-smoke.sh "$image" ;;
             update) exec bash tests/update-smoke.sh "$image" ;;
             user-files) exec bash tests/user-files-update-smoke.sh "$image" ;;
             *) exit 64 ;;

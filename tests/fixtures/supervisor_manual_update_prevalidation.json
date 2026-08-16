@@ -8,25 +8,23 @@
       "App.update stores the new App config",
       "App.update finally restores the running App with App.start",
       "App.start calls App.write_options",
-      "App.write_options validates merged defaults and persisted options",
+      "App.write_options validates merged defaults and persisted options into the container options.json without replacing persisted raw options",
+      "POST self/options validates the full options body, replaces persisted options, and saves it",
       "App.start runs the container only after validation succeeds"
     ],
-    "unknown_option_behavior": "drop"
+    "unknown_option_behavior": {
+      "container_options_json": "drop",
+      "persisted_raw_options": "retain_until_full_self_options_post"
+    }
   },
-  "legacy_update_modes": [
-    "refresh_agents",
-    "refresh_all"
-  ],
+  "legacy_update_modes": ["refresh_agents", "refresh_all"],
   "v1_persisted_overrides": {
     "antigravity_token": "fixture-antigravity-token-never-use",
     "telegram_enabled": true,
     "telegram_bot_token": "fixture-telegram-token-never-use",
-    "telegram_allowed_chat_ids": [
-      "456"
-    ],
-    "authorized_keys": [
-      "ssh-ed25519 fixture"
-    ],
+    "telegram_allowed_chat_ids": ["456"],
+    "telegram_access_mode": "autonomous",
+    "authorized_keys": ["ssh-ed25519 fixture"],
     "web_terminal_auto_start_antigravity": true,
     "tmux_session_name": "legacy-session",
     "antigravity_approval_policy": "never",
@@ -41,13 +39,13 @@
     "antigravity_sandbox_mode",
     "antigravity_token",
     "browser_approval_policy",
-    "home_assistant_browser_token"
+    "home_assistant_browser_token",
+    "telegram_access_mode"
   ],
   "expected_current_default_keys": [
     "antigravity_sensitive_data_access",
     "antigravity_terminal_sandbox",
     "antigravity_tool_permission",
-    "telegram_access_mode",
     "telegram_allowed_user_ids"
   ],
   "expected_container_init_reached": true,

@@ -34,11 +34,12 @@ on real HAOS.
 | --- | --- | --- |
 | Ingress Web terminal | Interactive Antigravity and local administration | Native permission + AppArmor |
 | Public-key SSH | Remote shell for trusted administrators | Native permission + AppArmor |
-| Telegram Bot | Restricted non-interactive questions and proposals | Read/proposal worker + approval broker |
+| Telegram Bot | Administrator-level primary Antigravity channel | Native permission + AppArmor + approval broker |
 
-Ingress and SSH share the same `/config` project and persistent Home. Telegram
-uses a separate `agy --print` worker and never relays input to the Web terminal's
-shell or tmux.
+Ingress, SSH, and Telegram use the same `/config` project, `/data/home`, OAuth,
+global/workspace plugins, agents, rules, MCP, and permission policy. The Telegram
+transport does not relay input to the Web terminal shell or tmux, but it is not
+a separate isolated identity.
 
 ## Installation
 
@@ -104,13 +105,13 @@ v2 uses the native JSON and plugin paths of Antigravity 1.1.11.
 | Global MCP settings | `/data/home/.gemini/config/mcp_config.json` |
 | App-managed HA plugin | `/data/home/.gemini/config/plugins/home-assistant/` |
 | Workspace MCP | `/config/.agents/mcp_config.json` |
-| Dedicated Telegram native HOME | `/data/antigravity-ha/telegram-home/` |
+| Shared Web/SSH/Telegram HOME | `/data/home/` |
 
 The App preserves unknown user JSON keys and user plugins, merging only the keys
 it owns. It does not create or overwrite the project's `/config/AGENTS.md` as an
 HA preset. HA defaults, skills, and MCP servers live in the image-managed
-`home-assistant` plugin.
-The Telegram worker does not inherit those interactive global/workspace customizations.
+`home-assistant` plugin. Antigravity launched from Telegram inherits those
+global/workspace customizations and may modify them when requested by the user.
 
 ## App configuration
 
@@ -121,7 +122,6 @@ telegram_enabled: false
 telegram_bot_token: ""
 telegram_allowed_user_ids: []
 telegram_allowed_chat_ids: []
-telegram_access_mode: confirm_changes
 authorized_keys: []
 web_terminal_auto_start_antigravity: false
 tmux_session_name: antigravity-ha
@@ -141,13 +141,12 @@ log_level: info
 | `telegram_bot_token` | `""` | Secret BotFather token; never expose it in logs or issues |
 | `telegram_allowed_user_ids` | `[]` | Allowed numeric user IDs stored as strings |
 | `telegram_allowed_chat_ids` | `[]` | Allowed numeric chat IDs stored as strings |
-| `telegram_access_mode` | `confirm_changes` | `read_only`, `confirm_changes`, `autonomous` |
 | `authorized_keys` | `[]` | One-line OpenSSH public keys allowed for SSH root login |
 | `web_terminal_auto_start_antigravity` | `false` | Start `agy` once in a new tmux session |
 | `tmux_session_name` | `antigravity-ha` | A 1–64 character session name using `[A-Za-z0-9._-]` |
 | `antigravity_tool_permission` | `request-review` | `request-review`, `proceed-in-sandbox`, `always-proceed`, `strict` |
-| `antigravity_terminal_sandbox` | `true` | Whether interactive CLI receives native `--sandbox` |
-| `antigravity_sensitive_data_access` | `false` | Diagnostic read-only access to three sensitive path classes for the interactive child while AppArmor stays on |
+| `antigravity_terminal_sandbox` | `true` | Whether Web/SSH/Telegram CLI receives native `--sandbox` |
+| `antigravity_sensitive_data_access` | `false` | Diagnostic read-only access to three sensitive path classes for Web/SSH/Telegram children while AppArmor stays on |
 | `antigravity_user_files_update_mode` | `preserve` | `preserve`, `refresh_managed`, `reset_v2`; deprecated migration-only `refresh_agents`, `refresh_all` |
 | `home_assistant_browser_auto_auth` | `true` | Manage a local-only, read-only browser identity |
 | `log_level` | `info` | `trace`, `debug`, `info`, `notice`, `warning`, `error`, `fatal` |
@@ -155,16 +154,18 @@ log_level: info
 The App Network setting for `22/tcp` defaults to host port `2224`. It is not a
 JSON option, and you can disable the port when SSH is unused.
 
-`always-proceed` reduces native prompts; it does not weaken AppArmor denies,
-Telegram risk reclassification, or broker confirmation. Disabling the terminal
-sandbox does not disable AppArmor.
+Telegram has no separate mode. It follows `antigravity_tool_permission`,
+`antigravity_terminal_sandbox`, and `antigravity_sensitive_data_access` exactly
+like Web and SSH. `always-proceed` and disabling the sandbox do not disable
+AppArmor or a separately required high-risk human confirmation.
 
 ### After changing settings
 
 Save the configuration and restart the App. If you changed native settings,
-plugin or MCP data, terminal profiles, or Telegram mode, end existing
-Antigravity processes and start a new session. If the sensitive profile cannot
-attach, interactive Antigravity must fail to start instead of falling back to
+plugin or MCP data, or the global permission profile, end and relaunch existing
+Web/SSH Antigravity processes. The Telegram binding survives restart and rotates
+only when the user sends `/new`. If the sensitive profile cannot
+attach, that Antigravity launch must fail instead of falling back to
 broader permissions.
 
 ## Access methods
@@ -196,20 +197,18 @@ Password and keyboard-interactive login are disabled. Do not port-forward TCP
 ## Telegram
 
 > [!CAUTION]
-> An actual Antigravity 1.1.11 local canary first reproduced the shared-HOME
-> global MCP launch. In the dedicated Telegram HOME/safe-cwd worker, that marker
-> and the `/config/.agents` marker did not run, and managed customization
-> tampering failed closed. Keep `telegram_enabled: false` until actual HAOS OAuth
-> success and AppArmor enforcement are verified.
+> Telegram is a primary administrator channel equivalent to the CLI. Authorized
+> users can read and modify `/config`, OAuth, and user-created global/workspace
+> plugins, agents, rules, MCP, and permission settings. Protect the bot token,
+> authorized chats, and Telegram accounts like HA administrator credentials.
+> Integrated OAuth, AppArmor, and Bot API E2E on real HAOS remain `NOT RUN`.
 
-Run `ha-telegram-login` from a trusted local Ingress/SSH controlling TTY to
-complete native first-run OAuth for the separate Telegram identity. Do not copy
-the interactive HOME credentials or guess undocumented credential paths.
+Sign in once with `ha-antigravity-login` in the Web UI or SSH. Telegram uses the
+same `/data/home` identity; there is no separate `ha-telegram-login`.
 
-Bot pairing authenticates only Telegram user/chat access; it does not complete
-this separate native OAuth. `/start`, `/help`, `/status`, `/new`, and `/cancel`
-are local control commands handled directly by the bridge without running AI.
-Only natural-language text is sent to the Antigravity worker.
+Bot pairing authenticates a Telegram user/chat for this administrator
+environment. `/start`, `/help`, `/status`, `/new`, and `/cancel` are local bridge
+control commands; natural-language text goes to the same Antigravity environment.
 
 ### Create a bot
 
@@ -256,41 +255,50 @@ waits quietly in `waiting_for_authorization`. Creating a pairing in the same
 App terminal is detected without an App restart. Restart the App after changing
 the static lists so Supervisor applies the new options.
 
-### Modes and change policy
+### Permission and change policy
 
-| Operation | `read_only` | `confirm_changes` | `autonomous` |
-| --- | --- | --- | --- |
-| State, service, and bounded log reads | Allowed | Allowed | Allowed |
-| Dashboard observation | Allowed | Allowed | Allowed |
-| Supported `/config` change | Denied | Confirm every time | Only broker-verified low risk automatically |
-| HA `service_call` | Denied | Confirm every time | Confirm every time |
-| Restart/update/restore/delete | Denied | Unsupported and denied | Unsupported and denied |
+The Telegram-only `read_only`/`confirm_changes`/`autonomous` modes were removed
+in 2.0.7. Telegram uses the same native `antigravity_tool_permission`, sandbox,
+and sensitive-data settings as Web and SSH. A `telegram_access_mode` saved by
+2.0.6 or earlier is ignored migration input, not an authorization source.
+Separately required human confirmation for high-risk operations such as locks,
+alarms, safety heating/water, host or Core restarts, restores, updates, removals,
+or credential and permission changes cannot be weakened by the global policy.
 
-The minimal broker currently classifies all `service_call` operations as high
-risk because verified device safety metadata is unavailable. Prompts and modes
-cannot lower the risk of door locks, alarms, safety heating or water, host/Core
-restart, backup restore, updates, removals, or credential and permission changes.
+Antigravity 1.1.11 `stream-json` has no protocol for relaying a native interactive
+permission prompt to Telegram and resuming the same turn. App-managed Home Assistant
+changes therefore use same-session Telegram approval buttons, while an arbitrary
+native tool outside the global allow rules may be denied non-interactively under
+`request-review`. The bridge does not add a channel-specific bypass; review it in
+Web/SSH or intentionally change the global `antigravity_tool_permission`.
 
 ### Commands and sessions
 
 | Command | Behavior |
 | --- | --- |
 | `/start` | Authorization status and basic guidance |
-| `/help` | Available commands and current mode |
+| `/help` | Available commands and current global permission |
 | `/status` | Bridge and current session status |
+| `/retry` | Explicitly resend an ambiguous delivery from the current session |
 | `/new` | Start a new conversation for that user and chat |
 | `/cancel` | Request cancellation of the current queued task |
 
 Requests for one user and chat are processed in order with a bounded queue,
-timeouts, and response size limits. `/cancel` is not a rollback command for work
-that already completed externally.
+timeouts, and response size limits. The first request persistently binds a
+conversation ID before execution; later prompts and approvals reuse that same
+session. Only `/new` creates another session. Antigravity results enter an
+encrypted persistent outbox before send and are removed only after Telegram
+acknowledges delivery. Clearly unsent 429 responses use bounded backoff; ambiguous
+delivery failures remain isolated until `/retry`. `/cancel` is not a rollback
+command for work already completed externally.
 
 ### Approval security
 
 The Telegram model process receives neither the raw Supervisor token nor the
 final execution socket; it can only create typed proposals. The bridge retrieves
 the proposal from the broker again before displaying its preview. Confirmation
-is bound to proposal ID, the same user and chat, preview digest, and a short TTL.
+is bound to proposal ID, the same conversation, user and chat, preview digest,
+and a short TTL. The approval callback and result continue in that session.
 A one-time 256-bit capability plus an idempotency key prevents reuse and
 duplicate execution. A changed preview or precondition, or an expired approval,
 requires a new proposal.
@@ -405,18 +413,19 @@ screenshots, proposals, or artifacts. Prefer supported APIs and secret key names
 
 ### Items that stay denied
 
-Regardless of the option, Telegram workers, browser, memory, broker, and general
-shells receive no additional sensitive-read access. SSH private and host keys,
-OAuth, App, browser and bot tokens, backups, private material under `/config/ssl`,
-cloud auth, and broker capabilities remain denied outside their owning process.
+Regardless of the option, browser, memory, broker, and general shells receive no
+additional sensitive-read access. Web, SSH, and Telegram Antigravity apply this
+option together. SSH private and host keys, App, browser and bot tokens, backups,
+private material under `/config/ssl`, cloud auth, and broker capabilities remain
+denied outside their owning process.
 
-Interactive native OAuth uses `/data/home`; the Telegram worker uses the separate
-`/data/antigravity-ha/telegram-home`. The identities are not shared, but AppArmor
-cannot fully distinguish a legitimate authentication read from a prompt- or
-tool-induced credential read inside either owning process. Native permissions,
-the sandbox, shell-free worker, discrete execution profiles, output redaction, and the broker
-are additional defenses, not complete token isolation. Telegram is off by
-default; review the actual HAOS OAuth/AppArmor gate and documented residual risk.
+Web, SSH, and Telegram Antigravity intentionally share `/data/home` and
+`/config`. AppArmor therefore cannot distinguish legitimate OAuth or user-setting
+access from the same access induced by a Telegram prompt or tool. This is the
+product boundary of a primary administrator channel, not an isolation guarantee;
+exact user/chat authentication, native permissions, the sandbox, output
+redaction, and the broker remain defense in depth. Telegram is off by default;
+review the actual HAOS OAuth/AppArmor gate and documented residual risk.
 
 ## Updates, migration, and rollback
 
@@ -504,9 +513,8 @@ without the user's explicit current confirmation.
 ### OAuth fails
 
 - Confirm the Web terminal or SSH session provides a controlling TTY.
-- Run `ha-antigravity-login` for the default interactive identity or
-  `ha-telegram-login` for the dedicated Telegram identity, then follow the
-  Google flow shown by the CLI.
+- Run `ha-antigravity-login` for the shared Web/SSH/Telegram identity, then
+  follow the Google flow shown by the CLI.
 - Do not use nonexistent login/status subcommands or arbitrary API-key
   environment variables.
 - Never print or manually edit the OAuth directory.
@@ -527,19 +535,16 @@ without the user's explicit current confirmation.
 - `connect_blocked` means the Bot token or request policy must be corrected in
   App options before restarting. The same 4xx request is not retried.
 - If `request_failed` has `reason_class=authentication_required`, do not repeat
-  Bot pairing. Run `ha-telegram-login` from a trusted App Web terminal or SSH
+  Bot pairing. Run `ha-antigravity-login` from a trusted App Web terminal or SSH
   session.
 - `reason_class=headless_read_denied` means a non-allowlisted headless file read
   was blocked. If it repeats for an ordinary question, do not edit user settings
   or add `read_file(*)`; update to the latest App version and restart.
-- `reason_class=runtime_integrity_failed` means one of several worker isolation
-  preflights failed. Do not infer a particular file fault or automatically
-  repair/retry the request. Restart the App, then inspect sanitized App logs if
-  it continues.
-- `/status` distinguishes Telegram transport from the most recent AI worker
-  result. A working help or status command does not prove native OAuth is ready.
-- Never upload native CLI logs, OAuth URLs, tokens, or raw prompts. Do not guess,
-  manually edit, or copy a credential path between HOME directories.
+- `/status` distinguishes Telegram transport, the bound conversation, and the
+  most recent shared AI runtime/outbox result. Working help or status does not prove the
+  shared native OAuth is ready.
+- Never upload native CLI logs, OAuth URLs, tokens, or raw prompts. Do not guess
+  or manually edit credential paths in the shared HOME.
 - Never use `--dangerously-skip-permissions` or a broad file-read grant.
 - If a change preview changed or expired, submit a new request and approve again.
 
@@ -572,7 +577,7 @@ development environment cannot mark these items `VERIFIED`:
 - Native Antigravity OAuth and plugin discovery on both architectures
 - Discrete custom AppArmor execution profiles attached in enforce mode on HAOS
 - Actual pull of the public GHCR generic manifest and per-architecture digests
-- End-to-end dashboard, all three Telegram modes, all migration modes, and rollback
+- End-to-end dashboard, Telegram shared policy/session/outbox, all migration modes, and rollback
 
 The App therefore remains experimental. Check the release CI, Builder, GHCR
 manifest, and HAOS acceptance record for each item. Do not interpret plans or

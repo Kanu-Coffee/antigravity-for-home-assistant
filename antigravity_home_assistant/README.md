@@ -18,13 +18,14 @@ Home Assistant 안에서 antigravity와 대화하며 설정을 살펴보고 대�
 - Home Assistant Core API와 Supervisor `manager` helper
 - 브라우저를 닫았다 다시 열어도 이어지는 공유 `tmux` Web 터미널
 - ChatGPT 모바일 Remote가 앱 내장 antigravity에 직접 연결할 수 있는 공개키 전용 SSH
+- CLI와 같은 `/data/home`·`/config`·전역 설정을 사용하는 관리자급 Telegram 주 채널
 - Home Assistant 모바일 앱/웹의 **OPEN WEB UI**
 - 대시보드의 데스크톱·모바일 화면과 console/network 오류를 확인하는 Headless Chromium
 - HA 구조와 사용자가 명시한 별칭·용도·선호를 보존하는 프로젝트 자체 검증형 로컬 메모리
 - 앱 버그와 기능 제안을 읽기 전용으로 검증하고 정제된 보고서로 만드는 `/ha-feedback`
 
 > [!WARNING]
-> 이 앱은 Home Assistant 설정을 직접 바꿀 수 있는 강한 관리자 도구입니다. 중요한 변경 전에는 backup을 만들고 계획과 diff를 확인하세요. SSH 포트를 인터넷에 직접 공개하지 마세요.
+> 이 앱은 Home Assistant 설정을 직접 바꿀 수 있는 강한 관리자 도구입니다. Telegram도 CLI와 동등한 관리자 채널이므로 bot token, 허용 chat과 Telegram 계정을 보호하세요. 중요한 변경 전에는 backup을 만들고 계획과 diff를 확인하며 SSH 포트를 인터넷에 직접 공개하지 마세요.
 
 ## 빠른 시작
 
@@ -33,6 +34,10 @@ Home Assistant 안에서 antigravity와 대화하며 설정을 살펴보고 대�
 3. 처음 한 번 `ha-antigravity-login`으로 로그인합니다.
 4. `ha-antigravity`를 실행합니다.
 5. “현재 구성을 읽기 전용으로 살펴보고 아직 수정하지 마”라고 시작해 보세요.
+
+Telegram을 켜면 같은 OAuth, 전역 plugin/agent/rule/MCP와 권한 정책을 사용합니다.
+첫 요청에서 만든 대화는 `/new` 전까지 유지되고 승인과 응답도 그 session에서
+이어집니다. 별도 Telegram 로그인이나 HOME은 없습니다.
 
 SSH를 사용하지 않는다면 `authorized_keys`를 비워 둬도 됩니다. Web UI는 그대로 동작합니다.
 

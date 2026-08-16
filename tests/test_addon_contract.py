@@ -62,7 +62,7 @@ def test_release_is_multi_arch_with_generic_registry_image(
     )
     assert "{arch}" not in addon_config["image"]
     assert addon_config["stage"] == "experimental"
-    assert addon_config["breaking_versions"] == ["2.0.0"]
+    assert addon_config["breaking_versions"] == ["2.0.0", "2.0.7"]
 
 
 def test_registry_release_workflow_is_tag_gated(repository_root: Path) -> None:
@@ -311,22 +311,17 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
     telegram_admin_profile = remaining_profiles.split(
         "profile antigravity_home_assistant-telegram-admin", maxsplit=1
     )[1].split(
-        "profile antigravity_home_assistant-telegram-login", maxsplit=1
-    )[0]
-    telegram_login_profile = remaining_profiles.split(
-        "profile antigravity_home_assistant-telegram-login", maxsplit=1
-    )[1].split(
         "profile antigravity_home_assistant-telegram flags", maxsplit=1
     )[0]
     telegram_profile = remaining_profiles.split(
         "profile antigravity_home_assistant-telegram flags", maxsplit=1
     )[1].split(
-        "profile antigravity_home_assistant-telegram-worker", maxsplit=1
+        "profile antigravity_home_assistant-change-proposal-client", maxsplit=1
     )[0]
-    telegram_worker_profile = remaining_profiles.split(
-        "profile antigravity_home_assistant-telegram-worker", maxsplit=1
+    proposal_client_profile = remaining_profiles.split(
+        "profile antigravity_home_assistant-change-proposal-client", maxsplit=1
     )[1].split(
-        "profile antigravity_home_assistant-change-broker", maxsplit=1
+        "profile antigravity_home_assistant-broker-bootstrap", maxsplit=1
     )[0]
     change_broker_profile = remaining_profiles.split(
         "profile antigravity_home_assistant-change-broker", maxsplit=1
@@ -426,8 +421,15 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
     assert "/run/antigravity-ha/ha-feedback-options.json r," in (
         playwright_bootstrap_profile
     )
-    assert "/usr/local/libexec/ha-telegram-worker Px -> " \
-        "antigravity_home_assistant-telegram-worker," in telegram_profile
+    assert "/usr/local/bin/antigravity rix," in telegram_profile
+    assert (
+        "/usr/local/libexec/antigravity-interactive-restricted Px -> "
+        "antigravity_home_assistant-interactive-restricted,"
+    ) in telegram_profile
+    assert (
+        "/usr/local/libexec/antigravity-interactive-sensitive-read Px -> "
+        "antigravity_home_assistant-interactive-sensitive-read,"
+    ) in telegram_profile
     assert "/run/antigravity-ha/change-broker.sock rw," in telegram_profile
     assert "deny /run/antigravity-ha/change-proposal.sock rwklm," in (
         telegram_profile
@@ -452,17 +454,10 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
         "antigravity_home_assistant-telegram-admin,"
     ) in shell_profile
     assert (
-        "/usr/local/bin/ha-telegram-login Px -> "
-        "antigravity_home_assistant-telegram-login,"
-    ) in shell_profile
-    assert (
         "tmux-session-shell,web-terminal-entrypoint} rix,"
     ) in shell_profile
-    assert "/data/antigravity-ha/telegram-home/** rwkl," in (
-        telegram_login_profile
-    )
-    assert "deny /data/home/** rwklm," in telegram_login_profile
-    assert "deny /config/** rwklm," in telegram_login_profile
+    assert "ha-telegram-login" not in profile
+    assert "ha-telegram-worker" not in profile
     assert "deny /data/antigravity-ha/telegram/** rwklm," in main_profile
     assert "deny /data/antigravity-ha/change-broker/** rwklm," in main_profile
     for readable_ssh_material in (
@@ -485,48 +480,33 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
     assert "deny /config/ rwklmx," in sshd_profile
     assert "deny /config/** rwklmx," in sshd_profile
     assert "/run/antigravity-ha/change-proposal.sock rw," in (
-        telegram_worker_profile
+        proposal_client_profile
     )
     assert "Px -> antigravity_home_assistant-ha-helper" not in (
-        telegram_worker_profile
+        proposal_client_profile
     )
-    for direct_helper in (
-        "ha-addon-logs",
-        "ha-api",
-        "ha-config-check",
-        "ha-core-logs",
-        "ha-feedback",
-        "supervisor-api",
-    ):
-        assert direct_helper not in telegram_worker_profile
-    assert (
-        "/usr/local/bin/ha-read-mcp Px -> "
-        "antigravity_home_assistant-read-client,"
-    ) in telegram_worker_profile
-    assert "deny /config/ rwklmx," in telegram_worker_profile
-    assert "deny /config/** rwklmx," in telegram_worker_profile
-    assert "/config/** r," not in telegram_worker_profile
+    assert "deny /config/ rwklm," in proposal_client_profile
+    assert "deny /config/** rwklm," in proposal_client_profile
     assert "deny /run/antigravity-ha/change-broker.sock rwklm," in (
-        telegram_worker_profile
+        proposal_client_profile
     )
-    assert "deny /data/options.json rwklm," in telegram_worker_profile
+    assert "deny /data/options.json rwklm," in proposal_client_profile
     assert (
-        "/usr/local/bin/ha-memory-mcp Px -> "
-        "antigravity_home_assistant-memory-telegram,"
-    ) in telegram_worker_profile
+        "/usr/local/bin/ha-change-proposal-mcp Px -> "
+        "antigravity_home_assistant-change-proposal-client,"
+    ) in restricted_profile
     assert (
-        "/usr/local/bin/ha-playwright-mcp Px -> "
-        "antigravity_home_assistant-playwright-bootstrap-telegram,"
-    ) in telegram_worker_profile
-    assert "/usr/local/bin/{ha-memory,ha-memory-mcp}" not in (
-        telegram_worker_profile
-    )
-    assert "profile antigravity_home_assistant-memory-telegram" in profile
-    assert (
-        "profile antigravity_home_assistant-playwright-bootstrap-telegram"
-        in profile
-    )
-    assert "profile antigravity_home_assistant-browser-telegram" in profile
+        "/usr/local/bin/ha-change-proposal-mcp Px -> "
+        "antigravity_home_assistant-change-proposal-client,"
+    ) in sensitive_profile
+    for removed_profile in (
+        "profile antigravity_home_assistant-telegram-login",
+        "profile antigravity_home_assistant-telegram-worker",
+        "profile antigravity_home_assistant-memory-telegram",
+        "profile antigravity_home_assistant-playwright-bootstrap-telegram",
+        "profile antigravity_home_assistant-browser-telegram",
+    ):
+        assert removed_profile not in profile
     assert "/run/antigravity-ha/supervisor.token r," in broker_bootstrap_profile
     assert (
         "/usr/local/libexec/ha-change-broker-runtime Px -> "
@@ -638,16 +618,12 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
         _apparmor_profile(profile, name)
         for name in (
             "antigravity_home_assistant-telegram-admin",
-            "antigravity_home_assistant-telegram-login",
             "antigravity_home_assistant-telegram flags=",
-            "antigravity_home_assistant-telegram-worker",
+            "antigravity_home_assistant-change-proposal-client",
             "antigravity_home_assistant-read-client",
             "antigravity_home_assistant-memory flags=",
-            "antigravity_home_assistant-memory-telegram",
             "antigravity_home_assistant-playwright-bootstrap flags=",
-            "antigravity_home_assistant-playwright-bootstrap-telegram",
             "antigravity_home_assistant-browser flags=",
-            "antigravity_home_assistant-browser-telegram",
         )
     )
     for isolated_profile in isolated_profiles:
@@ -727,10 +703,8 @@ def test_security_sensitive_defaults(addon_config: dict) -> None:
     assert addon_config["options"]["telegram_enabled"] is False
     assert addon_config["options"]["telegram_allowed_user_ids"] == []
     assert addon_config["options"]["telegram_allowed_chat_ids"] == []
-    assert addon_config["options"]["telegram_access_mode"] == "confirm_changes"
-    assert addon_config["schema"]["telegram_access_mode"] == (
-        "list(read_only|confirm_changes|autonomous)"
-    )
+    assert "telegram_access_mode" not in addon_config["options"]
+    assert "telegram_access_mode" not in addon_config["schema"]
     assert addon_config["options"]["antigravity_tool_permission"] == (
         "request-review"
     )
@@ -759,10 +733,11 @@ def test_security_sensitive_defaults(addon_config: dict) -> None:
     ):
         assert removed_codex_option not in addon_config["options"]
         assert removed_codex_option not in addon_config["schema"]
+
+
 def test_new_v2_options_are_translated(addon_root: Path) -> None:
     expected_options = {
         "telegram_allowed_user_ids",
-        "telegram_access_mode",
         "antigravity_tool_permission",
         "antigravity_terminal_sandbox",
         "antigravity_sensitive_data_access",

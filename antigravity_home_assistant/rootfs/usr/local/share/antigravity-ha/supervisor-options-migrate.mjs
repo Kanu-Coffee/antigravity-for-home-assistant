@@ -8,28 +8,32 @@ import {
   fsyncSync,
   lstatSync,
   mkdtempSync,
+  mkdirSync,
   openSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const SUPERVISOR_OPTIONS_URL =
-  "http://supervisor/addons/self/options";
+export const SUPERVISOR_OPTIONS_URL = "http://supervisor/addons/self/options";
 export const NORMALIZED_UPDATE_MODE = "refresh_managed";
-export const LEGACY_UPDATE_MODES = new Set([
-  "refresh_agents",
-  "refresh_all",
-]);
+export const LEGACY_UPDATE_MODES = new Set(["refresh_agents", "refresh_all"]);
+export const RETIRED_TELEGRAM_OPTION = "telegram_access_mode";
+export const RETIRED_TELEGRAM_MIGRATION = "remove-telegram-access-mode@2.0.7";
 
 const OPTIONS_PATH = "/data/options.json";
 const CREDENTIAL_PATH = "/run/antigravity-ha/supervisor.token";
 const RUNTIME_ROOT = "/run/antigravity-ha";
+const COMPLETION_PATH =
+  "/data/antigravity-ha/migration/supervisor-options-2.0.7.json";
+const COMPLETION_SCHEMA = "antigravity-ha-supervisor-options-migration/v1";
 const MAX_OPTIONS_BYTES = 1024 * 1024;
 const MAX_CREDENTIAL_BYTES = 4_096;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
+const MAX_COMPLETION_BYTES = 4_096;
 
 export class RetryableMigrationError extends Error {}
 
@@ -51,17 +55,12 @@ function assertSafeRegularFile(path, info, { maxBytes, requiredUid, modes }) {
   }
 }
 
-function readSafeRegularFile(
-  path,
-  { maxBytes, requiredUid = 0, modes } = {},
-) {
+function readSafeRegularFile(path, { maxBytes, requiredUid = 0, modes } = {}) {
   let descriptor;
   try {
     descriptor = openSync(
       path,
-      fsConstants.O_RDONLY |
-        fsConstants.O_NOFOLLOW |
-        fsConstants.O_NONBLOCK,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
     );
     const before = fstatSync(descriptor);
     assertSafeRegularFile(path, before, { maxBytes, requiredUid, modes });
@@ -121,18 +120,71 @@ function readSupervisorCredential(path, requiredUid) {
   return token;
 }
 
-export function normalizedOptionsPayload(options) {
+export function normalizedOptionsPayload(
+  options,
+  { forceSanitizedPost = false } = {},
+) {
   if (!isPlainObject(options)) {
     throw new RetryableMigrationError("Current App options are invalid");
   }
   const requestedMode = options.antigravity_user_files_update_mode;
-  if (!LEGACY_UPDATE_MODES.has(requestedMode)) return undefined;
+  const normalizeUpdateMode = LEGACY_UPDATE_MODES.has(requestedMode);
+  const removeRetiredTelegramMode = Object.hasOwn(
+    options,
+    RETIRED_TELEGRAM_OPTION,
+  );
+  if (
+    !normalizeUpdateMode &&
+    !removeRetiredTelegramMode &&
+    !forceSanitizedPost
+  ) {
+    return undefined;
+  }
+  const normalized = { ...options };
+  if (normalizeUpdateMode) {
+    normalized.antigravity_user_files_update_mode = NORMALIZED_UPDATE_MODE;
+  }
+  delete normalized[RETIRED_TELEGRAM_OPTION];
   return {
-    options: {
-      ...options,
-      antigravity_user_files_update_mode: NORMALIZED_UPDATE_MODE,
-    },
+    options: normalized,
   };
+}
+
+function completionRecorded(path, requiredUid) {
+  try {
+    lstatSync(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw new RetryableMigrationError(
+      "Supervisor option migration completion state is unavailable",
+    );
+  }
+
+  const content = readSafeRegularFile(path, {
+    maxBytes: MAX_COMPLETION_BYTES,
+    modes: new Set([0o600]),
+    requiredUid,
+  });
+  let state;
+  try {
+    state = JSON.parse(content.toString("utf8"));
+  } catch {
+    throw new RetryableMigrationError(
+      "Supervisor option migration completion state is invalid",
+    );
+  }
+  if (
+    !isPlainObject(state) ||
+    Object.keys(state).sort().join(",") !== "completed,migration,schema" ||
+    state.schema !== COMPLETION_SCHEMA ||
+    state.migration !== RETIRED_TELEGRAM_MIGRATION ||
+    state.completed !== true
+  ) {
+    throw new RetryableMigrationError(
+      "Supervisor option migration completion state is invalid",
+    );
+  }
+  return true;
 }
 
 function assertPrivateRuntimeRoot(path, requiredUid) {
@@ -156,6 +208,47 @@ function assertPrivateRuntimeRoot(path, requiredUid) {
   }
 }
 
+function ensurePrivateDirectory(path, requiredUid) {
+  try {
+    mkdirSync(path, { mode: 0o700 });
+  } catch (error) {
+    if (error?.code !== "EEXIST") {
+      throw new RetryableMigrationError(
+        "Supervisor option migration state directory is unavailable",
+      );
+    }
+  }
+  assertPrivateRuntimeRoot(path, requiredUid);
+}
+
+function fsyncPrivateDirectory(path, requiredUid) {
+  let descriptor;
+  try {
+    descriptor = openSync(
+      path,
+      fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
+    );
+    const info = fstatSync(descriptor);
+    if (
+      !info.isDirectory() ||
+      info.uid !== requiredUid ||
+      (info.mode & 0o777) !== 0o700
+    ) {
+      throw new RetryableMigrationError(
+        "Supervisor option migration state directory is unsafe",
+      );
+    }
+    fsyncSync(descriptor);
+  } catch (error) {
+    if (error instanceof RetryableMigrationError) throw error;
+    throw new RetryableMigrationError(
+      "Supervisor option migration state directory is unavailable",
+    );
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
 function writePrivateFile(path, content) {
   let descriptor;
   try {
@@ -172,6 +265,45 @@ function writePrivateFile(path, content) {
     fsyncSync(descriptor);
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function recordCompletion(path, requiredUid) {
+  const stateDirectory = dirname(path);
+  ensurePrivateDirectory(stateDirectory, requiredUid);
+  const prefix = join(stateDirectory, ".supervisor-options-complete.");
+  let temporaryDirectory;
+  try {
+    temporaryDirectory = mkdtempSync(prefix);
+    chmodSync(temporaryDirectory, 0o700);
+    const stagedPath = join(temporaryDirectory, "completion.json");
+    writePrivateFile(
+      stagedPath,
+      `${JSON.stringify({
+        schema: COMPLETION_SCHEMA,
+        migration: RETIRED_TELEGRAM_MIGRATION,
+        completed: true,
+      })}\n`,
+    );
+    renameSync(stagedPath, path);
+    fsyncPrivateDirectory(stateDirectory, requiredUid);
+  } catch (error) {
+    if (error instanceof RetryableMigrationError) throw error;
+    throw new RetryableMigrationError(
+      "Supervisor option migration completion state could not be recorded",
+    );
+  } finally {
+    if (
+      temporaryDirectory !== undefined &&
+      temporaryDirectory.startsWith(prefix)
+    ) {
+      rmSync(temporaryDirectory, { force: true, recursive: true });
+    }
+  }
+  if (!completionRecorded(path, requiredUid)) {
+    throw new RetryableMigrationError(
+      "Supervisor option migration completion state could not be verified",
+    );
   }
 }
 
@@ -295,6 +427,7 @@ export function performFixedSupervisorRequest({
 }
 
 export function migrateSupervisorOptions({
+  completionPath = COMPLETION_PATH,
   credentialPath = CREDENTIAL_PATH,
   optionsPath = OPTIONS_PATH,
   requestImpl = performFixedSupervisorRequest,
@@ -302,10 +435,14 @@ export function migrateSupervisorOptions({
   runtimeRoot = RUNTIME_ROOT,
 } = {}) {
   const options = readCurrentOptions(optionsPath, requiredUid);
-  const payload = normalizedOptionsPayload(options);
+  const scrubCompleted = completionRecorded(completionPath, requiredUid);
+  const payload = normalizedOptionsPayload(options, {
+    forceSanitizedPost: !scrubCompleted,
+  });
   if (payload === undefined) return { status: "not_required" };
   const token = readSupervisorCredential(credentialPath, requiredUid);
   requestImpl({ payload, requiredUid, runtimeRoot, token });
+  if (!scrubCompleted) recordCompletion(completionPath, requiredUid);
   return { status: "migrated" };
 }
 

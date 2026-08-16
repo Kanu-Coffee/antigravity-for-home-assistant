@@ -1,8 +1,9 @@
 ---
 name: Antigravity for Home Assistant
-version: "2.0.6"
+version: "2.0.7"
 breaking_versions:
   - "2.0.0"
+  - "2.0.7"
 slug: antigravity_home_assistant
 description: Antigravity CLI with verified feedback, browser, terminal, and SSH for Home Assistant
 url: https://github.com/Kanu-Coffee/antigravity-for-home-assistant
@@ -39,7 +40,6 @@ options:
   telegram_bot_token: ""
   telegram_allowed_user_ids: []
   telegram_allowed_chat_ids: []
-  telegram_access_mode: confirm_changes
   authorized_keys: []
   web_terminal_auto_start_antigravity: false
   tmux_session_name: antigravity-ha
@@ -57,7 +57,6 @@ schema:
     - str
   telegram_allowed_chat_ids:
     - str
-  telegram_access_mode: "list(read_only|confirm_changes|autonomous)"
   authorized_keys:
     - str
   web_terminal_auto_start_antigravity: bool

@@ -31,11 +31,19 @@
 | aarch64 | NOT RUN | metadata와 Dockerfile이 amd64 전용 |
 | v2 AppArmor | NOT RUN | custom profile 없음 |
 | v2 Telegram security | FAIL | 기존 구현에 injection/auth/approval 결함 |
-| 1.1.11 shared-HOME global MCP positive control | FAIL as expected | `--agent ha-telegram`에서도 user global stdio MCP가 Google OAuth 인증 완료 전 launch |
+| 1.1.11 shared-HOME global MCP positive control | FAIL as expected | 이전 격리형 Telegram 실행에서도 user global stdio MCP가 Google OAuth 인증 완료 전 launch되어 격리 가정이 성립하지 않음 |
 | 1.1.11 runtime auto-update opt-out | PARTIAL | clean HOME에서 미설정 spawn=1, `AGY_CLI_DISABLE_AUTO_UPDATE=true` 설정 spawn=0 |
 | 실제 HAOS v2 | NOT RUN | v2 image 없음 |
 
 이 표 이후의 local v2 구현 증거는 별도로 관리한다.
+
+### 2.0.7 Telegram trust-model 전환
+
+2.0.6 이하의 Telegram HOME/customization isolation PASS는 2.0.7 수용 증거가 아니다.
+새 기준은 shared `/data/home`·`/config`·OAuth·global/workspace customization과 native
+permission의 positive inheritance, `/new`까지 안정된 session, same-session approval,
+encrypted reply outbox의 crash/retry/ack다. source/component 검증은 구현 뒤 새로
+기록하고 실제 HAOS OAuth/AppArmor/live Bot API E2E는 현재 `NOT RUN`이다.
 
 ### 2.1 2026-08-11 local v2 working-tree 증거
 
@@ -44,9 +52,9 @@
 | Python suite | PASS | historical local v2 snapshot `119 passed`; current full suite is recorded below |
 | linux/amd64 image | PASS | `antigravity-for-home-assistant:v2-final-local`; manifest-list digest `sha256:de1992f8c0df09a0b138a8c22659f68dc1e817079f6828149f68305df79ddb04` |
 | amd64 saved image config | PASS | `sha256:89fbca725e87f93af8d93f136b520f9e99738882ba3db2d6dc5e8db0f4d38a2b` |
-| amd64 image smoke | PASS | full Docker, browser-approval, feedback, memory, managed-auth, managed-plugin, update, user-files와 Telegram isolation |
-| linux/arm64 image | PASS (QEMU) | `antigravity-for-home-assistant:v2-final-local-arm64`; manifest-list digest `sha256:3cac3dcc76ba9d1410d3aac2369431a0568841f340f6b9748824b307cbd087df`; saved image config `sha256:1b63cf5afb9fb104426f94a1bdc9d6c3822c5fcc274a35515ee1d08fca17d82a`; packaging, HOME/rules/MCP Telegram isolation와 container-replacement update preservation PASS |
-| Telegram isolation | PASS | amd64와 QEMU arm64 actual 1.1.11 shared-HOME positive control 뒤 HOME별 marker 음성 및 managed MCP/rules tamper fail-closed |
+| amd64 image smoke | PASS | full Docker, browser-approval, feedback, memory, managed-auth, managed-plugin, update, user-files와 당시의 폐기된 Telegram isolation; 2.0.7 shared-context 증거가 아님 |
+| linux/arm64 image | PASS (QEMU) | `antigravity-for-home-assistant:v2-final-local-arm64`; manifest-list digest `sha256:3cac3dcc76ba9d1410d3aac2369431a0568841f340f6b9748824b307cbd087df`; saved image config `sha256:1b63cf5afb9fb104426f94a1bdc9d6c3822c5fcc274a35515ee1d08fca17d82a`; packaging, 당시의 폐기된 HOME/rules/MCP isolation과 container-replacement update preservation PASS |
+| Retired Telegram isolation | PASS (historical) | amd64와 QEMU arm64 actual 1.1.11에서 당시 HOME별 marker 음성 및 managed MCP/rules tamper fail-closed; 2.0.7은 shared-context positive canary로 재검증 필요 |
 | config + memory fixture | PASS | bounded diff, canonical input boolean reload, memory begin/verify, failure rollback와 installed `ha-memory` subprocess boundary |
 | transient device test | PASS | separate typed operation, test/restore preview, high-risk gate, success/test-failure/initial-call-error/rollback-failed/in-doubt와 durable replay fixture |
 | read transport ownership | PASS | ordinary read, memory snapshot와 state validation의 shared ha-read broker static/failure injection; privileged mutation/browser-auth는 분리 |
@@ -85,7 +93,7 @@ clean-commit 증거로 사용하지 않는다.
 | Python contracts | PASS | full suite `165 passed, 1 skipped`; Docker socket이 없는 test container에서 skip된 Buildx ignored-context canary를 host Docker에 연결해 별도로 `1 passed` |
 | Node contracts | PASS | Telegram/change 묶음 30개와 read/validate/memory/Supervisor credential·option 묶음 30개 |
 | static gates | PASS | ShellCheck, yamllint, markdownlint, actionlint, Hadolint, AppArmor parser/compiled target, App linter v2.21와 `git diff --check` |
-| amd64 full runtime | PASS | Antigravity 1.1.11, Docker, feedback, browser approval, memory, managed auth와 Telegram isolation smoke |
+| amd64 full runtime | PASS | Antigravity 1.1.11, Docker, feedback, browser approval, memory, managed auth와 당시의 폐기된 Telegram isolation smoke; 2.0.7 수용 증거가 아님 |
 | migration/update fixture | PASS | user-files와 managed-plugin의 SIGKILL recovery, container replacement update persistence |
 | public v1 rehearsal | NOT RUN | clean committed source를 강제하는 preflight가 dirty working tree를 의도대로 거부; commit-bound image에서 재실행 필요 |
 | actual HAOS/native arm64/live services | NOT RUN | AppArmor enforce, OAuth, Telegram Bot API, 실제 Core/Supervisor와 native arm64를 이 결과로 대체하지 않음 |
@@ -124,20 +132,18 @@ candidate와 HAOS evidence가 생기기 전에는 관련 마일스톤을 `VERIFI
 | AG-010 | stream parser | top-level `event`, init/progress/SUCCESS result, conversation binding, invalid JSON, unknown event, size limit |
 | AG-011 | headless permissions | settings policy와 sandbox가 print mode에서도 적용 |
 | AG-012 | forbidden flags | skip-permissions와 Telegram override 거부 |
-| AG-013 | Telegram customization isolation | user global/workspace plugin·agent·rule·MCP가 인증 전후 worker에서 실행·노출되지 않음 |
+| AG-013 | Telegram customization inheritance | user global/workspace plugin·agent·rule·MCP와 settings가 Web/SSH와 동일하게 실행·노출·수정 가능 |
 | AG-014 | runtime auto-update disabled | 모든 native launch가 opt-out을 강제하고 updater spawn·binary version/digest 변동이 없음 |
 
 AG-009와 AG-010은 실제 고정 binary의 authenticated test account 또는 비밀 없는
 recorded protocol fixture가 필요하다. fake binary만으로 최종 PASS하지 않는다.
 
 AG-013의 2026-08-11 actual 1.1.11 control은 shared `/data/home`에서 user global stdio
-MCP가 Google OAuth 인증 완료 전 launch됨을 먼저 재현했다. 전용
-`/data/antigravity-ha/telegram-home`과 image-managed safe cwd를 사용한 worker에서는
-같은 global MCP marker와 `/config/.agents` marker가 모두 실행되지 않았고, managed
-MCP 변조는 exit 70, rules 변조는 fail closed로 거부됐다. 이는 local container 격리
-PASS이며 primary OAuth
-backend/path, 실제 로그인 성공 뒤 동일-process credential 비유출과 HAOS AppArmor
-enforce는 아직 `NOT RUN`이다.
+MCP가 Google OAuth 인증 완료 전 launch됨을 재현했다. 2.0.7은 이 positive control을
+의도된 관리자 채널 inheritance로 채택한다. global/workspace plugin·agent·rule·MCP와
+settings 수정 canary가 Web/SSH/Telegram에서 같은 결과를 내야 한다. primary OAuth
+backend/path, 실제 로그인 뒤 credential 비유출과 HAOS AppArmor enforce는 아직
+`NOT RUN`이다.
 
 AG-014 control canary는 실제 1.1.11과 clean temporary HOME에서 opt-out 미설정 시
 updater spawn count 1, `AGY_CLI_DISABLE_AUTO_UPDATE=true` 설정 시 0을 먼저 재현한다.
@@ -212,16 +218,18 @@ current amd64 image와 current-source QEMU aarch64 packaging canary는 이 경�
 - local pairing entropy/TTL/single-use/revoke와 unauthorized response
 - `$()`, backtick, quotes, newline, leading dash, Unicode와 oversized input
 - shell false, `--print` 없는 exact argv와 stdin prompt
-- actual 1.1.11에서 user global stdio MCP pre/post-auth launch 거부와
-  user/workspace plugin·agent·rule·MCP discovery 격리
+- actual 1.1.11에서 user global/workspace plugin·agent·rule·MCP와 native settings의
+  Web/SSH 동등 상속 및 수정 positive canary
 - per-chat FIFO, global concurrency, queue overflow, cancel와 timeout
 - validated update의 HKDF/AES-256-GCM sealed spool, plaintext/token canary 부재,
   fsync-before-transport-offset, ack ciphertext 삭제와 비순차 contiguous commit
 - Bot API transport ack 뒤 process crash/restart replay, wrong-token/tamper fail-closed와
   sealed spool 128 records/2 MiB 경계
 - NDJSON invalid/oversized/missing result/non-zero exit
-- session key isolation, 24-hour expiry와 `/new`
-- read-only/confirm/autonomous mode matrix
+- first-run pre-binding, worker/restart/idle 뒤 같은 conversation과 explicit `/new` rotation
+- global tool permission/sandbox/sensitive option 동등 적용과 legacy mode 무시
+- encrypted reply outbox의 pre-send fsync, chunk ack, 429 bounded retry,
+  crash/network/timeout/5xx ambiguity 격리와 명시적 `/retry`, 최종 제거
 - high-risk always-confirm matrix와 모든 `service_call`의 human confirmation 강제
 - cross-user/chat callback, replay, expiry와 preview digest change
 - config replacement 원문을 Bot에 보내지 않고 broker structured preview만
@@ -278,11 +286,15 @@ consumer가 현재 run ID/attempt의 artifact만 받도록 해 이전 attempt의
 `NOT_RUN`을 `PASS`로 글자만 바꿔서는 안 된다. exact candidate/source와 연결된
 repository-scoped evidence URI와 content SHA-256이 여덟 gate 모두에 있어야 finalize가
 통과한다. pre-finalize gate는 AppArmor enforce, amd64 same-local-identity
-migration, aarch64 첫-release install/persistence, migration mode, OAuth
-isolation/persistence, updater canary, local migration rollback, Telegram mode다. amd64
+migration, aarch64 첫-release install/persistence, migration mode, shared runtime
+persistence, updater canary, local migration rollback, Telegram session/outbox다. amd64
 rehearsal은 공식 local testing `/addons/antigravity_home_assistant`에 exact public-v1
 source를 build한 뒤 같은 directory/slug를 candidate App directory로 교체하는
 `HA-007`이다. original custom repository의 public update/rollback `HA-005`가 아니다.
+공유 identity/customization의 읽기·수정·재시작 계약은
+`shared_runtime_persistence`, 명시적 `/new`·same-session approval·암호화 전달
+ledger 계약은 `telegram_session_delivery` gate가 담당한다. 폐기된 별도 OAuth
+격리와 Telegram 전용 mode는 release PASS 조건이 아니다.
 
 Candidate artifact의 `haos-report-templates/`에는 exact candidate binding과 여덟 gate의
 key/check set을 자동으로 채운 fail-closed authoring template이 들어 있다. 동일 결과는
@@ -460,16 +472,15 @@ HAOS update와 이전 image rollback은 실행하지 않았으므로 IM-012는 `
 
 - static allowlist와 local pairing 각각 1회
 - unauthorized user/chat와 pairing probe 거부
-- readonly query와 per-chat session continuation
-- `confirm_changes`의 safe config change와 cancel/expiry
-- `autonomous` 저위험 실행과 high-risk confirmation 강제
+- 조회와 per-chat session continuation, explicit `/new` rotation
+- global native permission 동등 적용과 same-session change confirmation/cancel/expiry
 - safe fixture entity `device_test`의 test+restore preview, human confirmation과 최종
   prior-state 복원. 실제 safety-critical entity는 사용하지 않음
 - callback replay/cross-user negative test
 - App restart 때 queue/capability 취소와 authorization 보존
 - Bot API network interruption 뒤 duplicate mutation 없음
-- sanitized Telegram Home/safe cwd에서 user global/workspace customization이
-  실행되지 않고 실제 OAuth canary가 reply/log/network로 유출되지 않음
+- shared `/data/home`·`/config`에서 user global/workspace customization이 CLI와
+  동일하게 실행·수정되고 실제 OAuth canary가 reply/log/network로 유출되지 않음
 
 실제 high-risk device를 작동하지 않는다. broker dry-run과 synthetic policy operation으로
 confirmation 강제를 검증한다.
@@ -601,18 +612,17 @@ Negative:
   Recorder DB read/write
 - option `true` interactive sensitive-read `Px` 프로필의 위 세 종류
   write/rename/truncate/delete
-- Telegram/browser/memory/broker의 위 세 종류 read/write를 두 option 값에서 모두 거부
+- browser/memory/broker의 위 세 종류 read/write를 두 option 값에서 모두 거부하고
+  Web/SSH/Telegram Antigravity에는 같은 option profile 적용
 - 모든 profile의 SSH key, App token, backup, SSL과 cloud auth 접근을 두 option 값에서 모두 거부
-- Telegram의 `/config` write와 raw mutation endpoint
 - browser의 `/config`, `/data`, Supervisor endpoint
 - memory의 OAuth/Telegram/SSH/browser credential
 - 모든 unprivileged child의 capability directory와 host paths
 - ordinary SSH/SFTP/ttyd shell의 `/data/home/.gemini/**` 접근과 main/shell/interactive/
   helper/broker profile의 다른 PID `environ`, `cmdline`, `mem`, `fd`, `root`, `map_files` 우회
 
-interactive Antigravity process는 native Home/session 동작을 위해 `/data/home/**`에,
-Telegram Antigravity process는 별도 전용 Home에 접근한다. primary OAuth credential
-backend와 exact path가 아직
+Web/SSH/Telegram Antigravity process는 native Home/session과 사용자 customization을
+위해 `/data/home/**`와 `/config`에 접근한다. primary OAuth credential backend와 exact path가 아직
 검증되지 않았으므로 특정 `.gemini` 경로를 OAuth 필수 경로로 가정해 AppArmor deny
 시험을 설계하지 않는다. 대신 credential canary를 두고 native
 permission/sandbox/command 경계가 임의 file-read 유도를 차단하는지, 원문이 model
@@ -620,11 +630,10 @@ output, Telegram reply, log와 artifact에 없는지를 별도 negative test한�
 같은 process 안의 정상 인증 read와 유도된 read를 구분하지 못하는 잔여 위험을
 release evidence에 기록하지 않으면 PASS가 아니다.
 
-Telegram worker에서 임의 user global stdio MCP를 canary로 구성하고 인증 전과 인증
-후 모두 process launch가 없어야 한다. custom MCP를 의도적으로 launch하는 negative
-fixture에서는 child가 Telegram worker profile을 상속하고 coordinator socket이
-deny되는지도 별도로 확인한다. socket deny만으로 공유 Home credential 격리 PASS를
-주지 않는다.
+Telegram에서 실행한 Antigravity에 임의 user global stdio MCP와 workspace agent/rule canary를
+구성하고 인증 전후 discovery 및 수정 결과가 Web/SSH와 같아야 한다. custom MCP child도
+같은 Antigravity profile을 상속하되 Supervisor credential과 coordinator capability는
+계속 deny되어야 한다. shared Home은 credential isolation PASS로 표현하지 않는다.
 
 예상 deny는 test case와 일치해야 한다. 예상하지 않은 `DENIED`와 release run의
 `ALLOWED` complain event가 있으면 PASS가 아니다.

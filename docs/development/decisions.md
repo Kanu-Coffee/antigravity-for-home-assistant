@@ -1,5 +1,8 @@
 # decisions.md — Architecture Decision Records
 
+> 역사적 ADR입니다. Telegram 전용 HOME/login/mode를 제거한 2.0.7 결정은
+> [v2 ADR-004](../v2/decisions.md#adr-004--telegram-bridge-전면-교체)를 따릅니다.
+
 ## ADR-001 Home Assistant App으로 구현
 
 - 상태: Accepted

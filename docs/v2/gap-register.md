@@ -9,9 +9,9 @@
 | ID | 상태 | 범위 | 해제 조건 |
 | --- | --- | --- | --- |
 | GAP-001 | `OPEN` | 실제 HAOS 양 아키텍처 설치 | amd64 HA-007, aarch64 HA-006과 양쪽 HA-001/native updater digest canary PASS |
-| GAP-002 | `OPEN` | native Google OAuth | interactive와 Telegram 별도 identity login/restart, credential 비유출 canary PASS |
+| GAP-002 | `OPEN` | native Google OAuth | shared Web/SSH/Telegram identity login/restart와 credential 비유출 canary PASS |
 | GAP-003 | `OPEN` | AppArmor 실제 enforce | HAOS의 AA-001 positive/negative matrix와 예상 deny audit PASS |
-| GAP-004 | `OPEN` | live Telegram | 실제 Bot API에서 세 mode, pairing, replay, restart와 network interruption HA-004 PASS |
+| GAP-004 | `OPEN` | live Telegram | 실제 Bot API에서 global permission inheritance, stable session, `/new`, same-session approval, sealed outbox retry, pairing/replay/restart/network interruption HA-004 PASS |
 | GAP-005 | `OPEN` | public v1 migration | numeric publish 후 original repository/add-on identity의 amd64 `1.0.4 → 2.0.0` update/rollback HA-005 PASS |
 | GAP-006 | `OPEN` | public release supply chain | Candidate/HAOS evidence/finalize, numeric promotion/supply chain, reviewed merge/Release resume, post-publish two-arch public fresh-install `HA-008` artifact와 anonymous pull PASS |
 | GAP-007 | `OPEN` | 성능·내구성 (non-blocking advisory) | 짧은 CI contract를 유지한다. 30분 soak, 15분 동시 장애와 restart 20회는 필요할 때만 수동 진단하며 Candidate·finalize·tag·release를 차단하지 않는다. |
@@ -53,7 +53,7 @@ GAP-007을 닫으려면 별도의 실제 HAOS 장시간 운용·network interrup
 
 | ID | 상태 | 제거 대상 | 회귀 방지 |
 | --- | --- | --- | --- |
-| LEGACY-001 | `CLOSED` | Telegram shell/tmux prompt interpolation | bridge argv/stdin 및 isolation tests |
+| LEGACY-001 | `CLOSED` | Telegram shell/tmux prompt interpolation | bridge argv/stdin 및 session/outbox tests |
 | LEGACY-002 | `CLOSED` | `approval_policy=never`와 `danger-full-access` 강제 | native wrapper/policy tests |
 | LEGACY-003 | `CLOSED` | unauthenticated pairing PIN/deep-link 응답 | local-only pairing tests |
 | LEGACY-004 | `CLOSED` | Codex식 `-c`, TOML와 `$skill` 사용자 명령 | native help/settings/plugin contracts |

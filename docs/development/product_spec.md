@@ -1,5 +1,8 @@
 # product_spec.md — 제품 요구사항
 
+> 역사 문서입니다. Telegram까지 shared OAuth/customization/permission을 사용하는
+> 2.0.7 제품 계약은 [v2 product spec](../v2/product-spec.md)을 따릅니다.
+
 ## 1. 제품 정의
 
 `Antigravity for Home Assistant`는 HAOS의 Supervisor가 관리하는 Home Assistant App이다. 사용자는 Home Assistant 안의 웹 터미널, 일반 SSH 또는 App의 SSH endpoint에 직접 연결하는 ChatGPT mobile Remote를 통해 동일한 antigravity 환경에 접근한다.

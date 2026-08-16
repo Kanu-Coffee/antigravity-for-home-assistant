@@ -137,7 +137,6 @@ bashio::log.info "Configured headless browser approval policy: ${browser_approva
 
 unset browser_approval_policy
 
-legacy_user_files_mode_migration_pending=false
 user_files_update_result=''
 if user_files_update_result=$(/usr/local/bin/antigravity-user-files-update); then
   if ! jq --exit-status \
@@ -162,13 +161,6 @@ if user_files_update_result=$(/usr/local/bin/antigravity-user-files-update); the
     <<< "${user_files_update_result}" >/dev/null; then
     bashio::log.fatal 'antigravity user-file update helper returned an invalid result'
     exit 1
-  fi
-  if jq --exit-status '
-      (.requested_mode == "refresh_agents"
-        or .requested_mode == "refresh_all")
-      and .mode == "refresh_managed"
-    ' <<< "${user_files_update_result}" >/dev/null; then
-    legacy_user_files_mode_migration_pending=true
   fi
   if jq --exit-status '.created | index("settings") != null' \
     <<< "${user_files_update_result}" >/dev/null; then
@@ -260,12 +252,6 @@ if [[ -n "${managed_plugin_backup}" ]]; then
 fi
 unset managed_plugin_backup managed_plugin_result
 
-if ! /usr/local/libexec/ha-telegram-home-bootstrap --runtime; then
-  bashio::log.fatal 'Could not prepare the isolated Telegram Antigravity HOME'
-  exit 1
-fi
-bashio::log.info 'Prepared the isolated Telegram Antigravity HOME and managed plugin'
-
 rm -f "${RUNTIME_DIR}/runtime.env"
 supervisor_credential_available=false
 if [[ -n "${supervisor_credential_bootstrap}" ]]; then
@@ -288,8 +274,8 @@ fi
 # The raw Supervisor credential is now owned by the scoped helper boundary.
 unset supervisor_credential_bootstrap
 
-if [[ "${legacy_user_files_mode_migration_pending}" == true ]]; then
-  supervisor_options_migration_result=''
+supervisor_options_migration_result=''
+if [[ "${supervisor_credential_available}" == true ]]; then
   if supervisor_options_migration_result=$(
     /usr/bin/node "${SUPERVISOR_OPTIONS_MIGRATION}"
   ) && jq --exit-status '
@@ -299,16 +285,17 @@ if [[ "${legacy_user_files_mode_migration_pending}" == true ]]; then
     ' <<< "${supervisor_options_migration_result}" >/dev/null; then
     if jq --exit-status '.status == "migrated"' \
       <<< "${supervisor_options_migration_result}" >/dev/null; then
-      bashio::log.notice 'Normalized the deprecated user-file update option through the Supervisor self-options API'
+      bashio::log.notice 'Removed or normalized deprecated App options through the Supervisor self-options API'
     else
-      bashio::log.info 'The deprecated user-file update option was already normalized'
+      bashio::log.info 'No deprecated App option migration was required'
     fi
   else
-    bashio::log.warning 'Could not persist the deprecated user-file update option normalization through Supervisor; the safe in-memory mapping was applied and persistence will retry on the next App start'
+    bashio::log.warning 'Could not persist deprecated App option migration through Supervisor; safe runtime mappings remain active and persistence will retry on the next App start'
   fi
-  unset supervisor_options_migration_result
+else
+  bashio::log.info 'Skipped Supervisor option migration because no Supervisor credential is available'
 fi
-unset legacy_user_files_mode_migration_pending
+unset supervisor_options_migration_result
 
 if /usr/local/bin/ha-memory init >/dev/null 2>&1; then
   bashio::log.info 'Validated the persistent Home Assistant memory store'

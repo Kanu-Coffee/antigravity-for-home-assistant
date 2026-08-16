@@ -3,13 +3,12 @@
 ## 1. 시스템 개요
 
 ```text
-Home Assistant Ingress ── ttyd ── tmux ── interactive agy
-SSH public key ── sshd child ── session launcher ─┘ native plugin
-Telegram API ── poller ── auth ── queue ── print worker
-                                      │          │ read/propose only
-                                      └── approval coordinator
-                                                  │ one-time capability
-                                             change broker
+Home Assistant Ingress ── ttyd ── tmux ──┐
+SSH public key ── sshd child ─────────────┼─ shared /data/home + /config + native policy
+Telegram API ─ poller ─ auth ─ session ───┘
+                            │      │
+                            │      └─ encrypted reply outbox ── delivery/retry
+                            └─ same-session approval ── change broker
                                                   │
                 ┌─────────────────────────────────┼─────────────────┐
                 ▼                                 ▼                 ▼
@@ -28,8 +27,7 @@ inherited descriptor로 runtime에 일회 전달한다. runtime은 시작 즉시
 AppArmor profile 전환 전에 validated file descriptor를 anonymous pipe로 복사한다.
 따라서 target broker profile의 원본 token 경로 deny를 유지하면서도 exec의 inherited
 descriptor 재검증을 통과한다. 명시적으로 전환된 제한 helper만 파일 경로를 직접 연다.
-interactive CLI,
-Telegram worker, browser와 memory process는 원문 대신 scoped Unix socket 또는 helper
+Web/SSH/Telegram Antigravity, browser와 memory process는 원문 대신 scoped Unix socket 또는 helper
 결과만 받는다.
 
 ## 2. 신뢰 경계
@@ -38,9 +36,8 @@ Telegram worker, browser와 memory process는 원문 대신 scoped Unix socket �
 | --- | --- | --- |
 | App init과 credential file boundary | 최고 | 원본 Supervisor credential, option secret, root-only runtime file 생성 |
 | change broker | 높음 | typed proposal 검증, 원자적 `/config` 변경, 제한된 HA mutation |
-| interactive Antigravity | 관리자 대화형 | `/config` 일반 파일, allowlisted MCP, native 승인 UI. option에 따라 민감정보 제한/진단-read child 선택 |
-| Telegram bridge | 제한된 orchestrator | 인증, queue, preview, callback 검증. 원본 credential 없음 |
-| Telegram Antigravity worker | 비신뢰 입력 처리 | 조회와 proposal만. 직접 write/API mutation 금지 |
+| Web/SSH/Telegram Antigravity | 관리자 에이전트 | 공유 `/data/home`, `/config`, OAuth, global/workspace plugin·agent·rule·MCP와 native 권한. option에 따라 민감정보 제한/진단-read child 선택 |
+| Telegram bridge | 신뢰된 transport orchestrator | user/chat 인증, session binding, queue, sealed reply outbox, delivery retry와 approval callback 검증 |
 | browser gateway/Chromium | 비신뢰 web content 처리 | loopback HA frontend와 read-only identity |
 | memory daemon/MCP | 제한된 data processor | bounded catalog와 semantic memory. raw credential 없음 |
 | `/config` 내용과 web/log 응답 | data | 지침으로 실행하지 않음 |
@@ -82,8 +79,7 @@ base
 
 ```text
 /etc/antigravity/
-├─ settings.json                     # interactive native 기본값
-├─ telegram-settings.json            # Telegram 전용 fixed settings
+├─ settings.json                     # Web/SSH/Telegram 공유 native 기본값
 └─ mcp_config.json                   # global MCP 기본값
 
 /usr/local/libexec/
@@ -92,12 +88,7 @@ base
 ├─ antigravity-interactive-sensitive-read
 ├─ ha-sshd-runtime
 ├─ ha-ssh-session
-├─ ha-telegram-home-bootstrap
-├─ ha-telegram-runtime
-└─ ha-telegram-worker
-
-/usr/local/lib/antigravity-ha/
-└─ telegram-plugin.sh                 # Telegram용 safe-cwd plugin 파생기
+└─ ha-telegram-runtime
 
 /usr/local/share/antigravity-ha/
 ├─ app-version
@@ -108,8 +99,6 @@ base
 │  ├─ agents/
 │  ├─ rules/
 │  └─ skills/
-├─ telegram-workspace/                # root-owned read-only safe cwd
-│  └─ .antigravity-ha-managed         # cwd에는 customization/plugin 없음
 ├─ ha-read-broker.mjs
 ├─ ha-change-broker.mjs
 ├─ ha-change-proposal-mcp.mjs
@@ -128,7 +117,6 @@ base
 ├─ ha-read-broker
 ├─ ha-change-broker
 ├─ ha-change-proposal-mcp
-├─ ha-telegram-login
 └─ ha-telegram-pair
 ```
 
@@ -151,10 +139,7 @@ base
 │  │  └─ idempotency.json              # accepted/running/completed execution record
 │  ├─ telegram/
 │  │  ├─ authorizations.json          # pairing 결과; token 제외
-│  │  └─ bridge-state.json            # ack/transport offsets, AES-GCM sealed pending update, conversation binding
-│  └─ telegram-home/                  # Telegram 전용 native OAuth/HOME, 0700
-│     └─ .gemini/config/plugins/home-assistant/
-│        └─ mcp_config.json           # source에서 safe cwd로 파생한 managed copy
+│  │  └─ bridge-state.json            # offsets, conversation binding, AES-GCM sealed pending update/reply outbox
 ├─ antigravity-ha-memory/
 │  └─ memory.sqlite3
 ├─ antigravity/                       # v1 migration와 managed-file state
@@ -168,15 +153,11 @@ base
 └─ tmux/
 ```
 
-interactive native 기본 settings의 canonical path는
-`/etc/antigravity/settings.json`이다. change broker와 managed browser identity의
-canonical roots는 각각
-`/data/antigravity-ha/change-broker/`와 `/data/browser-auth/`다. Telegram safe cwd에는
-marker만 있으며 managed plugin은 bootstrap이 전용 Telegram HOME 아래 native global
-plugin 경로에 설치한다. canonical source의 다섯 MCP `cwd: /config`는 interactive
-plugin에는 그대로 유지한다. Telegram copy는 bootstrap이 exact server inventory와
-source tree를 검증한 뒤 모든 cwd를 image-managed `telegram-workspace`로 바꾼 canonical
-파생본이며, worker가 실행마다 같은 파생 결과와 tree 동등성을 다시 확인한다.
+공유 native 기본 settings의 canonical path는 `/etc/antigravity/settings.json`이다.
+change broker와 managed browser identity의 canonical roots는 각각
+`/data/antigravity-ha/change-broker/`와 `/data/browser-auth/`다. Telegram은 별도
+settings/plugin copy를 만들지 않고 `/data/home`과 `/config`의 사용자 전역·workspace
+customization을 그대로 사용하고 수정할 수 있다.
 
 Antigravity가 native하게 만드는 추가 `.gemini` 파일은 보존하되 문서화되지 않은
 인증 파일명을 코드가 추정하거나 직접 수정하지 않는다. CLI가 관리하는 OAuth
@@ -207,10 +188,10 @@ Antigravity가 native하게 만드는 추가 `.gemini` 파일은 보존하되 �
 └─ playwright-output/                 # 비영속 screenshot/artifact
 ```
 
-socket, in-memory capability/pending approval, browser profile와 screenshot은 App
-재시작 때 폐기한다. change capability와 Telegram approval을 `/run` file로 저장하는
-구현은 아직 없으며 broker/coordinator process memory에만 둔다. Telegram token을
-파일명, argv 또는 persisted queue에 넣지 않는다. `supervisor.token`은 init이 매
+socket, one-time change capability, browser profile와 screenshot은 App 재시작 때
+폐기한다. Telegram conversation binding과 암호화된 pending update/reply outbox는
+`/data`에 crash-safe하게 보존하며 approval은 같은 conversation key에 결합한다.
+Telegram token을 파일명, argv 또는 persisted queue에 넣지 않는다. `supervisor.token`은 init이 매
 시작마다 원자적으로 다시 만들고 AppArmor로 broker/scoped helper 외 접근을 거부한다.
 
 ## 5. Antigravity 구성 흐름
@@ -233,10 +214,10 @@ socket, in-memory capability/pending approval, browser profile와 screenshot은 
 
 ## 6. 주요 데이터 흐름
 
-### 6.1 대화형 작업
+### 6.1 Web/SSH/Telegram Antigravity 작업
 
 ```text
-user → Ingress/SSH → agy → native permissions → plugin MCP → broker/API
+user → Ingress/SSH/Telegram → agy → native permissions → plugin MCP → broker/API
                              │
                              └→ AppArmor interactive 실행 프로필 선택
                                  ├─ restricted: 세 조건부 경로 read/write deny
@@ -245,8 +226,9 @@ user → Ingress/SSH → agy → native permissions → plugin MCP → broker/AP
 
 세 조건부 경로는 `secrets.yaml`, `.storage/**`와 `/config` 아래 configurable/nested
 Recorder SQLite DB(`*.db`, `*.sqlite`, `*.sqlite3` 및 wal/shm/journal/backup 후보)다.
-Telegram, browser, memory, broker, 일반 shell과 SSH key/App token/backup/SSL/cloud
-auth 경로는 이 선택의 영향을 받지 않는다.
+browser, memory, broker, 일반 shell과 SSH key/App token/backup/SSL/cloud auth 경로는
+이 선택의 영향을 받지 않는다. Telegram Antigravity에는 Web/SSH와 같은 profile을
+적용한다.
 
 사용자가 TUI에서 승인해도 AppArmor deny와 broker의 고위험 정책은 해제되지
 않는다.
@@ -263,25 +245,20 @@ session shell로 상속되지 않고 private-key 및 다른 PID `/proc` 우회 d
 ### 6.2 Telegram 작업
 
 ```text
-Update → normalize → user/chat allowlist → per-chat queue → readonly print worker
-                                                        │
-                                                        ├→ answer
-                                                        └→ typed proposal
-                                                              │
-                           mode/risk → preview → confirmation ─┘
-                                                              │
-                                                       change broker
+Update → normalize → user/chat auth → session bind → per-session queue → shared Antigravity
+                                  │                              │
+                                  │                              ├→ sealed reply outbox → Telegram ack
+                                  │                              └→ approval in same conversation
+                                  └──────────── explicit /new rotates conversation
 ```
 
 prompt는 child stdin으로만 전달한다. NDJSON stdout은 event schema, byte limit와
-terminal result를 검증한 뒤 Telegram-safe text로 변환한다.
-worker는 대화형 `/data/home`이나 `/config`를 cwd로 쓰지 않는다. 전용
-`/data/antigravity-ha/telegram-home`, image-managed safe cwd, fixed settings, 빈 global
-MCP와 단일 managed plugin만 사용하며 bootstrap/worker가 owner, mode, symlink와
-content를 매 실행 검증한다. worker는 `/config` 자체와 하위 파일을 직접 읽거나 쓰지
-못하며 Telegram 전용 managed plugin의 MCP cwd도 safe workspace 파생본이다.
-`ha-telegram-login`은 trusted local TTY에서 이 별도
-HOME의 native first-run OAuth를 수행한다.
+terminal result를 검증한 뒤 Telegram-safe text로 변환한다. 이 실행은 Web/SSH와 같은
+`HOME=/data/home`, cwd `/config`, OAuth, plugin/agent/rule/MCP와 native permission을
+사용한다. 첫 prompt 전에 conversation binding을 영속화하고 실패를 이유로 자동
+회전하지 않는다. 결과는 암호화된 영속 outbox에 기록한 뒤 Telegram API가 전송을
+확인하면 제거한다. 429처럼 미전송이 명확한 실패만 bounded retry하고 crash·network·
+timeout·5xx처럼 전달 여부가 모호한 send는 `/retry`까지 격리한다.
 
 ### 6.3 브라우저
 
@@ -412,7 +389,8 @@ transient `device_test`는 persistent `service_call`과 다른 preview 형식을
 - App이 알 수 없는 미래 settings/plugin/memory schema를 발견하면 자동
   downgrade하지 않는다.
 - memory corruption은 DB를 삭제하지 않고 memory capability만 중단한다.
-- Telegram API 장애는 queue 상한과 backoff 안에서 격리한다.
+- Telegram API 장애는 queue 상한, 암호화된 reply outbox와 bounded backoff 안에서
+  격리하고 완료된 model 응답을 유실하지 않는다.
 - browser 실패는 텍스트/API 진단을 막지 않는다.
 - Core/Supervisor 장애는 명확한 unavailable 결과를 반환하며 credential fallback을
   시도하지 않는다.

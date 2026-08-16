@@ -25,12 +25,6 @@ INTERACTIVE_BROWSER_TOOLS = {
     "browser_type",
 }
 
-TELEGRAM_SAFE_BROWSER_TOOLS = SAFE_AUTO_APPROVE_BROWSER_TOOLS - {
-    "browser_hover",
-    "browser_navigate_back",
-    "browser_tabs",
-}
-
 ALLOWED_BROWSER_TOOLS = (
     SAFE_AUTO_APPROVE_BROWSER_TOOLS | INTERACTIVE_BROWSER_TOOLS
 )
@@ -143,15 +137,7 @@ def test_antigravity_plugin_registers_restricted_playwright_mcp(
     assert allowlist_match
     proxy_tools = set(re.findall(r'"(browser_[a-z_]+)"', allowlist_match.group(1)))
     assert ALLOWED_BROWSER_TOOLS == proxy_tools
-    telegram_allowlist_match = re.search(
-        r"const TELEGRAM_SAFE_TOOLS = new Set\(\[(.*?)\]\);", proxy, re.DOTALL
-    )
-    assert telegram_allowlist_match
-    telegram_tools = set(
-        re.findall(r'"(browser_[a-z_]+)"', telegram_allowlist_match.group(1))
-    )
-    assert telegram_tools == TELEGRAM_SAFE_BROWSER_TOOLS
-    assert telegram_tools.isdisjoint(INTERACTIVE_BROWSER_TOOLS)
+    assert "TELEGRAM_SAFE_TOOLS" not in proxy
     assert SAFE_AUTO_APPROVE_BROWSER_TOOLS.isdisjoint(INTERACTIVE_BROWSER_TOOLS)
 
 
@@ -204,11 +190,10 @@ def test_playwright_wrapper_uses_only_the_image_managed_stdio_server(
     assert '"${RUNTIME_DIR}/playwright-output" "${PLAYWRIGHT_HOME}"' in wrapper
     assert "PLAYWRIGHT_PROXY" not in wrapper
     assert 'if (( $# != 0 )); then' in wrapper
-    assert "[[ -v HA_TELEGRAM_USER_ID ]]" in wrapper
-    assert "[[ -v HA_TELEGRAM_CHAT_ID ]]" in wrapper
-    assert "^[1-9][0-9]{0,19}$" in wrapper
-    assert "^-?[1-9][0-9]{0,19}$" in wrapper
-    assert 'ANTIGRAVITY_HA_TELEGRAM_READ_ONLY="${telegram_read_only}"' in wrapper
+    assert "ANTIGRAVITY_HA_CHANNEL" in wrapper
+    assert "HA_TELEGRAM_USER_ID" in wrapper
+    assert "HA_TELEGRAM_CHAT_ID" in wrapper
+    assert "ANTIGRAVITY_HA_TELEGRAM_READ_ONLY" not in wrapper
     assert "exec /usr/local/libexec/ha-playwright-runtime" in wrapper
     assert 'readonly NODE_BINARY=/usr/bin/node' in wrapper
     assert "NODE_OPTIONS" in wrapper
@@ -232,7 +217,7 @@ def test_playwright_wrapper_uses_only_the_image_managed_stdio_server(
     assert "/usr/local/share/antigravity-ha/playwright-mcp-proxy.mjs" in runtime
     assert "SUPERVISOR_TOKEN" in runtime
     assert "exec /usr/bin/env -i" in runtime
-    assert 'ANTIGRAVITY_HA_TELEGRAM_READ_ONLY="${telegram_read_only}"' in runtime
+    assert "ANTIGRAVITY_HA_TELEGRAM_READ_ONLY" not in runtime
 
     proxy = (
         rootfs / "usr/local/share/antigravity-ha/playwright-mcp-proxy.mjs"
@@ -254,62 +239,40 @@ def test_playwright_wrapper_uses_only_the_image_managed_stdio_server(
     assert 'Object.prototype.hasOwnProperty.call(toolArgs, "filename")' in proxy
     assert "enabledTools.has(toolName)" in proxy
     assert ".filter((tool) => enabledTools.has(tool.name))" in proxy
-    assert "TELEGRAM_SAFE_TOOLS" in proxy
-    assert "playwright-bootstrap-telegram" in proxy
-    assert 'const TELEGRAM_CANONICAL_ORIGIN = "http://127.0.0.1:8099"' in proxy
-    assert 'toolName === "browser_navigate"' in proxy
-    assert "isCanonicalTelegramNavigation(toolArgs?.url)" in proxy
-    assert '"--block-service-workers"' in proxy
-    assert '"--allowed-origins"' in proxy
-    assert '"--init-page"' in proxy
-    assert "startTelegramNetworkProxy" in proxy
-    assert '"--proxy-server"' in proxy
-    assert '"--proxy-bypass"' in proxy
-    assert '"<-loopback>"' in proxy
-    assert 'request.socket.destroy()' in proxy
+    assert "TELEGRAM_SAFE_TOOLS" not in proxy
+    assert "playwright-bootstrap-telegram" not in proxy
+    assert "TELEGRAM_CANONICAL_ORIGIN" not in proxy
+    assert "startTelegramNetworkProxy" not in proxy
     assert "HOME_ASSISTANT_NAVIGATION_GUIDANCE" in proxy
     assert "http://127.0.0.1:8099/" in proxy
     assert ".map(addImageManagedGuidance)" in proxy
 
-    telegram_init_page = (
+    assert not (
         rootfs
         / "usr/local/share/antigravity-ha/playwright-telegram-init-page.ts"
-    ).read_text(encoding="utf-8")
-    assert 'const CANONICAL_HTTP_ORIGIN = "http://127.0.0.1:8099"' in (
-        telegram_init_page
-    )
-    assert 'const CANONICAL_WEBSOCKET_ORIGIN = "ws://127.0.0.1:8099"' in (
-        telegram_init_page
-    )
-    assert 'context.route("**/*"' in telegram_init_page
-    assert 'route.abort("blockedbyclient")' in telegram_init_page
-    assert "context.routeWebSocket" in telegram_init_page
-    assert "webSocket.connectToServer()" in telegram_init_page
-    assert 'webSocket.close({ code: 1008' in telegram_init_page
+    ).exists()
 
 
-def test_telegram_playwright_uses_a_parent_bound_read_only_profile(
+def test_telegram_playwright_uses_the_interactive_profiles(
     addon_root: Path,
 ) -> None:
     apparmor = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
-    worker = apparmor.split(
-        "profile antigravity_home_assistant-telegram-worker", maxsplit=1
+    telegram = apparmor.split(
+        "profile antigravity_home_assistant-telegram flags=", maxsplit=1
     )[1].split(
-        "profile antigravity_home_assistant-change-broker", maxsplit=1
+        "profile antigravity_home_assistant-change-proposal-client", maxsplit=1
     )[0]
 
     assert (
-        "/usr/local/bin/ha-playwright-mcp Px -> "
-        "antigravity_home_assistant-playwright-bootstrap-telegram,"
-    ) in worker
+        "/usr/local/libexec/antigravity-interactive-restricted Px -> "
+        "antigravity_home_assistant-interactive-restricted,"
+    ) in telegram
     assert (
-        "profile antigravity_home_assistant-playwright-bootstrap-telegram"
-    ) in apparmor
-    assert (
-        "/usr/local/libexec/ha-playwright-runtime Px -> "
-        "antigravity_home_assistant-browser-telegram,"
-    ) in apparmor
-    assert "profile antigravity_home_assistant-browser-telegram" in apparmor
+        "/usr/local/libexec/antigravity-interactive-sensitive-read Px -> "
+        "antigravity_home_assistant-interactive-sensitive-read,"
+    ) in telegram
+    assert "playwright-bootstrap-telegram" not in apparmor
+    assert "browser-telegram" not in apparmor
 
 
 def test_playwright_runtime_is_headless_isolated_and_ephemeral(
@@ -591,7 +554,8 @@ def test_real_playwright_mcp_smoke_is_part_of_container_validation(
     assert "mcpServers.playwright.command" in docker_smoke
     assert "PLAYWRIGHT_MCP_SMOKE_URL=http://127.0.0.1:8099/" in docker_smoke
     assert "PLAYWRIGHT_MCP_SMOKE_EXPECT_SOURCE_IP" in docker_smoke
-    assert "PLAYWRIGHT_MCP_SMOKE_TELEGRAM_REDIRECT_URL" in docker_smoke
+    assert "PLAYWRIGHT_MCP_SMOKE_POLICY_ONLY=1" in docker_smoke
+    assert "Telegram Playwright MCP shared policy smoke failed" in docker_smoke
     assert "home-assistant-internal-desktop.png" in docker_smoke
     assert "home-assistant-internal-mobile.png" in docker_smoke
     assert "PLAYWRIGHT_MCP_SMOKE_EXPECT_UNAUTHENTICATED=1" in docker_smoke

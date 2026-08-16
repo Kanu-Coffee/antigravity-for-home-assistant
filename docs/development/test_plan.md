@@ -1,5 +1,9 @@
 # test_plan.md — 검증 전략
 
+이 파일은 역사적 릴리스 증거입니다. 2.0.7 Telegram의 stable session, explicit
+`/new`, same-session approval, shared customization과 encrypted reply outbox 검증은
+[v2 test plan](../v2/test-plan.md)을 따릅니다.
+
 > 기존 browser/AppArmor 실기 대상은 public `0.2.3`이고 `0.2.4`는 그 결과를 기록한 validation/evidence release다. 검증형 HA 메모리는 public `0.3.0` 자동 회귀를 통과했지만 실제 HAOS read-only 감사의 catalog refresh는 FAIL했다. Public `0.3.1` 수정·공개 이미지 자동 회귀도 PASS했지만 후속 실제 HAOS/Core `2026.7.2` 재시험에서 automation-related 30건 중 2건이 `unknown_error`를 반환해 catalog는 다시 FAIL했다. Public `0.3.2`의 자동·공개 이미지 검증은 PASS했고 후속 실제 HAOS 재시험은 동일 2/30 오류 격리와 핵심 memory 경로를 PASS했지만 runtime digest와 순간 LKG 관측 증거가 없어 최종 PARTIAL(FAIL 0)이다. Public `0.4.0` 승인 정책의 정확한 공개 이미지 자동 검증과 실제 HAOS `never` mode 14/16 도구·승인 0회는 PASS지만 전체 UI/AppArmor 행렬은 PARTIAL이다. `0.9.7` 검증형 App 피드백은 local privacy/fake-`gh`/container/update 회귀와 실제 HAOS·GitHub 외부 write를 분리하며 live issue creation은 별도 승인 전까지 **NOT RUN**이다.
 
 ## 1. 테스트 계층

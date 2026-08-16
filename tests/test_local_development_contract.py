@@ -173,6 +173,7 @@ def test_development_memory_wrapper_is_digest_pinned_and_hardened(
     )
     assert re.search(r"(?:^|\s)(?:-i|--interactive)(?:\s|$)", memory)
     assert "/usr/local/bin/ha-memory-mcp" in memory
+    assert "ANTIGRAVITY_HA_MEMORY_READ_ONLY=1" in memory
     assert "HA_TELEGRAM_USER_ID=1" in memory
     assert "HA_TELEGRAM_CHAT_ID=1" in memory
     assert "type=volume" in memory and "volume-nocopy" in memory
@@ -384,6 +385,7 @@ def test_memory_wrapper_test_hook_preserves_the_sandbox(
     assert re.search(r"--security-opt\s+no-new-privileges(?::true)?", joined)
     assert any(PINNED_IMAGE.fullmatch(argument) for argument in arguments)
     assert "/usr/local/bin/ha-memory-mcp" in joined
+    assert "ANTIGRAVITY_HA_MEMORY_READ_ONLY" in joined
     assert "HA_TELEGRAM_USER_ID" in joined
     assert "HA_TELEGRAM_CHAT_ID" in joined
     assert "/var/run/docker.sock" not in joined

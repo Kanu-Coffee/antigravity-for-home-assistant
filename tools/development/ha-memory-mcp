@@ -24,6 +24,7 @@ if [[ ! $memory_volume =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$ ]]; then
   exit 64
 fi
 
+# Keep the legacy requester pair until the digest pin advances past 2.0.6.
 exec "$docker_bin" run --rm --interactive \
   --pull never \
   --network none \
@@ -33,6 +34,7 @@ exec "$docker_bin" run --rm --interactive \
   --pids-limit 64 \
   --memory 256m \
   --cpus 1 \
+  --env ANTIGRAVITY_HA_MEMORY_READ_ONLY=1 \
   --env HA_TELEGRAM_USER_ID=1 \
   --env HA_TELEGRAM_CHAT_ID=1 \
   --mount "type=volume,src=${memory_volume},dst=/data,volume-nocopy" \

@@ -122,8 +122,31 @@ const HA_VALIDATE_TOOLS = [
   "ha_validate_config",
   "ha_verify_state",
 ];
+// Telegram and the interactive CLI intentionally share this native HOME.  A
+// directory permission is recursive in Antigravity 1.1.11, so these exact
+// roots cover both the App-managed plugin and user-created global
+// plugins/agents/rules without granting the model access to OAuth material in
+// the rest of ~/.gemini.  Explicit workspace rules are needed because
+// request-review cannot show an interactive file review in headless mode.
+const SHARED_NATIVE_FILE_RULES = [
+  "read_file(/config)",
+  "write_file(/config)",
+  "read_file(/data/home/.gemini/config)",
+  "write_file(/data/home/.gemini/config)",
+  "read_file(/data/home/.gemini/antigravity-cli/agents)",
+  "write_file(/data/home/.gemini/antigravity-cli/agents)",
+  "read_file(/data/home/.gemini/antigravity-cli/plugins)",
+  "write_file(/data/home/.gemini/antigravity-cli/plugins)",
+  "read_file(/data/home/.gemini/antigravity-cli/skills)",
+  "write_file(/data/home/.gemini/antigravity-cli/skills)",
+  "read_file(/data/home/.gemini/GEMINI.md)",
+  "write_file(/data/home/.gemini/GEMINI.md)",
+  "read_file(/data/home/.gemini/antigravity-cli/settings.json)",
+  "write_file(/data/home/.gemini/antigravity-cli/settings.json)",
+];
 const HA_PERMISSION_RULES = {
   allow: [
+    ...SHARED_NATIVE_FILE_RULES,
     "mcp(ha_change/ha_change_propose)",
     "mcp(ha_memory/memory_search)",
     "mcp(ha_memory/memory_show)",
@@ -150,18 +173,71 @@ const HA_PERMISSION_RULES = {
     "write_file(.git/)",
     "read_file(/config/secrets.yaml)",
     "read_file(/config/.storage)",
-    "read_file(/data)",
     "write_file(/config/secrets.yaml)",
     "write_file(/config/.storage)",
+  ],
+};
+const SHARED_NATIVE_FILE_RULE_SET = new Set(SHARED_NATIVE_FILE_RULES);
+const LEGACY_2_0_6_PERMISSION_RULES = {
+  allow: [
+    ...HA_PERMISSION_RULES.allow.filter(
+      (rule) => !SHARED_NATIVE_FILE_RULE_SET.has(rule),
+    ),
+    ...PLAYWRIGHT_SAFE_TOOLS.map((tool) => `mcp(playwright/${tool})`),
+  ],
+  ask: [
+    ...HA_PERMISSION_RULES.ask,
+    ...PLAYWRIGHT_INTERACTIVE_TOOLS.map((tool) => `mcp(playwright/${tool})`),
+  ],
+  deny: [
+    ...HA_PERMISSION_RULES.deny,
+    "read_file(/data)",
     "write_file(/data)",
   ],
 };
+const LEGACY_2_0_6_MANAGED_SETTINGS_KEYS = [
+  "altScreenMode",
+  "toolPermission",
+  "artifactReviewPolicy",
+  "allowNonWorkspaceAccess",
+  "enableTerminalSandbox",
+  "showTips",
+  "showFeedbackSurvey",
+  "permissions",
+];
+const LEGACY_2_0_6_PERMISSION_RULE_SET = new Set([
+  ...LEGACY_2_0_6_PERMISSION_RULES.allow,
+  ...LEGACY_2_0_6_PERMISSION_RULES.ask,
+  ...LEGACY_2_0_6_PERMISSION_RULES.deny,
+]);
 const MANAGED_PERMISSION_RULES = new Set([
   ...HA_PERMISSION_RULES.allow,
   ...HA_PERMISSION_RULES.ask,
   ...HA_PERMISSION_RULES.deny,
   ...PLAYWRIGHT_SAFE_TOOLS.map((tool) => `mcp(playwright/${tool})`),
   ...PLAYWRIGHT_INTERACTIVE_TOOLS.map((tool) => `mcp(playwright/${tool})`),
+]);
+const RETIRED_MANAGED_PERMISSION_RULES = new Set([
+  // 2.0.6 used these recursive parent denies.  Keep recognizing them only in
+  // ownership state so an upgrade can remove them during the managed merge.
+  "read_file(/data)",
+  "write_file(/data)",
+  // Pre-release 2.0.7 candidates briefly managed individual App skill reads.
+  // Recognizing them makes interrupted candidate upgrades converge safely.
+  ...[
+    "ha-change-proposal",
+    "ha-dashboard",
+    "ha-feedback",
+    "ha-memory",
+    "home-assistant-operations",
+  ].map(
+    (skill) =>
+      `read_file(/data/home/.gemini/config/plugins/home-assistant/skills/${skill}/SKILL.md)`,
+  ),
+]);
+const REGISTERED_MANAGED_PERMISSION_RULES = new Set([
+  ...MANAGED_PERMISSION_RULES,
+  ...RETIRED_MANAGED_PERMISSION_RULES,
 ]);
 
 class FatalUpdateError extends Error {}
@@ -493,7 +569,8 @@ function validateState(value) {
     ) ||
     managedSettings.permission_rules.some(
       (rule) =>
-        typeof rule !== "string" || !MANAGED_PERMISSION_RULES.has(rule),
+        typeof rule !== "string" ||
+        !REGISTERED_MANAGED_PERMISSION_RULES.has(rule),
     )
   ) {
     throw new Error("The managed settings ownership state is invalid");
@@ -1453,6 +1530,218 @@ function permissionRules(value, name) {
   return rules;
 }
 
+function sameStringSet(left, right) {
+  return (
+    Array.isArray(left) &&
+    Array.isArray(right) &&
+    left.length === right.length &&
+    new Set(left).size === left.length &&
+    new Set(right).size === right.length &&
+    left.every((entry) => right.includes(entry))
+  );
+}
+
+function hasLegacy206PermissionOwnership(ownership) {
+  return (
+    sameStringSet(ownership.keys, LEGACY_2_0_6_MANAGED_SETTINGS_KEYS) &&
+    sameStringSet(
+      ownership.permission_rules,
+      [...LEGACY_2_0_6_PERMISSION_RULE_SET],
+    )
+  );
+}
+
+function skipJsonWhitespace(text, start) {
+  let index = start;
+  while (index < text.length && /[\t\n\r ]/u.test(text[index])) index += 1;
+  return index;
+}
+
+function scanJsonStringEnd(text, start) {
+  if (text[start] !== '"') throw new Error("Expected a JSON string");
+  for (let index = start + 1; index < text.length; index += 1) {
+    if (text[index] === "\\") {
+      index += 1;
+      continue;
+    }
+    if (text[index] === '"') return index + 1;
+  }
+  throw new Error("Unterminated JSON string");
+}
+
+function scanJsonValueEnd(text, start) {
+  if (text[start] === '"') return scanJsonStringEnd(text, start);
+  if (text[start] === "{" || text[start] === "[") {
+    const stack = [text[start] === "{" ? "}" : "]"];
+    for (let index = start + 1; index < text.length; index += 1) {
+      if (text[index] === '"') {
+        index = scanJsonStringEnd(text, index) - 1;
+        continue;
+      }
+      if (text[index] === "{" || text[index] === "[") {
+        stack.push(text[index] === "{" ? "}" : "]");
+        continue;
+      }
+      if (text[index] === "}" || text[index] === "]") {
+        if (stack.pop() !== text[index]) {
+          throw new Error("Mismatched JSON container");
+        }
+        if (stack.length === 0) return index + 1;
+      }
+    }
+    throw new Error("Unterminated JSON container");
+  }
+  let index = start;
+  while (index < text.length && text[index] !== "," && text[index] !== "}") {
+    index += 1;
+  }
+  while (index > start && /[\t\n\r ]/u.test(text[index - 1])) index -= 1;
+  return index;
+}
+
+function locateTopLevelJsonProperty(text, propertyName) {
+  let index = skipJsonWhitespace(text, 0);
+  if (text[index] !== "{") throw new Error("Settings JSON must be an object");
+  index += 1;
+  const seen = new Set();
+  let location;
+  while (true) {
+    index = skipJsonWhitespace(text, index);
+    if (text[index] === "}") {
+      index = skipJsonWhitespace(text, index + 1);
+      if (index !== text.length) throw new Error("Unexpected JSON suffix");
+      break;
+    }
+    const keyStart = index;
+    const keyEnd = scanJsonStringEnd(text, keyStart);
+    const key = JSON.parse(text.slice(keyStart, keyEnd));
+    if (seen.has(key)) throw new Error("Duplicate top-level settings key");
+    seen.add(key);
+    index = skipJsonWhitespace(text, keyEnd);
+    if (text[index] !== ":") throw new Error("Expected a JSON property colon");
+    const valueStart = skipJsonWhitespace(text, index + 1);
+    const valueEnd = scanJsonValueEnd(text, valueStart);
+    if (key === propertyName) {
+      location = { keyStart, valueEnd, valueStart };
+    }
+    index = skipJsonWhitespace(text, valueEnd);
+    if (text[index] === ",") {
+      index += 1;
+      continue;
+    }
+    if (text[index] !== "}") throw new Error("Expected a JSON property separator");
+  }
+  if (!location) throw new Error(`Missing top-level ${propertyName} property`);
+  return location;
+}
+
+function replaceTopLevelJsonPropertyValue(content, propertyName, value) {
+  const text = content.toString("utf8");
+  if (!Buffer.from(text, "utf8").equals(content)) {
+    throw new Error("Settings JSON is not valid UTF-8");
+  }
+  const location = locateTopLevelJsonProperty(text, propertyName);
+  const lineStart = text.lastIndexOf("\n", location.keyStart - 1) + 1;
+  const beforeKey = text.slice(lineStart, location.keyStart);
+  const indent = /^[\t ]*$/u.test(beforeKey) ? beforeKey : "";
+  const serialized = JSON.stringify(value, null, 2).replaceAll(
+    "\n",
+    `\n${indent}`,
+  );
+  const candidate = `${text.slice(0, location.valueStart)}${serialized}${text.slice(location.valueEnd)}`;
+  return Buffer.from(candidate, "utf8");
+}
+
+function preparePreservePermissionMigration(
+  currentContent,
+  desiredContent,
+  ownership,
+  desiredOwnership,
+) {
+  if (!hasLegacy206PermissionOwnership(ownership)) {
+    const currentOwnership =
+      sameStringSet(ownership.keys, desiredOwnership.keys) &&
+      sameStringSet(
+        ownership.permission_rules,
+        desiredOwnership.permission_rules,
+      );
+    if (currentOwnership) {
+      return { candidate: null, status: "not_needed", warning: null };
+    }
+    const emptyOwnership =
+      ownership.keys.length === 0 && ownership.permission_rules.length === 0;
+    return {
+      candidate: null,
+      status: emptyOwnership ? "skipped_unowned" : "skipped_ambiguous",
+      warning: emptyOwnership
+        ? "Preserve mode left settings.json unchanged because App-managed permission ownership could not be proven"
+        : "Preserve mode left settings.json unchanged because its permission ownership state was ambiguous",
+    };
+  }
+
+  try {
+    const current = parseSettings(currentContent, "Existing settings.json");
+    const desired = parseSettings(desiredContent, "The image default settings.json");
+    permissionRules(current, "Existing settings.json");
+    permissionRules(desired, "The image default settings.json");
+
+    for (const bucket of ["allow", "ask", "deny"]) {
+      for (const rule of LEGACY_2_0_6_PERMISSION_RULES[bucket]) {
+        const occurrences = ["allow", "ask", "deny"].reduce(
+          (count, candidateBucket) =>
+            count +
+            current.permissions[candidateBucket].filter(
+              (candidateRule) => candidateRule === rule,
+            ).length,
+          0,
+        );
+        if (
+          occurrences !== 1 ||
+          !current.permissions[bucket].includes(rule)
+        ) {
+          throw new Error("The App-owned permission layout changed");
+        }
+      }
+    }
+
+    const permissions = { ...current.permissions };
+    for (const bucket of ["allow", "ask", "deny"]) {
+      const userRules = current.permissions[bucket].filter(
+        (rule) => !LEGACY_2_0_6_PERMISSION_RULE_SET.has(rule),
+      );
+      permissions[bucket] = [...userRules];
+      for (const rule of desired.permissions[bucket]) {
+        if (!permissions[bucket].includes(rule)) permissions[bucket].push(rule);
+      }
+    }
+
+    const candidate = replaceTopLevelJsonPropertyValue(
+      currentContent,
+      "permissions",
+      permissions,
+    );
+    const installed = parseSettings(candidate, "Migrated settings.json");
+    const currentNonPermissions = { ...current };
+    const installedNonPermissions = { ...installed };
+    delete currentNonPermissions.permissions;
+    delete installedNonPermissions.permissions;
+    if (
+      JSON.stringify(currentNonPermissions) !==
+      JSON.stringify(installedNonPermissions)
+    ) {
+      throw new Error("A non-permission setting changed during migration");
+    }
+    return { candidate, status: "applied", warning: null };
+  } catch {
+    return {
+      candidate: null,
+      status: "skipped_ambiguous",
+      warning:
+        "Preserve mode left settings.json unchanged because its App-owned 2.0.6 permission layout was ambiguous",
+    };
+  }
+}
+
 function settingsOwnership(defaultContent) {
   const value = parseSettings(defaultContent, "The image default settings.json");
   const keys = Object.keys(value).filter((key) => MANAGED_SETTINGS_KEYS.has(key));
@@ -1612,6 +1901,7 @@ async function main() {
   const created = [];
   const candidates = {};
   let backupDirectory = null;
+  let permissionMigration = "not_applicable";
   let scopes = [];
   const refreshed = [];
 
@@ -1631,6 +1921,30 @@ async function main() {
     created.push("settings");
     candidates.settings = defaults.settings;
     state.managed.settings = desiredOwnership;
+  } else if (options.mode === "preserve") {
+    const currentSettings = await readSafeFile(SETTINGS_PATH);
+    if (currentSettings === undefined) {
+      throw new Error(
+        "Existing settings.json disappeared before permission migration",
+      );
+    }
+    const migration = preparePreservePermissionMigration(
+      currentSettings,
+      defaults.settings,
+      state.managed.settings,
+      desiredOwnership,
+    );
+    permissionMigration =
+      migration.status === "not_needed" &&
+      versionApplied(state, "settings", appVersion)
+        ? "already_applied"
+        : migration.status;
+    if (migration.warning !== null) warnings.push(migration.warning);
+    if (migration.candidate !== null) {
+      candidates.settings = migration.candidate;
+      state.managed.settings = desiredOwnership;
+      refreshed.push("settings");
+    }
   } else if (
     managedRefreshRequested &&
     !versionApplied(state, "settings", appVersion) &&
@@ -1681,6 +1995,7 @@ async function main() {
       backup_directory: backupDirectory,
       created,
       mode: options.mode,
+      permission_migration: permissionMigration,
       requested_mode: options.requestedMode,
       recovered,
       refreshed,

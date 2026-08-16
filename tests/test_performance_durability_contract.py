@@ -414,5 +414,4 @@ def test_short_ci_contract_is_mandatory_but_long_soak_is_manual_advisory() -> No
     assert "해당 장시간 evidence가 없다는 이유로 numeric image tag 생성을" in test_plan
 
     checklist = read(CHECKLIST)
-    m505 = next(line for line in checklist.splitlines() if line.startswith("| M5-05 |"))
-    assert "장시간 진단은 수동 advisory" in m505
+    assert "장시간 성능·내구성 진단은 수동 advisory" in checklist

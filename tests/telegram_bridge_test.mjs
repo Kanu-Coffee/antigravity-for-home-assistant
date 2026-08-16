@@ -8,7 +8,6 @@ import {
   ANTIGRAVITY_HEADLESS_PERMISSION_MARKER,
   AntigravityWorkerError,
   BoundedByteMatcher,
-  TELEGRAM_WORKER_INTEGRITY_MARKER,
   TelegramPollBackoff,
   buildAgyArgs,
   cancelRequesterWork,
@@ -65,7 +64,7 @@ const config = loadRuntimeConfig({
   telegram_bot_token: `123456:${"A".repeat(35)}`,
   telegram_allowed_user_ids: ["100"],
   telegram_allowed_chat_ids: ["-200"],
-  telegram_access_mode: "confirm_changes",
+  antigravity_tool_permission: "request-review",
 });
 assert.equal(
   ANTIGRAVITY_AUTH_REQUIRED_MARKER.toString("utf8"),
@@ -74,10 +73,6 @@ assert.equal(
 assert.equal(
   ANTIGRAVITY_HEADLESS_PERMISSION_MARKER.toString("utf8"),
   'a tool required the "read_file" permission that headless mode cannot prompt for, so it was auto-denied.',
-);
-assert.equal(
-  TELEGRAM_WORKER_INTEGRITY_MARKER.toString("utf8"),
-  "ha-telegram-worker: isolated native configuration is unavailable",
 );
 const authMarkerMatcher = new BoundedByteMatcher(ANTIGRAVITY_AUTH_REQUIRED_MARKER);
 const authMarkerSplit = Math.floor(ANTIGRAVITY_AUTH_REQUIRED_MARKER.length / 2);
@@ -328,10 +323,11 @@ await assert.rejects(
 );
 assert.throws(() => loadRuntimeConfig({ telegram_enabled: true, telegram_bot_token: "" }));
 assert.equal(requesterKey("100", "-200"), "100:-200");
-assert.equal(proposalDisposition("read_only", "low"), "read_only");
-assert.equal(proposalDisposition("confirm_changes", "low"), "human_confirmation");
-assert.equal(proposalDisposition("autonomous", "low"), "autonomous_policy");
-assert.equal(proposalDisposition("autonomous", "high"), "human_confirmation");
+assert.equal(proposalDisposition("request-review", "low"), "human_confirmation");
+assert.equal(proposalDisposition("strict", "high"), "human_confirmation");
+assert.equal(proposalDisposition("always-proceed", "low"), "autonomous_policy");
+assert.equal(proposalDisposition("always-proceed", "high"), "human_confirmation");
+assert.throws(() => proposalDisposition("autonomous", "low"), /invalid/u);
 
 const planArgs = buildAgyArgs("plan", true);
 assert.deepEqual(planArgs.slice(0, 2), ["--output-format", "stream-json"]);
@@ -339,14 +335,16 @@ assert.equal(planArgs.includes("--print"), false);
 assert.equal(planArgs.includes("-p"), false);
 assert.equal(planArgs.includes("--prompt"), false);
 assert.equal(planArgs.includes("--json-schema"), true);
-assert.equal(planArgs.includes("ha-telegram"), true);
-assert.equal(planArgs.includes("--disable-slash-commands"), true);
+assert.equal(planArgs.includes("ha-telegram"), false);
+assert.equal(planArgs.includes("--agent"), false);
+assert.equal(planArgs.includes("--mode"), false);
+assert.equal(planArgs.includes("--disable-slash-commands"), false);
 assert.equal(planArgs.includes("--print-timeout"), true);
 assert.equal(planArgs.includes("--sandbox"), true);
 assert.equal(planArgs.includes("-c"), false);
 assert.equal(planArgs.includes("approval_policy"), false);
 assert.equal(buildAgyArgs("execute", false).includes("accept-edits"), false);
-assert.equal(buildAgyArgs("execute", false).includes("plan"), true);
+assert.equal(buildAgyArgs("execute", false).includes("plan"), false);
 
 const stream = [
   JSON.stringify({ event: "init", conversation_id: "conversation.fixture-1" }),
@@ -753,6 +751,55 @@ try {
   await rm(crashReplayRoot, { recursive: true, force: true });
 }
 
+const backgroundDeliveryRoot = await mkdtemp(join(tmpdir(), "telegram-background-delivery-"));
+try {
+  const managedRoot = join(backgroundDeliveryRoot, "data", "antigravity-ha");
+  await mkdir(managedRoot, { recursive: true, mode: 0o700 });
+  await chmod(managedRoot, 0o700);
+  const statePath = join(managedRoot, "telegram", "bridge-state.json");
+  let polls = 0;
+  let handlerAttempts = 0;
+  const waits = [];
+  const offset = await pollUpdateBatches(config, {
+    statePath,
+    api: async (_token, method) => {
+      assert.equal(method, "getUpdates");
+      polls += 1;
+      if (polls === 1) {
+        return [{
+          update_id: 250,
+          message: {
+            message_id: 250,
+            from: { id: 100 },
+            chat: { id: -200, type: "private" },
+            text: "background delivery failure",
+          },
+        }];
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+      return [];
+    },
+    messageHandler: async () => {
+      handlerAttempts += 1;
+      if (handlerAttempts === 1) {
+        throw Object.assign(new Error("chat blocked the bot"), {
+          status: 403,
+          telegramMethod: "sendMessage",
+        });
+      }
+    },
+    wait: async (milliseconds) => waits.push(milliseconds),
+    shouldContinue: () => polls < 3,
+  });
+  assert.equal(offset, 251);
+  assert.equal(polls, 3);
+  assert.equal(handlerAttempts, 2);
+  assert.equal(waits.length, 1, "sendMessage 403 should back off without killing polling");
+} finally {
+  resetUpdateRuntimeForTest();
+  await rm(backgroundDeliveryRoot, { recursive: true, force: true });
+}
+
 let releaseQueue;
 const queueGate = new Promise((resolve) => { releaseQueue = resolve; });
 let queuedTaskStarted = false;
@@ -840,6 +887,8 @@ for await (const chunk of process.stdin) input += chunk;
 const payload = {
   prompt: input.trimEnd(),
   autoUpdateDisabled: process.env.AGY_CLI_DISABLE_AUTO_UPDATE === "true",
+  home: process.env.HOME,
+  channel: process.env.ANTIGRAVITY_HA_CHANNEL,
   leakedSupervisorToken: Boolean(process.env.SUPERVISOR_TOKEN),
   requester: [process.env.HA_TELEGRAM_USER_ID, process.env.HA_TELEGRAM_CHAT_ID],
   argv: process.argv.slice(2),
@@ -862,6 +911,7 @@ process.stdout.write(JSON.stringify({
   assert.equal(workerStatusSnapshot(), "not_checked");
   assert.equal(renderWorkerStatus(), "아직 확인되지 않음");
   const malicious = "literal $(touch /tmp/telegram-pwned) `id` ; echo nope";
+  let initializedConversation = null;
   const result = await runAntigravityPrompt(malicious, {
     binary: process.execPath,
     prefixArgs: [fake],
@@ -869,17 +919,32 @@ process.stdout.write(JSON.stringify({
     timeoutMs: 5_000,
     requester: { user_id: "100", chat_id: "-200" },
     conversationId: "conversation.fixture-1",
+    onConversation: (conversationId) => { initializedConversation = conversationId; },
   });
   const payload = JSON.parse(result.response);
   assert.equal(payload.prompt, malicious);
   assert.equal(payload.autoUpdateDisabled, true);
+  assert.equal(payload.home, "/data/home");
+  assert.equal(payload.channel, "telegram");
   assert.equal(payload.leakedSupervisorToken, false);
   assert.deepEqual(payload.requester, ["100", "-200"]);
   assert.equal(payload.argv.includes(malicious), false);
   assert.equal(payload.argv.includes("--output-format"), true);
   assert.equal(payload.argv.includes("--conversation"), true);
+  assert.equal(initializedConversation, "conversation.fixture-1");
   assert.equal(workerStatusSnapshot(), "ready");
   assert.equal(renderWorkerStatus(), "최근 요청 정상");
+  let mismatchedConversationBound = false;
+  await assert.rejects(runAntigravityPrompt("resume mismatch", {
+    binary: process.execPath,
+    prefixArgs: [fake],
+    cwd: fixtureDir,
+    timeoutMs: 5_000,
+    requester: { user_id: "100", chat_id: "-200" },
+    conversationId: "conversation.expected-other",
+    onConversation: () => { mismatchedConversationBound = true; },
+  }), /resumed a different conversation/u);
+  assert.equal(mismatchedConversationBound, false);
 
   const stderrCanary = "SECRET_STDERR_BEARER_URL_PROMPT_CANARY";
   const authFailureFake = join(fixtureDir, "auth-failure-agy.mjs");
@@ -908,9 +973,9 @@ process.exitCode = 1;
   assert.equal(authFailure.reasonClass, "authentication_required");
   assert.equal(requestFailureReason(authFailure), "authentication_required");
   assert.equal(workerStatusSnapshot(), "authentication_required");
-  assert.equal(renderWorkerStatus(), "Telegram 전용 로그인 필요 (ha-telegram-login)");
+  assert.equal(renderWorkerStatus(), "공유 Antigravity 로그인 필요 (antigravity)");
   const authFailureMessage = renderRequestFailure(authFailure);
-  assert.match(authFailureMessage, /ha-telegram-login/u);
+  assert.match(authFailureMessage, /antigravity/u);
   for (const forbidden of [
     stderrCanary,
     "private auth prompt canary",
@@ -947,9 +1012,9 @@ process.stderr.write(marker.slice(21) + "\\n${stderrCanary}\\n");
   assert.equal(permissionFailure.reasonClass, "headless_read_denied");
   assert.equal(requestFailureReason(permissionFailure), "headless_read_denied");
   assert.equal(workerStatusSnapshot(), "headless_read_denied");
-  assert.equal(renderWorkerStatus(), "파일 읽기 권한 차단");
+  assert.equal(renderWorkerStatus(), "전역 권한 정책의 대화형 승인 필요");
   const permissionFailureMessage = renderRequestFailure(permissionFailure);
-  assert.match(permissionFailureMessage, /최신 버전/u);
+  assert.match(permissionFailureMessage, /전역 Antigravity 권한/u);
   for (const forbidden of [
     stderrCanary,
     "private permission prompt canary",
@@ -1057,37 +1122,6 @@ process.stderr.write("${stderrCanary}\\n");
   assert.ok(emptySuccessFailure instanceof AntigravityWorkerError);
   assert.equal(emptySuccessFailure.reasonClass, "worker_failed");
   assert.equal(emptySuccessFailure.message.includes(stderrCanary), false);
-
-  const integrityFailureFake = join(fixtureDir, "integrity-failure-agy.mjs");
-  await writeFile(integrityFailureFake, `
-for await (const _chunk of process.stdin) { /* drain stdin */ }
-const marker = ${JSON.stringify(TELEGRAM_WORKER_INTEGRITY_MARKER.toString("utf8"))};
-process.stderr.write(marker.slice(0, 23));
-await new Promise((resolve) => setImmediate(resolve));
-process.stderr.write(marker.slice(23) + "\\n${stderrCanary}\\n");
-process.exitCode = 70;
-`, "utf8");
-  let integrityFailure;
-  try {
-    await runAntigravityPrompt("private integrity prompt canary", {
-      binary: process.execPath,
-      prefixArgs: [integrityFailureFake],
-      cwd: fixtureDir,
-      timeoutMs: 5_000,
-      requester: { user_id: "100", chat_id: "-200" },
-    });
-    assert.fail("integrity-failed worker unexpectedly succeeded");
-  } catch (error) {
-    integrityFailure = error;
-  }
-  assert.ok(integrityFailure instanceof AntigravityWorkerError);
-  assert.equal(integrityFailure.reasonClass, "runtime_integrity_failed");
-  assert.equal(requestFailureReason(integrityFailure), "runtime_integrity_failed");
-  assert.equal(workerStatusSnapshot(), "runtime_integrity_failed");
-  assert.equal(renderWorkerStatus(), "격리 실행 환경 무결성 오류");
-  const integrityFailureMessage = renderRequestFailure(integrityFailure);
-  assert.match(integrityFailureMessage, /App을 재시작/u);
-  assert.equal(integrityFailureMessage.includes(stderrCanary), false);
 
   const nativeExit70Fake = join(fixtureDir, "native-exit-70-agy.mjs");
   await writeFile(nativeExit70Fake, `

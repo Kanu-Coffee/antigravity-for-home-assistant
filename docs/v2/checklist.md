@@ -44,14 +44,14 @@
 - diagnostics, proposed diff와 command success는 mutation 승인/검증이 아니다.
 - memory 0건은 준비 완료나 검증된 no-result와 같지 않다.
 - 실제 HAOS/AppArmor 결과는 local Docker fixture와 별도 기록한다.
-- 대화형 Antigravity는 `/data/home`, Telegram은 전용
-  `/data/antigravity-ha/telegram-home`과 image-managed safe cwd를 사용한다. 실제
-  1.1.11 shared-HOME positive control에서는 user global MCP가 OAuth 인증 완료 전
-  launch됐지만, 전용 worker canary에서는 user global MCP와 `/config/.agents` marker가
-  모두 실행되지 않았고 managed MCP 변조는 exit 70, rules 변조는 fail closed로
-  닫혔다. 실제 HAOS OAuth 성공,
-  AppArmor enforce와 worker 자신의 OAuth 동일-process 유출 음성 시험 전에는 기본 OFF와
-  release blocker를 유지한다.
+- GAP-007의 장시간 성능·내구성 진단은 수동 advisory이며 Candidate, finalize,
+  tag 또는 release를 차단하지 않는다.
+- Web/SSH/Telegram Antigravity는 `/data/home`, `/config`, OAuth, user global/workspace
+  plugin·agent·rule·MCP와 native permission을 공유한다. 실제 1.1.11 shared-HOME
+  positive control의 global MCP launch는 2.0.7의 필수 inheritance 증거다. 실제 HAOS
+  OAuth/AppArmor enforce와 동일-process 비유출 시험은 별도 기록한다.
+- Telegram은 최초 실행 전에 conversation을 결합하고 `/new` 전까지 유지하며,
+  same-session approval과 암호화 reply outbox의 retry/ack를 보장한다.
 - `config_patch` public preview는 broker-generated secret-safe bounded structured
   diff, 생략 표시와 normalized mutation digest를 포함한다. local component suite는
   secret canary 제거와 changed-preview 승인 무효화를 통과했다.
@@ -77,12 +77,14 @@
   `sha256:3cac3dcc76ba9d1410d3aac2369431a0568841f340f6b9748824b307cbd087df`,
   saved image config digest
   `sha256:1b63cf5afb9fb104426f94a1bdc9d6c3822c5fcc274a35515ee1d08fca17d82a`;
-  QEMU packaging, HOME/rules/MCP Telegram isolation와 container-replacement update
-  preservation PASS. 임시 binfmt 등록은 시험 후 제거했다.
+  QEMU packaging, 당시의 폐기된 Telegram HOME 격리 canary와 container-replacement
+  update preservation PASS. 이 격리 결과는 2.0.7 수용 증거가 아니다. 임시 binfmt
+  등록은 시험 후 제거했다.
 - 해당 amd64 image의 full Docker, memory, browser-approval, feedback,
   managed-auth, user-files, managed-plugin과 update smoke: PASS.
-- amd64와 QEMU arm64 actual Antigravity 1.1.11 Telegram 전용 HOME/cwd 격리 canary와
-  managed MCP/rules tamper fail-closed: PASS.
+- amd64와 QEMU arm64 actual Antigravity 1.1.11에서 당시 Telegram 전용 HOME/cwd
+  격리 canary와 managed MCP/rules tamper fail-closed: PASS. 이 구조는 2.0.7에서
+  shared-context 관리자 채널로 교체됐다.
 - canonical input boolean config transaction, memory begin/verify와 failure rollback local
   fixture: PASS.
 - 실제 HAOS OAuth/AppArmor enforce, native arm64와 실제 Telegram/config mutation
@@ -106,7 +108,8 @@
   skip된 Buildx context canary는 host Docker를 연결해 별도로 `1 passed`였다. Node
   component는 두 묶음 60개, 전체 static/lint/AppArmor parser/App linter gate는 PASS했다.
 - 같은 이미지의 full Docker, feedback, browser approval, memory, managed auth,
-  Telegram isolation, user-files, managed-plugin과 update persistence smoke는 PASS했다.
+  당시의 폐기된 Telegram isolation, user-files, managed-plugin과 update persistence
+  smoke는 PASS했다. Telegram 항목은 2.0.7 shared-context 증거가 아니다.
 - 이 image의 OCI revision은 아직 변경 전 `HEAD`를 가리키므로 release 증거가 아니다.
   public `1.0.4 → v2` rehearsal도 clean committed source preflight에서 의도대로 멈췄다.
   commit-bound rebuild와 rehearsal 전에는 M6-01, M6-08 또는 M7-05를 승격하지 않는다.
@@ -162,7 +165,7 @@
 | M3-07 | `TODO` | HAOS enforce positive/negative matrix | AppArmor E2E PASS |
 | M3-08 | `PARTIAL` | 고위험 항상 확인 불변조건 검증 | local policy/replay matrix PASS; real Telegram E2E TODO |
 | M3-09 | `PARTIAL` | 민감정보 option의 profile 선택과 불변 deny 구현 | local profile matrix PASS; false/true HAOS matrix TODO |
-| M3-10 | `PARTIAL` | native OAuth 동일-process 잔여 위험 완화와 release 판단 | Telegram Home isolation PASS; actual interactive/Telegram OAuth canary TODO |
+| M3-10 | `PARTIAL` | shared native OAuth 동일-process 잔여 위험과 관리자 trust-model 검증 | local shared-HOME canary; actual HAOS OAuth 비유출/AppArmor TODO |
 
 ### M4 — HA API, memory와 browser
 
@@ -184,14 +187,14 @@
 | M5-01 | `PARTIAL` | 기존 bridge 격리/제거와 기본 OFF 유지 | static/image entrypoint PASS; HAOS install TODO |
 | M5-02 | `PARTIAL` | long polling, static user/chat allowlist와 bounded metrics | Bot API/metric component tests PASS; live Bot API TODO |
 | M5-03 | `PARTIAL` | local-only pairing create/list/revoke | pairing security suite PASS; HAOS operator flow TODO |
-| M5-04 | `PARTIAL` | input normalization과 shell-free print worker | injection/argv/stdin suite PASS; live conversation TODO |
-| M5-05 | `PARTIAL` | per-chat queue, session, cancel와 timeout | 짧은 CI/component와 historical local 30분 baseline PASS; 장시간 진단은 수동 advisory이며 live HAOS Telegram TODO |
+| M5-04 | `PARTIAL` | input normalization과 shell-free shared-runtime invocation | injection/argv/stdin suite PASS; live conversation TODO |
+| M5-05 | `PARTIAL` | pre-bound stable session, explicit `/new`, per-chat queue, cancel와 timeout | 2.0.7 component 재검증 및 live HAOS Telegram TODO |
 | M5-06 | `PARTIAL` | stream-json parser와 Telegram chunking | parser/output suite PASS; live Telegram formatting TODO |
 | M5-07 | `PARTIAL` | typed proposal와 broker-generated human-reviewable confirmation preview | local secret-safe diff + replay/cross-chat PASS; HAOS Telegram E2E TODO |
-| M5-08 | `PARTIAL` | 세 access mode와 high-risk matrix | local full policy suite PASS; HAOS E2E TODO |
-| M5-09 | `PARTIAL` | rate limit/backoff/idempotent result | sealed transport-ack crash replay + failure/restart injection PASS; live Bot API TODO |
+| M5-08 | `PARTIAL` | global permission 상속, legacy mode 무시와 high-risk matrix | 2.0.7 local policy suite 및 HAOS E2E TODO |
+| M5-09 | `PARTIAL` | encrypted reply outbox, rate limit/backoff/idempotent result | pre-send persist/retry/ack component와 live Bot API TODO |
 | M5-10 | `TODO` | 실제 HAOS Telegram E2E | sanitized E2E report |
-| M5-11 | `PARTIAL` | Telegram 전용 native Home/cwd와 user customization 격리 | actual 1.1.11 local canary PASS; HAOS OAuth/AppArmor TODO |
+| M5-11 | `PARTIAL` | shared Home/cwd와 user customization 상속·수정 | actual 1.1.11 positive canary 재검증; HAOS OAuth/AppArmor TODO |
 
 ### M6 — migration과 multi-arch release
 
@@ -202,7 +205,7 @@
 | M6-03 | `PARTIAL` | refresh_managed owned settings merge와 plugin mode-independent refresh의 one-shot/idempotency | local native merge/plugin transaction/full update PASS; HAOS restart/update TODO |
 | M6-04 | `PARTIAL` | reset_v2 strict ownership conflict, backup과 recovery | local state/target journal + SIGKILL rollback PASS; HAOS rollback TODO |
 | M6-05 | `PARTIAL` | memory/browser/SSH/OAuth preservation | amd64 public-v1 fixture와 QEMU arm64 restart persistence PASS; HA-005/HA-006/HA-007 TODO |
-| M6-06 | `PARTIAL` | amd64와 aarch64 Docker build/runtime | amd64 full + arm64 QEMU packaging/Telegram isolation PASS; native HAOS both arch TODO |
+| M6-06 | `PARTIAL` | amd64와 aarch64 Docker build/runtime | 2.0.7 shared Telegram environment/outbox 양 architecture 재검증; native HAOS both arch TODO |
 | M6-07 | `PARTIAL` | `image`, AppArmor와 breaking metadata | local schema/parser/App linter PASS; HAOS install TODO |
 | M6-08 | `PARTIAL` | staged candidate exact-digest smoke, HAOS rehearsal bundle와 rebuild 없는 idempotent promotion | remote PR Builder PASS; Candidate workflow/actual bundle run TODO |
 | M6-09 | `PARTIAL` | leaf SBOM, provenance, exact Cosign identity와 anonymous preflight | local workflow contract; public registry retrieval TODO |

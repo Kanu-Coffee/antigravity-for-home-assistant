@@ -620,7 +620,7 @@ def test_release_and_notes_reject_tampered_embedded_haos_gate(
     }
     evidence_path = tmp_path / "release-evidence.json"
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
-    tampered_gate = haos_gate_dir / "telegram_modes.json"
+    tampered_gate = haos_gate_dir / "telegram_session_delivery.json"
     tampered_gate.write_bytes(tampered_gate.read_bytes() + b"\n")
     release_result = _run(
         [
@@ -863,46 +863,46 @@ def test_haos_gate_reports_bind_schema_source_arch_and_scope(
         report = _haos_report(candidate, gate)
         CONTRACT.validate_haos_gate_report(candidate, gate, report)
 
-    wrong_gate = _haos_report(candidate, "telegram_modes")
+    wrong_gate = _haos_report(candidate, "telegram_session_delivery")
     wrong_gate["gate"] = "local_migration_rollback"
     with pytest.raises(CONTRACT.ContractError, match="gate binding"):
-        CONTRACT.validate_haos_gate_report(candidate, "telegram_modes", wrong_gate)
+        CONTRACT.validate_haos_gate_report(candidate, "telegram_session_delivery", wrong_gate)
 
-    wrong_source = _haos_report(candidate, "oauth_isolation_persistence")
+    wrong_source = _haos_report(candidate, "shared_runtime_persistence")
     wrong_source["source_sha"] = "b" * 40
     with pytest.raises(CONTRACT.ContractError, match="source differs"):
         CONTRACT.validate_haos_gate_report(
-            candidate, "oauth_isolation_persistence", wrong_source
+            candidate, "shared_runtime_persistence", wrong_source
         )
 
-    wrong_manifest = _haos_report(candidate, "telegram_modes")
+    wrong_manifest = _haos_report(candidate, "telegram_session_delivery")
     wrong_manifest["candidate_manifest_digest"] = _digest("wrong-manifest")
     with pytest.raises(CONTRACT.ContractError, match="candidate manifest differs"):
         CONTRACT.validate_haos_gate_report(
-            candidate, "telegram_modes", wrong_manifest
+            candidate, "telegram_session_delivery", wrong_manifest
         )
 
-    wrong_leaf = _haos_report(candidate, "telegram_modes")
+    wrong_leaf = _haos_report(candidate, "telegram_session_delivery")
     wrong_leaf["candidate_images"] = dict(wrong_leaf["candidate_images"])
     wrong_leaf["candidate_images"]["amd64_runtime_digest"] = _digest(
         "wrong-amd64-leaf"
     )
     with pytest.raises(CONTRACT.ContractError, match="image binding differs"):
-        CONTRACT.validate_haos_gate_report(candidate, "telegram_modes", wrong_leaf)
+        CONTRACT.validate_haos_gate_report(candidate, "telegram_session_delivery", wrong_leaf)
 
-    wrong_rehearsal = _haos_report(candidate, "telegram_modes")
+    wrong_rehearsal = _haos_report(candidate, "telegram_session_delivery")
     wrong_rehearsal["haos_rehearsal"] = dict(wrong_rehearsal["haos_rehearsal"])
     wrong_rehearsal["haos_rehearsal"]["digest"] = _digest("wrong-rehearsal")
     with pytest.raises(CONTRACT.ContractError, match="rehearsal repository"):
         CONTRACT.validate_haos_gate_report(
-            candidate, "telegram_modes", wrong_rehearsal
+            candidate, "telegram_session_delivery", wrong_rehearsal
         )
 
-    wrong_test_ids = _haos_report(candidate, "telegram_modes")
+    wrong_test_ids = _haos_report(candidate, "telegram_session_delivery")
     wrong_test_ids["test_ids"] = [*wrong_test_ids["test_ids"], "HA-008"]
     with pytest.raises(CONTRACT.ContractError, match="test ID set is not exact"):
         CONTRACT.validate_haos_gate_report(
-            candidate, "telegram_modes", wrong_test_ids
+            candidate, "telegram_session_delivery", wrong_test_ids
         )
 
     missing_check = _haos_report(candidate, "apparmor_enforce")
@@ -959,7 +959,7 @@ def test_haos_gate_reports_bind_schema_source_arch_and_scope(
     duplicate_json.write_text('{"schema":"one","schema":"two"}\n', encoding="utf-8")
     with pytest.raises(CONTRACT.ContractError, match="duplicate JSON key"):
         CONTRACT.load_haos_gate_report(
-            duplicate_json, "telegram_modes", "json"
+            duplicate_json, "telegram_session_delivery", "json"
         )
 
 
@@ -1064,14 +1064,14 @@ def test_haos_gate_zip_rejects_extra_symlink_and_reuse(
     tmp_path: Path,
 ) -> None:
     candidate = _candidate()
-    report = _haos_report_bytes(candidate, "telegram_modes")
+    report = _haos_report_bytes(candidate, "telegram_session_delivery")
     valid_zip = tmp_path / "valid.zip"
     with zipfile.ZipFile(valid_zip, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("manual-gate-evidence.json", report)
     loaded = CONTRACT.load_haos_gate_report(
-        valid_zip, "telegram_modes", "github_actions_zip"
+        valid_zip, "telegram_session_delivery", "github_actions_zip"
     )
-    CONTRACT.validate_haos_gate_report(candidate, "telegram_modes", loaded)
+    CONTRACT.validate_haos_gate_report(candidate, "telegram_session_delivery", loaded)
 
     extra_zip = tmp_path / "extra.zip"
     with zipfile.ZipFile(extra_zip, "w") as archive:
@@ -1079,7 +1079,7 @@ def test_haos_gate_zip_rejects_extra_symlink_and_reuse(
         archive.writestr("extra.json", b"{}")
     with pytest.raises(CONTRACT.ContractError, match="member set"):
         CONTRACT.load_haos_gate_report(
-            extra_zip, "telegram_modes", "github_actions_zip"
+            extra_zip, "telegram_session_delivery", "github_actions_zip"
         )
 
     symlink_zip = tmp_path / "symlink.zip"
@@ -1090,7 +1090,7 @@ def test_haos_gate_zip_rejects_extra_symlink_and_reuse(
         archive.writestr(link, b"target")
     with pytest.raises(CONTRACT.ContractError, match="not a regular"):
         CONTRACT.load_haos_gate_report(
-            symlink_zip, "telegram_modes", "github_actions_zip"
+            symlink_zip, "telegram_session_delivery", "github_actions_zip"
         )
 
     manual = _manual(candidate, _digest("report"))
@@ -1578,13 +1578,13 @@ def test_haos_and_public_install_reports_enforce_exact_30_day_boundary(
     )
 
     candidate = _candidate()
-    haos_report = _haos_report(candidate, "telegram_modes")
+    haos_report = _haos_report(candidate, "telegram_session_delivery")
     haos_report["observed_at_utc"] = boundary
-    CONTRACT.validate_haos_gate_report(candidate, "telegram_modes", haos_report)
+    CONTRACT.validate_haos_gate_report(candidate, "telegram_session_delivery", haos_report)
     haos_report["observed_at_utc"] = expired
     with pytest.raises(CONTRACT.ContractError, match="older than 30 days"):
         CONTRACT.validate_haos_gate_report(
-            candidate, "telegram_modes", haos_report
+            candidate, "telegram_session_delivery", haos_report
         )
 
     evidence = _release_evidence(candidate)
@@ -2462,8 +2462,9 @@ def test_workflows_encode_exact_release_invariants() -> None:
     assert "ubuntu-24.04-arm" in build
     assert 'TEST_PLATFORM: ${{ matrix.platform }}' in build
     assert 'HA_ARCH: ${{ matrix.ha_arch }}' in build
-    assert build.count("suite: telegram-isolation") == 2
+    assert build.count("suite: telegram-shared-context") == 2
     assert build.count("suite: public-v1") == 1
+    assert build.count("suite: public-v2") == 1
     assert "public-v1) exec bash tests/public-v1-upgrade-smoke.sh" in build
     assert "Build exact public v1 source image for migration rehearsal" in build
     assert "refs/tags/v1.0.4:refs/tags/v1.0.4" in build
@@ -2474,10 +2475,13 @@ def test_workflows_encode_exact_release_invariants() -> None:
         "antigravity-for-home-assistant:public-v1.0.4-local \"$image\" ;;"
         in build
     )
-    assert "telegram-isolation) exec bash tests/telegram-isolation-smoke.sh" in build
+    assert "public-v2) exec bash tests/public-v2-upgrade-smoke.sh \"$image\" ;;" in build
+    assert "telegram-shared-context) exec bash tests/telegram-shared-context-smoke.sh" in build
     assert build.count("suite: update") == 2
-    assert "- telegram-isolation" in ci
-    assert "telegram-isolation-smoke.sh antigravity-for-home-assistant:test" in ci
+    assert "- telegram-shared-context" in ci
+    assert "telegram-shared-context-smoke.sh antigravity-for-home-assistant:test" in ci
+    assert "- public-v2" in ci
+    assert "public-v2-upgrade-smoke.sh antigravity-for-home-assistant:test" in ci
     assert "CANDIDATE_DIGEST: ${{ needs.assemble-candidate.outputs.generic_digest }}" in build
     assert '"${IMAGE}@${CANDIDATE_DIGEST}"' in build
     assert "size >= 16777216" in build
@@ -2617,7 +2621,8 @@ def test_workflows_encode_exact_release_invariants() -> None:
         ROOT / "tests/managed-auth-smoke.sh",
         ROOT / "tests/managed-plugin-update-smoke.sh",
         ROOT / "tests/memory-smoke.sh",
-        ROOT / "tests/telegram-isolation-smoke.sh",
+        ROOT / "tests/public-v2-upgrade-smoke.sh",
+        ROOT / "tests/telegram-shared-context-smoke.sh",
         ROOT / "tests/update-smoke.sh",
         ROOT / "tests/user-files-update-smoke.sh",
     ):

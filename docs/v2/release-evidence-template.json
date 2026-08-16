@@ -1,6 +1,6 @@
 {
   "schema": "antigravity-ha-manual-evidence/v1",
-  "version": "2.0.0",
+  "version": "2.0.7",
   "source_sha": "REPLACE_WITH_40_HEX_CANDIDATE_SOURCE_SHA",
   "candidate_manifest_digest": "sha256:REPLACE_WITH_64_HEX_CANDIDATE_DIGEST",
   "gates": {
@@ -28,7 +28,7 @@
       "sha256": "",
       "format": ""
     },
-    "oauth_isolation_persistence": {
+    "shared_runtime_persistence": {
       "status": "NOT_RUN",
       "evidence_uri": "",
       "sha256": "",
@@ -46,7 +46,7 @@
       "sha256": "",
       "format": ""
     },
-    "telegram_modes": {
+    "telegram_session_delivery": {
       "status": "NOT_RUN",
       "evidence_uri": "",
       "sha256": "",

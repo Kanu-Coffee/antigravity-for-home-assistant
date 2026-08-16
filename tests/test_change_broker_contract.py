@@ -80,6 +80,7 @@ def test_broker_passes_only_a_validated_supervisor_credential_fd(rootfs: Path) -
 
     assert "HA_TELEGRAM_USER_ID" in proposal
     assert "HA_TELEGRAM_CHAT_ID" in proposal
+    assert 'ANTIGRAVITY_HA_CHANNEL:-}" != telegram' in proposal
     assert "^[1-9][0-9]{0,19}$" in proposal
     assert "^-?[1-9][0-9]{0,19}$" in proposal
 

@@ -37,12 +37,12 @@ credential 노출이나 원격 접근 문제가 의심되면 먼저 앱을 중�
 ### 보안 경계
 
 - custom AppArmor profile은 항상 활성화되며 App option으로 끌 수 없습니다.
-- `antigravity_sensitive_data_access`는 AppArmor를 끄는 option이 아닙니다. 대화형 Antigravity child에 한해 `secrets.yaml`, `.storage`와 Recorder DB의 조건부 read-only 진단 profile을 선택하며 쓰기, Telegram, browser, memory와 credential 접근은 계속 차단합니다.
-- `/config`는 앱에 read-write로 연결되므로 대화형 Antigravity는 여전히 관리자 도구입니다. native 승인, terminal sandbox와 prompt 지침만을 완전한 경계로 간주하지 마세요.
+- `antigravity_sensitive_data_access`는 AppArmor를 끄는 option이 아닙니다. Web/SSH/Telegram Antigravity child에 같은 조건부 read-only 진단 profile을 적용하며 쓰기, browser, memory와 App credential 접근은 계속 차단합니다.
+- `/config`는 앱에 read-write로 연결되며 Web/SSH/Telegram Antigravity가 같은 관리자 환경을 사용합니다. native 승인, terminal sandbox와 prompt 지침만을 완전한 경계로 간주하지 마세요.
 - 앱은 Supervisor `admin`, Docker API, Home Assistant `full_access`, host network를 사용하지 않습니다.
 - SSH는 공개키 전용이며 인터넷 직접 노출을 지원되는 배포 방식으로 간주하지 않습니다.
 - Headless browser의 관리형 HA 사용자는 local-only, non-admin, `system-read-only`이지만 모든 entity state를 볼 수 있습니다.
-- Telegram은 기본 OFF이며 전용 native HOME, user/chat 인증, read/proposal MCP와 별도 변경 broker를 사용합니다. 고위험 변경은 모드와 무관하게 사람 확인이 필요합니다.
+- Telegram은 기본 OFF인 관리자 주 채널입니다. exact user/chat 인증 뒤 CLI의 `/data/home`, `/config`, OAuth, global/workspace customization과 permission을 상속하므로 Bot token, 허용 chat과 Telegram 계정을 관리자 credential처럼 보호해야 합니다. 고위험 변경에는 별도 사람 확인이 필요합니다.
 
 현재 threat model과 실제 HAOS 검증 gate는 [v2 보안 계약](../docs/v2/security.md)을 확인하세요.
 
@@ -58,4 +58,4 @@ Include affected versions, architecture, prerequisites, impact, minimal reproduc
 
 If credential exposure or unintended remote access is suspected, stop the app, disable SSH and Telegram, revoke affected keys, Bot tokens, and sessions, and follow the browser-identity removal procedure in the [user guide](../antigravity_home_assistant/DOCS.en.md). Do not paste the exposed secret into another report.
 
-The custom AppArmor profile is always enabled. `antigravity_sensitive_data_access` selects only a conditional read-only diagnostic profile for interactive Antigravity; it does not disable AppArmor or grant Telegram, browser, memory, or credential access. `/config` remains read-write, so interactive Antigravity is an administrative tool. Telegram is off by default and uses a dedicated native HOME, exact user/chat authorization, read/proposal MCP servers, and a separate mutation broker; high-risk changes always require human confirmation. See the current [v2 security contract](../docs/v2/security.md) for the threat model and required HAOS enforcement evidence.
+The custom AppArmor profile is always enabled. `antigravity_sensitive_data_access` selects the same conditional read-only diagnostic profile for Web, SSH, and Telegram Antigravity; it does not disable AppArmor or grant browser, memory, or App-credential access. `/config` remains read-write and all three Antigravity surfaces are administrator tools. Telegram is off by default, requires exact user/chat authorization, and intentionally inherits the CLI's `/data/home`, `/config`, OAuth, global/workspace customizations, and permissions. Protect the Bot token, authorized chats, and Telegram accounts as administrator credentials; high-risk changes still require separate human confirmation. See the current [v2 security contract](../docs/v2/security.md) for the threat model and required HAOS enforcement evidence.

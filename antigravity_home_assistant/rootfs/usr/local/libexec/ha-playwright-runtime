@@ -7,14 +7,6 @@ if (( $# != 0 )); then
   exit 64
 fi
 
-case "${ANTIGRAVITY_HA_TELEGRAM_READ_ONLY:-}" in
-  0 | 1) readonly telegram_read_only="${ANTIGRAVITY_HA_TELEGRAM_READ_ONLY}" ;;
-  *)
-    printf 'ha-playwright-runtime: invalid Telegram restriction mode\n' >&2
-    exit 78
-    ;;
-esac
-
 case "${antigravity_HA_BROWSER_TOKEN_VALIDATED:-0}" in
   0 | 1) readonly browser_token_validated="${antigravity_HA_BROWSER_TOKEN_VALIDATED:-0}" ;;
   *) readonly browser_token_validated=0 ;;
@@ -37,5 +29,4 @@ exec /usr/bin/env -i \
   LC_ALL=C.UTF-8 \
   PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
   antigravity_HA_BROWSER_TOKEN_VALIDATED="${browser_token_validated}" \
-  ANTIGRAVITY_HA_TELEGRAM_READ_ONLY="${telegram_read_only}" \
   /usr/bin/node /usr/local/share/antigravity-ha/playwright-mcp-proxy.mjs

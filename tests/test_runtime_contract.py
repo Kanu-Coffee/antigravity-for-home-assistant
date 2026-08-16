@@ -78,7 +78,6 @@ def test_entrypoints_are_executable_and_sourced_shell_libraries_are_not(
         "usr/local/lib/antigravity-ha/config.sh",
         "usr/local/lib/antigravity-ha/environment.sh",
         "usr/local/lib/antigravity-ha/supervisor-credential.sh",
-        "usr/local/lib/antigravity-ha/telegram-plugin.sh",
     )
     if os.name != "nt":
         for relative_path in source_only:

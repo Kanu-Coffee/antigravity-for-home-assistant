@@ -7,6 +7,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +16,8 @@ import test from "node:test";
 
 import {
   NORMALIZED_UPDATE_MODE,
+  RETIRED_TELEGRAM_MIGRATION,
+  RETIRED_TELEGRAM_OPTION,
   RetryableMigrationError,
   SUPERVISOR_OPTIONS_URL,
   migrateSupervisorOptions,
@@ -25,19 +28,25 @@ const REQUIRED_UID = process.getuid();
 const TOKEN = "fixture-supervisor-token-never-use";
 const SECRET_OPTION = "fixture-telegram-secret-never-use";
 
-function makeFixture(mode, { credential = true } = {}) {
+function makeFixture(
+  mode,
+  { completed = false, credential = true, telegramAccessMode } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), "supervisor-options-migration."));
   const runtimeRoot = join(root, "run");
+  const migrationRoot = join(root, "migration");
   mkdirSync(runtimeRoot, { mode: 0o700 });
+  mkdirSync(migrationRoot, { mode: 0o700 });
   chmodSync(runtimeRoot, 0o700);
+  chmodSync(migrationRoot, 0o700);
   const optionsPath = join(root, "options.json");
   const credentialPath = join(runtimeRoot, "supervisor.token");
+  const completionPath = join(migrationRoot, "supervisor-options-2.0.7.json");
   const options = {
     telegram_enabled: true,
     telegram_bot_token: SECRET_OPTION,
     telegram_allowed_user_ids: ["123"],
     telegram_allowed_chat_ids: ["456"],
-    telegram_access_mode: "confirm_changes",
     authorized_keys: ["ssh-ed25519 fixture"],
     web_terminal_auto_start_antigravity: false,
     tmux_session_name: "antigravity-ha",
@@ -48,13 +57,35 @@ function makeFixture(mode, { credential = true } = {}) {
     home_assistant_browser_auto_auth: true,
     log_level: "info",
   };
+  if (telegramAccessMode !== undefined) {
+    options[RETIRED_TELEGRAM_OPTION] = telegramAccessMode;
+  }
   writeFileSync(optionsPath, `${JSON.stringify(options)}\n`, { mode: 0o600 });
   chmodSync(optionsPath, 0o600);
   if (credential) {
     writeFileSync(credentialPath, TOKEN, { mode: 0o400 });
     chmodSync(credentialPath, 0o400);
   }
-  return { credentialPath, options, optionsPath, root, runtimeRoot };
+  if (completed) {
+    writeFileSync(
+      completionPath,
+      `${JSON.stringify({
+        schema: "antigravity-ha-supervisor-options-migration/v1",
+        migration: RETIRED_TELEGRAM_MIGRATION,
+        completed: true,
+      })}\n`,
+      { mode: 0o600 },
+    );
+    chmodSync(completionPath, 0o600);
+  }
+  return {
+    completionPath,
+    credentialPath,
+    options,
+    optionsPath,
+    root,
+    runtimeRoot,
+  };
 }
 
 function optionValue(arguments_, name) {
@@ -122,6 +153,7 @@ for (const legacyMode of ["refresh_agents", "refresh_all"]) {
       };
 
       const result = migrateSupervisorOptions({
+        completionPath: fixture.completionPath,
         credentialPath: fixture.credentialPath,
         optionsPath: fixture.optionsPath,
         requestImpl: (request) =>
@@ -131,6 +163,8 @@ for (const legacyMode of ["refresh_agents", "refresh_all"]) {
       });
       assert.deepEqual(result, { status: "migrated" });
       assert.equal(existsSync(temporaryDirectory), false);
+      assert.equal(existsSync(fixture.completionPath), true);
+      assert.equal(statSync(fixture.completionPath).mode & 0o777, 0o600);
       assert.equal(
         JSON.parse(readFileSync(fixture.optionsPath, "utf8"))
           .antigravity_user_files_update_mode,
@@ -142,10 +176,56 @@ for (const legacyMode of ["refresh_agents", "refresh_all"]) {
   });
 }
 
-test("returns not_required without reading a credential for a current mode", () => {
-  const fixture = makeFixture("preserve", { credential: false });
+test("posts the schema-filtered full current options once when the retired persisted key is not visible", () => {
+  const fixture = makeFixture("preserve");
+  try {
+    rmSync(dirname(fixture.completionPath), { recursive: true });
+    let observedPayload;
+    const result = migrateSupervisorOptions({
+      completionPath: fixture.completionPath,
+      credentialPath: fixture.credentialPath,
+      optionsPath: fixture.optionsPath,
+      requestImpl: ({ payload }) => {
+        observedPayload = payload;
+      },
+      requiredUid: REQUIRED_UID,
+      runtimeRoot: fixture.runtimeRoot,
+    });
+    assert.deepEqual(result, { status: "migrated" });
+    assert.deepEqual(observedPayload, { options: fixture.options });
+    assert.equal(
+      Object.hasOwn(observedPayload.options, RETIRED_TELEGRAM_OPTION),
+      false,
+    );
+    assert.equal(statSync(fixture.completionPath).mode & 0o777, 0o600);
+    const completion = readFileSync(fixture.completionPath, "utf8");
+    assert.equal(completion.includes(TOKEN), false);
+    assert.equal(completion.includes(SECRET_OPTION), false);
+    assert.equal(JSON.parse(completion).migration, RETIRED_TELEGRAM_MIGRATION);
+
+    rmSync(fixture.credentialPath);
+    const repeated = migrateSupervisorOptions({
+      completionPath: fixture.completionPath,
+      credentialPath: fixture.credentialPath,
+      optionsPath: fixture.optionsPath,
+      requestImpl: () => assert.fail("completed scrub must not repeat"),
+      requiredUid: REQUIRED_UID,
+      runtimeRoot: fixture.runtimeRoot,
+    });
+    assert.deepEqual(repeated, { status: "not_required" });
+  } finally {
+    rmSync(fixture.root, { force: true, recursive: true });
+  }
+});
+
+test("returns not_required without reading a credential after the scrub completed", () => {
+  const fixture = makeFixture("preserve", {
+    completed: true,
+    credential: false,
+  });
   try {
     const result = migrateSupervisorOptions({
+      completionPath: fixture.completionPath,
       credentialPath: fixture.credentialPath,
       optionsPath: fixture.optionsPath,
       requestImpl: () => assert.fail("request must not run"),
@@ -158,12 +238,79 @@ test("returns not_required without reading a credential for a current mode", () 
   }
 });
 
+test("removes the retired Telegram channel mode through the fixed self-options request", () => {
+  const fixture = makeFixture("preserve", {
+    telegramAccessMode: "autonomous",
+  });
+  try {
+    let observedPayload;
+    const result = migrateSupervisorOptions({
+      completionPath: fixture.completionPath,
+      credentialPath: fixture.credentialPath,
+      optionsPath: fixture.optionsPath,
+      requestImpl: ({ payload }) => {
+        observedPayload = payload;
+      },
+      requiredUid: REQUIRED_UID,
+      runtimeRoot: fixture.runtimeRoot,
+    });
+    assert.deepEqual(result, { status: "migrated" });
+    assert.equal(
+      Object.hasOwn(observedPayload.options, RETIRED_TELEGRAM_OPTION),
+      false,
+    );
+    assert.equal(
+      observedPayload.options.antigravity_user_files_update_mode,
+      "preserve",
+    );
+    assert.equal(
+      JSON.parse(readFileSync(fixture.optionsPath, "utf8"))[
+        RETIRED_TELEGRAM_OPTION
+      ],
+      "autonomous",
+    );
+  } finally {
+    rmSync(fixture.root, { force: true, recursive: true });
+  }
+});
+
+test("normalizes legacy update mode and removes retired Telegram mode atomically", () => {
+  const fixture = makeFixture("refresh_all", {
+    telegramAccessMode: "confirm_changes",
+  });
+  try {
+    let observedPayload;
+    const result = migrateSupervisorOptions({
+      completionPath: fixture.completionPath,
+      credentialPath: fixture.credentialPath,
+      optionsPath: fixture.optionsPath,
+      requestImpl: ({ payload }) => {
+        observedPayload = payload;
+      },
+      requiredUid: REQUIRED_UID,
+      runtimeRoot: fixture.runtimeRoot,
+    });
+    assert.deepEqual(result, { status: "migrated" });
+    assert.equal(
+      Object.hasOwn(observedPayload.options, RETIRED_TELEGRAM_OPTION),
+      false,
+    );
+    assert.equal(
+      observedPayload.options.antigravity_user_files_update_mode,
+      NORMALIZED_UPDATE_MODE,
+    );
+  } finally {
+    rmSync(fixture.root, { force: true, recursive: true });
+  }
+});
+
 test("missing Supervisor credential fails safely and leaves options untouched", () => {
   const fixture = makeFixture("refresh_all", { credential: false });
   try {
     assert.throws(
       () =>
         migrateSupervisorOptions({
+          completionPath: fixture.completionPath,
           credentialPath: fixture.credentialPath,
           optionsPath: fixture.optionsPath,
           requestImpl: () => assert.fail("request must not run"),
@@ -176,6 +323,7 @@ test("missing Supervisor credential fails safely and leaves options untouched", 
       JSON.parse(readFileSync(fixture.optionsPath, "utf8")),
       fixture.options,
     );
+    assert.equal(existsSync(fixture.completionPath), false);
   } finally {
     rmSync(fixture.root, { force: true, recursive: true });
   }
@@ -194,6 +342,7 @@ test("Supervisor rejection is retryable and private request files are removed", 
     assert.throws(
       () =>
         migrateSupervisorOptions({
+          completionPath: fixture.completionPath,
           credentialPath: fixture.credentialPath,
           optionsPath: fixture.optionsPath,
           requestImpl: (request) =>
@@ -207,6 +356,28 @@ test("Supervisor rejection is retryable and private request files are removed", 
     assert.deepEqual(
       JSON.parse(readFileSync(fixture.optionsPath, "utf8")),
       fixture.options,
+    );
+    assert.equal(existsSync(fixture.completionPath), false);
+  } finally {
+    rmSync(fixture.root, { force: true, recursive: true });
+  }
+});
+
+test("unsafe completion state fails closed without issuing a request", () => {
+  const fixture = makeFixture("preserve");
+  try {
+    symlinkSync(fixture.optionsPath, fixture.completionPath);
+    assert.throws(
+      () =>
+        migrateSupervisorOptions({
+          completionPath: fixture.completionPath,
+          credentialPath: fixture.credentialPath,
+          optionsPath: fixture.optionsPath,
+          requestImpl: () => assert.fail("request must not run"),
+          requiredUid: REQUIRED_UID,
+          runtimeRoot: fixture.runtimeRoot,
+        }),
+      RetryableMigrationError,
     );
   } finally {
     rmSync(fixture.root, { force: true, recursive: true });

@@ -1,12 +1,9 @@
 """Security and packaging contracts for the Telegram bridge v2."""
 
 from pathlib import Path
-import json
 import os
 import stat
 import subprocess
-
-import yaml
 
 
 def test_telegram_options_in_config_yaml(addon_config: dict) -> None:
@@ -17,10 +14,10 @@ def test_telegram_options_in_config_yaml(addon_config: dict) -> None:
     assert options["telegram_bot_token"] == ""
     assert options["telegram_allowed_user_ids"] == []
     assert options["telegram_allowed_chat_ids"] == []
-    assert options["telegram_access_mode"] == "confirm_changes"
     assert schema["telegram_enabled"] == "bool"
     assert schema["telegram_bot_token"] == "password?"
-    assert schema["telegram_access_mode"] == "list(read_only|confirm_changes|autonomous)"
+    assert "telegram_access_mode" not in options
+    assert "telegram_access_mode" not in schema
 
 
 def test_telegram_bridge_syntax_and_unit_suite(repository_root: Path, addon_root: Path) -> None:
@@ -60,6 +57,24 @@ def test_telegram_bridge_syntax_and_unit_suite(repository_root: Path, addon_root
         text=True,
     )
     assert state_suite.returncode == 0, state_suite.stderr
+
+    session_delivery_suite = subprocess.run(
+        [
+            "node",
+            str(repository_root / "tests/telegram_bridge_session_delivery_test.mjs"),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert session_delivery_suite.returncode == 0, session_delivery_suite.stderr
+
+
+def test_ci_runs_shared_context_session_delivery_gate(repository_root: Path) -> None:
+    workflow = (repository_root / ".github/workflows/ci.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "Telegram shared context, session, delivery, and broker contracts" in workflow
+    assert "tests/telegram_bridge_session_delivery_test.mjs" in workflow
 
 
 def test_telegram_local_pairing_helper_is_packaged(addon_root: Path) -> None:
@@ -120,14 +135,9 @@ def test_telegram_service_depends_on_init(addon_root: Path) -> None:
     assert 'audit("waiting_for_authorization"' in bridge
     assert "await waitForTelegramAuthorization(config)" in bridge
     assert bridge.index("await waitForTelegramAuthorization(config)") < bridge.index(
-        'sendBrokerRequest("health"'
-    )
-    assert bridge.index("await waitForTelegramAuthorization(config)") < bridge.index(
         "await connectTelegram(config)"
     )
-    assert bridge.index('sendBrokerRequest("health"') < bridge.index(
-        "await connectTelegram(config)"
-    )
+    assert 'sendBrokerRequest("health"' not in bridge
     assert 'api(config.botToken, "deleteWebhook"' in bridge
     assert 'api(config.botToken, "getMe"' in bridge
     assert 'auditEvent("connect_retry", fields)' in bridge
@@ -166,14 +176,14 @@ def test_telegram_bridge_has_no_legacy_shell_or_pairing_surface(addon_root: Path
         assert marker not in bridge
 
     assert 'spawn(binary, args' in bridge
-    assert 'DEFAULT_AGY_BIN = "/usr/local/libexec/ha-telegram-worker"' in bridge
-    assert 'TELEGRAM_HOME = "/data/antigravity-ha/telegram-home"' in bridge
-    assert (
-        'TELEGRAM_WORKSPACE = "/usr/local/share/antigravity-ha/telegram-workspace"'
-        in bridge
-    )
-    assert "cwd = TELEGRAM_WORKSPACE" in bridge
-    assert "HOME: TELEGRAM_HOME" in bridge
+    assert 'DEFAULT_AGY_BIN = "/usr/local/bin/antigravity"' in bridge
+    assert 'SHARED_ANTIGRAVITY_HOME = "/data/home"' in bridge
+    assert 'SHARED_ANTIGRAVITY_WORKSPACE = "/config"' in bridge
+    assert "cwd = SHARED_ANTIGRAVITY_WORKSPACE" in bridge
+    assert "HOME: SHARED_ANTIGRAVITY_HOME" in bridge
+    assert 'ANTIGRAVITY_HA_CHANNEL = "telegram"' in bridge
+    assert "HA_TELEGRAM_USER_ID" in bridge
+    assert "HA_TELEGRAM_CHAT_ID" in bridge
     assert 'AGY_CLI_DISABLE_AUTO_UPDATE: "true"' in bridge
     assert '"--output-format"' in bridge
     assert '"stream-json"' in bridge
@@ -188,11 +198,20 @@ def test_telegram_bridge_has_no_legacy_shell_or_pairing_surface(addon_root: Path
     assert "event.result.conversation_id !== conversationId" in bridge
     assert "parseTerminalResponse(event.result.response)" in bridge
     assert "telegram_allowed_user_ids" in bridge
-    assert "confirm_changes" in bridge
+    assert "ACCESS_MODES" not in bridge
+    assert "confirm_changes" not in bridge
+    assert '"read_only"' not in bridge
+    assert "proposalDisposition(config.toolPermission" in bridge
     assert 'sendBrokerRequest("inspect"' in bridge
     assert 'brokerRequest("authorize"' in bridge
     assert 'brokerRequest("execute"' in bridge
     assert 'brokerRequest("execute_status"' in bridge
+    assert "ensureSession(userId, chatId" in bridge
+    assert "bindSessionConversation(" in bridge
+    assert "queueResponseDelivery(textDeliveryRecord(" in bridge
+    assert "terminalFinalize(" in bridge
+    assert "drainPendingResponseDeliveries(config" in bridge
+    assert "applyNewSessionControl({" in bridge
     assert "classifyPrompt" not in bridge
     assert 'detached: true' in bridge
 
@@ -230,191 +249,136 @@ def test_telegram_metrics_have_bounded_privacy_safe_labels(addon_root: Path) -> 
     assert 'setInterval(() => audit("metrics", metricsSnapshot()), 60_000)' in bridge
 
 
-def test_telegram_native_home_is_bootstrapped_and_fail_closed(
+def test_telegram_uses_shared_native_home_and_interactive_policy(
     addon_root: Path,
     repository_root: Path,
 ) -> None:
     rootfs = addon_root / "rootfs"
-    bootstrap_path = rootfs / "usr/local/libexec/ha-telegram-home-bootstrap"
-    worker_path = rootfs / "usr/local/libexec/ha-telegram-worker"
-    plugin_deriver_path = (
-        rootfs / "usr/local/lib/antigravity-ha/telegram-plugin.sh"
-    )
-    login_path = rootfs / "usr/local/bin/ha-telegram-login"
-    workspace = rootfs / "usr/local/share/antigravity-ha/telegram-workspace"
-    telegram_settings = rootfs / "etc/antigravity/telegram-settings.json"
-    telegram_agent = (
-        rootfs
-        / "usr/local/share/antigravity-ha/plugins/home-assistant/"
-        "agents/ha-telegram/agent.md"
-    ).read_text(encoding="utf-8")
     init = (rootfs / "usr/local/bin/antigravity-ha-init").read_text(
         encoding="utf-8"
     )
+    launcher = (rootfs / "usr/local/bin/antigravity").read_text(
+        encoding="utf-8"
+    )
+    restricted = (
+        rootfs / "usr/local/libexec/antigravity-interactive-restricted"
+    ).read_text(encoding="utf-8")
+    sensitive = (
+        rootfs / "usr/local/libexec/antigravity-interactive-sensitive-read"
+    ).read_text(encoding="utf-8")
     dockerfile = (addon_root / "Dockerfile").read_text(encoding="utf-8")
     apparmor = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
 
-    for executable in (bootstrap_path, worker_path, login_path):
-        assert executable.is_file()
-        if os.name != "nt":
-            assert executable.stat().st_mode & stat.S_IXUSR
-    assert (workspace / ".antigravity-ha-managed").is_file()
-    plugin_deriver = plugin_deriver_path.read_text(encoding="utf-8")
-    assert "antigravity_ha_render_telegram_plugin_mcp" in plugin_deriver
-    assert "antigravity_ha_stage_telegram_plugin" in plugin_deriver
-    assert (
-        '.value.cwd = "/usr/local/share/antigravity-ha/telegram-workspace"'
-        in plugin_deriver
+    obsolete_paths = (
+        "usr/local/bin/ha-telegram-login",
+        "usr/local/libexec/ha-telegram-home-bootstrap",
+        "usr/local/libexec/ha-telegram-worker",
+        "usr/local/lib/antigravity-ha/telegram-plugin.sh",
+        "etc/antigravity/telegram-settings.json",
+        "usr/local/share/antigravity-ha/telegram-workspace/.antigravity-ha-managed",
+        "usr/local/share/antigravity-ha/playwright-telegram-init-page.ts",
+        "usr/local/share/antigravity-ha/plugins/home-assistant/agents/ha-telegram/agent.md",
     )
-    for server in (
-        "ha_change",
-        "ha_memory",
-        "ha_read",
-        "ha_validate",
-        "playwright",
+    for relative_path in obsolete_paths:
+        assert not (rootfs / relative_path).exists()
+
+    assert "ha-telegram-home-bootstrap" not in init
+    assert "telegram-workspace" not in dockerfile
+    assert "telegram-settings.json" not in dockerfile
+    assert "ANTIGRAVITY_HA_CHANNEL" in launcher
+    assert "invalid Telegram requester binding" in launcher
+    for confined_launcher in (restricted, sensitive):
+        assert "HOME=/data/home" in confined_launcher
+        assert "ANTIGRAVITY_HA_CHANNEL=telegram" in confined_launcher
+        assert '"HA_TELEGRAM_USER_ID=${HA_TELEGRAM_USER_ID}"' in confined_launcher
+        assert '"HA_TELEGRAM_CHAT_ID=${HA_TELEGRAM_CHAT_ID}"' in confined_launcher
+        assert '"${requester_environment[@]}"' in confined_launcher
+
+    telegram_profile = apparmor.split(
+        "profile antigravity_home_assistant-telegram flags=", maxsplit=1
+    )[1].split(
+        "profile antigravity_home_assistant-change-proposal-client", maxsplit=1
+    )[0]
+    assert "/usr/local/bin/antigravity rix," in telegram_profile
+    assert (
+        "/usr/local/libexec/antigravity-interactive-restricted Px -> "
+        "antigravity_home_assistant-interactive-restricted," in telegram_profile
+    )
+    assert (
+        "/usr/local/libexec/antigravity-interactive-sensitive-read Px -> "
+        "antigravity_home_assistant-interactive-sensitive-read," in telegram_profile
+    )
+    for obsolete_profile in (
+        "antigravity_home_assistant-telegram-login",
+        "antigravity_home_assistant-telegram-worker",
+        "antigravity_home_assistant-memory-telegram",
+        "antigravity_home_assistant-playwright-bootstrap-telegram",
+        "antigravity_home_assistant-browser-telegram",
     ):
-        assert f'"{server}"' in plugin_deriver
-    settings = telegram_settings.read_text(encoding="utf-8")
-    assert '"enableTerminalSandbox": true' in settings
-    assert '"allowNonWorkspaceAccess": true' not in settings
-    assert '"toolPermission": "always-proceed"' not in settings
-    telegram_settings_value = json.loads(settings)
-    assert telegram_settings_value["toolPermission"] == "request-review"
-    assert telegram_settings_value["allowNonWorkspaceAccess"] is False
-    assert "tools: []" in telegram_agent
-    assert "view_file" not in telegram_agent
-    assert "grep_search" not in telegram_agent
-    assert "`device_test`" in telegram_agent
-    assert "always-restore/fresh-verify" in telegram_agent
-    telegram_permissions = telegram_settings_value["permissions"]
-    managed_plugin_target = (
-        "/data/antigravity-ha/telegram-home/.gemini/config/plugins/"
-        "home-assistant"
-    )
-    managed_plugin_source = (
-        rootfs
-        / "usr/local/share/antigravity-ha/plugins/home-assistant"
-    )
-    agent_frontmatter = telegram_agent.split("---\n", maxsplit=2)[1]
-    declared_skills = yaml.safe_load(agent_frontmatter)["skills"]
-    assert declared_skills == [
-        "skills/ha-change-proposal",
-        "skills/home-assistant-operations",
-        "skills/ha-memory",
-    ]
-    expected_skill_read_rules = set()
-    for relative_skill in declared_skills:
-        assert relative_skill.startswith("skills/")
-        skill_file = f"{relative_skill}/SKILL.md"
-        assert (managed_plugin_source / skill_file).is_file()
-        expected_skill_read_rules.add(
-            f"read_file({managed_plugin_target}/{skill_file})"
-        )
-    assert {
-        rule
-        for rule in telegram_permissions["allow"]
-        if rule.startswith("read_file(")
-    } == expected_skill_read_rules
-    assert "read_file(*)" not in telegram_permissions["allow"]
-    for rule in (
-        "mcp(ha_change/ha_change_propose)",
-        "mcp(ha_read/ha_read_registry)",
-        "mcp(ha_read/ha_read_history)",
-        "mcp(ha_read/ha_read_traces)",
-        "mcp(ha_validate/ha_validate_config)",
-        "mcp(ha_validate/ha_verify_state)",
-        "mcp(playwright/browser_snapshot)",
-    ):
-        assert rule in telegram_permissions["allow"]
-    for rule in (
-        "command(*)",
-        "mcp(ha_memory/memory_begin_change)",
-        "mcp(playwright/browser_click)",
-        "mcp(playwright/browser_hover)",
-    ):
-        assert rule in telegram_permissions["deny"]
-    assert telegram_permissions["ask"] == []
+        assert obsolete_profile not in apparmor
 
-    bootstrap = bootstrap_path.read_text(encoding="utf-8")
-    worker = worker_path.read_text(encoding="utf-8")
-    login = login_path.read_text(encoding="utf-8")
-    assert "TELEGRAM_HOME=/data/antigravity-ha/telegram-home" in bootstrap
-    assert "SETTINGS_SOURCE=/etc/antigravity/telegram-settings.json" in bootstrap
-    assert "rm -rf --" in bootstrap
-    assert '"${CONFIG_ROOT}/agents"' in bootstrap
-    assert '"${CONFIG_ROOT}/rules"' in bootstrap
-    assert '"${CONFIG_ROOT}/mcp_config.json"' in bootstrap
-    assert "PLUGIN_TARGET=${CONFIG_ROOT}/plugins/home-assistant" in bootstrap
-    assert "--login" in bootstrap and "--runtime" in bootstrap
-    assert "native OAuth backend is not inferred" in bootstrap
-    assert 'if .toolPermission == "request-review"' in plugin_deriver
-    assert 'if .allowNonWorkspaceAccess == false' in plugin_deriver
-    assert 'if .permissions.ask == []' in plugin_deriver
-    assert "antigravity_ha_telegram_settings_match" in plugin_deriver
-    assert "antigravity_ha_telegram_settings_match" in bootstrap
-    assert 'install_managed_file "${SETTINGS_SOURCE}"' in bootstrap
-    assert 'antigravity_ha_stage_telegram_plugin \\' in bootstrap
-    assert '"${PLUGIN_SOURCE}" "${plugin_temporary}"' in bootstrap
-    assert 'diff -qr "${plugin_expected}" "${PLUGIN_TARGET}"' in bootstrap
-    assert "/usr/local/libexec/ha-telegram-home-bootstrap --runtime" in init
+    proposal_profile = apparmor.split(
+        "profile antigravity_home_assistant-change-proposal-client", maxsplit=1
+    )[1].split(
+        "profile antigravity_home_assistant-broker-bootstrap", maxsplit=1
+    )[0]
+    assert "/run/antigravity-ha/change-proposal.sock rw," in proposal_profile
+    assert "deny /data/home/** rwklm," in proposal_profile
+    assert "deny /config/** rwklm," in proposal_profile
+    assert "deny /run/antigravity-ha/supervisor.token rwklm," in proposal_profile
 
-    assert "TELEGRAM_HOME=/data/antigravity-ha/telegram-home" in worker
-    assert '[[ "$(pwd -P)" == "${SAFE_WORKSPACE}" ]]' in worker
-    assert '/usr/bin/flock --shared 9' in worker
-    assert "antigravity_ha_telegram_settings_match" in worker
-    assert "/usr/local/libexec/ha-telegram-home-bootstrap" not in worker
-    assert 'cmp -s "${MCP_SOURCE}"' in worker
-    assert 'antigravity_ha_stage_telegram_plugin \\' in worker
-    assert 'diff -qr "${plugin_expected}" "${PLUGIN_TARGET}"' in worker
-    assert 'diff -qr "${PLUGIN_SOURCE}" "${PLUGIN_TARGET}"' not in worker
-    assert '"${CONFIG_ROOT}/rules"' in worker
-    assert 'exec /usr/local/libexec/antigravity-real "$@"' in worker
-    assert worker.rstrip().endswith(
-        'exec /usr/local/libexec/antigravity-real "$@"'
-    )
-
-    assert login.splitlines()[:3] == [
-        "#!/bin/bash -p",
-        "set -Eeuo pipefail",
-        "unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN",
-    ]
-    assert "unset ANTIGRAVITY_TOKEN" in login
-    assert "a trusted local controlling terminal is required" in login
-    assert "/usr/bin/flock --exclusive 9" in login
-    assert "--login --lock-held" in login
-    assert "--runtime --lock-held" in login
-    assert "native Antigravity first-run login" in login
-    assert "--sandbox --disable-slash-commands" in login
-    assert "/data/home" not in login
-
-    assert "chmod 0555 /usr/local/share/antigravity-ha/telegram-workspace" in dockerfile
-    assert (
-        "/usr/local/bin/ha-telegram-login Px -> "
-        "antigravity_home_assistant-telegram-login" in apparmor
-    )
-    assert (
-        "/usr/local/libexec/ha-telegram-worker Px -> "
-        "antigravity_home_assistant-telegram-worker" in apparmor
-    )
-    assert "deny /data/home/** rwklm," in apparmor
-    assert "deny /config/ rwklmx," in apparmor
-    assert "deny /config/** rwklmx," in apparmor
-    assert (
-        "deny /data/antigravity-ha/telegram-home/.gemini/config/rules/** rwklm,"
-        in apparmor
-    )
-
-    canary = repository_root / "tests/telegram-isolation-smoke.sh"
+    canary = repository_root / "tests/telegram-shared-context-smoke.sh"
     assert canary.is_file()
     if os.name != "nt":
         assert canary.stat().st_mode & stat.S_IXUSR
     canary_source = canary.read_text(encoding="utf-8")
     assert "/usr/local/libexec/antigravity-real --version" in canary_source
-    assert "positive control did not launch the user global MCP" in canary_source
-    assert "isolated worker launched the interactive global MCP" in canary_source
-    assert "isolated worker launched the /config workspace MCP" in canary_source
-    assert "isolated worker accepted a global rules directory" in canary_source
+    assert "shared Antigravity did not load the global MCP" in canary_source
+    assert "shared global rule marker" in canary_source
+    assert "shared global plugin marker" in canary_source
+    assert "shared native OAuth/config marker" in canary_source
+    assert '"[[ \\\"\\${HOME:-}\\\" == /data/home ]]"' in canary_source
+    assert '"[[ \\\"\\$(pwd -P)\\\" == /config ]]"' in canary_source
     docker_smoke = (repository_root / "tests/docker-smoke.sh").read_text(
         encoding="utf-8"
     )
-    assert 'tests/telegram-isolation-smoke.sh "${IMAGE}"' in docker_smoke
+    assert 'tests/telegram-shared-context-smoke.sh "${IMAGE}"' in docker_smoke
+    assert 'tests/public-v2-upgrade-smoke.sh "${IMAGE}"' in docker_smoke
+
+
+def test_public_v2_upgrade_smoke_covers_shared_runtime_migration(
+    repository_root: Path,
+) -> None:
+    smoke_path = repository_root / "tests/public-v2-upgrade-smoke.sh"
+    assert smoke_path.is_file()
+    if os.name != "nt":
+        assert smoke_path.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(smoke_path)], check=True)
+    smoke = smoke_path.read_text(encoding="utf-8")
+
+    for required in (
+        "ghcr.io/kanu-coffee/antigravity-for-home-assistant@${PUBLIC_V2_DIGEST}",
+        "sha256:7147fd32b3f117879451481a206cb973484a35b4646ac91907769ff9cda327df",
+        "sha256:e98274a617d25deeacb8db777898718f920604b260931944997b3aa52ef0c3dd",
+        "8eb03cfa22bac2cc481f9c5ebab4c1a250d92cb2",
+        "/usr/local/share/antigravity-ha/telegram-pairing.mjs",
+        "/usr/local/share/antigravity-ha/telegram-state.mjs",
+        "registerSealedUpdateBatch",
+        "v2 local pairing authorization bytes changed during upgrade",
+        "v4 transport state was not preserved during migration",
+        "session.generation !== 1",
+        "session.conversation_id !== null",
+        "retired dedicated-HOME settings changed during upgrade",
+        "shared global permissions were not migrated from preserve mode",
+        'index("read_file(/data)") == null',
+        'index("write_file(/data)") == null',
+        "/usr/local/bin/ha-telegram-login",
+        "/usr/local/libexec/ha-telegram-worker",
+        "antigravity_home_assistant-telegram-worker",
+        "--network none",
+    ):
+        assert required in smoke
+
+    assert "telegram_enabled: false" in smoke
+    assert "PUBLIC_V2_SEALED_PROMPT_DO_NOT_PERSIST" in smoke
+    assert "actual HAOS" not in smoke

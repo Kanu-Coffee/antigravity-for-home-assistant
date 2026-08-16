@@ -24,7 +24,7 @@ breaking_versions:
 
 Supervisor는 `version`을 image tag로 사용한다. 같은 numeric tag에 amd64와
 aarch64 manifest가 모두 있을 때만 `config.yaml`에 두 아키텍처를 선언한다.
-첫 v2는 보안·설정·Telegram 계약이 바뀌므로 breaking version으로 표시하고
+첫 v2와 2.0.7의 Telegram 관리자 trust-model 전환은 breaking version으로 표시하고
 자동 major update가 아니라 사용자가 release note를 읽고 선택하게 한다.
 
 image에 고정한 Antigravity binary는 App runtime에서 자체 갱신하지 않는다. 모든
@@ -55,15 +55,20 @@ PASS로 표시하지 않는다.
 | SSH | authorized keys option, `/data/ssh/host-keys` | 보존 |
 | browser identity | `/data/antigravity-ha/browser-auth`와 기존 호환 경로 | 보존 후 정책 재검증 |
 | memory | `/data/antigravity-ha-memory` | 보존, schema 사전검사 |
-| Telegram | bot option, static allowlist, `/data/antigravity-ha/telegram-home` | option 보존, dedicated native auth 보존, managed customization 재검증. legacy pairing/session은 폐기 |
+| Telegram | bot option, static allowlist, local pairing authorization, durable binding/outbox | 인증 option과 v2 local pairing authorization은 보존, shared `/data/home` 사용, legacy dedicated HOME은 실행 경로에서 제거·root-only 보존, 그 HOME에 속한 conversation binding만 초기화 |
 | 임시 상태 | `/run/antigravity-ha/**` | 매 시작 폐기 |
 
 OAuth, token과 private key는 backup 대상이어도 내용을 읽어 변환하거나 log하지
 않는다. regular file, owner, link count와 mode를 검증한 뒤 같은 filesystem에서
 보호된 archive에 byte-for-byte 보존한다.
-대화형 `/data/home`의 OAuth 자료를 Telegram HOME으로 복사하지 않는다. 기존 v1에
-별도 Telegram identity가 없으면 update 후 trusted local TTY에서
-`ha-telegram-login`을 실행하며, 실제 HAOS OAuth 성공 전에는 bot을 계속 끈다.
+Telegram은 Web/SSH의 `/data/home` OAuth와 customization을 그대로 사용한다. 기존
+`/data/antigravity-ha/telegram-home`의 내용을 공유 HOME으로 병합·복사하거나 credential
+파일명을 추정하지 않는다. legacy directory는 실행 경로에서 분리해 root-only 보존하고
+사용자는 필요할 때 별도 승인으로 폐기한다. shared OAuth가 없으면 trusted local
+TTY에서 `ha-antigravity-login`을 실행한다. 2.0.6의 v2 local pairing authorization은
+그대로 유지하되 전용 HOME에서 생성된 conversation ID는 재사용하지 않고 2.0.7의 첫
+요청에서 공유 HOME용 ID를 새로 결합한다. 더 오래된 v1 pairing 자료는 기존 quarantine
+정책을 유지하며 자동 승인 자료로 승격하지 않는다.
 
 ## MIG-003 — migration mode
 
@@ -125,6 +130,7 @@ v2.0.x는 update input을 읽기 위해 deprecated v1 key와 enum을 migration-o
 | `...=refresh_all` | `refresh_managed`; `reset_v2`는 사용자가 새로 선택해야 함 |
 | `antigravity_token` | import하지 않음. 공식 OAuth 필요 상태 보고 |
 | `telegram_allowed_chat_ids` | 유효 ID만 보존. user allowlist와 교집합을 이루거나 새 private pairing 전까지 모든 메시지를 거부 |
+| `telegram_access_mode` | 2.0.7에서는 권한으로 사용하지 않고 제거. global `antigravity_tool_permission`/sandbox/민감정보 option을 적용 |
 | legacy Telegram pairing/session | `/data/antigravity-ha/quarantine/v1-telegram/`으로 root-only 원자 격리하고 v2에서 재사용하지 않음 |
 | `home_assistant_browser_token` | 새 secret으로 복사하지 않음. 관리 identity 재검증 또는 setup 안내 |
 
@@ -138,6 +144,17 @@ mapping과 image-managed plugin/bootstrap이 모두 끝난 뒤에만 App이
 않고 private runtime file로만 curl에 전달한다. Supervisor token이나 API가
 없거나 응답이 거부되면 `/data/options.json`을 직접 수정하지 않고 경고한 뒤
 다음 App 시작에서 재시도한다.
+
+고정한 Supervisor 구현은 schema에서 제거된 unknown key를 container의
+`/data/options.json`에서는 버리지만 persisted raw option에서는 즉시 지우지 않는다.
+따라서 2.0.7은 local file에서 `telegram_access_mode`가 보일 때만 동작하지 않는다.
+Supervisor credential이 있고
+`/data/antigravity-ha/migration/supervisor-options-2.0.7.json` 완료 marker가 없으면,
+schema 검증을 이미 통과한 현재 option 전체를 새 값 추정 없이 self-options API에 한
+번 POST한다. 성공 응답 뒤 비밀값이 없는 root-only marker를 원자 기록하고 이후
+restart에서는 건너뛴다. API 실패 또는 marker 기록 실패는 marker를 완료로 간주하지
+않아 다음 App 시작에서 재시도하며, Supervisor credential이 없는 generic container는
+API 호출 없이 안전하게 건너뛴다.
 
 deprecated key는 v2.1 이후 제거 후보지만 실제 설치 telemetry가 아닌 migration
 fixture와 support 기간 결정이 먼저다. deprecation 제거는 별도 breaking release로
@@ -175,7 +192,7 @@ atomic rename으로 기록한다.
 5. 임시 디렉터리에 새 파일을 만들고 schema, JSON parse와 plugin validation을
    수행한다.
 6. 같은 filesystem에서 atomic rename하고 parent directory를 fsync한다.
-7. postcondition과 Antigravity plugin discovery를 확인한 뒤 commit한다.
+7. 설치 tree digest와 Antigravity plugin validation postcondition을 확인한 뒤 commit한다.
 8. crash journal이 있으면 다음 시작에서 commit 여부를 판정해 finish 또는
    rollback한다. 모호하면 자동 삭제하지 않고 recovery mode로 들어간다.
 
@@ -189,8 +206,8 @@ fail closed한다. migration 실패 때문에 기존 recovery용 SSH/Ingress를 
 `/data/antigravity-ha/migration/managed-plugin.json` phase journal과
 `/data/antigravity-ha/backups/plugin-<source>-to-<target>-<nonce>/` verified
 backup을 사용한다. sibling staging tree에서 실제 Antigravity 1.1.11
-`plugin validate`를 통과한 뒤 rename/fsync하고, target digest, plugin validation과
-`ha-telegram` discovery를 postcondition으로 검사한다. stage validation 실패,
+`plugin validate`를 통과한 뒤 rename/fsync하고, 설치 tree digest와 plugin
+validation을 postcondition으로 검사한다. stage validation 실패,
 target 활성화 직후 SIGKILL과 postcondition validation 실패 fixture에서 다음 시작 또는
 동일 실행의 rollback이 기존 plugin을 복원했다.
 
@@ -333,7 +350,7 @@ Candidate와 Builder workflow 조건:
   `HA-006`을 수행한다.
 - 이 rehearsal의 정확한 candidate runtime digest를 확인한 뒤 AppArmor enforce,
   amd64 local migration, aarch64 fresh install/persistence, migration mode, local migration
-  rollback, Telegram mode, native updater와 OAuth isolation/persistence를 각각 `PASS`로
+  rollback, Telegram shared-policy/session/outbox, native updater와 OAuth persistence를 각각 `PASS`로
   기록한다. `HAOS evidence` workflow는 gate별 sanitized report의 exact schema와
   candidate source/digest를 검증하고 고유 Actions artifact URI/SHA-256을 낸다.
   finalize는 각 URI를 다운로드해 byte SHA-256과 내부 source/digest/arch/check
@@ -496,6 +513,12 @@ byte SHA-256을 가진다. finalize는 원본을 검증한 뒤 각 report를 can
 `release-evidence.json` 안의 `haos_gate_evidence`에 기록한다. 이 JSON 파일과 digest
 map은 final artifact와 GitHub Release에 모두 보존한다. finalize artifact archive
 자체의 SHA-256까지 annotated tag에 다음처럼 묶는다.
+
+2.0.7의 Telegram 관련 manual gate는 `shared_runtime_persistence`와
+`telegram_session_delivery`다. 전자는 Web/SSH/Telegram의 동일 OAuth·HOME·전역
+customization 상속과 수정, 후자는 `/new` 전까지의 session 유지·승인·응답 전달
+내구성을 검증한다. 이전 별도 Telegram identity/isolation 또는 channel mode를 PASS
+조건으로 다시 도입하지 않는다.
 
 ```text
 Candidate-Run-ID: <positive integer>

@@ -12,9 +12,6 @@ configuration:
   telegram_allowed_chat_ids:
     name: Allowed Telegram chat IDs
     description: Telegram chat IDs for static authorization. Static authorization requires both the chat and user allowlists to match; an empty list is blocked unless a valid local pairing authorization exists.
-  telegram_access_mode:
-    name: Telegram access mode
-    description: read_only blocks mutations; confirm_changes requires an expiring same-chat confirmation; autonomous permits low-risk changes while high-risk actions still require confirmation.
   authorized_keys:
     name: Authorized SSH keys
     description: OpenSSH public keys allowed to sign in as root. Password login is always disabled.
@@ -26,7 +23,7 @@ configuration:
     description: Shared session used to restore the terminal after a browser reconnect.
   antigravity_tool_permission:
     name: Antigravity tool permission
-    description: Native Antigravity toolPermission policy. request-review is the safe default; always-proceed grants the most autonomy inside the App boundary.
+    description: Native Antigravity toolPermission policy shared by Web, SSH, and Telegram. request-review is the safe default; always-proceed grants the most autonomy inside the App boundary.
   antigravity_terminal_sandbox:
     name: Enable the Antigravity terminal sandbox
     description: Keep native Antigravity command execution inside its Linux terminal sandbox where supported.
@@ -34,9 +31,9 @@ configuration:
     name: Allow diagnostic reads of sensitive HA data
     description: >-
       Keep disabled to block Antigravity from secrets.yaml, .storage, and the
-      Recorder database. When enabled, only the interactive Antigravity child
-      may read those three areas for diagnostics; writes remain blocked and
-      Telegram, browser, memory, App tokens, SSH keys, backups, SSL, and cloud
+      Recorder database. When enabled, Web, SSH, and Telegram Antigravity
+      children may read those three areas for diagnostics; writes remain blocked
+      and browser, memory, App tokens, SSH keys, backups, SSL, and cloud
       credentials remain isolated. Restart the App after changing this option.
   antigravity_user_files_update_mode:
     name: Antigravity user-file update mode

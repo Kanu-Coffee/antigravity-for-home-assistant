@@ -454,16 +454,8 @@ async function validatePlugin(path) {
   await runNative(["plugin", "validate", path]);
 }
 
-async function validateDiscovery() {
-  const output = await runNative(["agent"]);
-  if (!output.split(/\r?\n/u).includes("ha-telegram")) {
-    throw new Error("The managed ha-telegram agent was not discovered");
-  }
-}
-
 async function validateInstalledPostcondition(expectedDigest) {
   await validatePlugin(TARGET);
-  await validateDiscovery();
   const installed = await snapshotTree(TARGET);
   if (!installed || installed.tree_sha256 !== expectedDigest) {
     throw new Error("The installed managed plugin changed during postcondition checks");

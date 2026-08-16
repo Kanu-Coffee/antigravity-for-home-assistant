@@ -6,6 +6,12 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BrokerError } from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/ha-change-broker.mjs";
+import {
+  bindSessionConversation,
+  ensureSession,
+  getPendingApproval,
+  listPendingDeliveries,
+} from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/telegram-state.mjs";
 
 const COORDINATOR_SOCKET = "/run/antigravity-ha/change-broker.sock";
 const REQUESTER = {
@@ -15,6 +21,7 @@ const REQUESTER = {
 };
 const PREVIEW_DIGEST = `sha256:${"1".repeat(64)}`;
 const CHANGED_DIGEST = `sha256:${"2".repeat(64)}`;
+const VALID_BOT_TOKEN = `123456:${"A".repeat(35)}`;
 const PROPOSAL = {
   proposal_id: "proposalFixture1234567890",
   operation: "service_call",
@@ -38,6 +45,7 @@ const requestedSocketPaths = [];
 const telegramRequests = [];
 let inspectResult = PROPOSAL;
 const DURABLE_CANCEL_KEY = "tg:100:-200:durable-cancel";
+let durableExecutionKey = DURABLE_CANCEL_KEY;
 let durableCompletionReady = false;
 
 function brokerResultFor(request) {
@@ -53,7 +61,7 @@ function brokerResultFor(request) {
     };
   }
   if (request.action === "execute") {
-    if (request.payload.idempotency_key === DURABLE_CANCEL_KEY) {
+    if (request.payload.idempotency_key === durableExecutionKey) {
       return {
         status: "running",
         operation: "service_call",
@@ -72,7 +80,7 @@ function brokerResultFor(request) {
     };
   }
   if (request.action === "execute_status" &&
-      request.payload.idempotency_key === DURABLE_CANCEL_KEY) {
+      request.payload.idempotency_key === durableExecutionKey) {
     if (!durableCompletionReady) return { status: "running", operation: "service_call" };
     return {
       status: "completed",
@@ -83,6 +91,9 @@ function brokerResultFor(request) {
         changed: true,
       },
     };
+  }
+  if (request.action === "execute_status") {
+    throw new BrokerError("execution_not_found", "fixture execution is absent");
   }
   throw new Error(`unexpected broker action: ${request.action}`);
 }
@@ -103,7 +114,7 @@ const brokerServer = net.createServer((socket) => {
       socket.end(`${JSON.stringify({
         id: request?.id ?? null,
         ok: false,
-        error: { code: "fixture_error", message: error.message },
+        error: { code: error?.code ?? "fixture_error", message: error.message },
       })}\n`);
     }
   });
@@ -144,10 +155,40 @@ try {
       JSON.stringify(new URL(dependency, bridgeUrl).href),
     );
   }
-  bridgeSource += "\nexport { executeProposal, handleCallback, pendingApprovals };\n";
+  bridgeSource += "\nexport { executeProposal, pendingApprovals };\n";
   const bridge = await import(
     `data:text/javascript;base64,${Buffer.from(bridgeSource).toString("base64")}`
   );
+  const callbackOptions = {
+    statePath: join(fixtureRoot, "telegram", "bridge-state.json"),
+  };
+  const callbackStateOptions = { path: callbackOptions.statePath };
+  const callbackSession = bindSessionConversation(
+    REQUESTER.user_id,
+    REQUESTER.chat_id,
+    ensureSession(REQUESTER.user_id, REQUESTER.chat_id, callbackStateOptions).generation,
+    "conversation.approval-fixture",
+    callbackStateOptions,
+  );
+  let callbackUpdateId = 1_000;
+  const nextCallbackUpdateId = () => {
+    callbackUpdateId += 1;
+    return callbackUpdateId;
+  };
+  const createDurableApproval = (idempotencyKey) => bridge.createApproval({
+    requester: REQUESTER,
+    proposal: PROPOSAL,
+    idempotencyKey,
+    session: callbackSession,
+  }, {
+    botToken: VALID_BOT_TOKEN,
+    statePath: callbackOptions.statePath,
+  });
+  assert.throws(() => bridge.createApproval({
+    requester: REQUESTER,
+    proposal: PROPOSAL,
+    idempotencyKey: "tg:100:-200:in-memory-forbidden",
+  }), /durable bound Telegram session/u);
 
   const inspected = await bridge.inspectProposal(PROPOSAL.proposal_id, REQUESTER);
   assert.deepEqual(inspected, PROPOSAL);
@@ -364,66 +405,158 @@ try {
   brokerRequests.length = 0;
   requestedSocketPaths.length = 0;
   telegramRequests.length = 0;
-  const approval = bridge.createApproval({
-    requester: REQUESTER,
-    proposal: PROPOSAL,
-    idempotencyKey: "tg:100:-200:43",
-  });
+  const approval = createDurableApproval("tg:100:-200:43");
   const callback = {
+    updateId: nextCallbackUpdateId(),
     id: "callback-fixture",
     data: `v2a:${approval.id}`,
     from: { id: REQUESTER.user_id },
     message: { chat: { id: REQUESTER.chat_id } },
   };
-  await bridge.handleCallback({ botToken: "123456:fixture" }, callback);
+  let callbackAcknowledgements = 0;
+  await bridge.handleCallback({ botToken: VALID_BOT_TOKEN }, callback, {
+    ...callbackOptions,
+    acknowledgeInput: () => {
+      callbackAcknowledgements += 1;
+      assert.equal(
+        getPendingApproval(approval.id, VALID_BOT_TOKEN, callbackStateOptions),
+        null,
+      );
+      assert.equal(
+        listPendingDeliveries(VALID_BOT_TOKEN, callbackStateOptions)
+          .some((delivery) => delivery.update_id === callback.updateId &&
+            delivery.stage === "execution" && delivery.status === "pending"),
+        true,
+      );
+      assert.equal(
+        telegramRequests.some((request) => request.url.endsWith("/sendMessage")),
+        false,
+      );
+    },
+  });
+  assert.equal(callbackAcknowledgements, 1);
   assert.deepEqual(
     brokerRequests.map((request) => request.action),
     ["inspect", "authorize", "execute"],
   );
-  assert.equal(brokerRequests[2].payload.idempotency_key, "tg:100:-200:43");
+  assert.equal(brokerRequests[2].payload.idempotency_key, "tgcb:100:-200:1001");
   assert.equal(requestedSocketPaths.every((path) => path === COORDINATOR_SOCKET), true);
 
   brokerRequests.length = 0;
   requestedSocketPaths.length = 0;
-  await bridge.handleCallback({ botToken: "123456:fixture" }, callback);
-  assert.deepEqual(brokerRequests, []);
-  assert.deepEqual(requestedSocketPaths, []);
+  telegramRequests.length = 0;
+  const duplicateUpdateId = nextCallbackUpdateId();
+  durableExecutionKey = `tgcb:${REQUESTER.user_id}:${REQUESTER.chat_id}:${duplicateUpdateId}`;
+  durableCompletionReady = true;
+  let recoveredAcknowledgements = 0;
+  await bridge.handleCallback({ botToken: VALID_BOT_TOKEN }, {
+    ...callback,
+    updateId: duplicateUpdateId,
+    id: "callback-fixture-duplicate",
+  }, {
+    ...callbackOptions,
+    acknowledgeInput: () => {
+      recoveredAcknowledgements += 1;
+      assert.equal(
+        listPendingDeliveries(VALID_BOT_TOKEN, callbackStateOptions)
+          .some((delivery) => delivery.update_id === duplicateUpdateId &&
+            delivery.stage === "execution" && delivery.status === "pending"),
+        true,
+      );
+      assert.equal(
+        telegramRequests.some((request) => request.url.endsWith("/sendMessage")),
+        false,
+      );
+    },
+  });
+  assert.deepEqual(brokerRequests.map((request) => request.action), ["execute_status"]);
+  assert.deepEqual(requestedSocketPaths, [COORDINATOR_SOCKET]);
+  assert.equal(recoveredAcknowledgements, 1);
+  assert.equal(
+    telegramRequests.some((request) => request.url.endsWith("/sendMessage")),
+    true,
+  );
+  durableExecutionKey = DURABLE_CANCEL_KEY;
+  durableCompletionReady = false;
 
   brokerRequests.length = 0;
   requestedSocketPaths.length = 0;
+  telegramRequests.length = 0;
+  const missingApprovalUpdateId = nextCallbackUpdateId();
+  await bridge.handleCallback({ botToken: VALID_BOT_TOKEN }, {
+    ...callback,
+    updateId: missingApprovalUpdateId,
+    id: "callback-missing-no-execution",
+    data: `v2a:${"missingApproval1"}`,
+  }, callbackOptions);
+  assert.deepEqual(brokerRequests.map((request) => request.action), ["execute_status"]);
+  assert.deepEqual(requestedSocketPaths, [COORDINATOR_SOCKET]);
+  assert.equal(
+    telegramRequests.some((request) => request.url.endsWith("/sendMessage")),
+    false,
+  );
+  assert.equal(
+    telegramRequests.some((request) =>
+      request.url.endsWith("/answerCallbackQuery") &&
+      request.body.callback_query_id === "callback-missing-no-execution" &&
+      request.body.show_alert === true),
+    true,
+  );
+
+  brokerRequests.length = 0;
+  requestedSocketPaths.length = 0;
+  telegramRequests.length = 0;
   inspectResult = { ...PROPOSAL, preview_digest: CHANGED_DIGEST };
-  const changedApproval = bridge.createApproval({
-    requester: REQUESTER,
-    proposal: PROPOSAL,
-    idempotencyKey: "tg:100:-200:44",
-  });
+  const changedApproval = createDurableApproval("tg:100:-200:44");
+  const changedUpdateId = nextCallbackUpdateId();
+  let failureAcknowledgements = 0;
   await bridge.handleCallback(
-    { botToken: "123456:fixture" },
+    { botToken: VALID_BOT_TOKEN },
     {
       ...callback,
+      updateId: changedUpdateId,
       id: "callback-preview-changed",
       data: `v2a:${changedApproval.id}`,
     },
+    {
+      ...callbackOptions,
+      acknowledgeInput: () => {
+        failureAcknowledgements += 1;
+        assert.equal(
+          getPendingApproval(changedApproval.id, VALID_BOT_TOKEN, callbackStateOptions),
+          null,
+        );
+        assert.equal(
+          listPendingDeliveries(VALID_BOT_TOKEN, callbackStateOptions)
+            .some((delivery) => delivery.update_id === changedUpdateId &&
+              delivery.stage === "error" && delivery.status === "pending"),
+          true,
+        );
+        assert.equal(
+          telegramRequests.some((request) => request.url.endsWith("/sendMessage")),
+          false,
+        );
+      },
+    },
   );
+  assert.equal(failureAcknowledgements, 1);
   assert.deepEqual(brokerRequests.map((request) => request.action), ["inspect"]);
   assert.deepEqual(requestedSocketPaths, [COORDINATOR_SOCKET]);
 
   brokerRequests.length = 0;
   requestedSocketPaths.length = 0;
   inspectResult = PROPOSAL;
-  const requesterApproval = bridge.createApproval({
-    requester: REQUESTER,
-    proposal: PROPOSAL,
-    idempotencyKey: "tg:100:-200:45",
-  });
+  const requesterApproval = createDurableApproval("tg:100:-200:45");
   await bridge.handleCallback(
-    { botToken: "123456:fixture" },
+    { botToken: VALID_BOT_TOKEN },
     {
       ...callback,
+      updateId: nextCallbackUpdateId(),
       id: "callback-wrong-requester",
       data: `v2a:${requesterApproval.id}`,
       from: { id: "101" },
     },
+    callbackOptions,
   );
   assert.deepEqual(brokerRequests, []);
   assert.deepEqual(requestedSocketPaths, []);
@@ -431,13 +564,15 @@ try {
 
   telegramRequests.length = 0;
   await bridge.handleCallback(
-    { botToken: "123456:fixture" },
+    { botToken: VALID_BOT_TOKEN },
     {
       ...callback,
+      updateId: nextCallbackUpdateId(),
       id: "callback-wrong-chat",
       data: `v2a:${requesterApproval.id}`,
       message: { chat: { id: "-201" } },
     },
+    callbackOptions,
   );
   assert.deepEqual(brokerRequests, []);
   assert.deepEqual(requestedSocketPaths, []);
@@ -449,12 +584,14 @@ try {
 
   telegramRequests.length = 0;
   await bridge.handleCallback(
-    { botToken: "123456:fixture" },
+    { botToken: VALID_BOT_TOKEN },
     {
       ...callback,
+      updateId: nextCallbackUpdateId(),
       id: "callback-owner-after-mismatch",
       data: `v2a:${requesterApproval.id}`,
     },
+    callbackOptions,
   );
   assert.deepEqual(
     brokerRequests.map((request) => request.action),
@@ -464,20 +601,130 @@ try {
 
   brokerRequests.length = 0;
   requestedSocketPaths.length = 0;
-  telegramRequests.length = 0;
-  durableCompletionReady = false;
-  const durableApproval = bridge.createApproval({
-    requester: REQUESTER,
-    proposal: PROPOSAL,
-    idempotencyKey: DURABLE_CANCEL_KEY,
-  });
-  const durableRun = bridge.handleCallback(
-    { botToken: "123456:fixture" },
+  const sessionOptions = callbackStateOptions;
+  const restartApproval = createDurableApproval("tg:100:-200:approval-restart");
+  assert.notEqual(
+    getPendingApproval(restartApproval.id, VALID_BOT_TOKEN, sessionOptions),
+    null,
+  );
+  bridge.pendingApprovals.clear();
+  await bridge.handleCallback(
+    { botToken: VALID_BOT_TOKEN },
     {
       ...callback,
+      updateId: nextCallbackUpdateId(),
+      id: "callback-after-restart",
+      data: `v2a:${restartApproval.id}`,
+    },
+    callbackOptions,
+  );
+  assert.deepEqual(
+    brokerRequests.map((request) => request.action),
+    ["inspect", "authorize", "execute"],
+  );
+  assert.equal(
+    getPendingApproval(restartApproval.id, VALID_BOT_TOKEN, sessionOptions),
+    null,
+  );
+
+  brokerRequests.length = 0;
+  requestedSocketPaths.length = 0;
+  inspectResult = PROPOSAL;
+  const transitionApproval = createDurableApproval("tg:100:-200:approval-transition");
+  const transitionUpdateId = nextCallbackUpdateId();
+  const transitionCallback = {
+    ...callback,
+    updateId: transitionUpdateId,
+    id: "callback-approval-transition-crash",
+    data: `v2a:${transitionApproval.id}`,
+  };
+  await assert.rejects(bridge.handleCallback(
+    { botToken: VALID_BOT_TOKEN },
+    transitionCallback,
+    {
+      ...callbackOptions,
+      afterApprovalTransition: () => {
+        throw new Error("synthetic crash after durable approval transition");
+      },
+    },
+  ), /synthetic crash/u);
+  const transitioned = getPendingApproval(
+    transitionApproval.id,
+    VALID_BOT_TOKEN,
+    sessionOptions,
+  );
+  assert.equal(transitioned.approved_update_id, transitionUpdateId);
+  assert.deepEqual(brokerRequests, [], "approval must be durable before broker inspection");
+  telegramRequests.length = 0;
+  let duplicateTapAcknowledgements = 0;
+  const duplicateTapUpdateId = nextCallbackUpdateId();
+  await bridge.handleCallback(
+    { botToken: VALID_BOT_TOKEN },
+    {
+      ...transitionCallback,
+      updateId: duplicateTapUpdateId,
+      id: "callback-approval-double-tap",
+    },
+    {
+      ...callbackOptions,
+      acknowledgeInput: () => {
+        duplicateTapAcknowledgements += 1;
+        const pending = getPendingApproval(
+          transitionApproval.id,
+          VALID_BOT_TOKEN,
+          sessionOptions,
+        );
+        assert.equal(pending.approved_update_id, transitionUpdateId);
+        assert.equal(
+          listPendingDeliveries(VALID_BOT_TOKEN, callbackStateOptions)
+            .some((delivery) => delivery.update_id === duplicateTapUpdateId),
+          false,
+        );
+      },
+    },
+  );
+  assert.equal(duplicateTapAcknowledgements, 1);
+  assert.deepEqual(brokerRequests, [], "a second callback must not repeat broker execution");
+  assert.equal(
+    telegramRequests.every((request) =>
+      request.url.endsWith("/answerCallbackQuery")),
+    true,
+  );
+  bridge.pendingApprovals.clear();
+  await bridge.handleCallback(
+    { botToken: VALID_BOT_TOKEN },
+    transitionCallback,
+    callbackOptions,
+  );
+  assert.deepEqual(
+    brokerRequests.map((request) => request.action),
+    ["inspect", "authorize", "execute"],
+  );
+  assert.equal(
+    brokerRequests[2].payload.idempotency_key,
+    `tgcb:${REQUESTER.user_id}:${REQUESTER.chat_id}:${transitionUpdateId}`,
+  );
+  assert.equal(
+    getPendingApproval(transitionApproval.id, VALID_BOT_TOKEN, sessionOptions),
+    null,
+  );
+
+  brokerRequests.length = 0;
+  requestedSocketPaths.length = 0;
+  telegramRequests.length = 0;
+  durableCompletionReady = false;
+  const durableApproval = createDurableApproval(DURABLE_CANCEL_KEY);
+  const durableUpdateId = nextCallbackUpdateId();
+  durableExecutionKey = `tgcb:${REQUESTER.user_id}:${REQUESTER.chat_id}:${durableUpdateId}`;
+  const durableRun = bridge.handleCallback(
+    { botToken: VALID_BOT_TOKEN },
+    {
+      ...callback,
+      updateId: durableUpdateId,
       id: "callback-durable-cancel",
       data: `v2a:${durableApproval.id}`,
     },
+    callbackOptions,
   );
   for (let attempt = 0; attempt < 100 &&
       !brokerRequests.some((request) => request.action === "execute"); attempt += 1) {

@@ -74,18 +74,12 @@ rootfs/etc/s6-overlay/s6-rc.d/ttyd/dependencies.d/*
 rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/*
 !rootfs/usr/local/share/antigravity-ha/plugins/
 rootfs/usr/local/share/antigravity-ha/plugins/*
-!rootfs/usr/local/share/antigravity-ha/telegram-workspace/
-rootfs/usr/local/share/antigravity-ha/telegram-workspace/*
 !rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/
 rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/*
-!rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/agents/
-rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/agents/*
 !rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/rules/
 rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/rules/*
 !rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/
 rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/*
-!rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/agents/ha-telegram/
-rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/agents/ha-telegram/*
 !rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/ha-change-proposal/
 rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/ha-change-proposal/*
 !rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/ha-dashboard/
@@ -100,7 +94,6 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assista
 !playwright/package.json
 !rootfs/etc/antigravity/mcp_config.json
 !rootfs/etc/antigravity/settings.json
-!rootfs/etc/antigravity/telegram-settings.json
 !rootfs/etc/motd
 !rootfs/etc/nginx/nginx.conf
 !rootfs/etc/profile.d/antigravity-ha.sh
@@ -171,7 +164,6 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assista
 !rootfs/usr/local/bin/ha-playwright-mcp
 !rootfs/usr/local/bin/ha-read-broker
 !rootfs/usr/local/bin/ha-read-mcp
-!rootfs/usr/local/bin/ha-telegram-login
 !rootfs/usr/local/bin/ha-telegram-pair
 !rootfs/usr/local/bin/ha-validate-mcp
 !rootfs/usr/local/bin/supervisor-api
@@ -182,7 +174,6 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assista
 !rootfs/usr/local/lib/antigravity-ha/config.sh
 !rootfs/usr/local/lib/antigravity-ha/environment.sh
 !rootfs/usr/local/lib/antigravity-ha/supervisor-credential.sh
-!rootfs/usr/local/lib/antigravity-ha/telegram-plugin.sh
 !rootfs/usr/local/libexec/antigravity-interactive-restricted
 !rootfs/usr/local/libexec/antigravity-interactive-sensitive-read
 !rootfs/usr/local/libexec/ha-change-broker-runtime
@@ -192,9 +183,7 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assista
 !rootfs/usr/local/libexec/ha-read-broker-runtime
 !rootfs/usr/local/libexec/ha-ssh-session
 !rootfs/usr/local/libexec/ha-sshd-runtime
-!rootfs/usr/local/libexec/ha-telegram-home-bootstrap
 !rootfs/usr/local/libexec/ha-telegram-runtime
-!rootfs/usr/local/libexec/ha-telegram-worker
 !rootfs/usr/local/share/antigravity-ha/AGENTS.md
 !rootfs/usr/local/share/antigravity-ha/browser-auth-check.mjs
 !rootfs/usr/local/share/antigravity-ha/browser-user-admin.mjs
@@ -215,8 +204,6 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assista
 !rootfs/usr/local/share/antigravity-ha/playwright-init-page.ts
 !rootfs/usr/local/share/antigravity-ha/playwright-mcp-proxy.mjs
 !rootfs/usr/local/share/antigravity-ha/playwright-mcp.json
-!rootfs/usr/local/share/antigravity-ha/playwright-telegram-init-page.ts
-!rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/agents/ha-telegram/agent.md
 !rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/mcp_config.json
 !rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/plugin.json
 !rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/rules/home-assistant-safety.md
@@ -232,5 +219,4 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assista
 !rootfs/usr/local/share/antigravity-ha/telegram-pairing.mjs
 !rootfs/usr/local/share/antigravity-ha/telegram-result-schema.json
 !rootfs/usr/local/share/antigravity-ha/telegram-state.mjs
-!rootfs/usr/local/share/antigravity-ha/telegram-workspace/.antigravity-ha-managed
 !rootfs/usr/local/share/antigravity-ha/user-files-update.mjs

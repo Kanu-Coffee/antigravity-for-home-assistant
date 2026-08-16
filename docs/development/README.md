@@ -30,6 +30,10 @@ v2 작업은 다음 순서로 읽습니다.
 내용에 나오는 단일 아키텍처, legacy provider 설정, `config.toml`, `runtime.env`,
 shell/tmux Telegram 또는 과거 option 이름은 v2 계약이 아닙니다.
 
+특히 2.0.7부터 Telegram은 CLI와 같은 `/data/home`, `/config`, OAuth, 전역·workspace
+customization과 permission을 사용하는 관리자 주 채널입니다. 전용 HOME/login/mode
+격리 설명은 역사 기록일 뿐이며 현재 계약은 `docs/v2/telegram-spec.md`를 따릅니다.
+
 | Historical document | 보존 목적 |
 | --- | --- |
 | [rules.md](rules.md) | 당시 저장소 작업 원칙 |

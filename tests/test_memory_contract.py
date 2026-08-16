@@ -200,7 +200,7 @@ def test_memory_daemon_is_optional_to_terminal_and_ssh(
     )
     assert main_profile and f"{diagnostic_path} rwk," in main_profile.group("body")
     assert memory_profile and f"{diagnostic_path} w," in memory_profile.group("body")
-    assert len(telegram_profiles) == 2
+    assert len(telegram_profiles) == 1
     assert all(
         f"deny {diagnostic_path} rwklm," in profile
         for profile in telegram_profiles
@@ -340,7 +340,7 @@ def test_memory_mcp_exposes_only_the_structured_protocol(rootfs: Path) -> None:
     assert "optional: true" not in list_case
 
 
-def test_memory_mcp_forces_a_bounded_read_only_telegram_surface(
+def test_memory_mcp_uses_the_same_surface_for_telegram_and_cli(
     addon_root: Path,
     rootfs: Path,
 ) -> None:
@@ -351,41 +351,21 @@ def test_memory_mcp_forces_a_bounded_read_only_telegram_surface(
     mcp = mcp_path.read_text(encoding="utf-8")
     apparmor = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
 
-    assert "[[ -v HA_TELEGRAM_USER_ID ]]" in wrapper
-    assert "[[ -v HA_TELEGRAM_CHAT_ID ]]" in wrapper
-    assert "^[1-9][0-9]{0,19}$" in wrapper
-    assert "^-?[1-9][0-9]{0,19}$" in wrapper
-    assert 'ANTIGRAVITY_HA_TELEGRAM_READ_ONLY="${telegram_read_only}"' in wrapper
-    assert "unset HA_TELEGRAM_USER_ID HA_TELEGRAM_CHAT_ID" in wrapper
-    assert "TELEGRAM_READ_ONLY_TOOLS" in mcp
-    assert "tools.filter((tool) => TELEGRAM_READ_ONLY_TOOLS.has(tool.name))" in mcp
-    assert "Memory tool is not enabled" in mcp
-    assert "memory-telegram" in mcp
     assert (
-        "/usr/local/bin/ha-memory-mcp Px -> "
-        "antigravity_home_assistant-memory-telegram,"
-    ) in apparmor
-    assert "profile antigravity_home_assistant-memory-telegram" in apparmor
+        "unset ANTIGRAVITY_HA_CHANNEL HA_TELEGRAM_USER_ID "
+        "HA_TELEGRAM_CHAT_ID" in wrapper
+    )
+    assert "ANTIGRAVITY_HA_TELEGRAM_READ_ONLY" not in wrapper
+    assert "TELEGRAM_READ_ONLY_TOOLS" not in mcp
+    assert "memory-telegram" not in mcp
+    assert "profile antigravity_home_assistant-memory-telegram" not in apparmor
 
     requests = "\n".join(
         json.dumps(message)
         for message in (
             {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {
-                    "name": "memory_remember_explicit",
-                    "arguments": {},
-                },
-            },
         )
     )
-    environment = {
-        **os.environ,
-        "ANTIGRAVITY_HA_TELEGRAM_READ_ONLY": "1",
-    }
     completed = subprocess.run(
         ["node", str(mcp_path)],
         input=f"{requests}\n",
@@ -393,7 +373,7 @@ def test_memory_mcp_forces_a_bounded_read_only_telegram_surface(
         capture_output=True,
         timeout=10,
         check=True,
-        env=environment,
+        env=os.environ,
     )
     responses = {
         message["id"]: message
@@ -402,16 +382,25 @@ def test_memory_mcp_forces_a_bounded_read_only_telegram_surface(
         for message in (json.loads(line),)
     }
     listed_names = {tool["name"] for tool in responses[1]["result"]["tools"]}
-    assert listed_names == {
-        "memory_search",
-        "memory_show",
-        "memory_list_candidates",
-        "memory_status",
-        "memory_history",
-        "memory_conflicts",
+    assert "memory_search" in listed_names
+    assert "memory_remember_explicit" in listed_names
+    assert "memory_begin_change" in listed_names
+
+    read_only = subprocess.run(
+        ["node", str(mcp_path)],
+        input='{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}\n',
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=True,
+        env={**os.environ, "ANTIGRAVITY_HA_MEMORY_READ_ONLY": "1"},
+    )
+    read_only_names = {
+        tool["name"]
+        for tool in json.loads(read_only.stdout)["result"]["tools"]
     }
-    assert responses[2]["error"]["code"] == -32601
-    assert "not enabled" in responses[2]["error"]["message"]
+    assert "memory_search" in read_only_names
+    assert "memory_remember_explicit" not in read_only_names
 
 
 def test_memory_ha_client_uses_the_fixed_snapshot_allowlist(rootfs: Path) -> None:

@@ -112,19 +112,25 @@ def test_apparmor_separates_read_worker_client_and_token_broker(
     read_client = read_client_tail.split(
         "profile antigravity_home_assistant-playwright-bootstrap", maxsplit=1
     )[0]
-    worker = main.split(
-        "profile antigravity_home_assistant-telegram-worker", maxsplit=1
+    restricted = profile.split(
+        "profile antigravity_home_assistant-interactive-restricted", maxsplit=1
     )[1].split(
-        "profile antigravity_home_assistant-change-broker", maxsplit=1
+        "profile antigravity_home_assistant-interactive-sensitive-read", maxsplit=1
+    )[0]
+    sensitive = profile.split(
+        "profile antigravity_home_assistant-interactive-sensitive-read", maxsplit=1
+    )[1].split(
+        "profile antigravity_home_assistant-init", maxsplit=1
     )[0]
 
     assert "/usr/local/bin/{ha-change-broker,ha-read-broker} Px -> " \
         "antigravity_home_assistant-broker-bootstrap," in main
-    assert "/usr/local/bin/ha-read-mcp Px -> " \
-        "antigravity_home_assistant-read-client," in worker
-    assert "/usr/local/bin/ha-validate-mcp Px -> " \
-        "antigravity_home_assistant-read-client," in worker
-    assert "deny /run/antigravity-ha/ha-read.sock rwklm," in worker
+    for interactive in (restricted, sensitive):
+        assert "/usr/local/bin/ha-read-mcp Px -> " \
+            "antigravity_home_assistant-read-client," in interactive
+        assert "/usr/local/bin/ha-validate-mcp Px -> " \
+            "antigravity_home_assistant-read-client," in interactive
+        assert "deny /run/antigravity-ha/ha-read.sock rwklm," in interactive
     assert "/run/antigravity-ha/ha-read.sock rw," in read_client
     assert "/usr/local/bin/ha-config-check Px -> " \
         "antigravity_home_assistant-ha-helper," in read_client

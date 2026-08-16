@@ -48,9 +48,9 @@ EXPECTED_MANUAL_GATES = {
     "haos_amd64_local_migration",
     "local_migration_rollback",
     "migration_modes",
-    "oauth_isolation_persistence",
+    "shared_runtime_persistence",
     "native_updater_canary",
-    "telegram_modes",
+    "telegram_session_delivery",
 }
 HAOS_GATE_REPORT_SCHEMA = "antigravity-ha-haos-gate-evidence/v1"
 HAOS_GATE_REPORT_KEYS = {
@@ -90,9 +90,9 @@ EXPECTED_HAOS_GATE_TEST_IDS = {
     "haos_amd64_local_migration": ["HA-001", "HA-002", "HA-003", "HA-007"],
     "local_migration_rollback": ["HA-007"],
     "migration_modes": ["HA-007"],
-    "oauth_isolation_persistence": ["HA-001", "HA-004", "HA-006", "AA-001"],
+    "shared_runtime_persistence": ["HA-001", "HA-004", "HA-006", "AA-001"],
     "native_updater_canary": ["HA-001", "HA-006"],
-    "telegram_modes": ["HA-004"],
+    "telegram_session_delivery": ["HA-004"],
 }
 EXPECTED_HAOS_GATE_ARCHITECTURES = {
     "apparmor_enforce": ["amd64", "aarch64"],
@@ -100,9 +100,9 @@ EXPECTED_HAOS_GATE_ARCHITECTURES = {
     "haos_amd64_local_migration": ["amd64"],
     "local_migration_rollback": ["amd64"],
     "migration_modes": ["amd64"],
-    "oauth_isolation_persistence": ["amd64", "aarch64"],
+    "shared_runtime_persistence": ["amd64", "aarch64"],
     "native_updater_canary": ["amd64", "aarch64"],
-    "telegram_modes": ["amd64", "aarch64"],
+    "telegram_session_delivery": ["amd64", "aarch64"],
 }
 EXPECTED_HAOS_GATE_CHECKS = {
     "apparmor_enforce": {
@@ -158,16 +158,17 @@ EXPECTED_HAOS_GATE_CHECKS = {
         "same_local_repository_identity",
         "user_data_preserved",
     },
-    "oauth_isolation_persistence": {
+    "shared_runtime_persistence": {
         "credential_non_disclosure",
         "interactive_login",
         "interactive_restart_persistence",
+        "restart_persistence_both_arches",
         "same_process_residual_risk_recorded",
-        "telegram_separate_identity_login",
+        "telegram_shared_identity_login",
         "telegram_reply_log_network_non_disclosure",
         "telegram_restart_persistence",
-        "restart_persistence_both_arches",
-        "user_global_mcp_absent_before_and_after_auth",
+        "user_global_customization_inherited",
+        "user_global_customization_mutable",
     },
     "native_updater_canary": {
         "auto_update_process_absent",
@@ -175,17 +176,19 @@ EXPECTED_HAOS_GATE_CHECKS = {
         "cli_version_1_1_11",
         "disable_environment_all_launchers",
     },
-    "telegram_modes": {
+    "telegram_session_delivery": {
         "amd64_and_aarch64_sessions",
-        "autonomous_low_risk_only",
         "bot_api_interruption_no_duplicate_mutation",
         "cancel_expiry_and_restart",
-        "confirm_changes_high_risk_confirmation",
+        "explicit_new_only_session_rotation",
+        "global_tool_policy_shared",
+        "high_risk_confirmation",
+        "oauth_canary_not_disclosed",
         "pairing_and_static_allowlist",
         "replay_and_cross_user_denied",
+        "response_outbox_crash_recovery",
         "safe_device_test_restored",
-        "telegram_home_customization_isolated",
-        "oauth_canary_not_disclosed",
+        "shared_customization_inherited",
     },
 }
 HAOS_EVIDENCE_MAX_BYTES = 1_048_576

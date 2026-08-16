@@ -459,7 +459,7 @@ async function runFailureInjection(config, fixtureDirectory, moduleOrigin) {
     telegram_bot_token: `123456:${"A".repeat(35)}`,
     telegram_allowed_user_ids: ["83001"],
     telegram_allowed_chat_ids: ["83001"],
-    telegram_access_mode: "read_only",
+    antigravity_tool_permission: "request-review",
   });
   const normalizedCallback = {
     kind: "callback_query",
