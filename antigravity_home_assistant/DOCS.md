@@ -95,7 +95,7 @@ Git·Telegram·지원 이슈에 복사하지 마세요.
 
 ### Native 경로와 plugin
 
-v2는 Antigravity 1.1.11의 native JSON/plugin 경로를 사용합니다.
+v2는 Antigravity 1.1.13의 native JSON/plugin 경로를 사용합니다.
 
 | 역할 | 경로 |
 | --- | --- |
@@ -258,7 +258,7 @@ ignored migration input입니다. door lock, alarm, 안전 관련 heating/water,
 restart, backup restore, update, removal, credential·permission 변경처럼 별도 사람
 확인이 필요한 고위험 작업은 전역 tool policy로 낮출 수 없습니다.
 
-Antigravity 1.1.11의 `stream-json`에는 native 대화형 permission prompt를 Telegram에
+Antigravity 1.1.13의 `stream-json`에는 native 대화형 permission prompt를 Telegram에
 전달하고 같은 turn을 재개하는 protocol이 없습니다. 따라서 App이 관리하는 HA 변경은
 같은 session에 묶인 Telegram 승인 버튼을 사용하지만, global allow에 없는 임의 native
 tool은 `request-review`에서 비대화형 거부될 수 있습니다. 이 경우 별도 Telegram 정책으로
@@ -450,7 +450,7 @@ global `mcp_config.json`은 없을 때 빈 `mcpServers` 기본본만 생성하�
   다음 App 시작에서 재시도합니다.
 - 이전 provider credential이나 App 전용 token을 native 인증으로 import하지
   않습니다. Google OAuth를 다시 완료해야 할 수 있습니다.
-- 이전 비-native 설정과 guidance 파일은 보존될 수 있지만 Antigravity 1.1.11의
+- 이전 비-native 설정과 guidance 파일은 보존될 수 있지만 Antigravity 1.1.13의
   native settings/plugin으로 로드된다고 가정하면 안 됩니다.
 - 공개 v1의 managed-file journal이 남아 있으면 v2는 검증된 기존 backup에서
   미완료 `config.toml`/`AGENTS.md` 교체를 먼저 복구합니다. 복구 자료가 손상되거나
@@ -519,6 +519,14 @@ global `mcp_config.json`은 없을 때 빈 `mcpServers` 기본본만 생성하�
 - `/status`는 Telegram transport, 결합된 conversation과 최근 공유 AI runtime/outbox 결과를
   구분해 표시합니다. help와 status가 정상이어도 공유 native OAuth가 완료됐다는
   뜻은 아닙니다.
+- `/start`, `/help`, `/status` 또는 bridge의 오류 안내가 Telegram에 도착하고
+  `telegram_api_errors_total`이 증가하지 않았다면 outbound Bot API network는 정상입니다.
+  `session_bound` 뒤 `request_failed`가 발생하고 `delivery_queued`가 없다면 전송 문제가
+  아니라 Antigravity terminal result 검증 단계의 실패이며 `/retry`할 outbox도 없습니다.
+- 이 경우 `reason_class`와 `/status`의 최근 runtime을 확인합니다.
+  `terminal_missing`, `terminal_status_failed`, `terminal_response_invalid`,
+  `conversation_mismatch`, `stream_contract_failed`, `proposal_result_invalid`는 prompt,
+  raw model output 또는 stderr를 남기지 않는 제한된 terminal 진단입니다.
 - native CLI log, OAuth URL, token, prompt 원문을 지원 자료로 올리지 말고 공유 HOME의
   credential 경로를 추정하거나 수동 편집하지 않습니다.
 - `--dangerously-skip-permissions`와 광범위한 file-read 허용은 사용하지 않습니다.

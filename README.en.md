@@ -152,7 +152,7 @@ as the CLI. Replies enter an encrypted persistent outbox before send, are remove
 only after Telegram acknowledges delivery, and use bounded backoff only for
 clearly unsent 429 responses. Ambiguous delivery failures remain isolated until
 `/retry`.
-Because 1.1.11 `stream-json` cannot resume a native permission prompt, managed
+Because 1.1.13 `stream-json` cannot resume a native permission prompt, managed
 Home Assistant changes use Telegram approval buttons; reviewing an arbitrary tool
 outside the global allow rules requires Web/SSH or an intentional global permission
 change. Telegram has no private auto-approval override.

@@ -348,7 +348,7 @@ run_bounded docker run --detach \
 wait_for_ready
 
 # This generic container has no Supervisor credential or API. It therefore
-# proves only that the legacy channel-policy key is ignored safely by the 2.0.7
+# proves only that the legacy channel-policy key is ignored safely by the current
 # runtime. The fixed Supervisor self-options deletion has a separate component
 # contract and is not simulated here.
 run_bounded docker exec "${CANDIDATE_CONTAINER}" jq --exit-status '

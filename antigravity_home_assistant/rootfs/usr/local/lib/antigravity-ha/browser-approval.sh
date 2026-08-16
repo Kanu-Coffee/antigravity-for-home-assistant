@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Antigravity 1.1.11 reads browser tool permissions from settings.json. The
+# Antigravity 1.1.13 reads browser tool permissions from settings.json. The
 # persistent-file updater owns that translation; startup only needs to reject
 # invalid App option values before it invokes the updater.
 

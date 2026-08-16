@@ -162,6 +162,22 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
     first_stderr=$(mktemp)
     second_stdout=$(mktemp)
     second_stderr=$(mktemp)
+    legacy_stdout=$(mktemp)
+    legacy_stderr=$(mktemp)
+    transition_stdout=$(mktemp)
+    transition_stderr=$(mktemp)
+    legacy_schema=$(mktemp)
+    jq -n "
+      {
+        type: \"object\",
+        additionalProperties: false,
+        properties: {
+          response: { type: \"string\", minLength: 1 },
+          proposal_ids: { type: \"array\", items: { type: \"string\" } }
+        },
+        required: [\"response\", \"proposal_ids\"]
+      }
+    " > "${legacy_schema}"
     mock_pid=
     cleanup_mock() {
       if [[ -n "${mock_pid}" ]] && kill -0 "${mock_pid}" 2>/dev/null; then
@@ -240,41 +256,96 @@ const server = http.createServer((request, response) => {
     }
     const pathname = new URL(request.url, "http://127.0.0.1").pathname;
     const finishFunctionAdvertised = advertisesFinishFunction(parsedRequest);
+    const firstRequest = flattened.includes("TELEGRAM_NATIVE_FIRST_SENTINEL");
+    const secondRequest = flattened.includes("TELEGRAM_NATIVE_SECOND_SENTINEL");
+    const legacyRequest = flattened.includes("TELEGRAM_LEGACY_SCHEMA_SENTINEL");
+    const transitionRequest = flattened.includes("TELEGRAM_SCHEMA_FREE_TRANSITION_SENTINEL");
     process.stdout.write(`${JSON.stringify({
       kind: "request",
       pathname,
-      first_stdin_sentinel: flattened.includes("TELEGRAM_NATIVE_FIRST_SENTINEL"),
-      second_stdin_sentinel: flattened.includes("TELEGRAM_NATIVE_SECOND_SENTINEL"),
+      first_stdin_sentinel: firstRequest,
+      second_stdin_sentinel: secondRequest,
+      legacy_stdin_sentinel: legacyRequest,
+      transition_stdin_sentinel: transitionRequest,
       output_format_literal: flattened.includes("--output-format"),
-      finish_function_advertised: finishFunctionAdvertised,
+      json_schema_literal: flattened.includes("--json-schema"),
+      finish_schema_advertised: finishFunctionAdvertised,
     })}\n`);
 
     if (pathname.includes("countTokens")) {
       sendJson(response, 200, { totalTokens: 1 });
       return;
     }
-    const part = finishFunctionAdvertised
-      ? {
-          functionCall: {
-            name: "finish",
-            args: { response: "MOCK_RESPONSE_OK", proposal_ids: [] },
+    if (finishFunctionAdvertised) {
+      const event = {
+        candidates: [{
+          content: {
+            parts: [{
+              functionCall: {
+                name: "finish",
+                args: { response: "MOCK_LEGACY_RESPONSE_OK", proposal_ids: [] },
+              },
+            }],
+            role: "model",
           },
-        }
-      : { text: "MOCK_MANAGED_OK" };
-    const event = {
-      candidates: [{
-        content: { parts: [part], role: "model" },
-        finishReason: "STOP",
-        index: 0,
-      }],
-      usageMetadata: {
-        promptTokenCount: 1,
-        candidatesTokenCount: 1,
-        totalTokenCount: 2,
+          finishReason: "STOP",
+          index: 0,
+        }],
+        usageMetadata: {
+          promptTokenCount: 1,
+          candidatesTokenCount: 1,
+          totalTokenCount: 2,
+        },
+        modelVersion: "synthetic-model",
+      };
+      const payload = `data: ${JSON.stringify(event)}\n\n`;
+      response.writeHead(200, {
+        "content-type": "text/event-stream",
+        "content-length": Buffer.byteLength(payload),
+      });
+      response.end(payload);
+      return;
+    }
+    const naturalResponse = transitionRequest
+      ? "MOCK_SCHEMA_FREE_TRANSITION_OK"
+      : secondRequest
+        ? "MOCK_NATIVE_SECOND_OK"
+        : firstRequest
+          ? "MOCK_NATIVE_FIRST_OK"
+          : legacyRequest
+            ? "MOCK_LEGACY_UNEXPECTED_FREE_TEXT"
+            : "MOCK_MANAGED_OK";
+    const splitAt = naturalResponse.indexOf("_") + 1;
+    const events = [
+      {
+        candidates: [{
+          content: {
+            parts: [{ text: naturalResponse.slice(0, splitAt) }],
+            role: "model",
+          },
+          index: 0,
+        }],
+        modelVersion: "synthetic-model",
       },
-      modelVersion: "synthetic-model",
-    };
-    const payload = `data: ${JSON.stringify(event)}\n\n`;
+      {
+        candidates: [{
+          content: {
+            parts: [{ text: naturalResponse.slice(splitAt) }],
+            role: "model",
+          },
+          finishReason: "STOP",
+          index: 0,
+        }],
+        usageMetadata: {
+          promptTokenCount: 1,
+          candidatesTokenCount: 1,
+          totalTokenCount: 2,
+        },
+        modelVersion: "synthetic-model",
+      },
+    ];
+    const payload = events.map((event) =>
+      `data: ${JSON.stringify(event)}\n\n`).join("");
     response.writeHead(200, {
       "content-type": "text/event-stream",
       "content-length": Buffer.byteLength(payload),
@@ -317,19 +388,23 @@ NODE
       timeout 20s /usr/local/libexec/antigravity-real \
         --output-format stream-json \
         --print-timeout 10s \
-        --json-schema /usr/local/share/antigravity-ha/telegram-result-schema.json \
         --sandbox \
         > "${first_stdout}" 2> "${first_stderr}"
 
     first_request_count=$(jq -s \
       "[.[] | select(.kind == \"request\" and .first_stdin_sentinel == true)] | length" \
       "${mock_log}")
-    first_finish_count=$(jq -s \
-      "[.[] | select(.kind == \"request\" and .first_stdin_sentinel == true and .finish_function_advertised == true)] | length" \
+    first_finish_schema_count=$(jq -s \
+      "[.[] | select(.kind == \"request\" and .first_stdin_sentinel == true and .finish_schema_advertised == true)] | length" \
       "${mock_log}")
-    if [[ "${first_finish_count}" -lt 1 ]]; then
-      printf "synthetic Gemini finish declaration was not detected (requests=%s finish=%s)\n" \
-        "${first_request_count}" "${first_finish_count}" >&2
+    first_schema_literal_count=$(jq -s \
+      "[.[] | select(.kind == \"request\" and .first_stdin_sentinel == true and .json_schema_literal == true)] | length" \
+      "${mock_log}")
+    if [[ "${first_request_count}" -lt 1 || "${first_finish_schema_count}" -ne 0 ||
+          "${first_schema_literal_count}" -ne 0 ]]; then
+      printf "synthetic Gemini request unexpectedly advertised structured output (requests=%s finish=%s schema_literal=%s)\n" \
+        "${first_request_count}" "${first_finish_schema_count}" \
+        "${first_schema_literal_count}" >&2
       exit 1
     fi
     conversation_id=$(
@@ -340,11 +415,19 @@ import { parseStreamResult } from "/usr/local/share/antigravity-ha/telegram-brid
 const stream = readFileSync(process.env.NATIVE_STREAM_PATH);
 const events = stream.toString("utf8").trim().split("\n").map(JSON.parse);
 const terminal = events.find((event) => event.event === "result");
-if (terminal?.result?.num_turns !== 1) {
-  throw new Error(`native first turn count was not one (num_turns=${JSON.stringify(terminal?.result?.num_turns ?? null)})`);
+const doneAgentResponses = events.filter((event) =>
+  event.event === "step_update" &&
+  event.step_update?.step_type === "agent_response" &&
+  event.step_update?.state === "DONE");
+if (doneAgentResponses.length !== 1 || terminal?.result?.status !== "SUCCESS" ||
+    terminal?.result?.num_turns !== 1 ||
+    terminal?.result?.response !== "MOCK_NATIVE_FIRST_OK\n") {
+  throw new Error("native first invocation was not a single successful free-text turn");
 }
-JSON.parse(terminal.result.response);
 const parsed = parseStreamResult(stream);
+if (parsed.response !== "MOCK_NATIVE_FIRST_OK\n" || parsed.proposalIds.length !== 0) {
+  throw new Error("native free-text first response was not parsed");
+}
 process.stdout.write(parsed.conversationId);
 NODE
     )
@@ -366,7 +449,6 @@ NODE
       timeout 20s /usr/local/libexec/antigravity-real \
         --output-format stream-json \
         --print-timeout 10s \
-        --json-schema /usr/local/share/antigravity-ha/telegram-result-schema.json \
         --conversation "${conversation_id}" \
         --sandbox \
         > "${second_stdout}" 2> "${second_stderr}"
@@ -387,23 +469,20 @@ for (const path of [process.env.FIRST_STREAM_PATH, process.env.SECOND_STREAM_PAT
   terminalTurns.push(terminal?.result?.num_turns);
   const agentResponses = events.filter((event) =>
     event.event === "step_update" &&
-    event.step_update?.step_type === "agent_response");
+    event.step_update?.step_type === "agent_response" &&
+    event.step_update?.state === "DONE");
   const finishes = events.filter((event) =>
     event.event === "step_update" &&
     event.step_update?.step_type === "finish");
-  if (agentResponses.length !== 1 || finishes.length !== 1) {
-    throw new Error("native invocation did not emit exactly one response and finish step");
-  }
-  const document = JSON.parse(terminal.result.response);
-  if (document.response !== "MOCK_RESPONSE_OK" ||
-      !Array.isArray(document.proposal_ids) || document.proposal_ids.length !== 0) {
-    throw new Error("native finish contract returned an invalid terminal document");
+  if (agentResponses.length !== 1 || finishes.length !== 0 ||
+      terminal?.result?.status !== "SUCCESS") {
+    throw new Error("native invocation did not emit exactly one completed free-text response");
   }
 }
-// Antigravity 1.1.11 reports num_turns cumulatively for a resumed
+// The pinned Antigravity 1.1.13 reports num_turns cumulatively for a resumed
 // conversation. A one-turn first invocation followed by a one-turn resume is
 // therefore reported as 1 then 2, while each stream above still contains one
-// agent_response and one finish step.
+// completed agent_response and no schema-generated finish step.
 if (terminalTurns[0] !== 1 || terminalTurns[1] !== terminalTurns[0] + 1) {
   throw new Error(`native cumulative turn count did not advance once (${JSON.stringify(terminalTurns)})`);
 }
@@ -411,8 +490,104 @@ if (first.conversationId !== process.env.EXPECTED_CONVERSATION_ID ||
     second.conversationId !== process.env.EXPECTED_CONVERSATION_ID) {
   throw new Error("native conversation resume changed the conversation identifier");
 }
-if (first.response !== "MOCK_RESPONSE_OK" || second.response !== "MOCK_RESPONSE_OK") {
-  throw new Error("native stream parser did not return both synthetic responses");
+if (first.response !== "MOCK_NATIVE_FIRST_OK\n" ||
+    second.response !== "MOCK_NATIVE_SECOND_OK\n" ||
+    first.proposalIds.length !== 0 || second.proposalIds.length !== 0) {
+  throw new Error("native stream parser did not return both free-text synthetic responses");
+}
+NODE
+
+    # Contract boundary: a conversation created with the legacy structured
+    # contract must remain resumable on the pinned runtime without a schema.
+    printf "%s\n" "TELEGRAM_LEGACY_SCHEMA_SENTINEL" | /usr/bin/env -i \
+      AGY_CLI_DISABLE_AUTO_UPDATE=true \
+      ANTIGRAVITY_HA_CHANNEL=telegram \
+      GEMINI_API_KEY=synthetic-telegram-canary \
+      GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:18787 \
+      HOME=/data/home \
+      HA_TELEGRAM_USER_ID=123456789 \
+      HA_TELEGRAM_CHAT_ID=-100123456789 \
+      LANG=C.UTF-8 \
+      LC_ALL=C.UTF-8 \
+      PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+      TERM=dumb \
+      NO_COLOR=1 \
+      timeout 20s /usr/local/libexec/antigravity-real \
+        --output-format stream-json \
+        --print-timeout 10s \
+        --json-schema "${legacy_schema}" \
+        --sandbox \
+        > "${legacy_stdout}" 2> "${legacy_stderr}"
+
+    legacy_conversation_id=$(
+      NATIVE_STREAM_PATH="${legacy_stdout}" /usr/bin/node --input-type=module - <<\NODE
+import { readFileSync } from "node:fs";
+
+const events = readFileSync(process.env.NATIVE_STREAM_PATH, "utf8")
+  .trim().split("\n").map(JSON.parse);
+const init = events.find((event) => event.event === "init");
+const terminal = events.find((event) => event.event === "result");
+const doneAgentResponses = events.filter((event) =>
+  event.event === "step_update" &&
+  event.step_update?.step_type === "agent_response" &&
+  event.step_update?.state === "DONE");
+const finishes = events.filter((event) =>
+  event.event === "step_update" && event.step_update?.step_type === "finish");
+const document = JSON.parse(terminal?.result?.response ?? "null");
+if (doneAgentResponses.length !== 1 || finishes.length !== 1 ||
+    terminal?.result?.status !== "SUCCESS" || terminal?.result?.num_turns !== 1 ||
+    document?.response !== "MOCK_LEGACY_RESPONSE_OK" ||
+    !Array.isArray(document?.proposal_ids) || document.proposal_ids.length !== 0 ||
+    terminal?.result?.conversation_id !== init?.conversation_id) {
+  throw new Error("legacy structured conversation canary did not complete once");
+}
+process.stdout.write(init.conversation_id);
+NODE
+    )
+    [[ "${legacy_conversation_id}" =~ ^[A-Za-z0-9._:-]{1,256}$ ]]
+
+    printf "%s\n" "TELEGRAM_SCHEMA_FREE_TRANSITION_SENTINEL" | /usr/bin/env -i \
+      AGY_CLI_DISABLE_AUTO_UPDATE=true \
+      ANTIGRAVITY_HA_CHANNEL=telegram \
+      GEMINI_API_KEY=synthetic-telegram-canary \
+      GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:18787 \
+      HOME=/data/home \
+      HA_TELEGRAM_USER_ID=123456789 \
+      HA_TELEGRAM_CHAT_ID=-100123456789 \
+      LANG=C.UTF-8 \
+      LC_ALL=C.UTF-8 \
+      PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+      TERM=dumb \
+      NO_COLOR=1 \
+      timeout 20s /usr/local/libexec/antigravity-real \
+        --output-format stream-json \
+        --print-timeout 10s \
+        --conversation "${legacy_conversation_id}" \
+        --sandbox \
+        > "${transition_stdout}" 2> "${transition_stderr}"
+
+    NATIVE_STREAM_PATH="${transition_stdout}" \
+      EXPECTED_CONVERSATION_ID="${legacy_conversation_id}" \
+      /usr/bin/node --input-type=module - <<\NODE
+import { readFileSync } from "node:fs";
+import { parseStreamResult } from "/usr/local/share/antigravity-ha/telegram-bridge.mjs";
+
+const stream = readFileSync(process.env.NATIVE_STREAM_PATH);
+const events = stream.toString("utf8").trim().split("\n").map(JSON.parse);
+const terminal = events.find((event) => event.event === "result");
+const doneAgentResponses = events.filter((event) =>
+  event.event === "step_update" &&
+  event.step_update?.step_type === "agent_response" &&
+  event.step_update?.state === "DONE");
+const finishes = events.filter((event) =>
+  event.event === "step_update" && event.step_update?.step_type === "finish");
+const parsed = parseStreamResult(stream);
+if (doneAgentResponses.length !== 1 || finishes.length !== 0 ||
+    terminal?.result?.status !== "SUCCESS" || terminal?.result?.num_turns !== 2 ||
+    parsed.conversationId !== process.env.EXPECTED_CONVERSATION_ID ||
+    parsed.response !== "MOCK_SCHEMA_FREE_TRANSITION_OK\n" ||
+    parsed.proposalIds.length !== 0) {
+  throw new Error("legacy conversation did not resume once through schema-free output");
 }
 NODE
 
@@ -421,14 +596,27 @@ NODE
     mock_pid=
     [[ ! -s "${first_stderr}" ]]
     [[ ! -s "${second_stderr}" ]]
+    [[ ! -s "${legacy_stderr}" ]]
+    [[ ! -s "${transition_stderr}" ]]
     jq -s -e "
       ([.[] | select(.kind == \"request\")] | length) > 1 and
       any(.[]; .kind == \"request\" and .first_stdin_sentinel == true) and
       any(.[]; .kind == \"request\" and .second_stdin_sentinel == true) and
-      any(.[]; .kind == \"request\" and .finish_function_advertised == true) and
+      all(.[];
+        .kind != \"request\" or
+        ((.first_stdin_sentinel != true and .second_stdin_sentinel != true) or
+         (.finish_schema_advertised == false and .json_schema_literal == false))) and
+      any(.[];
+        .kind == \"request\" and .legacy_stdin_sentinel == true and
+        .finish_schema_advertised == true) and
+      any(.[];
+        .kind == \"request\" and .transition_stdin_sentinel == true) and
+      all(.[];
+        .kind != \"request\" or .transition_stdin_sentinel != true or
+        (.finish_schema_advertised == false and .json_schema_literal == false)) and
       all(.[]; .kind != \"request\" or .output_format_literal == false)
     " "${mock_log}" >/dev/null
-  ' || fail 'native 1.1.11 shared HOME stdin stream-json resume canary failed'
+  ' || fail 'native 1.1.13 shared HOME stdin stream-json resume canary failed'
 
 printf 'telegram shared-context smoke passed for Antigravity %s\n' \
   "${EXPECTED_VERSION}"

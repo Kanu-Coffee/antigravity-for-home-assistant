@@ -144,7 +144,7 @@ tmux에 입력을 주입하지 않지만 CLI와 같은 전역
 설정·plugin·agent·rule·권한 정책을 상속합니다. 생성된 답변은 암호화된 영속 outbox에
 기록한 뒤 Telegram 전송 확인 시 제거합니다. 429처럼 미전송이 명확한 오류만 bounded
 backoff로 재시도하고 전달 여부가 모호하면 `/retry` 전까지 격리합니다.
-1.1.11 `stream-json`이 native permission prompt 재개 protocol을 제공하지 않으므로,
+1.1.13 `stream-json`이 native permission prompt 재개 protocol을 제공하지 않으므로,
 관리형 HA 변경은 Telegram 승인 버튼을 사용하고 global allow 밖의 임의 tool 검토는
 Web/SSH 또는 전역 permission 변경이 필요합니다. Telegram만의 auto-approve는 없습니다.
 

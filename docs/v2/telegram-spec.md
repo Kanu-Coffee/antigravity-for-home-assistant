@@ -5,7 +5,7 @@
 
 ## TG-001 — 범위
 
-2.0.7 Telegram 브리지는 Antigravity와 별개인 축소 agent가 아니라 같은 관리자
+2.0.8 Telegram 브리지는 Antigravity와 별개인 축소 agent가 아니라 같은 관리자
 환경을 노출하는 transport adapter다. Bot API long polling, 인증, stable session,
 per-session queue, print transport, 암호화 reply outbox와 confirmation routing을
 담당한다. shell, interactive TUI와 tmux pane scraping은 범위 밖이다.
@@ -182,7 +182,7 @@ HOME = "/data/home"
 stdin = normalized prompt
 ```
 
-Antigravity 1.1.11은 non-TTY stdin이 pipe되면 print mode를 자동 선택한다. 값 없는
+Antigravity 1.1.13은 non-TTY stdin이 pipe되면 print mode를 자동 선택한다. 값 없는
 `--print`/`-p`는 boolean switch가 아니라 다음 argv를 prompt 값으로 소비하므로 넣지
 않는다. global agent·plugin의 slash command를 그대로 상속하므로
 `--disable-slash-commands`도 넣지 않는다. 이 규칙으로 prompt는 argv나 environment에
@@ -210,13 +210,22 @@ stdout NDJSON 총량은 4 MiB, 단일 line은 256 KiB로 제한한다. 최종 �
 Unicode-safe 분할한다. 초과 결과는 local raw output을 보존하지 않고 요약 실패를
 보고한다.
 
-pinned 1.1.11 stream의 top-level discriminator는 `type`이 아니라 `event`다. init과
+pinned 1.1.13 stream의 top-level discriminator는 `type`이 아니라 `event`다. init과
 terminal result는 같은 conversation ID여야 하며, terminal은
-`result.status == "SUCCESS"`와 관리형 schema JSON을 담은 `result.response`를 모두
-충족해야 한다. legacy `type`, 실패 status, 다른 conversation ID와 recursive
-fallback payload는 거부한다.
+`result.status == "SUCCESS"`와 non-empty bounded native free-text
+`result.response`를 모두 충족해야 한다. 일반 채팅에는 `--json-schema`나 generated
+`finish` tool을 강제하지 않으며 terminal response를 App 전용 JSON으로 다시 parse하지
+않는다. legacy `type`, 실패 status, 다른 conversation ID와 recursive fallback
+payload는 거부한다.
 
-pinned 1.1.11 native child의 stderr는 원문을 저장·로그·회신하지 않는다. bridge는
+HA 변경 proposal ID는 정확한 `call_mcp_tool`의
+`ha_change/ha_change_propose` step이 `DONE`으로 완료한 tool output에서만 추출한다.
+시작됐지만 완료되지 않은 call, malformed/중복 receipt와 임의 model text의 ID는
+거부한다. receipt를 얻은 뒤에도 bridge가 durable conversation binding을 별도로
+확인하고 trusted broker에서 동일 requester와 live proposal metadata를 검증해야
+approval을 만든다.
+
+pinned 1.1.13 native child의 stderr는 원문을 저장·로그·회신하지 않는다. bridge는
 `Error: authentication required. Run 'antigravity-real' to log in, then retry.`라는
 고정 byte marker만 marker 길이 미만의 tail을 유지하는 bounded streaming matcher로
 판정한다. exit 1과 이 marker가 모두 있으면 `authentication_required`로 분류한다.
@@ -229,9 +238,14 @@ nonempty stream 또는 정상 terminal result이면 이 분류를 적용하지 �
 
 `/status`의 transport 정상은 Bot API command가 bridge에서 처리된다는 뜻일 뿐이다.
 공유 AI runtime 상태는 App 시작 뒤 `아직 확인되지 않음`에서 시작해 완료된 최근
-native child 결과만 `ready`, `authentication_required`, `headless_read_denied` 또는
-`worker_failed`로 갱신한다. 이 상태에는 identifier,
-prompt, stderr 또는 credential 자료를 넣지 않는다.
+native child 결과만 `ready`, `authentication_required`, `headless_read_denied`,
+`stream_contract_failed`, `terminal_missing`, `terminal_status_failed`,
+`terminal_response_invalid`, `conversation_mismatch`, `proposal_result_invalid` 또는
+`worker_failed`로 갱신한다. 이 상태에는 identifier, prompt, stderr 또는 credential
+자료를 넣지 않는다. bridge의 로컬 명령·오류 회신이 도착하고 Telegram API error가
+없는데 `session_bound` 뒤 terminal reason으로 실패했다면 outbound network가 아니라
+native result 검증 실패다. `delivery_queued` 전이가 없으므로 `/retry`할 outbox 항목도
+생기지 않는다.
 
 ## TG-008 — proposal schema
 
@@ -360,7 +374,7 @@ Telegram 전용 mode는 없다. Web/SSH와 동일한 `antigravity_tool_permissio
 적용한다. 2.0.6 이하의 `telegram_access_mode`는 무시하는 migration 입력이며 권한
 source가 아니다.
 
-1.1.11 `stream-json`은 native interactive permission request를 외부 transport에
+1.1.13 `stream-json`은 native interactive permission request를 외부 transport에
 노출하거나 승인 뒤 같은 turn을 재개하는 protocol을 제공하지 않는다. 따라서 공유
 global allow rule에 포함된 plugin·agent·rule·settings·`/config` file action은
 headless-compatible하게 처리하고, App 관리 HA mutation의 사람 확인은 same-session
@@ -526,7 +540,7 @@ reason/result/status class만 허용하며 재시작 시 0부터 시작한다. �
   재전송하고 ack 뒤에만 제거한다.
 - pairing/local command/transport 정상과 공유 native OAuth·Antigravity 상태를 혼동하지
   않고 인증 필요 시 `ha-antigravity-login`만 안전하게 안내한다.
-- 실제 1.1.11에서 user global/workspace plugin·agent·rule·MCP와 native permission을
+- 실제 1.1.13에서 user global/workspace plugin·agent·rule·MCP와 native permission을
   Web/SSH와 동일하게 상속하고 수정할 수 있다.
 - 실제 HAOS에서 조회, 확인 변경, rollback과 Bot API 장애 복구를 검증한다.
 

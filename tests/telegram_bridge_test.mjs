@@ -334,7 +334,7 @@ assert.deepEqual(planArgs.slice(0, 2), ["--output-format", "stream-json"]);
 assert.equal(planArgs.includes("--print"), false);
 assert.equal(planArgs.includes("-p"), false);
 assert.equal(planArgs.includes("--prompt"), false);
-assert.equal(planArgs.includes("--json-schema"), true);
+assert.equal(planArgs.includes("--json-schema"), false);
 assert.equal(planArgs.includes("ha-telegram"), false);
 assert.equal(planArgs.includes("--agent"), false);
 assert.equal(planArgs.includes("--mode"), false);
@@ -354,12 +354,12 @@ const stream = [
     result: {
       conversation_id: "conversation.fixture-1",
       status: "SUCCESS",
-      response: `${JSON.stringify({ response: "최종 응답", proposal_ids: [] })}\n`,
+      response: "최종 응답\n",
     },
   }),
 ].join("\n");
 assert.deepEqual(parseStreamResult(stream), {
-  response: "최종 응답",
+  response: "최종 응답\n",
   proposalIds: [],
   conversationId: "conversation.fixture-1",
 });
@@ -375,7 +375,8 @@ assert.throws(
       },
     }),
   ].join("\n")),
-  /did not report success/u,
+  (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "terminal_status_failed",
 );
 assert.throws(
   () => parseStreamResult([
@@ -389,30 +390,181 @@ assert.throws(
       },
     }),
   ].join("\n")),
-  /changed the conversation identifier/u,
+  (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "conversation_mismatch",
+);
+
+const proposalOutputCanary = "PRIVATE_PROPOSAL_PREVIEW_CANARY";
+const proposalId = "proposalFixture1234567890";
+const parsedProposalStream = parseStreamResult([
+  JSON.stringify({ event: "init", conversation_id: "conversation.proposal" }),
+  JSON.stringify({
+    event: "step_update",
+    step_update: {
+      step_index: 3,
+      step_type: "tool",
+      state: "ACTIVE",
+      tool_name: "call_mcp_tool",
+      tool_info: {
+        name: "call_mcp_tool",
+        parameters: {
+          Arguments: { summary: "fixture" },
+          ServerName: "ha_change",
+          ToolName: "ha_change_propose",
+        },
+      },
+    },
+  }),
+  JSON.stringify({
+    event: "step_update",
+    step_update: {
+      step_index: 3,
+      step_type: "tool",
+      state: "DONE",
+      tool_name: "call_mcp_tool",
+      tool_info: {
+        name: "call_mcp_tool",
+        parameters: {
+          Arguments: { summary: "fixture" },
+          ServerName: "ha_change",
+          ToolName: "ha_change_propose",
+        },
+        output: JSON.stringify({
+          proposal_id: proposalId,
+          preview: proposalOutputCanary,
+          requester: { user_id: "100", chat_id: "-200" },
+        }),
+      },
+    },
+  }),
+  JSON.stringify({
+    event: "result",
+    result: {
+      conversation_id: "conversation.proposal",
+      status: "SUCCESS",
+      response: "변경 제안을 준비했습니다.",
+    },
+  }),
+].join("\n"));
+assert.deepEqual(parsedProposalStream, {
+  response: "변경 제안을 준비했습니다.",
+  proposalIds: [proposalId],
+  conversationId: "conversation.proposal",
+});
+assert.equal(JSON.stringify(parsedProposalStream).includes(proposalOutputCanary), false);
+
+const managedProposalStep = ({ state, stepIndex = 7, output = null }) => ({
+  event: "step_update",
+  step_update: {
+    step_index: stepIndex,
+    step_type: "tool",
+    state,
+    tool_name: "call_mcp_tool",
+    tool_info: {
+      name: "call_mcp_tool",
+      parameters: {
+        Arguments: { summary: "fixture" },
+        ServerName: "ha_change",
+        ToolName: "ha_change_propose",
+      },
+      ...(output === null ? {} : { output }),
+    },
+  },
+});
+const successTerminal = (conversationId, response = "fixture response") => ({
+  event: "result",
+  result: { conversation_id: conversationId, status: "SUCCESS", response },
+});
+assert.throws(
+  () => parseStreamResult([
+    JSON.stringify({ event: "init", conversation_id: "conversation.missing-receipt" }),
+    JSON.stringify(managedProposalStep({ state: "ACTIVE" })),
+    JSON.stringify(successTerminal("conversation.missing-receipt")),
+  ].join("\n")),
+  (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "proposal_result_invalid",
 );
 assert.throws(
   () => parseStreamResult([
-    JSON.stringify({ event: "init", conversation_id: "conversation.extra" }),
+    JSON.stringify({ event: "init", conversation_id: "conversation.multiple-proposals" }),
+    JSON.stringify(managedProposalStep({
+      state: "DONE",
+      stepIndex: 7,
+      output: JSON.stringify({ proposal_id: proposalId }),
+    })),
+    JSON.stringify(managedProposalStep({
+      state: "DONE",
+      stepIndex: 8,
+      output: JSON.stringify({ proposal_id: "proposalFixture0987654321" }),
+    })),
+    JSON.stringify(successTerminal("conversation.multiple-proposals")),
+  ].join("\n")),
+  (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "proposal_result_invalid",
+);
+assert.deepEqual(parseStreamResult([
+  JSON.stringify({ event: "init", conversation_id: "conversation.other-mcp" }),
+  JSON.stringify({
+    ...managedProposalStep({ state: "DONE", output: proposalOutputCanary }),
+    step_update: {
+      ...managedProposalStep({ state: "DONE", output: proposalOutputCanary }).step_update,
+      tool_info: {
+        ...managedProposalStep({ state: "DONE", output: proposalOutputCanary }).step_update.tool_info,
+        parameters: {
+          Arguments: {},
+          ServerName: "user_plugin",
+          ToolName: "ha_change_propose",
+        },
+      },
+    },
+  }),
+  JSON.stringify(successTerminal("conversation.other-mcp", "other MCP ignored")),
+].join("\n")), {
+  response: "other MCP ignored",
+  proposalIds: [],
+  conversationId: "conversation.other-mcp",
+});
+assert.throws(
+  () => parseStreamResult([
+    JSON.stringify({ event: "init", conversation_id: "conversation.bad-proposal" }),
+    JSON.stringify({
+      event: "step_update",
+      step_update: {
+        step_type: "tool",
+        state: "DONE",
+        tool_name: "call_mcp_tool",
+        tool_info: {
+          name: "call_mcp_tool",
+          parameters: {
+            Arguments: {},
+            ServerName: "ha_change",
+            ToolName: "ha_change_propose",
+          },
+          output: "not-json",
+        },
+      },
+    }),
     JSON.stringify({
       event: "result",
       result: {
-        conversation_id: "conversation.extra",
+        conversation_id: "conversation.bad-proposal",
         status: "SUCCESS",
-        response: JSON.stringify({
-          response: "must not escape",
-          proposal_ids: [],
-          unexpected: true,
-        }),
+        response: "must not escape",
       },
     }),
   ].join("\n")),
-  /managed schema/u,
+  (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "proposal_result_invalid",
 );
-assert.throws(() => parseStreamResult("not json\n"), /invalid JSON/u);
+assert.throws(
+  () => parseStreamResult("not json\n"),
+  (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "stream_contract_failed",
+);
 assert.throws(
   () => parseStreamResult(`${JSON.stringify({ event: "unexpected" })}\n`),
-  /before init/u,
+  (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "stream_contract_failed",
 );
 const unknownTypeCanary = "future_SECRET_TYPE_a";
 const unknownRawCanary = "SECRET_RAW_NDJSON_CANARY";
@@ -426,7 +578,7 @@ assert.deepEqual(parseStreamResult([
     result: {
       conversation_id: "conversation.future",
       status: "SUCCESS",
-      response: JSON.stringify({ response: "future compatible", proposal_ids: [] }),
+      response: "future compatible",
     },
   }),
 ].join("\n")), {
@@ -453,7 +605,8 @@ for (const invalidEvent of [{}, { event: 7 }, { type: "init" }]) {
         },
       }),
     ].join("\n")),
-    /missing or malformed event discriminator/u,
+    (error) => error instanceof AntigravityWorkerError &&
+      error.reasonClass === "stream_contract_failed",
   );
 }
 assert.throws(
@@ -462,10 +615,11 @@ assert.throws(
     result: {
       conversation_id: "conversation.missing-init",
       status: "SUCCESS",
-      response: JSON.stringify({ response: "missing init", proposal_ids: [] }),
+      response: "missing init",
     },
   })}\n`),
-  /valid init sequence/u,
+  (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "stream_contract_failed",
 );
 assert.throws(
   () => parseStreamResult([
@@ -476,11 +630,12 @@ assert.throws(
       result: {
         conversation_id: "conversation.late",
         status: "SUCCESS",
-        response: JSON.stringify({ response: "late init", proposal_ids: [] }),
+        response: "late init",
       },
     }),
   ].join("\n")),
-  /before init/u,
+  (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "stream_contract_failed",
 );
 assert.throws(
   () => parseStreamResult([
@@ -491,15 +646,17 @@ assert.throws(
       result: {
         conversation_id: "conversation.two",
         status: "SUCCESS",
-        response: JSON.stringify({ response: "duplicate init", proposal_ids: [] }),
+        response: "duplicate init",
       },
     }),
   ].join("\n")),
-  /invalid init sequence/u,
+  (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "stream_contract_failed",
 );
 assert.throws(
   () => parseStreamResult(Buffer.from([0xc3, 0x28, 0x0a])),
-  /invalid UTF-8/u,
+  (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "stream_contract_failed",
 );
 assert.throws(
   () => parseStreamResult([
@@ -509,12 +666,13 @@ assert.throws(
       result: {
         conversation_id: "conversation.terminal",
         status: "SUCCESS",
-        response: JSON.stringify({ response: "done", proposal_ids: [] }),
+        response: "done",
       },
     }),
     JSON.stringify({ event: "future_after_terminal" }),
   ].join("\n")),
-  /after the terminal result/u,
+  (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "stream_contract_failed",
 );
 assert.ok(chunkText("A".repeat(32_768)).every((part) => Array.from(part).length <= 4_096));
 assert.throws(() => chunkText("A".repeat(32_769)), /message limit/u);
@@ -902,7 +1060,7 @@ process.stdout.write(JSON.stringify({
   result: {
     conversation_id: "conversation.fixture-1",
     status: "SUCCESS",
-    response: JSON.stringify({ response: JSON.stringify(payload), proposal_ids: [] }),
+    response: JSON.stringify(payload),
   },
 }) + "\\n");
 `, "utf8");
@@ -943,7 +1101,8 @@ process.stdout.write(JSON.stringify({
     requester: { user_id: "100", chat_id: "-200" },
     conversationId: "conversation.expected-other",
     onConversation: () => { mismatchedConversationBound = true; },
-  }), /resumed a different conversation/u);
+  }), (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "conversation_mismatch");
   assert.equal(mismatchedConversationBound, false);
 
   const stderrCanary = "SECRET_STDERR_BEARER_URL_PROMPT_CANARY";
@@ -1042,7 +1201,7 @@ process.stdout.write(JSON.stringify({
   result: {
     conversation_id: "conversation.permission-success",
     status: "SUCCESS",
-    response: JSON.stringify({ response: "safe response", proposal_ids: [] }),
+    response: "safe response",
   },
 }) + "\\n");
 `, "utf8");
@@ -1097,9 +1256,10 @@ process.stdout.write("not-json\\n");
       timeoutMs: 5_000,
       requester: { user_id: "100", chat_id: "-200" },
     }),
-    /invalid JSON/u,
+    (error) => error instanceof AntigravityWorkerError &&
+      error.reasonClass === "stream_contract_failed",
   );
-  assert.equal(workerStatusSnapshot(), "worker_failed");
+  assert.equal(workerStatusSnapshot(), "stream_contract_failed");
 
   const emptySuccessFake = join(fixtureDir, "empty-success-agy.mjs");
   await writeFile(emptySuccessFake, `
@@ -1192,7 +1352,8 @@ process.stdout.write(Buffer.from([0xc3, 0x28, 0x0a]));
       timeoutMs: 5_000,
       requester: { user_id: "100", chat_id: "-200" },
     }),
-    /invalid UTF-8/u,
+    (error) => error instanceof AntigravityWorkerError &&
+      error.reasonClass === "stream_contract_failed",
   );
 
   const slotFixtureRoot = join(fixtureDir, "slot-fixture");
@@ -1220,7 +1381,7 @@ process.stdout.write(JSON.stringify({
   result: {
     conversation_id: "conversation." + id,
     status: "SUCCESS",
-    response: JSON.stringify({ response: id, proposal_ids: [] }),
+    response: id,
   },
 }) + "\\n");
 `, "utf8");

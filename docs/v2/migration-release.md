@@ -309,7 +309,7 @@ PR/push CI는 독립 job으로 다음을 수행해 첫 실패가 나머지 증�
 6. migration/update fixtures
 7. Telegram injection/approval security suite
 8. browser, memory와 broker failure-isolation suite
-9. 실제 1.1.11의 `AGY_CLI_DISABLE_AUTO_UPDATE=true` propagation과 updater
+9. 실제 1.1.13의 `AGY_CLI_DISABLE_AUTO_UPDATE=true` propagation과 updater
    spawn/version/digest canary
 
 Candidate와 Builder workflow 조건:

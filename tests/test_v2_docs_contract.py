@@ -475,7 +475,7 @@ def test_decisions_and_gap_register_are_closed_contracts() -> None:
         "HA-006",
         "AppArmor는 항상 ON",
         "Telegram bridge 전면 교체",
-        "Antigravity CLI는 `1.1.11`",
+        "Antigravity CLI는 `1.1.13`",
     ):
         assert fragment in decisions, f"missing v2 decision contract: {fragment}"
 
@@ -499,7 +499,7 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
         "telegram_session_delivery",
     }
     template = json.loads(read(V2 / "release-evidence-template.json"))
-    assert template["version"] == "2.0.7"
+    assert template["version"] == "2.0.8"
     assert set(template["gates"]) == expected_gates
     assert "HA-008" not in json.dumps(template, sort_keys=True)
     for gate in template["gates"].values():

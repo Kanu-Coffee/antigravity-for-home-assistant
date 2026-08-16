@@ -123,7 +123,7 @@ const HA_VALIDATE_TOOLS = [
   "ha_verify_state",
 ];
 // Telegram and the interactive CLI intentionally share this native HOME.  A
-// directory permission is recursive in Antigravity 1.1.11, so these exact
+// directory permission is recursive in Antigravity 1.1.13, so these exact
 // roots cover both the App-managed plugin and user-created global
 // plugins/agents/rules without granting the model access to OAuth material in
 // the rest of ~/.gemini.  Explicit workspace rules are needed because
@@ -1824,7 +1824,7 @@ async function preflightDefaultTargets() {
 
   if ((await inspectPath(LEGACY_CONFIG_PATH)) || (await inspectPath(LEGACY_AGENTS_PATH))) {
     warnings.push(
-      "Legacy config.toml or AGENTS.md was preserved but is not loaded by Antigravity 1.1.11",
+      "Legacy config.toml or AGENTS.md was preserved but is not loaded by Antigravity 1.1.13",
     );
   }
   return { targets, warnings };

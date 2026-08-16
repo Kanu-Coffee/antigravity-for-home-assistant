@@ -223,7 +223,7 @@ run_script "${POSTCONDITION_BACKUP}" <<'SCRIPT'
   jq --exit-status '
     .schema == 1
     and .owner == "antigravity-for-home-assistant"
-    and .source_version == "2.0.7"
+    and .source_version == "2.0.8"
     and .target_version == "2.0.0-postconditionfailure"
     and .target == "/data/home/.gemini/config/plugins/home-assistant"
     and (.before.tree_sha256 | test("^[0-9a-f]{64}$"))

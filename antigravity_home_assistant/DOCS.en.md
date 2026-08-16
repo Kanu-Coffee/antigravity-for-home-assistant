@@ -97,7 +97,7 @@ or credential contents, or copy them into Git, Telegram, or a support issue.
 
 ### Native paths and plugin
 
-v2 uses the native JSON and plugin paths of Antigravity 1.1.11.
+v2 uses the native JSON and plugin paths of Antigravity 1.1.13.
 
 | Role | Path |
 | --- | --- |
@@ -265,7 +265,7 @@ Separately required human confirmation for high-risk operations such as locks,
 alarms, safety heating/water, host or Core restarts, restores, updates, removals,
 or credential and permission changes cannot be weakened by the global policy.
 
-Antigravity 1.1.11 `stream-json` has no protocol for relaying a native interactive
+Antigravity 1.1.13 `stream-json` has no protocol for relaying a native interactive
 permission prompt to Telegram and resuming the same turn. App-managed Home Assistant
 changes therefore use same-session Telegram approval buttons, while an arbitrary
 native tool outside the global allow rules may be denied non-interactively under
@@ -473,7 +473,7 @@ to `preserve` after review is recommended.
 - Previous provider credentials and App-specific tokens are not imported as
   native authentication. Google OAuth may need to be completed again.
 - Previous non-native settings and guidance files may be preserved, but do not
-  assume Antigravity 1.1.11 loads them as native settings or plugins.
+  assume Antigravity 1.1.13 loads them as native settings or plugins.
 - If the public v1 managed-file journal remains, v2 first recovers an unfinished
   `config.toml` or `AGENTS.md` replacement from its verified legacy backup. It
   stops before writing native files when that recovery is corrupt or ambiguous.
@@ -543,6 +543,16 @@ without the user's explicit current confirmation.
 - `/status` distinguishes Telegram transport, the bound conversation, and the
   most recent shared AI runtime/outbox result. Working help or status does not prove the
   shared native OAuth is ready.
+- If `/start`, `/help`, `/status`, or a bridge-generated failure reaches Telegram
+  and `telegram_api_errors_total` does not increase, the outbound Bot API network
+  is working. A `request_failed` after `session_bound` with no `delivery_queued`
+  is an Antigravity terminal-result failure, not a send failure, and there is no
+  outbox item for `/retry` yet.
+- In that case inspect the bounded `reason_class` and recent runtime in `/status`.
+  `terminal_missing`, `terminal_status_failed`, `terminal_response_invalid`,
+  `conversation_mismatch`, `stream_contract_failed`, and
+  `proposal_result_invalid` identify terminal stages without retaining prompts,
+  raw model output, or stderr.
 - Never upload native CLI logs, OAuth URLs, tokens, or raw prompts. Do not guess
   or manually edit credential paths in the shared HOME.
 - Never use `--dangerously-skip-permissions` or a broad file-read grant.

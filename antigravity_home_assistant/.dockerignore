@@ -217,6 +217,5 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assista
 !rootfs/usr/local/share/antigravity-ha/supervisor-options-migrate.mjs
 !rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs
 !rootfs/usr/local/share/antigravity-ha/telegram-pairing.mjs
-!rootfs/usr/local/share/antigravity-ha/telegram-result-schema.json
 !rootfs/usr/local/share/antigravity-ha/telegram-state.mjs
 !rootfs/usr/local/share/antigravity-ha/user-files-update.mjs

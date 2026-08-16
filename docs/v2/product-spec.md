@@ -85,7 +85,7 @@ App은 기존 복구 표면을 유지하고 rollback 절차를 안내한다.
 
 ### FR-002 Antigravity
 
-- CLI version은 1.1.11에 고정하고 아키텍처별 artifact digest를 검증한다.
+- CLI version은 1.1.13에 고정하고 아키텍처별 artifact digest를 검증한다.
 - 사용자 명령은 `agy`와 `antigravity` alias를 제공한다.
 - Web/SSH/Telegram의 `HOME`은 `/data/home`, 작업 디렉터리는 `/config`다. 세 표면은
   OAuth와 사용자 전역·workspace customization을 의도적으로 공유한다.

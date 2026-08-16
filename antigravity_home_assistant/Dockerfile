@@ -4,14 +4,14 @@ FROM ${BUILD_FROM}
 
 ARG DEBIAN_SNAPSHOT=20260812T000000Z
 ARG BUILD_ARCH=amd64
-ARG BUILD_VERSION=2.0.7
+ARG BUILD_VERSION=2.0.8
 ARG SOURCE_REVISION=""
 ARG SOURCE_ROOTFS_SHA256=""
 ARG TARGETARCH
-ARG ANTIGRAVITY_VERSION=1.1.11
-ARG ANTIGRAVITY_BUILD=4956531888881664
-ARG ANTIGRAVITY_AMD64_SHA512=32d64529cf035ab9790352069dd0df4525d7c920b42872de1775e65455e77fd983b37a6dee81a6345b060c98d5f350729bb5e2ae881bbda80f46b7487af4588d
-ARG ANTIGRAVITY_ARM64_SHA512=fb1acacdbde606a60a8002b6dc0a8c9800bb84aef3add069f843f6ffa3efaafe4a52fce440505c6f16aebd6b1257cce5ecfaec2dbab21732c625943422318cdb
+ARG ANTIGRAVITY_VERSION=1.1.13
+ARG ANTIGRAVITY_BUILD=6057583128215552
+ARG ANTIGRAVITY_AMD64_SHA512=89c6881b6c1999cb8236e7181c2192ae8f372b0413396c0f7bcff83d27ac9c0cc1202795cc0d629ec1ecbf4937d1c294cf4f5e4f9f8e05b1e972e27198313442
+ARG ANTIGRAVITY_ARM64_SHA512=d2f3642873e3283265ebf4d4e2cc8c3652dff5a0b193a33ebfe0dded68521dd02b4c28ed92ff54784f6a6267e95c807b4d8194e8a6d619d4348638ab5c810d44
 ARG NODE_VERSION=22.23.2
 ARG NODE_AMD64_SHA256=d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307
 ARG NODE_ARM64_SHA256=fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8
@@ -257,7 +257,6 @@ RUN manifest=/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
       /usr/local/share/antigravity-ha/supervisor-options-migrate.mjs \
       /usr/local/share/antigravity-ha/telegram-bridge.mjs \
       /usr/local/share/antigravity-ha/telegram-pairing.mjs \
-      /usr/local/share/antigravity-ha/telegram-result-schema.json \
       /usr/local/share/antigravity-ha/telegram-state.mjs \
       /usr/local/share/antigravity-ha/user-files-update.mjs \
       /usr/local/share/antigravity-ha/app-version

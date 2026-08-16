@@ -187,7 +187,7 @@ def test_telegram_bridge_has_no_legacy_shell_or_pairing_surface(addon_root: Path
     assert 'AGY_CLI_DISABLE_AUTO_UPDATE: "true"' in bridge
     assert '"--output-format"' in bridge
     assert '"stream-json"' in bridge
-    assert '"--json-schema"' in bridge
+    assert '"--json-schema"' not in bridge
     assert '"--print"' not in bridge
     assert '"--prompt"' not in bridge
     assert 'child.stdin.end(`${prompt}\\n`)' in bridge
@@ -196,7 +196,10 @@ def test_telegram_bridge_has_no_legacy_shell_or_pairing_surface(addon_root: Path
     assert "event?.type" not in bridge
     assert 'event.result.status !== "SUCCESS"' in bridge
     assert "event.result.conversation_id !== conversationId" in bridge
-    assert "parseTerminalResponse(event.result.response)" in bridge
+    assert 'response = event.result.response.replace' in bridge
+    assert 'parameters.ServerName !== "ha_change"' in bridge
+    assert 'parameters.ToolName !== "ha_change_propose"' in bridge
+    assert 'stepUpdate.state !== "DONE"' in bridge
     assert "telegram_allowed_user_ids" in bridge
     assert "ACCESS_MODES" not in bridge
     assert "confirm_changes" not in bridge

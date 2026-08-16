@@ -95,8 +95,8 @@ def test_antigravity_release_is_pinned_and_verified(addon_root: Path) -> None:
     )
 
     assert version_match
-    assert version_match.group(1) == "1.1.11"
-    assert "ARG ANTIGRAVITY_BUILD=4956531888881664" in dockerfile
+    assert version_match.group(1) == "1.1.13"
+    assert "ARG ANTIGRAVITY_BUILD=6057583128215552" in dockerfile
     assert "ARG ANTIGRAVITY_AMD64_SHA512=" in dockerfile
     assert "ARG ANTIGRAVITY_ARM64_SHA512=" in dockerfile
     assert "antigravity-public/antigravity-cli" in dockerfile

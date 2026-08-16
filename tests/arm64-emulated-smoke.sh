@@ -22,7 +22,7 @@ docker run --rm --platform linux/arm64 \
   "${IMAGE}" -ceu '
     [[ "$(uname -m)" == aarch64 ]]
     [[ "${AGY_CLI_DISABLE_AUTO_UPDATE:-}" == true ]]
-    [[ "$(/usr/local/libexec/antigravity-real --version)" == 1.1.11 ]]
+    [[ "$(/usr/local/libexec/antigravity-real --version)" == 1.1.13 ]]
     [[ "$(node --version)" == v22.23.2 ]]
     gh --version | grep -Fq "gh version 2.93.0 "
     ttyd --version 2>&1 | grep -Fq "ttyd version 1.7.7"

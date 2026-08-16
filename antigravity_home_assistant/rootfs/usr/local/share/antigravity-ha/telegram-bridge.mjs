@@ -48,7 +48,6 @@ const OPTIONS_PATH = "/data/options.json";
 const DEFAULT_AGY_BIN = "/usr/local/bin/antigravity";
 const SHARED_ANTIGRAVITY_HOME = "/data/home";
 const SHARED_ANTIGRAVITY_WORKSPACE = "/config";
-const RESULT_SCHEMA_PATH = "/usr/local/share/antigravity-ha/telegram-result-schema.json";
 const MAX_PROMPT_BYTES = 16 * 1024;
 const MAX_RESULT_BYTES = 32 * 1024;
 const MAX_STREAM_BYTES = 4 * 1024 * 1024;
@@ -74,7 +73,13 @@ const ANTIGRAVITY_HEADLESS_PERMISSION_MARKER = Buffer.from(
 );
 const WORKER_FAILURE_REASONS = Object.freeze([
   "authentication_required",
+  "conversation_mismatch",
   "headless_read_denied",
+  "proposal_result_invalid",
+  "stream_contract_failed",
+  "terminal_missing",
+  "terminal_response_invalid",
+  "terminal_status_failed",
   "worker_failed",
 ]);
 const REQUEST_FAILURE_REASONS = Object.freeze([
@@ -218,7 +223,13 @@ class AntigravityWorkerError extends Error {
     }
     const messages = {
       authentication_required: "Antigravity worker authentication is required",
+      conversation_mismatch: "Antigravity resumed a different conversation",
       headless_read_denied: "Antigravity headless file read was denied",
+      proposal_result_invalid: "Antigravity change proposal result was invalid",
+      stream_contract_failed: "Antigravity stream contract validation failed",
+      terminal_missing: "Antigravity terminal result was missing",
+      terminal_response_invalid: "Antigravity terminal response was invalid",
+      terminal_status_failed: "Antigravity terminal result did not succeed",
       worker_failed: "Antigravity worker exited unsuccessfully",
     };
     super(messages[reasonClass]);
@@ -314,6 +325,15 @@ function renderRequestFailure(error) {
       return "Antigravity 로그인이 필요합니다. App 웹 터미널 또는 SSH에서 antigravity를 실행해 로그인한 뒤 다시 시도하세요.";
     case "headless_read_denied":
       return "현재 전역 Antigravity 권한 정책에서 비대화형 도구 실행이 승인되지 않았습니다. App의 전역 도구 권한을 확인하거나 해당 작업을 웹 터미널에서 승인하세요.";
+    case "conversation_mismatch":
+      return "저장된 대화와 Antigravity 세션이 일치하지 않습니다. /new 명령으로 새 대화를 시작한 뒤 다시 시도하세요.";
+    case "proposal_result_invalid":
+      return "Home Assistant 변경 제안 결과를 안전하게 확인하지 못해 중단했습니다. 변경은 실행되지 않았습니다.";
+    case "stream_contract_failed":
+    case "terminal_missing":
+    case "terminal_response_invalid":
+    case "terminal_status_failed":
+      return "Antigravity의 최종 응답을 검증하지 못했습니다. /status에서 최근 런타임 상태를 확인하세요.";
     default:
       return "요청을 완료하지 못했습니다. App 로그를 확인하세요.";
   }
@@ -332,7 +352,13 @@ function renderWorkerStatus() {
     not_checked: "아직 확인되지 않음",
     ready: "최근 요청 정상",
     authentication_required: "공유 Antigravity 로그인 필요 (antigravity)",
+    conversation_mismatch: "저장된 대화와 런타임 세션 불일치 (/new 필요)",
     headless_read_denied: "전역 권한 정책의 대화형 승인 필요",
+    proposal_result_invalid: "최근 변경 제안 결과 검증 실패",
+    stream_contract_failed: "최근 응답 스트림 형식 검증 실패",
+    terminal_missing: "최근 요청의 최종 결과 누락",
+    terminal_response_invalid: "최근 최종 응답 내용 검증 실패",
+    terminal_status_failed: "최근 Antigravity 실행이 성공 상태로 끝나지 않음",
     worker_failed: "최근 요청 실패",
   };
   return descriptions[workerRuntimeStatus] ?? descriptions.worker_failed;
@@ -828,8 +854,6 @@ function buildAgyArgs(_mode = null, sandboxEnabled = null, conversationId = null
     "stream-json",
     "--print-timeout",
     "5m",
-    "--json-schema",
-    RESULT_SCHEMA_PATH,
   ];
   if (conversationId !== null) {
     if (typeof conversationId !== "string" || !/^[A-Za-z0-9._:-]{1,256}$/.test(conversationId)) {
@@ -844,82 +868,94 @@ function buildAgyArgs(_mode = null, sandboxEnabled = null, conversationId = null
   return args;
 }
 
-function extractString(value, depth = 0) {
-  if (depth > 4 || value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value.map((item) => extractString(item, depth + 1)).filter(Boolean).join("\n");
-  if (typeof value !== "object") return "";
-  for (const key of ["response", "result", "output", "text", "content", "message"]) {
-    if (Object.hasOwn(value, key)) {
-      const found = extractString(value[key], depth + 1);
-      if (found) return found;
-    }
-  }
-  return "";
+function streamFailure(reasonClass) {
+  return new AntigravityWorkerError(reasonClass);
 }
 
-function parseTerminalResponse(value) {
-  if (typeof value !== "string") {
-    throw new Error("Antigravity terminal response was not JSON text");
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function proposalReceiptFromStepUpdate(stepUpdate) {
+  if (!isPlainObject(stepUpdate) || stepUpdate.step_type !== "tool" ||
+      !isPlainObject(stepUpdate.tool_info)) {
+    return null;
   }
-  let parsed;
+  const parameters = stepUpdate.tool_info.parameters;
+  if (!isPlainObject(parameters) || parameters.ServerName !== "ha_change" ||
+      parameters.ToolName !== "ha_change_propose") {
+    return null;
+  }
+  if (stepUpdate.tool_name !== "call_mcp_tool" ||
+      stepUpdate.tool_info.name !== "call_mcp_tool" ||
+      JSON.stringify(Object.keys(parameters).sort()) !==
+      JSON.stringify(["Arguments", "ServerName", "ToolName"]) ||
+      !isPlainObject(parameters.Arguments) || !Number.isSafeInteger(stepUpdate.step_index) ||
+      stepUpdate.step_index < 0 || !["ACTIVE", "DONE", "ERROR"].includes(stepUpdate.state)) {
+    throw streamFailure("proposal_result_invalid");
+  }
+  if (stepUpdate.state !== "DONE") {
+    return { proposalId: null, stepIndex: stepUpdate.step_index };
+  }
+  if (typeof stepUpdate.tool_info.output !== "string" ||
+      Buffer.byteLength(stepUpdate.tool_info.output) > MAX_STREAM_LINE_BYTES) {
+    throw streamFailure("proposal_result_invalid");
+  }
+  let output;
   try {
-    parsed = JSON.parse(value);
+    output = JSON.parse(stepUpdate.tool_info.output);
   } catch {
-    throw new Error("Antigravity terminal response contained invalid JSON");
+    throw streamFailure("proposal_result_invalid");
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) ||
-      JSON.stringify(Object.keys(parsed).sort()) !==
-        JSON.stringify(["proposal_ids", "response"])) {
-    throw new Error("Antigravity terminal response did not match the managed schema");
+  if (!isPlainObject(output) || typeof output.proposal_id !== "string" ||
+      !/^[A-Za-z0-9_-]{20,64}$/u.test(output.proposal_id)) {
+    throw streamFailure("proposal_result_invalid");
   }
-  if (typeof parsed.response !== "string" || parsed.response.trim().length === 0 ||
-      !Array.isArray(parsed.proposal_ids)) {
-    throw new Error("Antigravity terminal response did not match the managed schema");
-  }
-  return parsed;
+  return { proposalId: output.proposal_id, stepIndex: stepUpdate.step_index };
 }
 
 function decodeStreamUtf8(stdout) {
   if (typeof stdout === "string") return stdout;
   if (!Buffer.isBuffer(stdout) && !(stdout instanceof Uint8Array)) {
-    throw new Error("Antigravity stream must be UTF-8 bytes");
+    throw streamFailure("stream_contract_failed");
   }
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(stdout);
   } catch {
-    throw new Error("Antigravity stream contained invalid UTF-8");
+    throw streamFailure("stream_contract_failed");
   }
 }
 
 function parseStreamResult(stream) {
   const stdout = decodeStreamUtf8(stream);
-  let result = null;
+  let response = null;
   let resultEvents = 0;
   let initEvents = 0;
   let terminalSeen = false;
   let conversationId = null;
+  const proposalIds = [];
+  const proposalCallSteps = new Set();
   for (const line of stdout.split("\n")) {
     if (!line.trim()) continue;
     if (Buffer.byteLength(line) > MAX_STREAM_LINE_BYTES) {
-      throw new Error("Antigravity stream line exceeded the safe limit");
+      throw streamFailure("stream_contract_failed");
     }
     let event;
     try {
       event = JSON.parse(line);
     } catch {
-      throw new Error("Antigravity stream contained invalid JSON");
+      throw streamFailure("stream_contract_failed");
     }
     if (terminalSeen) {
-      throw new Error("Antigravity stream contained an event after the terminal result");
+      throw streamFailure("stream_contract_failed");
     }
     if (typeof event?.event !== "string" || event.event.length === 0) {
-      throw new Error("Antigravity stream contained a missing or malformed event discriminator");
+      throw streamFailure("stream_contract_failed");
     }
     const knownEventType = /^(?:init|step_update|result)$/u.test(event.event);
     if (!knownEventType) {
       if (initEvents !== 1) {
-        throw new Error("Antigravity unknown event arrived before init");
+        throw streamFailure("stream_contract_failed");
       }
       incrementBounded(metricState.streamEventsIgnored, "unknown_type");
       continue;
@@ -927,45 +963,55 @@ function parseStreamResult(stream) {
     if (event?.event === "init") {
       initEvents += 1;
       if (initEvents !== 1) {
-        throw new Error("Antigravity stream contained an invalid init sequence");
+        throw streamFailure("stream_contract_failed");
       }
       const candidate = event.conversation_id ?? event.conversationId;
       if (typeof candidate !== "string" || !/^[A-Za-z0-9._:-]{1,256}$/.test(candidate)) {
-        throw new Error("Antigravity init event contained an invalid conversation identifier");
+        throw streamFailure("stream_contract_failed");
       }
       conversationId = candidate;
     }
     if (event?.event === "result") {
       if (initEvents !== 1) {
-        throw new Error("Antigravity terminal result arrived outside a valid init sequence");
+        throw streamFailure("stream_contract_failed");
       }
       if (typeof event.result !== "object" || event.result === null ||
-          Array.isArray(event.result) || event.result.status !== "SUCCESS") {
-        throw new Error("Antigravity terminal result did not report success");
+          Array.isArray(event.result)) {
+        throw streamFailure("stream_contract_failed");
+      }
+      if (event.result.status !== "SUCCESS") {
+        throw streamFailure("terminal_status_failed");
       }
       if (event.result.conversation_id !== conversationId) {
-        throw new Error("Antigravity terminal result changed the conversation identifier");
+        throw streamFailure("conversation_mismatch");
+      }
+      if (typeof event.result.response !== "string") {
+        throw streamFailure("terminal_response_invalid");
       }
       terminalSeen = true;
       resultEvents += 1;
-      result = parseTerminalResponse(event.result.response);
-    } else if (event?.event === "step_update" && initEvents !== 1) {
-      throw new Error("Antigravity progress event arrived before init");
+      response = event.result.response.replace(/\u0000/gu, "");
+    } else if (event?.event === "step_update") {
+      if (initEvents !== 1) throw streamFailure("stream_contract_failed");
+      const receipt = proposalReceiptFromStepUpdate(event.step_update);
+      if (receipt !== null) {
+        proposalCallSteps.add(receipt.stepIndex);
+        if (receipt.proposalId !== null) proposalIds.push(receipt.proposalId);
+      }
     }
   }
-  if (initEvents !== 1 || resultEvents !== 1 || !result) {
-    throw new Error("Antigravity returned no unique structured terminal result event");
+  if (initEvents !== 1 || resultEvents !== 1 || response === null) {
+    throw streamFailure("terminal_missing");
   }
-  if (Buffer.byteLength(result.response) > MAX_RESULT_BYTES) {
-    throw new Error("Antigravity terminal response exceeded the safe limit");
+  if (response.trim().length === 0 || Buffer.byteLength(response) > MAX_RESULT_BYTES) {
+    throw streamFailure("terminal_response_invalid");
   }
-  if (result.proposal_ids.length > 1 ||
-      result.proposal_ids.some((id) => typeof id !== "string" || !/^[A-Za-z0-9_-]{20,64}$/.test(id))) {
-    throw new Error("Antigravity terminal result contained invalid proposal identifiers");
+  if (proposalIds.length > 1 || proposalIds.length !== proposalCallSteps.size) {
+    throw streamFailure("proposal_result_invalid");
   }
   return {
-    response: result.response.replace(/\u0000/g, ""),
-    proposalIds: [...result.proposal_ids],
+    response,
+    proposalIds,
     conversationId,
   };
 }
@@ -976,17 +1022,17 @@ function parseInitEventLine(line, expectedConversationId = null) {
   try {
     event = JSON.parse(decoded);
   } catch {
-    throw new Error("Antigravity stream contained invalid JSON before init");
+    throw streamFailure("stream_contract_failed");
   }
   if (event?.event !== "init") {
-    throw new Error("Antigravity first event was not init");
+    throw streamFailure("stream_contract_failed");
   }
   const conversationId = event.conversation_id ?? event.conversationId;
   if (typeof conversationId !== "string" || !/^[A-Za-z0-9._:-]{1,256}$/.test(conversationId)) {
-    throw new Error("Antigravity init event contained an invalid conversation identifier");
+    throw streamFailure("stream_contract_failed");
   }
   if (expectedConversationId !== null && conversationId !== expectedConversationId) {
-    throw new Error("Antigravity resumed a different conversation identifier");
+    throw streamFailure("conversation_mismatch");
   }
   return conversationId;
 }
@@ -1197,12 +1243,12 @@ async function runAntigravityPrompt(prompt, {
     activeChildren.delete(runId);
     throwIfSignalCancelled(signal);
     if (initError !== null) {
-      workerRuntimeStatus = "worker_failed";
+      workerRuntimeStatus = requestFailureReason(initError);
       throw initError;
     }
     if (oversized) {
-      workerRuntimeStatus = "worker_failed";
-      throw new Error("Antigravity output exceeded the safe limit");
+      workerRuntimeStatus = "stream_contract_failed";
+      throw streamFailure("stream_contract_failed");
     }
     if (timedOut) {
       workerRuntimeStatus = "worker_failed";
@@ -1226,20 +1272,20 @@ async function runAntigravityPrompt(prompt, {
     try {
       parsed = parseStreamResult(Buffer.concat(stdoutChunks, stdoutBytes));
     } catch (error) {
-      workerRuntimeStatus = "worker_failed";
+      workerRuntimeStatus = requestFailureReason(error);
       throw error;
     }
     if (initConversationId === null) {
       initConversationId = parsed.conversationId;
       if (conversationId !== null && initConversationId !== conversationId) {
-        workerRuntimeStatus = "worker_failed";
-        throw new Error("Antigravity resumed a different conversation identifier");
+        workerRuntimeStatus = "conversation_mismatch";
+        throw streamFailure("conversation_mismatch");
       }
       if (onConversation !== null) onConversation(initConversationId);
     }
     if (parsed.conversationId !== initConversationId) {
-      workerRuntimeStatus = "worker_failed";
-      throw new Error("Antigravity parser changed the initialized conversation identifier");
+      workerRuntimeStatus = "conversation_mismatch";
+      throw streamFailure("conversation_mismatch");
     }
     workerRuntimeStatus = "ready";
     return parsed;
@@ -2708,7 +2754,6 @@ export {
   drainPendingResponseDeliveries,
   drainResponseDelivery,
   enqueueRequester,
-  extractString,
   holdTelegramFailClosed,
   handleCallback,
   handleMessage,

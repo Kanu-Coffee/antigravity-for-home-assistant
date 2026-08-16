@@ -21,7 +21,7 @@ Antigravity native plugin으로 제공한다.
 ## 성공 조건
 
 1. 신규 설치가 별도의 중계 서버 없이 HAOS 내부에서 완료된다.
-2. Antigravity 1.1.11의 실제 CLI와 JSON 설정만 사용한다.
+2. Antigravity 1.1.13의 실제 CLI와 JSON 설정만 사용한다.
 3. 사용자 Home Assistant 설정과 기존 `/data` 상태가 명시한 migration 정책에
    따라 보존되며 실패 시 복구할 수 있다.
 4. Telegram은 허용된 사용자와 채팅만 처리하며 CLI의 OAuth·전역 customization·

@@ -12,7 +12,7 @@
 - [문서 패키지 읽기 순서와 상태 규칙](v2/README.md)
 - [제품 요구사항](v2/product-spec.md)
 - [아키텍처](v2/architecture.md)
-- [Antigravity 1.1.11 계약](v2/antigravity-contract.md)
+- [Antigravity 1.1.13 계약](v2/antigravity-contract.md)
 - [보안 계약](v2/security.md)
 - [Telegram 계약](v2/telegram-spec.md)
 - [Migration·release 계약](v2/migration-release.md)

@@ -320,7 +320,7 @@ credential 노출이 의심되면 해당 service를 중지하고 token을 revoke
 - prompt/command/callback injection 회귀
 - child environment allowlist와 token canary 비노출
 - 공유 Web/SSH/Telegram native OAuth canary 비유출과 동일-process 잔여 위험 기록
-- 실제 1.1.11에서 Telegram이 user global/workspace plugin·agent·rule·MCP와 permission을
+- 실제 1.1.13에서 Telegram이 user global/workspace plugin·agent·rule·MCP와 permission을
   CLI와 동일하게 상속하고 수정할 수 있는 positive canary
 - symlink/hardlink/FIFO/path traversal migration 회귀
 - Telegram auth, stable conversation, explicit `/new`, same-session approval, sealed outbox

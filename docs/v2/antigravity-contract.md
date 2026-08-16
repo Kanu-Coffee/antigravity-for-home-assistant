@@ -1,15 +1,15 @@
-# Antigravity 1.1.11 통합 계약
+# Antigravity 1.1.13 통합 계약
 
 ## 1. 고정 기준
 
-v2 첫 릴리스는 Google Antigravity CLI `1.1.11`을 고정한다. 이 문서의 명령은
-2026-08-11에 image 안의 `/usr/local/libexec/antigravity-real --help`로 확인한
-계약을 기준으로 한다. 버전을 변경할 때는 이 문서, help snapshot, wrapper
+현재 v2 App은 Google Antigravity CLI `1.1.13`을 고정한다. 이 문서의 명령은
+image 안의 `/usr/local/libexec/antigravity-real --help`로 확인한 계약을 기준으로
+한다. 버전을 변경할 때는 이 문서, help snapshot, wrapper
 contract test와 두 아키텍처 smoke를 같은 변경에서 갱신한다.
 
 ### 1.1 런타임 self-updater 차단
 
-Antigravity 1.1.11에는 background self-updater가 있다. GHCR image에 고정한 binary가
+Antigravity 1.1.13에는 background self-updater가 있다. GHCR image에 고정한 binary가
 App 실행 중 다른 version을 내려받거나 실행하면 version/digest pin과 rollback 증거가
 무효가 되므로, 모든 native CLI launch는 다음 환경을 강제한다.
 
@@ -87,7 +87,7 @@ help
 
 - `-c`는 config override가 아니라 `--continue`다.
 - `agy -c approval_policy=...`와 `agy -c sandbox_mode=...`를 사용하지 않는다.
-- `debug prompt-input`, `login`, `mcp` subcommand는 1.1.11 top-level 계약에 없다.
+- `debug prompt-input`, `login`, `mcp` subcommand는 1.1.13 top-level 계약에 없다.
 - `config.toml`, `approval_policy`, `sandbox_mode`, Codex per-tool approval flag를
   생성하거나 주입하지 않는다.
 - `ANTIGRAVITY_TOKEN` 또는 `GEMINI_API_KEY`가 공식 App 인증 계약이라고 가정하지
@@ -160,7 +160,7 @@ App이 소유한 key만 merge한다. 최소 관리 key는 다음과 같다.
 }
 ```
 
-1.1.11의 directory target은 재귀이며 deny가 ask와 allow보다 우선한다. 그래서 위
+1.1.13의 directory target은 재귀이며 deny가 ask와 allow보다 우선한다. 그래서 위
 shared customization/workspace root는 Web/SSH/Telegram에 공통으로 허용하되 OAuth가
 있는 `.gemini` 전체를 wildcard로 열지 않고, `/config`의 secret·storage 경로는 native
 deny와 AppArmor deny를 함께 유지한다. 2.0.6의 `read_file(/data)`와
@@ -176,12 +176,12 @@ deny와 AppArmor deny를 함께 유지한다. 2.0.6의 `read_file(/data)`와
 | `always-proceed` | `always-proceed` | native prompt를 줄이지만 AppArmor와 broker는 유지 |
 | `strict` | `strict` | 모든 non-read 작업을 확인 |
 
-1.1.11 `stream-json`은 native permission request를 외부 channel에 전달하고 승인 뒤
+1.1.13 `stream-json`은 native permission request를 외부 channel에 전달하고 승인 뒤
 같은 turn을 재개하는 입력 protocol이 없다. Telegram의 사람 확인은 관리형 HA broker
 proposal에만 제공하며, 그 밖의 ask rule은 Web/SSH TUI 또는 global permission 변경이
 필요하다. Telegram 전용 skip-permission이나 auto-approve 설정은 만들지 않는다.
 
-Antigravity 1.1.11은 system default와 같은 값을 저장하지 않는 sparse persistence를
+Antigravity 1.1.13은 system default와 같은 값을 저장하지 않는 sparse persistence를
 적용한다. 따라서 `agy agent`가 `request-review`를 읽으면 redundant
 `toolPermission` key를 제거할 수 있다. 이 경우에도 App이 생성한
 `permissions.allow`, `permissions.ask`, `permissions.deny`가 native authorization
@@ -189,7 +189,7 @@ Antigravity 1.1.11은 system default와 같은 값을 저장하지 않는 sparse
 같은 이유로 default `colorScheme: "terminal"` 대신 CLI가 왕복 보존하는 공식
 non-default `colorScheme: "tokyo night"`를 사용한다.
 
-1.1.11은 공유 native CLI HOME의 `antigravity-cli/cli.log`를 같은 directory 아래
+1.1.13은 공유 native CLI HOME의 `antigravity-cli/cli.log`를 같은 directory 아래
 `log/cli-YYYYMMDD_HHMMSS.log`를 가리키는 상대 symlink로 만든다. public v1 update
 canary는 `/data/home`의 이 exact 경로만 허용하며, link가
 root 소유이고 CLI root와 `log` parent가 모두 root 소유 real 0700 directory인지
@@ -325,14 +325,19 @@ first-run OAuth가 가능한 controlling TTY에서 `agy`를 실행하고 안내�
 새 bridge는 shell 없이 CLI와 같은 wrapper 정책의 argv array를 만든다.
 
 ```text
-/usr/local/bin/antigravity --output-format stream-json --print-timeout 5m --json-schema <managed> [--conversation <bound-id>]
+/usr/local/bin/antigravity --output-format stream-json --print-timeout 5m [--conversation <bound-id>]
 ```
 
 - `cwd`는 `/config`, `HOME`은 `/data/home`이며 native OAuth, global/workspace
   plugin/agent/rule/MCP와 settings를 Web/SSH와 동일하게 사용한다.
 - 공유 launcher는 customization을 제거하거나 image-only inventory로 축소하지 않는다.
 - prompt는 UTF-8 stdin으로 전달하고 argv, environment, log file에 넣지 않는다.
-- 1.1.11은 pipe된 non-TTY stdin에서 print mode를 자동 선택한다. 값 없는
+- 일반 답변은 terminal `result.response`의 native free-text 계약을 사용한다.
+  관리형 변경 proposal ID는 정확히 완료된
+  `call_mcp_tool(ha_change/ha_change_propose)` stream receipt에서만 후보를
+  추출하고 requester-bound broker inspection으로 다시 검증한다. Telegram
+  일반 채팅에는 `--json-schema`/`finish`를 강제하지 않는다.
+- 1.1.13은 pipe된 non-TTY stdin에서 print mode를 자동 선택한다. 값 없는
   `--print`/`-p`는 다음 argv를 prompt로 소비하므로 bridge argv에 넣지 않는다.
 - stdout은 NDJSON 전용, stderr는 비밀 정화된 진단 전용이다.
 - exit code 0과 terminal `result` event가 모두 있어야 성공이다.
@@ -352,15 +357,25 @@ wrapper와 bridge는 다음 인수를 거부한다.
 - Telegram 요청에서 전달된 `--conversation` 또는 execution mode override
 - App이 검증하지 않은 model name과 JSON schema path
 
-## 8. structured output parser
+## 8. stream result parser
 
-parser는 한 줄에 JSON object 하나인 NDJSON만 받는다. 알려진 1.1.11 top-level
+parser는 한 줄에 JSON object 하나인 NDJSON만 받는다. 알려진 1.1.13 top-level
 `event` discriminator와 terminal result만 사용자 응답으로 변환한다. 정상 순서는
 `event: "init"`, 0개 이상의 `event: "step_update"`, 단 하나의
-`event: "result"`다. terminal object는 init과 같은 conversation ID,
-`result.status == "SUCCESS"`, JSON schema 응답을 담은 `result.response`를 모두
-충족해야 한다. unknown event는 안전하게 무시하고
-비밀 정화된 metric을 남기되 전체 raw line은 기록하지 않는다.
+`event: "result"`다. terminal object는 init과 같은 conversation ID와
+`result.status == "SUCCESS"`를 충족해야 한다. 일반 답변은 native free-text
+`result.response`이며 bridge는 이를 App 전용 JSON으로 다시 parse하거나 model에
+`--json-schema`/`finish` tool을 강제하지 않는다. NUL을 제거한 뒤 non-empty와 32 KiB
+상한만 검증한다. unknown event는 안전하게 무시하고 비밀 정화된 metric을 남기되
+전체 raw line은 기록하지 않는다.
+
+proposal ID는 임의 model text나 terminal JSON에서 받지 않는다. 정확한
+`call_mcp_tool`의 `ha_change/ha_change_propose` step이 `DONE`으로 끝나고 그 tool
+output이 단 하나의 유효한 proposal ID를 반환한 경우만 receipt로 채택한다. 이후
+bridge가 durable conversation binding을 별도로 확인하고 trusted change broker에서
+동일 requester와 live proposal metadata를 다시 검증해야 approval을 만들 수 있다.
+시작됐지만 완료되지 않은 proposal call, 중복
+proposal 또는 잘못된 receipt는 `proposal_result_invalid`로 fail closed한다.
 
 다음 조건은 job 실패다.
 
@@ -368,8 +383,19 @@ parser는 한 줄에 JSON object 하나인 NDJSON만 받는다. 알려진 1.1.11
 - invalid UTF-8 또는 invalid JSON
 - init 없이 tool/result event 수신
 - terminal result 중복 또는 누락
+- terminal status 실패, 비어 있거나 과대한 free-text response
+- init/terminal/bound conversation 불일치
+- 완료되지 않았거나 malformed/중복인 HA change proposal receipt
 - process timeout, signal 또는 non-zero exit
 - schema에 없는 path로 artifact 쓰기 시도
+
+실패는 `stream_contract_failed`, `terminal_missing`, `terminal_status_failed`,
+`terminal_response_invalid`, `conversation_mismatch`, `proposal_result_invalid`처럼
+bounded reason class로만 상태와 로그에 남긴다. raw NDJSON, prompt, model response,
+stderr와 proposal body는 보존하지 않는다. bridge의 `/start`·`/status`·오류 안내가
+Telegram에 도착한 상태에서 `session_bound` 뒤 이 reason이 나오면 Bot API network
+실패가 아니라 terminal 검증 실패이며, `delivery_queued` 전이 없으므로 `/retry`할
+outbox 항목도 아직 없다.
 
 structured event schema는 고정 binary에서 golden fixture로 캡처해 저장하되 prompt,
 conversation ID, token, 실제 HA object와 model output은 fixture에서 제거한다.
@@ -378,7 +404,8 @@ conversation ID, token, 실제 HA object와 model output은 fixture에서 제거
 
 Antigravity version 변경 PR은 다음을 함께 제공해야 한다.
 
-1. amd64/aarch64 공식 artifact URL과 SHA-256
+1. amd64/aarch64 공식 artifact URL과 공식 manifest의 SHA-512, 그리고 제공되는
+   경우 독립 release SHA-256 checksum
 2. `--version`, top-level `--help`, `plugin --help` contract diff
 3. settings와 plugin schema validation
 4. interactive OAuth persistence smoke

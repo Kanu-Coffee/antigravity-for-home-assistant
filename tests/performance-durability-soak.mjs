@@ -331,7 +331,7 @@ setTimeout(() => {
     result: {
       conversation_id: "conversation.gap007-fixture",
       status: "SUCCESS",
-      response: JSON.stringify({ response: "fixture complete", proposal_ids: [] }),
+      response: "fixture complete",
     },
   }) + "\\n");
 }, holdMs);

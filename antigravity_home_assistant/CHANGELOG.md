@@ -2,6 +2,24 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.0.8] - 2026-08-17
+
+### Fixed
+
+- Return Telegram chat replies from Antigravity's native free-text terminal
+  `result.response` instead of requiring the model to invoke a generated
+  `finish` tool and serialize an App-specific JSON schema.
+- Accept a Home Assistant change proposal only from an exact completed
+  `ha_change/ha_change_propose` tool receipt and revalidate its proposal ID,
+  requester and live proposal metadata through the trusted change broker before
+  showing or executing it.
+- Separate a working Telegram Bot API transport from Antigravity terminal-result
+  failures in `/status` and bounded logs. Missing, unsuccessful, malformed,
+  conversation-mismatched, and invalid-proposal results now have safe reason
+  classes without retaining prompts, raw model output, or stderr.
+- Upgrade the pinned Antigravity CLI runtime from 1.1.11 to 1.1.13, including
+  architecture-specific immutable artifact verification.
+
 ## [2.0.7] - 2026-08-17
 
 ### Changed

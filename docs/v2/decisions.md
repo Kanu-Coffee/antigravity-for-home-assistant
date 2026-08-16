@@ -67,7 +67,7 @@
 ## ADR-005 — Antigravity native pin
 
 - 상태: `Accepted`
-- Antigravity CLI는 `1.1.11` artifact와 architecture별 digest에 고정한다.
+- Antigravity CLI는 `1.1.13` artifact와 architecture별 digest에 고정한다.
 - Codex식 `-c` override, TOML config, token option과 추정 subcommand를 사용하지 않는다.
 - 모든 native launch는 `AGY_CLI_DISABLE_AUTO_UPDATE=true`를 전달한다.
 - native upgrade는 새 numeric App release와 migration/rollback evidence로만 수행한다.

@@ -45,6 +45,16 @@ permission의 positive inheritance, `/new`까지 안정된 session, same-session
 encrypted reply outbox의 crash/retry/ack다. source/component 검증은 구현 뒤 새로
 기록하고 실제 HAOS OAuth/AppArmor/live Bot API E2E는 현재 `NOT RUN`이다.
 
+### 2.0.8 Telegram terminal-result 복구
+
+2.0.7의 shared conversation과 outbox 계약은 유지하되 일반 채팅 성공을 model의
+App 전용 JSON schema/`finish` tool 호출에 의존하지 않는다. 2.0.8 수용 증거는 실제
+1.1.13 native free-text `result.response`, 정확한 완료 `ha_change_propose` receipt,
+durable conversation binding과 requester-bound broker live-metadata 재검증, typed
+terminal failure, 그리고 transport 정상과
+terminal 실패의 구분을 포함해야 한다. source/component fixture는 실제 Bot API
+network, HAOS OAuth/AppArmor 또는 live Telegram 전달 PASS로 확대하지 않는다.
+
 ### 2.1 2026-08-11 local v2 working-tree 증거
 
 | 항목 | 결과 | 정확한 범위 |
@@ -120,7 +130,7 @@ candidate와 HAOS evidence가 생기기 전에는 관련 마일스톤을 `VERIFI
 
 | ID | 시나리오 | 수용 기준 |
 | --- | --- | --- |
-| AG-001 | `--version` | 정확히 `1.1.11` |
+| AG-001 | `--version` | 정확히 `1.1.13` |
 | AG-002 | help snapshot | 필수 flags/subcommands 일치, 금지 Codex 호출 없음 |
 | AG-003 | wrapper argv | 사용자 argv 보존, 허용된 `--sandbox`만 주입 |
 | AG-004 | settings merge | managed key 갱신, unknown/user key byte-semantic 보존 |
@@ -129,7 +139,7 @@ candidate와 HAOS evidence가 생기기 전에는 관련 마일스톤을 `VERIFI
 | AG-007 | MCP discovery | `ha_change`, `ha_memory`, `ha_read`, `ha_validate`, `playwright` 다섯 managed server가 secret env 없이 발견 |
 | AG-008 | OAuth persistence | login 후 restart/update에서 native session 보존 |
 | AG-009 | print stdin | 값 없는 `--print` 없이 pipe된 prompt가 argv/log에 없고 stdin으로 처리 |
-| AG-010 | stream parser | top-level `event`, init/progress/SUCCESS result, conversation binding, invalid JSON, unknown event, size limit |
+| AG-010 | stream parser | top-level `event`, init/progress/SUCCESS native free-text result, exact completed HA proposal receipt, conversation binding, typed terminal failures, invalid JSON, unknown event, size limit |
 | AG-011 | headless permissions | settings policy와 sandbox가 print mode에서도 적용 |
 | AG-012 | forbidden flags | skip-permissions와 Telegram override 거부 |
 | AG-013 | Telegram customization inheritance | user global/workspace plugin·agent·rule·MCP와 settings가 Web/SSH와 동일하게 실행·노출·수정 가능 |
@@ -218,7 +228,7 @@ current amd64 image와 current-source QEMU aarch64 packaging canary는 이 경�
 - local pairing entropy/TTL/single-use/revoke와 unauthorized response
 - `$()`, backtick, quotes, newline, leading dash, Unicode와 oversized input
 - shell false, `--print` 없는 exact argv와 stdin prompt
-- actual 1.1.11에서 user global/workspace plugin·agent·rule·MCP와 native settings의
+- actual 1.1.13에서 user global/workspace plugin·agent·rule·MCP와 native settings의
   Web/SSH 동등 상속 및 수정 positive canary
 - per-chat FIFO, global concurrency, queue overflow, cancel와 timeout
 - validated update의 HKDF/AES-256-GCM sealed spool, plaintext/token canary 부재,
@@ -430,7 +440,7 @@ rehearsal과 numeric tag publish 증거가 아니다. 외부 결과가 없으므
 `PARTIAL`이다.
 
 현재 `tests/managed-plugin-update-smoke.sh`는 기존 App 관리 plugin의 verified backup,
-sibling stage, 실제 1.1.11 validation, activation 직후 SIGKILL restart recovery와
+sibling stage, 실제 1.1.13 validation, activation 직후 SIGKILL restart recovery와
 postcondition failure rollback을 검사한다. `tests/user-files-update-smoke.sh`는 managed
 permission의 unknown user rule 보존, ownership conflict의 preflight-before-write,
 settings/MCP/state transaction과 같은 state digest를 가진 missing-MCP transaction의

@@ -31,7 +31,7 @@
 | [goal.md](goal.md) | 장기 Goal 프롬프트, 성공 조건과 완료 판정 |
 | [product-spec.md](product-spec.md) | 사용자 시나리오, 기능 요구사항과 App 옵션 |
 | [architecture.md](architecture.md) | 컴포넌트, 신뢰 경계, 데이터 흐름과 디렉터리 스키마 |
-| [antigravity-contract.md](antigravity-contract.md) | Antigravity 1.1.11 CLI, 설정, 플러그인과 MCP 계약 |
+| [antigravity-contract.md](antigravity-contract.md) | Antigravity 1.1.13 CLI, 설정, 플러그인과 MCP 계약 |
 | [security.md](security.md) | 위협 모델, AppArmor, 비밀정보와 승인 경계 |
 | [telegram-spec.md](telegram-spec.md) | 새 Telegram 브리지의 인증, 상태 머신과 실행 계약 |
 | [migration-release.md](migration-release.md) | 기존 데이터 이관, rollback, multi-arch GHCR 릴리스 |
@@ -49,7 +49,7 @@
 - 현재 App metadata는 amd64만 선언하고 GHCR `image` 항목과 custom
   `apparmor.txt`가 없다.
 - 현재 wrapper는 Antigravity의 `-c`를 Codex식 설정 override로 사용한다.
-  Antigravity 1.1.11에서 `-c`는 `--continue`이므로 이 경로는 잘못됐다.
+  Antigravity 1.1.13에서 `-c`는 `--continue`이므로 이 경로는 잘못됐다.
 - 현재 Telegram 브리지는 shell interpolation, 승인 우회, pairing 노출,
   session 격리 문제 때문에 v2에서 재사용하지 않는다.
 - 당시 Python 검사는 84개 성공, executable-bit 계약 1개 실패였다. Docker
@@ -91,7 +91,7 @@ Antigravity 명령이나 설정을 추정하지 않는다. 문서와 고정 bina
 
 다음 조건을 모두 만족해야 v2 목표가 완료된다.
 
-- Antigravity 1.1.11의 native CLI, `settings.json`, MCP와 plugin 경로만 사용한다.
+- Antigravity 1.1.13의 native CLI, `settings.json`, MCP와 plugin 경로만 사용한다.
 - Ingress, 공개키 SSH와 Telegram에서 정의된 사용자 흐름이 동작한다.
 - Telegram이 CLI의 전역 환경·권한을 상속하고 `/new`까지 같은 session과 reply
   outbox를 유지하며 고위험 항상 확인 규칙이 우회 불가능하다.
