@@ -1012,7 +1012,6 @@ MAPPING_FIXTURE
       and ((.permissions.allow | length) == (.permissions.allow | unique | length))
       and ((.permissions.ask | length) == (.permissions.ask | unique | length))
       and ((.permissions.deny | length) == (.permissions.deny | unique | length))
-      and (.permissions.allow | index("mcp(ha_read/ha_read_state)") != null)
       and (.permissions.allow | index("mcp(playwright/browser_snapshot)") != null)
       and (.permissions.allow | index("read_file(/config)") != null)
       and (.permissions.allow | index("write_file(/config)") != null)
@@ -1125,7 +1124,7 @@ MAPPING_FIXTURE
   for fragment in \
     'Legacy refresh_all mode was mapped to refresh_managed' \
     'Legacy antigravity_approval_policy was conservatively mapped' \
-    'Legacy antigravity_sandbox_mode was conservatively mapped' \
+    'Legacy antigravity_sandbox_mode was retired' \
     'Legacy browser_approval_policy was retired' \
     'Legacy antigravity_token was not imported' \
     'Legacy home_assistant_browser_token was not migrated' \

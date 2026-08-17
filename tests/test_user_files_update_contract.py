@@ -87,6 +87,7 @@ def test_public_v1_upgrade_rehearsal_is_source_and_candidate_bound(
         '.permissions.allow | index("command(*)") != null',
         '.permissions.allow | index("mcp(*)") != null',
         ".permissions.ask == []",
+        "Legacy antigravity_sandbox_mode was retired",
         (
             '.permissions.deny | index("write_file('
             '/data/home/.gemini/antigravity-cli/settings.json)") != null'
@@ -99,6 +100,7 @@ def test_public_v1_upgrade_rehearsal_is_source_and_candidate_bound(
         assert required in smoke
 
     assert "SOURCE_MANIFEST_TOOL verify-image interface is pending" not in smoke
+    assert "Legacy antigravity_sandbox_mode was conservatively mapped" not in smoke
     assert "grep -R" not in smoke
     assert smoke.count("assert_candidate_source_checkout") >= 4
     assert smoke.count('start_app "${MAPPING_') == 2
