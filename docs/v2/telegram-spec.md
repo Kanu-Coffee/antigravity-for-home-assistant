@@ -5,7 +5,7 @@
 
 ## TG-001 — 범위
 
-2.0.8 Telegram 브리지는 Antigravity와 별개인 축소 agent가 아니라 같은 관리자
+2.0.9 Telegram 브리지는 Antigravity와 별개인 축소 agent가 아니라 같은 관리자
 환경을 노출하는 transport adapter다. Bot API long polling, 인증, stable session,
 per-session queue, print transport, 암호화 reply outbox와 confirmation routing을
 담당한다. shell, interactive TUI와 tmux pane scraping은 범위 밖이다.
@@ -129,12 +129,17 @@ type NormalizedUpdate =
   SIGTERM 후 10초 grace 뒤 SIGKILL로 정리하고 pending proposal을 폐기한다.
   broker `execute`에 이미 접수된 durable mutation은 취소되었다고 응답하지 않는다.
   bridge는 `execute_status` 조회를 계속해 terminal result를 사용자에게 전달한다.
-- 실행 중 queue는 `/run`에만 저장한다. approval은 conversation/user/chat에 결합하며
-  restart 뒤 유효성을 다시 증명할 수 없으면 취소한다.
+- 실행 중 model queue는 `/run`에만 저장한다. approval은 durable state에
+  conversation/user/chat/session generation/proposal digest/expiry를 결합하고 restart 뒤
+  모두 재검증될 때만 계속한다.
 - conversation binding은 opaque Antigravity conversation ID만 `/data`에 저장하고
   idle timeout으로 만료하거나 worker 실패 시 교체하지 않는다. response는 delivery가
   끝날 때까지만 sealed reply outbox에 저장하고 처리 완료 prompt는 저장하지 않는다.
 - `/new`만 새 binding을 생성하며 Antigravity 내부 history 파일을 임의 삭제하지 않는다.
+- approval callback ACK와 기본 인증/control 처리는 즉시 수행한다. 승인된 broker 실행은
+  같은 requester FIFO에서 session-serialized되고 실행 직전 현재 generation/conversation을
+  durable binding과 다시 비교하므로 `/new`,
+  `/cancel`, expiry, restart 또는 duplicate callback 경합이 stale mutation을 만들지 않는다.
 
 Bot API batch를 dispatch하거나 transport offset을 전진하기 전에 validated normalized
 update를 `/data`의 acknowledgement ledger와 sealed spool에 한 번의 atomic write와
@@ -174,8 +179,7 @@ bridge는 Node `spawn`과 `shell: false`를 사용한다.
 argv = [
   "--output-format", "stream-json",
   "--print-timeout", "5m",
-  "--conversation", "<bound-id>",
-  "--sandbox" // global option이 true일 때만
+  "--conversation", "<bound-id>"
 ]
 cwd = "/config"
 HOME = "/data/home"
@@ -194,7 +198,7 @@ conversation 또는 path를 추출하지 않는다. worker 실패·timeout·App 
 바꾸지 않으며 `/new`만 새 ID를 만든다.
 
 worker environment는 Web/SSH wrapper와 같은 HOME, PATH, locale, native permission,
-sandbox 및 민감정보 profile 선택과 requester binding을 사용한다. Supervisor,
+AppArmor runtime/command profile 선택과 requester binding을 사용한다. Supervisor,
 Telegram, browser raw credential과 shell startup 변수는 environment value로 전달하지
 않는다. HOME은 `/data/home`, cwd는 `/config`이며 OAuth와 user global/workspace
 plugin·agent·rule·MCP를 의도적으로 상속하고 수정할 수 있다. 별도 Telegram settings,
@@ -303,18 +307,29 @@ type ConfigPatchPreview = {
         }>;
       }
     | {
+        kind: "automation_reload" | "script_reload" | "scene_reload";
+        reload_service: string;
+        executable: true;
+      }
+    | {
         kind: "none";
-        executable: false;
-        reason: "supported_activation_contract_required";
+        executable: true;
+        apply_result: "restart_required";
       };
 };
 
 type ServiceCallPreview = {
+  format: "ha-service-call-v1";
   summary: string;
   service: string;
-  entity_id: string;
-  expected_state: "on" | "off";
-  verify_state: "on" | "off";
+  entity_id: string | string[] | null;
+  service_data: Record<string, unknown>;
+  precondition:
+    | {kind: "none"}
+    | {kind: "fresh_entity_state"; entity_id: string; expected_state: string};
+  verification:
+    | {kind: "api_completion"}
+    | {kind: "fresh_entity_state"; entity_id: string; expected_state: string};
 };
 
 type DeviceTestPreview = {
@@ -342,7 +357,8 @@ type DeviceTestPreview = {
 broker가 canonical target, operation, diff, 이전 상태와 risk를 계산한다. model이
 requester, risk, proposal ID, expiry 또는 `reversible` 표시를 지정할 수 없으며, 알 수
 없는 input key는 거부한다. preview에는 secret value, full state attribute, token과
-raw API body가 없어야 한다.
+raw API body가 없어야 한다. token/secret/password/auth/key/PIN/code/credential 계열
+key와 credential-like value는 redaction하되 preview digest는 실행할 raw payload에 묶는다.
 
 `config_patch`의 human preview는 model summary가 아니라 broker가 normalized
 mutation에서 생성한 secret-safe bounded structured diff여야 한다. 최소한 exact
@@ -353,13 +369,19 @@ target, digest, byte 수와 model summary만 보여 주는 preview는 실제 rep
 preview와 실행할 normalized mutation을 함께 묶어 어느 한쪽이 달라져도 기존
 approval을 무효화해야 한다.
 
-첫 실행 가능한 `config_patch` payload는
-`activation: {"kind":"input_boolean_reload"}`를 포함해야 한다. broker는
-`configuration.yaml`의 단일 canonical root-level `input_boolean: !include`가 target을
-가리키는지, replacement가 flat helper map과 `name`/`icon`/`initial` 제한을 지키는지
-검사하고 affected entity expectation을 직접 만든다. 기존 helper의 `initial` 변경처럼
-fresh API로 완전히 증명할 수 없는 mutation은 거부한다. activation 없는 임의 YAML은
-structured preview까지만 제공하며 승인돼도 파일을 쓰지 않는다.
+`config_patch`는 `secrets.yaml`, `.storage`와 hidden sensitive segment를 제외한
+`/config` 내 `.yaml`/`.yml` target을 받는다. expected SHA, 최대 1 MiB replacement와
+structured preview를 digest에 묶고 승인 뒤 atomic backup/write와 `ha-config-check`를
+수행한다. 실패하면 exact backup을 복원하고 config check를 다시 실행한다. activation을
+생략하면 파일 변경은 실행 가능하되 `restart_required`를 반환한다. 명시 activation은
+`input_boolean_reload`, `automation_reload`, `script_reload`, `scene_reload`이며 첫 종류만
+semantic fresh-state verification을 추가한다.
+
+`service_call`은 live `GET /api/services`에서 모든 domain/service를 확인한다. entity는
+생략, 단일 ID 또는 중복 없는 최대 100개 배열이고 `service_data`는 64 KiB/depth 12/
+2048 nodes/array 512의 plain JSON이며 prototype key를 거부한다. `expected_state`와
+`verify_state`는 단일 entity에서만 선택 지원하며 그 밖의 성공은 API completion까지만
+보고한다.
 
 `device_test` payload는 `light`, `switch`, `input_boolean` 중 exact entity와
 `turn_on`/`turn_off`, `expected_prior_state`만 받는다. expected prior와 service가 만드는
@@ -369,59 +391,87 @@ test/restore plan은 broker가 normalized payload에서 만들고 digest에 묶�
 
 ## TG-009 — global permission과 confirmation
 
-Telegram 전용 mode는 없다. Web/SSH와 동일한 `antigravity_tool_permission`,
-`antigravity_terminal_sandbox`, `antigravity_sensitive_data_access`를 native 실행에
-적용한다. 2.0.6 이하의 `telegram_access_mode`는 무시하는 migration 입력이며 권한
+Telegram 전용 mode는 없다. Web/SSH와 동일한 `antigravity_tool_permission`과
+`antigravity_sensitive_data_access`를 native 실행에 적용한다. 1.1.13 native
+`--sandbox`는 비특권 HAOS App에서 namespace 생성이 실패하므로 세 채널 모두 사용하지
+않는다. native sandbox argv override는 거부하고 spawned command/stdio tool executable은
+`antigravity_home_assistant-command` AppArmor profile로 discrete `Px` transition한다.
+legacy `antigravity_terminal_sandbox`는 deprecated/no-op compatibility 입력으로만 받아
+어느 값이든 `false`로 정규화하고 warning을 남긴다. 이 경계를 위해 host privilege를
+늘리지 않는다. 2.0.6 이하의 `telegram_access_mode`는 무시하는 migration 입력이며 권한
 source가 아니다.
+
+새 설치의 global managed policy는 `always-proceed`와 ordinary `/config`, exact global
+customization root, URL, command, MCP allow를 사용하며 managed ask는 비어 있다.
+secrets/storage/runtime token/options/SSH key exact deny와 사용자가 추가한 ask/deny가
+항상 우선한다.
+
+App 관리 `settings.json`의 raw direct write는 default-allow의 exact deny다. 사용자의
+현재 명시적 요청으로 일반 전역 설정을 바꿀 때는 digest-bound `agy-settings patch`로
+매개 수정한다. helper는 `permissions`, `enableTerminalSandbox`,
+`allowNonWorkspaceAccess`, `toolPermission`, `artifactReviewPolicy`를 거부하며 이 다섯
+보안 key만 App option과 restart로 바꾼다. 사용자 global plugin·agent·rule·skill은
+계속 공유·직접 수정할 수 있고 user-configured MCP executable은 command profile에서
+실행한다.
 
 1.1.13 `stream-json`은 native interactive permission request를 외부 transport에
 노출하거나 승인 뒤 같은 turn을 재개하는 protocol을 제공하지 않는다. 따라서 공유
-global allow rule에 포함된 plugin·agent·rule·settings·`/config` file action은
-headless-compatible하게 처리하고, App 관리 HA mutation의 사람 확인은 same-session
-broker proposal/button으로 수행한다. 그 밖의 native tool이 `request-review`를 요구하면
-Telegram 전용 auto-approve를 만들지 않고 비대화형 거부한다. 사용자는 Web/SSH에서
-검토하거나 global `antigravity_tool_permission`을 명시적으로 변경해야 한다.
+global allow rule에 포함된 plugin·agent·rule·`/config` file action과
+`agy-settings patch`의 일반 전역 설정 변경은 headless-compatible하게 처리한다.
+관리형 runtime rule로 라우팅되는 일반 HA
+service/config mutation의 사람 확인은 same-session broker proposal/button으로
+수행한다. 관리형 runtime rule은 일반 HA service/config
+변경을 `ha_change_propose`로 라우팅한다. 이 경로로 제출된 모든 App-managed broker
+`service_call`/`config_patch`는 durable Telegram 확인이 필요하다. 그 밖의 native
+tool이 `request-review`를 요구하면 Telegram 전용 auto-approve를 만들지 않고
+비대화형 거부한다. 사용자는 Web/SSH에서 검토하거나 global
+`antigravity_tool_permission`을 명시적으로 변경해야 한다.
 
-지원 activation이 없는 preview-only `config_patch`는 broker가 `high`로 분류한다.
-사용자가 확인해도 실행 단계에서 파일을 쓰지 않고 fail closed한다.
+App-managed broker의 모든 `config_patch`, `service_call`, `device_test`는 `high`이며
+global native policy와 관계없이 human confirmation이 필요하다. model의 risk 표시는
+이 판정을 낮출 수 없다.
 
-현재 `low`인 유일한 config 정책은 broker가 canonical root-level
-`input_boolean: !include` target, restricted helper schema, affected entity expectation,
-backup/config-check/reload/rollback plan을 모두 계산한 `input_boolean_reload` 중 기존
-helper의 `name`/`icon` metadata를 fresh API로 완전히 검증할 수 있는 update다. helper
-create/remove, 기존 metadata 제거, 임의 YAML, 모든 `service_call`과 모든
-`device_test`는 계속 `high`이거나 검증 불가능으로 거부된다. model의 risk 표시는 이
-판정을 낮출 수 없다. `device_test`는 global native policy와 관계없이 human
-confirmation 없이 실행되지 않는다.
+신뢰된 사용자 설치·전역 native tool, `command(*)`/`mcp(*)`, 직접 `ha-api`/
+`supervisor-api`와 일반 `/config` shell write는 CLI와 같은 관리자 권한을 상속하고
+broker가 투명하게 가로채지 않는다. 이 경로의 mutation은 exact deny와 AppArmor
+안에서 사용자 rule과 현재 명시적 요청을 따른다. 따라서 broker 보장은 가능한 모든
+native mutation을 포괄하지 않는다. broker 고위험 목록은
+[security.md](security.md)에 정의하며 global policy로 낮출 수 없다.
+인증된 Web/SSH의 명시적 direct operation은 native TUI 또는 현재 사용자 요청을
+승인 근거로 사용할 수 있고 Telegram button으로 자동 broker되지 않는다. 이것은 승인
+transport 차이이지 HOME, OAuth, global permission을 나눈 별도 runtime이 아니다.
 
-고위험 목록은 [security.md](security.md)에 정의하며 global policy로 낮출 수 없다.
-
-coordinator 내부 record는 wire JSON이 아니다. 구현은 random approval ID를 Map key와
-callback data에 두고 다음 값을 보관한다.
+coordinator 내부 logical record는 wire JSON이 아니다. random approval ID만 callback
+data에 두고 durable state에는 다음 binding을 보관한다.
 
 ```ts
 type PendingApproval = {
+  approvalId: string;
   conversationId: string;
+  sessionGeneration: number;
   requester: ChangeProposal["requester"];
-  proposal: ChangeProposal;
+  proposalId: string;
+  previewDigest: `sha256:${string}`;
   idempotencyKey: string;
   expiresAt: number;
-  timer: NodeJS.Timeout;
+  state: "pending" | "approved";
 };
-
-type PendingApprovals = Map<string, PendingApproval>; // approval ID → record
 ```
 
 - 기본 TTL은 2분이다.
 - inline Confirm/Cancel button의 callback data에는 random approval ID만 넣는다.
-- callback conversation/user/chat이 record와 다르면 generic denial 후 아무 상태도
+- callback requester/chat/current generation/conversation이 record와 다르면 generic denial 후 아무 상태도
   바꾸지 않는다.
-- Confirm은 preview digest와 현재 proposal을 다시 비교하고 1회용 capability를
-  발급한다.
-- Cancel, expiry, restart, `/cancel`, proposal 변경 또는 첫 Confirm 시 record를
-  즉시 폐기한다.
+- callback은 즉시 ACK하고 기본 인증을 검사하지만 승인된 broker 실행은 requester FIFO에
+  넣는다. 실행 직전에 durable record, current session과 broker proposal/digest를 다시
+  비교하고 1회용 capability를 발급한다.
+- Cancel, expiry, `/cancel`, proposal 변경 또는 첫 Confirm 시 record를
+  원자적으로 terminal 상태로 바꾸거나 폐기한다. restart 자체는 유효 approval을 잃지
+  않지만 재검증할 수 없는 record는 실행하지 않는다.
 - 실행 직전 broker가 risk, target와 현재 precondition을 다시 검증하고 결과를 같은
   conversation reply outbox에 넣는다.
+- durable idempotency key는 restart 또는 duplicate callback 뒤에도 동일 mutation을
+  정확히 한 번만 접수하며 replay는 저장된 status/result만 회수한다.
 
 ## TG-010 — 실행과 결과
 
@@ -433,21 +483,14 @@ idempotency key로 `execute_status`를 조회해 `completed` result 또는 재�
 
 config 변경:
 
-1. exact target, include source와 precondition 재확인
-2. 기존 entity fresh state와 recoverable backup 확인
-3. `memory_begin_change`로 broker-generated expectation commit
-4. atomic candidate replace와 digest 확인
-5. `ha-config-check`
-6. `input_boolean.reload`
-7. fresh API 기반 `memory_verify_change`
-8. 실패 시 backup restore/reload/API verify와 rollback memory record
-9. 모든 단계가 증명된 경우에만 성공 회신
-
-reload가 지원되지 않거나 semantic memory의 begin/verify expectation을 표현할 수
-없으면 해당 단계가 수행된 것처럼 보고하지 않는다. 첫 v2의 end-to-end 변경 완료
-판정에는 supported reload와 `memory_begin_change`/`memory_verify_change` 연결이
-모두 필요하다. 현재 이 local 실행 계약은 canonical input boolean include에만 있고,
-automation/script/theme/다른 YAML에는 적용하지 않는다.
+1. exact YAML target과 expected SHA precondition 재확인
+2. recoverable exact backup 확인
+3. atomic candidate replace와 digest 확인
+4. `ha-config-check`
+5. 지원 activation이면 broker가 해당 reload API 호출; 생략이면 `restart_required`
+6. `input_boolean_reload`이면 semantic memory begin/fresh verify 연결
+7. 실패 시 exact backup restore, config recheck와 reload를 수행하고 결과를 durable 기록
+8. 수행·검증된 단계만 성공 회신에 포함
 
 device test:
 

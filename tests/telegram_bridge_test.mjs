@@ -340,7 +340,7 @@ assert.equal(planArgs.includes("--agent"), false);
 assert.equal(planArgs.includes("--mode"), false);
 assert.equal(planArgs.includes("--disable-slash-commands"), false);
 assert.equal(planArgs.includes("--print-timeout"), true);
-assert.equal(planArgs.includes("--sandbox"), true);
+assert.equal(planArgs.includes("--sandbox"), false);
 assert.equal(planArgs.includes("-c"), false);
 assert.equal(planArgs.includes("approval_policy"), false);
 assert.equal(buildAgyArgs("execute", false).includes("accept-edits"), false);

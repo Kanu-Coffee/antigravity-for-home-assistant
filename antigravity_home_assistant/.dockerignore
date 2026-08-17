@@ -52,6 +52,8 @@ rootfs/etc/s6-overlay/s6-rc.d/ttyd/*
 rootfs/etc/s6-overlay/s6-rc.d/user/*
 !rootfs/usr/local/lib/antigravity-ha/
 rootfs/usr/local/lib/antigravity-ha/*
+!rootfs/usr/local/libexec/antigravity-command-bin/
+rootfs/usr/local/libexec/antigravity-command-bin/*
 !rootfs/usr/local/share/antigravity-ha/
 rootfs/usr/local/share/antigravity-ha/*
 !rootfs/etc/s6-overlay/s6-rc.d/antigravity-ha-init/dependencies.d/
@@ -138,6 +140,7 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assista
 !rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/ttyd
 !rootfs/etc/ssh/sshd_config
 !rootfs/usr/local/bin/agy
+!rootfs/usr/local/bin/agy-settings
 !rootfs/usr/local/bin/antigravity
 !rootfs/usr/local/bin/antigravity-ha-init
 !rootfs/usr/local/bin/antigravity-user-files-update
@@ -174,6 +177,7 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assista
 !rootfs/usr/local/lib/antigravity-ha/config.sh
 !rootfs/usr/local/lib/antigravity-ha/environment.sh
 !rootfs/usr/local/lib/antigravity-ha/supervisor-credential.sh
+!rootfs/usr/local/libexec/antigravity-command-bin/bash
 !rootfs/usr/local/libexec/antigravity-interactive-restricted
 !rootfs/usr/local/libexec/antigravity-interactive-sensitive-read
 !rootfs/usr/local/libexec/ha-change-broker-runtime
@@ -185,6 +189,7 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assista
 !rootfs/usr/local/libexec/ha-sshd-runtime
 !rootfs/usr/local/libexec/ha-telegram-runtime
 !rootfs/usr/local/share/antigravity-ha/AGENTS.md
+!rootfs/usr/local/share/antigravity-ha/antigravity-settings-update.mjs
 !rootfs/usr/local/share/antigravity-ha/browser-auth-check.mjs
 !rootfs/usr/local/share/antigravity-ha/browser-user-admin.mjs
 !rootfs/usr/local/share/antigravity-ha/ha-change-broker-client.mjs

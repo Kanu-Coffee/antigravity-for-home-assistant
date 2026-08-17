@@ -1,0 +1,271 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Local App builds use their own ephemeral BuildKit instance. Removing that
+# instance after every build removes only this project's build cache; it never
+# prunes the shared default builder, Docker volumes, or container data.
+readonly LOCAL_IMAGE_REPOSITORY=antigravity-for-home-assistant
+readonly LOCAL_IMAGE_OWNER=antigravity-for-home-assistant
+readonly LOCAL_IMAGE_RETENTION=2
+
+usage() {
+  cat >&2 <<'EOF'
+usage: tools/development/build-app build [image-tag] [linux/amd64|linux/arm64]
+       tools/development/build-app cache-status
+       tools/development/build-app cache-prune
+EOF
+}
+
+if (($# < 1 || $# > 3)); then
+  usage
+  exit 64
+fi
+
+command_name=$1
+shift
+case "$command_name" in
+  build)
+    if (($# > 2)); then
+      usage
+      exit 64
+    fi
+    ;;
+  cache-status | cache-prune)
+    if (($# != 0)); then
+      usage
+      exit 64
+    fi
+    ;;
+  *)
+    usage
+    exit 64
+    ;;
+esac
+
+script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+repository_root="$(git -C "$script_directory" rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "build-app must run inside the Antigravity source checkout" >&2
+  exit 69
+}
+[[ $script_directory == "$repository_root/tools/development" ]] || {
+  echo "development build path does not match the repository root" >&2
+  exit 69
+}
+
+command -v sha256sum >/dev/null 2>&1 || {
+  echo "sha256sum is required to isolate the project BuildKit cache" >&2
+  exit 69
+}
+repository_identity=$(printf '%s' "$repository_root" | sha256sum)
+repository_identity=${repository_identity%% *}
+[[ $repository_identity =~ ^[0-9a-f]{64}$ ]] || {
+  echo "could not derive the repository BuildKit identity" >&2
+  exit 69
+}
+readonly REPOSITORY_IDENTITY=${repository_identity:0:12}
+readonly BUILDER_NAME="antigravity-ha-local-${REPOSITORY_IDENTITY}"
+
+git_common_directory=$(git -C "$repository_root" rev-parse --git-common-dir)
+if [[ $git_common_directory != /* ]]; then
+  git_common_directory="$repository_root/$git_common_directory"
+fi
+git_common_directory=$(cd -- "$git_common_directory" && pwd -P) || {
+  echo "could not locate the repository Git metadata" >&2
+  exit 69
+}
+
+docker_bin=docker
+if [[ ${ANTIGRAVITY_HA_DEV_TEST_MODE:-0} == 1 ]]; then
+  docker_bin=${ANTIGRAVITY_HA_DEV_DOCKER_BIN:-docker}
+elif [[ -n ${ANTIGRAVITY_HA_DEV_DOCKER_BIN:-} ]]; then
+  echo "development Docker override requires ANTIGRAVITY_HA_DEV_TEST_MODE=1" >&2
+  exit 64
+fi
+
+command -v flock >/dev/null 2>&1 || {
+  echo "flock is required to serialize the project BuildKit cache" >&2
+  exit 69
+}
+
+readonly LOCK_FILE="${git_common_directory}/antigravity-ha-build-${REPOSITORY_IDENTITY}.lock"
+exec 9>"$LOCK_FILE"
+flock 9
+
+builder_exists() {
+  "$docker_bin" buildx inspect "$BUILDER_NAME" >/dev/null 2>&1
+}
+
+remove_project_builder() {
+  if ! builder_exists; then
+    return
+  fi
+  "$docker_bin" buildx rm --force "$BUILDER_NAME" >/dev/null
+}
+
+create_project_builder() {
+  # Recover a builder left by an unclean host shutdown before creating the
+  # one instance owned by this serialized build.
+  remove_project_builder
+  "$docker_bin" buildx create \
+    --name "$BUILDER_NAME" \
+    --driver docker-container \
+    --bootstrap >/dev/null
+}
+
+cleanup_managed_images() {
+  local current_image_id=$1
+  local image_id label_checkout label_owner label_managed referenced_container
+  local retained=1
+  local -a image_ids=() repo_tags=()
+
+  mapfile -t image_ids < <(
+    "$docker_bin" image ls \
+      --filter "label=io.antigravity-ha.local-build=true" \
+      --filter "label=io.antigravity-ha.local-build.owner=${LOCAL_IMAGE_OWNER}" \
+      --filter "label=io.antigravity-ha.local-build.checkout=${REPOSITORY_IDENTITY}" \
+      --no-trunc \
+      --format '{{.ID}}' \
+      | awk '!seen[$0]++'
+  )
+  for image_id in "${image_ids[@]}"; do
+    [[ -n $image_id ]] || continue
+    if [[ $image_id == "$current_image_id" ]]; then
+      continue
+    fi
+    if ((retained < LOCAL_IMAGE_RETENTION)); then
+      ((retained += 1))
+      continue
+    fi
+
+    label_managed=$("$docker_bin" image inspect --format \
+      '{{ index .Config.Labels "io.antigravity-ha.local-build" }}' \
+      "$image_id") || continue
+    label_owner=$("$docker_bin" image inspect --format \
+      '{{ index .Config.Labels "io.antigravity-ha.local-build.owner" }}' \
+      "$image_id") || continue
+    label_checkout=$("$docker_bin" image inspect --format \
+      '{{ index .Config.Labels "io.antigravity-ha.local-build.checkout" }}' \
+      "$image_id") || continue
+    [[ $label_managed == true \
+      && $label_owner == "$LOCAL_IMAGE_OWNER" \
+      && $label_checkout == "$REPOSITORY_IDENTITY" ]] \
+      || continue
+
+    mapfile -t repo_tags < <(
+      "$docker_bin" image inspect --format \
+        '{{range .RepoTags}}{{println .}}{{end}}' "$image_id"
+    )
+    for repo_tag in "${repo_tags[@]}"; do
+      [[ $repo_tag == "${LOCAL_IMAGE_REPOSITORY}:"* ]] || {
+        echo "warning: preserved managed image with an external tag: ${image_id}" >&2
+        continue 2
+      }
+    done
+    referenced_container=$("$docker_bin" ps --all --quiet \
+      --filter "ancestor=${image_id}") || continue
+    if [[ -n $referenced_container ]]; then
+      echo "warning: preserved managed image referenced by a container: ${image_id}" >&2
+      continue
+    fi
+    "$docker_bin" image rm --force "$image_id" >/dev/null || {
+      echo "warning: could not remove old managed local image: ${image_id}" >&2
+    }
+  done
+}
+
+case "$command_name" in
+  cache-status)
+    if ! builder_exists; then
+      echo "The project BuildKit cache has not been created."
+      exit 0
+    fi
+    exec "$docker_bin" buildx du --builder "$BUILDER_NAME"
+    ;;
+  cache-prune)
+    if ! builder_exists; then
+      echo "The project BuildKit cache has not been created."
+      exit 0
+    fi
+    remove_project_builder
+    echo "Removed only the Antigravity project BuildKit cache."
+    exit 0
+    ;;
+esac
+
+image_tag=${1:-${LOCAL_IMAGE_REPOSITORY}:local}
+platform=${2:-linux/amd64}
+case "$platform" in
+  linux/amd64) build_arch=amd64 ;;
+  linux/arm64) build_arch=aarch64 ;;
+  *)
+    usage
+    exit 64
+    ;;
+esac
+[[ $image_tag =~ ^antigravity-for-home-assistant:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$ ]] || {
+  echo "invalid local image tag" >&2
+  exit 64
+}
+
+readonly MANIFEST_TOOL="$repository_root/.github/scripts/source-rootfs-manifest.py"
+readonly APP_ROOT="$repository_root/antigravity_home_assistant"
+readonly ROOTFS="$APP_ROOT/rootfs"
+readonly MANIFEST="$ROOTFS/usr/local/share/antigravity-ha/source-rootfs-manifest.json"
+[[ -f $MANIFEST_TOOL && -f $APP_ROOT/Dockerfile && -d $ROOTFS ]] || {
+  echo "App build inputs are incomplete" >&2
+  exit 69
+}
+
+source_revision=$(git -C "$repository_root" rev-parse HEAD)
+[[ $source_revision =~ ^[0-9a-f]{40}$ ]] || {
+  echo "source revision is invalid" >&2
+  exit 69
+}
+source_rootfs_sha256=$(python3 "$MANIFEST_TOOL" create \
+  --root "$ROOTFS" \
+  --manifest "$MANIFEST")
+python3 "$MANIFEST_TOOL" verify-installed \
+  --root "$ROOTFS" \
+  --manifest "$MANIFEST" \
+  --exact >/dev/null
+[[ $source_rootfs_sha256 =~ ^sha256:[0-9a-f]{64}$ ]] || {
+  echo "source rootfs digest is invalid" >&2
+  exit 69
+}
+
+cleanup_build_cache() {
+  remove_project_builder || {
+    echo "warning: could not remove the ephemeral project BuildKit cache" >&2
+  }
+}
+trap cleanup_build_cache EXIT
+
+# buildx create --bootstrap can leave its named builder behind even when the
+# command returns a failure. Arm cleanup before creation so that partial
+# bootstrap failures are covered by the same exact-name cleanup as build
+# failures.
+create_project_builder
+
+"$docker_bin" buildx build \
+  --builder "$BUILDER_NAME" \
+  --platform "$platform" \
+  --load \
+  --build-arg "BUILD_ARCH=${build_arch}" \
+  --build-arg "SOURCE_REVISION=${source_revision}" \
+  --build-arg "SOURCE_ROOTFS_SHA256=${source_rootfs_sha256}" \
+  --label "io.antigravity-ha.local-build=true" \
+  --label "io.antigravity-ha.local-build.owner=${LOCAL_IMAGE_OWNER}" \
+  --label "io.antigravity-ha.local-build.checkout=${REPOSITORY_IDENTITY}" \
+  --tag "$image_tag" \
+  "$APP_ROOT"
+
+current_image_id=$("$docker_bin" image inspect --format '{{.ID}}' "$image_tag")
+[[ $current_image_id =~ ^sha256:[0-9a-f]{64}$ ]] || {
+  echo "built local image ID is invalid" >&2
+  exit 69
+}
+cleanup_managed_images "$current_image_id"
+remove_project_builder
+trap - EXIT
+printf 'Built %s for %s; its ephemeral BuildKit cache was removed.\n' \
+  "$image_tag" "$platform"

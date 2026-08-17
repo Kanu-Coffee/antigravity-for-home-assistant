@@ -1,0 +1,10 @@
+#!/bin/bash -p
+set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
+
+# Antigravity resolves the command runner named "bash" through PATH when its
+# built-in terminal sandbox is disabled.  The native process itself must retain
+# access to the shared HOME for OAuth and global customization, so this
+# image-owned hop is the AppArmor transition point for every run_command shell.
+# Descendants inherit the command profile after the real shell is executed.
+exec /usr/bin/bash "$@"

@@ -4,7 +4,7 @@ FROM ${BUILD_FROM}
 
 ARG DEBIAN_SNAPSHOT=20260812T000000Z
 ARG BUILD_ARCH=amd64
-ARG BUILD_VERSION=2.0.8
+ARG BUILD_VERSION=2.0.9
 ARG SOURCE_REVISION=""
 ARG SOURCE_ROOTFS_SHA256=""
 ARG TARGETARCH
@@ -98,6 +98,7 @@ RUN sed -i \
       | sha256sum --check --strict - \
     && install -m 0755 /tmp/ttyd /usr/local/bin/ttyd \
     && install -d -m 0755 /usr/local/libexec \
+    && install -m 0755 /usr/bin/env /usr/local/libexec/antigravity-native-env \
     && curl --fail --show-error --silent --location \
       --output /tmp/antigravity.tar.gz \
       "https://storage.googleapis.com/antigravity-public/antigravity-cli/${ANTIGRAVITY_VERSION}-${ANTIGRAVITY_BUILD}/${antigravity_platform}/${antigravity_archive}" \
@@ -233,6 +234,7 @@ RUN manifest=/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
       /usr/local/lib/antigravity-ha/environment.sh \
       /usr/local/lib/antigravity-ha/supervisor-credential.sh \
       /usr/local/share/antigravity-ha/AGENTS.md \
+      /usr/local/share/antigravity-ha/antigravity-settings-update.mjs \
       /usr/local/share/antigravity-ha/browser-auth-check.mjs \
       /usr/local/share/antigravity-ha/browser-user-admin.mjs \
       /usr/local/share/antigravity-ha/ha-memory-core.mjs \

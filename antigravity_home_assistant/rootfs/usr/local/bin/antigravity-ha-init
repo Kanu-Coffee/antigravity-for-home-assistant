@@ -58,6 +58,14 @@ if ! jq --exit-status 'type == "object"' /data/options.json >/dev/null; then
   bashio::log.fatal '/data/options.json is missing or invalid'
   exit 1
 fi
+if jq --exit-status '.antigravity_terminal_sandbox == true' \
+  /data/options.json >/dev/null; then
+  bashio::log.warning 'antigravity_terminal_sandbox=true is deprecated and ignored; run_command uses the non-privileged AppArmor command boundary'
+fi
+if jq --exit-status '.antigravity_tool_permission == "proceed-in-sandbox"' \
+  /data/options.json >/dev/null; then
+  bashio::log.warning 'antigravity_tool_permission=proceed-in-sandbox is deprecated and normalized to always-proceed because the privileged native sandbox is unavailable'
+fi
 
 feedback_options_tmp=$(mktemp "${RUNTIME_DIR}/.ha-feedback-options.XXXXXX")
 if ! jq --exit-status '
@@ -74,8 +82,11 @@ if ! jq --exit-status '
     {
       authorized_keys: option_string_array("authorized_keys"),
       web_terminal_auto_start_antigravity: option_bool("web_terminal_auto_start_antigravity"; false),
-      antigravity_tool_permission: option_string("antigravity_tool_permission"; "request-review"),
-      antigravity_terminal_sandbox: option_bool("antigravity_terminal_sandbox"; true),
+      antigravity_tool_permission:
+        (option_string("antigravity_tool_permission"; "always-proceed")
+          | if . == "proceed-in-sandbox" then "always-proceed" else . end),
+      antigravity_terminal_sandbox:
+        (option_bool("antigravity_terminal_sandbox"; false) | false),
       antigravity_sensitive_data_access: option_bool("antigravity_sensitive_data_access"; false),
       browser_approval_policy: option_string("browser_approval_policy"; "safe"),
       antigravity_user_files_update_mode: option_string("antigravity_user_files_update_mode"; "preserve"),

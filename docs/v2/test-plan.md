@@ -55,6 +55,29 @@ terminal failure, 그리고 transport 정상과
 terminal 실패의 구분을 포함해야 한다. source/component fixture는 실제 Bot API
 network, HAOS OAuth/AppArmor 또는 live Telegram 전달 PASS로 확대하지 않는다.
 
+### 2.0.9 Telegram 관리자 권한·변경 승인과 local cache
+
+2.0.9는 새 설치 `always-proceed`, operational default allow, 세 채널의 native sandbox
+무사용과 legacy true/false 입력의 false 정규화, bootstrap/runtime/command AppArmor
+전환, secrets/storage/token/key exact deny, 모든 live-validated HA service 및 일반 YAML patch,
+durable requester/session-bound approval을 검증한다. 관리형 runtime rule은 일반 HA
+service/config 변경을 `ha_change_propose`로 라우팅하고, 이 경로의 모든 App-managed
+broker `service_call`/`config_patch`에 durable 확인을 강제해야 한다. 신뢰된 사용자 전역
+native tool과 direct command/API helper는 broker가 투명하게 intercept하지 않는
+관리자 경로임을 문서 계약으로 고정한다. callback ACK/기본 인증은 긴 model
+작업과 무관하게 즉시 끝나야 하지만 broker 실행은 requester FIFO에서 직렬화되고 실행
+직전 `/new`·`/cancel` 경합과 generation/conversation을 다시 확인해야 한다. restart와
+duplicate callback은 동일 idempotency mutation을 한 번만 접수해야 한다. native
+headless permission prompt는 Telegram으로 resume할 수 없으므로 broker proposal과
+혼동하지 않는다. local build는 per-checkout project builder/cache/image 경계만 지우며
+global prune 부재를 계약 테스트한다. 실제 HAOS와 live Bot API는 별도 증거 전까지
+`NOT RUN`이다.
+
+release build는 stable GHA cache scope를 검사한다. managed-plugin, native user-files
+refresh와 change-broker config backup fixture는 각 범주에서 검증된 완료 transaction의
+최신 총 2개, active journal/result 보존, atomic quarantine crash retry와
+manifestless/unsafe/symlink 보존을 확인한다.
+
 ### 2.1 2026-08-11 local v2 working-tree 증거
 
 | 항목 | 결과 | 정확한 범위 |
@@ -132,7 +155,7 @@ candidate와 HAOS evidence가 생기기 전에는 관련 마일스톤을 `VERIFI
 | --- | --- | --- |
 | AG-001 | `--version` | 정확히 `1.1.13` |
 | AG-002 | help snapshot | 필수 flags/subcommands 일치, 금지 Codex 호출 없음 |
-| AG-003 | wrapper argv | 사용자 argv 보존, 허용된 `--sandbox`만 주입 |
+| AG-003 | wrapper argv | 사용자 argv 보존, native sandbox flag 미주입, enable/disable/assignment 형태 거부 |
 | AG-004 | settings merge | managed key 갱신, unknown/user key byte-semantic 보존 |
 | AG-005 | plugin validation | source와 installed plugin이 공식 schema 통과 |
 | AG-006 | duplicate plugin | global/staged/workspace 이름 충돌 시 fail closed |
@@ -140,9 +163,9 @@ candidate와 HAOS evidence가 생기기 전에는 관련 마일스톤을 `VERIFI
 | AG-008 | OAuth persistence | login 후 restart/update에서 native session 보존 |
 | AG-009 | print stdin | 값 없는 `--print` 없이 pipe된 prompt가 argv/log에 없고 stdin으로 처리 |
 | AG-010 | stream parser | top-level `event`, init/progress/SUCCESS native free-text result, exact completed HA proposal receipt, conversation binding, typed terminal failures, invalid JSON, unknown event, size limit |
-| AG-011 | headless permissions | settings policy와 sandbox가 print mode에서도 적용 |
+| AG-011 | headless permissions | settings policy와 AppArmor command 경계가 print mode에도 적용되고 legacy true/false는 false로 정규화 |
 | AG-012 | forbidden flags | skip-permissions와 Telegram override 거부 |
-| AG-013 | Telegram customization inheritance | user global/workspace plugin·agent·rule·MCP와 settings가 Web/SSH와 동일하게 실행·노출·수정 가능 |
+| AG-013 | Telegram customization inheritance | user global/workspace plugin·agent·rule·MCP를 Web/SSH와 동일하게 실행·노출·수정; shared settings policy 상속, 일반 설정의 매개 patch, raw/protected settings write deny |
 | AG-014 | runtime auto-update disabled | 모든 native launch가 opt-out을 강제하고 updater spawn·binary version/digest 변동이 없음 |
 
 AG-009와 AG-010은 실제 고정 binary의 authenticated test account 또는 비밀 없는
@@ -150,10 +173,12 @@ recorded protocol fixture가 필요하다. fake binary만으로 최종 PASS하�
 
 AG-013의 2026-08-11 actual 1.1.11 control은 shared `/data/home`에서 user global stdio
 MCP가 Google OAuth 인증 완료 전 launch됨을 재현했다. 2.0.7은 이 positive control을
-의도된 관리자 채널 inheritance로 채택한다. global/workspace plugin·agent·rule·MCP와
-settings 수정 canary가 Web/SSH/Telegram에서 같은 결과를 내야 한다. primary OAuth
-backend/path, 실제 로그인 뒤 credential 비유출과 HAOS AppArmor enforce는 아직
-`NOT RUN`이다.
+의도된 관리자 채널 inheritance로 채택한다. global/workspace plugin·agent·rule·MCP
+수정 canary, shared settings policy read canary와 `agy-settings patch` 일반 설정 수정
+canary가 Web/SSH/Telegram에서 같은 결과를 내야 한다. raw `settings.json` write와
+`permissions`, `enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`,
+`artifactReviewPolicy` patch는 모두 거부되어야 한다. primary OAuth backend/path, 실제
+로그인 뒤 credential 비유출과 HAOS AppArmor enforce는 아직 `NOT RUN`이다.
 
 AG-014 control canary는 실제 1.1.11과 clean temporary HOME에서 opt-out 미설정 시
 updater spawn count 1, `AGY_CLI_DISABLE_AUTO_UPDATE=true` 설정 시 0을 먼저 재현한다.
@@ -184,12 +209,13 @@ current amd64 image와 current-source QEMU aarch64 packaging canary는 이 경�
 - structured preview의 secret canary 제거, truncation 표시, digest binding과
   changed-preview confirmation 무효화
 - config backup, temporary patch, failed config check와 atomic rollback
-- canonical root-level input_boolean include만 restricted schema로 파싱하고 broker가
-  expectation을 생성; memory begin → atomic replace/check → `input_boolean.reload` →
-  fresh API memory verify → 실패 시 backup reload 순서를 검증
-- automation/script/theme/임의 YAML은 preview-only이며 supported activation과 fresh API
-  postcondition이 없으면 파일을 쓰거나 end-to-end 성공으로 표시하지 않음
-- persistent `service_call`의 prior-state precondition과 fresh result verify
+- 민감 exact deny 밖의 일반 `/config` YAML에 expected SHA, bounded preview, atomic
+  backup/write, config check와 실패 시 exact restore/recheck를 검증
+- activation 생략 시 `restart_required`; input_boolean/automation/script/scene reload API와
+  input_boolean semantic memory verification을 각각 정확한 completion 범위로 검증
+- live `/api/services` 기반 모든 domain/service, optional 단일/100개 entity,
+  bounded/prototype-safe/redacted-but-digest-bound `service_data`, 단일 entity의 optional
+  prior-state/fresh-result verify와 그 밖의 API-completion-only 보고
 - 별도 typed `device_test`의 light/switch/input_boolean on/off allowlist, no-op/safety
   domain 거부, broker-generated test+restore preview, fresh prior/test/restore 순서와
   test-call error/verification failure에도 always restore
@@ -228,19 +254,26 @@ current amd64 image와 current-source QEMU aarch64 packaging canary는 이 경�
 - local pairing entropy/TTL/single-use/revoke와 unauthorized response
 - `$()`, backtick, quotes, newline, leading dash, Unicode와 oversized input
 - shell false, `--print` 없는 exact argv와 stdin prompt
-- actual 1.1.13에서 user global/workspace plugin·agent·rule·MCP와 native settings의
-  Web/SSH 동등 상속 및 수정 positive canary
+- actual 1.1.13에서 user global/workspace plugin·agent·rule·MCP의 Web/SSH 동등 상속·
+  수정, shared native settings read와 `agy-settings patch` 일반 설정 수정 positive
+  canary. raw write와 다섯 protected key patch는 negative canary
 - per-chat FIFO, global concurrency, queue overflow, cancel와 timeout
+- callback query ACK/기본 인증의 즉시 처리, approved broker execution의 requester FIFO
+  직렬화, execution-boundary generation/conversation/requester/digest 재검증
 - validated update의 HKDF/AES-256-GCM sealed spool, plaintext/token canary 부재,
   fsync-before-transport-offset, ack ciphertext 삭제와 비순차 contiguous commit
 - Bot API transport ack 뒤 process crash/restart replay, wrong-token/tamper fail-closed와
   sealed spool 128 records/2 MiB 경계
 - NDJSON invalid/oversized/missing result/non-zero exit
 - first-run pre-binding, worker/restart/idle 뒤 같은 conversation과 explicit `/new` rotation
-- global tool permission/sandbox/sensitive option 동등 적용과 legacy mode 무시
+- global tool permission/sensitive option 동등 적용, native sandbox flag 부재/override
+  거부, legacy true/false 입력의 false 정규화, legacy Telegram mode 무시
+- bootstrap → runtime → command AppArmor policy, PATH shell/stdio MCP의 command 전환,
+  command OAuth/settings/MCP-config/token deny와 일반 `/config`/network/helper positive path
 - encrypted reply outbox의 pre-send fsync, chunk ack, 429 bounded retry,
   crash/network/timeout/5xx ambiguity 격리와 명시적 `/retry`, 최종 제거
-- high-risk always-confirm matrix와 모든 `service_call`의 human confirmation 강제
+- App-managed broker high-risk always-confirm matrix와 모든 broker
+  `service_call`/`config_patch`의 durable human confirmation 강제
 - cross-user/chat callback, replay, expiry와 preview digest change
 - config replacement 원문을 Bot에 보내지 않고 broker structured preview만
   confirmation에 사용하며 model summary-only preview를 거부
@@ -608,8 +641,7 @@ persistence나 독립 설치 check의 `PASS` 선언만으로는 validation을 �
 Positive:
 
 - interactive worker의 일반 `/config` YAML read/write
-- option `true` interactive sensitive-read `Px` 프로필의 `secrets.yaml`, `.storage`와
-  Recorder DB read-only
+- option `true` interactive sensitive-read `Px` 프로필의 Recorder DB read-only
 - broker의 scoped atomic config transaction
 - memory profile의 DB access
 - browser의 `/run` profile과 loopback gateway
@@ -618,13 +650,15 @@ Positive:
 
 Negative:
 
-- option `false` interactive restricted `Px` 프로필의 `secrets.yaml`, `.storage`,
+- option `false` interactive-runtime-restricted `Px` 프로필의 `secrets.yaml`, `.storage`,
   Recorder DB read/write
-- option `true` interactive sensitive-read `Px` 프로필의 위 세 종류
-  write/rename/truncate/delete
-- browser/memory/broker의 위 세 종류 read/write를 두 option 값에서 모두 거부하고
+- 두 interactive runtime profile 모두에서 `secrets.yaml`, `.storage` read/write 거부
+- option `true` interactive-runtime-sensitive-read `Px` 프로필의 Recorder DB
+  write/rename/truncate/delete 거부
+- browser/memory/broker의 secrets/storage/Recorder read/write를 두 option 값에서 모두 거부하고
   Web/SSH/Telegram Antigravity에는 같은 option profile 적용
-- 모든 profile의 SSH key, App token, backup, SSL과 cloud auth 접근을 두 option 값에서 모두 거부
+- 모든 profile의 SSH key, App token, backup, SSL과 App이 관리하는 표준 cloud-auth
+  경로 접근을 두 option 값에서 모두 거부
 - browser의 `/config`, `/data`, Supervisor endpoint
 - memory의 OAuth/Telegram/SSH/browser credential
 - 모든 unprivileged child의 capability directory와 host paths
@@ -634,16 +668,21 @@ Negative:
 Web/SSH/Telegram Antigravity process는 native Home/session과 사용자 customization을
 위해 `/data/home/**`와 `/config`에 접근한다. primary OAuth credential backend와 exact path가 아직
 검증되지 않았으므로 특정 `.gemini` 경로를 OAuth 필수 경로로 가정해 AppArmor deny
-시험을 설계하지 않는다. 대신 credential canary를 두고 native
-permission/sandbox/command 경계가 임의 file-read 유도를 차단하는지, 원문이 model
-output, Telegram reply, log와 artifact에 없는지를 별도 negative test한다. AppArmor가
-같은 process 안의 정상 인증 read와 유도된 read를 구분하지 못하는 잔여 위험을
+시험을 설계하지 않는다. 대신 credential canary를 두고 native permission과
+bootstrap/runtime/command 경계가 spawned command/stdio MCP의 임의 file-read 유도를
+차단하는지, 원문이 model output, Telegram reply, log와 artifact에 없는지를 별도
+negative test한다. native sandbox는 비특권 container에서 namespace EPERM을 재현하고
+App runtime argv에는 없어야 한다. AppArmor가 같은 process 안의 정상 인증 read와
+유도된 built-in read를 구분하지 못하는 잔여 위험을
 release evidence에 기록하지 않으면 PASS가 아니다.
 
 Telegram에서 실행한 Antigravity에 임의 user global stdio MCP와 workspace agent/rule canary를
 구성하고 인증 전후 discovery 및 수정 결과가 Web/SSH와 같아야 한다. custom MCP child도
-같은 Antigravity profile을 상속하되 Supervisor credential과 coordinator capability는
-계속 deny되어야 한다. shared Home은 credential isolation PASS로 표현하지 않는다.
+command profile로 전환되어 OAuth, settings, MCP config, Supervisor credential과
+coordinator capability가 계속 deny되어야 한다. shared Home은 credential isolation
+PASS로 표현하지 않는다. 사용자가 global plugin/MCP config에 inline한 credential은
+신뢰된 확장 컨텍스트이므로 자동 redaction 보장으로 주장하지 않고, fixture에는 실제
+secret 대신 sentinel만 사용한다.
 
 예상 deny는 test case와 일치해야 한다. 예상하지 않은 `DENIED`와 release run의
 `ALLOWED` complain event가 있으면 PASS가 아니다.

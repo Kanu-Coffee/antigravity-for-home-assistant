@@ -125,8 +125,8 @@ telegram_allowed_chat_ids: []
 authorized_keys: []
 web_terminal_auto_start_antigravity: false
 tmux_session_name: antigravity-ha
-antigravity_tool_permission: request-review
-antigravity_terminal_sandbox: true
+antigravity_tool_permission: always-proceed
+antigravity_terminal_sandbox: false
 antigravity_sensitive_data_access: false
 antigravity_user_files_update_mode: preserve
 home_assistant_browser_auto_auth: true
@@ -144,9 +144,9 @@ log_level: info
 | `authorized_keys` | `[]` | One-line OpenSSH public keys allowed for SSH root login |
 | `web_terminal_auto_start_antigravity` | `false` | Start `agy` once in a new tmux session |
 | `tmux_session_name` | `antigravity-ha` | A 1–64 character session name using `[A-Za-z0-9._-]` |
-| `antigravity_tool_permission` | `request-review` | `request-review`, `proceed-in-sandbox`, `always-proceed`, `strict` |
-| `antigravity_terminal_sandbox` | `true` | Whether Web/SSH/Telegram CLI receives native `--sandbox` |
-| `antigravity_sensitive_data_access` | `false` | Diagnostic read-only access to three sensitive path classes for Web/SSH/Telegram children while AppArmor stays on |
+| `antigravity_tool_permission` | `always-proceed` | `request-review`, `proceed-in-sandbox`, `always-proceed`, `strict` |
+| `antigravity_terminal_sandbox` | `false` | Deprecated no-op compatibility input; neither value enables the native sandbox and both normalize to `false` |
+| `antigravity_sensitive_data_access` | `false` | Diagnostic read-only access to Recorder DB files for Web/SSH/Telegram runtimes while AppArmor stays on |
 | `antigravity_user_files_update_mode` | `preserve` | `preserve`, `refresh_managed`, `reset_v2`; deprecated migration-only `refresh_agents`, `refresh_all` |
 | `home_assistant_browser_auto_auth` | `true` | Manage a local-only, read-only browser identity |
 | `log_level` | `info` | `trace`, `debug`, `info`, `notice`, `warning`, `error`, `fatal` |
@@ -154,16 +154,41 @@ log_level: info
 The App Network setting for `22/tcp` defaults to host port `2224`. It is not a
 JSON option, and you can disable the port when SSH is unused.
 
-Telegram has no separate mode. It follows `antigravity_tool_permission`,
-`antigravity_terminal_sandbox`, and `antigravity_sensitive_data_access` exactly
-like Web and SSH. `always-proceed` and disabling the sandbox do not disable
-AppArmor or a separately required high-risk human confirmation.
+Telegram has no separate mode. It follows `antigravity_tool_permission` and
+`antigravity_sensitive_data_access` exactly like Web and SSH. The 1.1.13 native
+`--sandbox` cannot create namespaces inside the non-privileged HAOS App, so none
+of the three 2.0.9 channels uses it. Commands and stdio tools started by the model
+instead cross a discrete `Px` transition into the
+`antigravity_home_assistant-command` AppArmor profile, with no added host
+privilege. `antigravity_terminal_sandbox` is deprecated no-op input; either value
+normalizes to `false`, and native sandbox argv overrides are rejected.
+`always-proceed` does not disable AppArmor or an App-managed broker's high-risk
+human confirmation.
+
+New installs start with `always-proceed`. Managed permissions give all three
+channels the same operational access to ordinary `/config`, user global plugins,
+agents, skills and rules, URLs, commands, and MCP; the managed `ask`
+bucket is empty so headless Telegram does not stop at a native prompt. Exact
+read/write denies cover `secrets.yaml`, `.storage`, App-owned runtime
+options/tokens, SSH/private keys, and standard cloud-auth paths. Spawned
+command/stdio tools also cannot read the native OAuth backend under AppArmor.
+Other user-created rules are preserved. Inline secrets that
+users put in global plugin/MCP configuration belong to a trusted extension
+context and are outside this guarantee.
+Writing `settings.json` directly through a raw file tool is the exception. For
+an explicit current user request to change an ordinary global setting, obtain
+the current digest with `agy-settings sha256`, then send `expected_sha256` and a
+JSON merge `patch` on stdin to `agy-settings patch`. The helper updates
+atomically but rejects the App-owned `permissions`, `enableTerminalSandbox`,
+`allowNonWorkspaceAccess`, `toolPermission`, and `artifactReviewPolicy` keys.
+Change those five security policies through App options and a restart. User
+plugins, agents, skills, and rules remain shared and directly writable.
 
 ### After changing settings
 
-Save the configuration and restart the App. If you changed native settings,
-plugin or MCP data, or the global permission profile, end and relaunch existing
-Web/SSH Antigravity processes. The Telegram binding survives restart and rotates
+If you changed App options, save them and restart the App. If you changed native
+settings, plugin or MCP data, or the global permission profile, end and relaunch
+existing Web/SSH Antigravity processes. The Telegram binding survives restart and rotates
 only when the user sends `/new`. If the sensitive profile cannot
 attach, that Antigravity launch must fail instead of falling back to
 broader permissions.
@@ -198,9 +223,12 @@ Password and keyboard-interactive login are disabled. Do not port-forward TCP
 
 > [!CAUTION]
 > Telegram is a primary administrator channel equivalent to the CLI. Authorized
-> users can read and modify `/config`, OAuth, and user-created global/workspace
-> plugins, agents, rules, MCP, and permission settings. Protect the bot token,
-> authorized chats, and Telegram accounts like HA administrator credentials.
+> users can use the shared OAuth identity and read and modify `/config` and
+> user-created global/workspace plugins, agents, rules, and MCP customizations.
+> Raw settings writes are an
+> exception; use `agy-settings patch` for ordinary global settings. Protect the
+> bot token, authorized chats,
+> and Telegram accounts like HA administrator credentials.
 > Integrated OAuth, AppArmor, and Bot API E2E on real HAOS remain `NOT RUN`.
 
 Sign in once with `ha-antigravity-login` in the Web UI or SSH. Telegram uses the
@@ -258,19 +286,35 @@ the static lists so Supervisor applies the new options.
 ### Permission and change policy
 
 The Telegram-only `read_only`/`confirm_changes`/`autonomous` modes were removed
-in 2.0.7. Telegram uses the same native `antigravity_tool_permission`, sandbox,
-and sensitive-data settings as Web and SSH. A `telegram_access_mode` saved by
-2.0.6 or earlier is ignored migration input, not an authorization source.
-Separately required human confirmation for high-risk operations such as locks,
-alarms, safety heating/water, host or Core restarts, restores, updates, removals,
-or credential and permission changes cannot be weakened by the global policy.
+in 2.0.7. Telegram uses the same native `antigravity_tool_permission`,
+sensitive-data setting, and AppArmor command boundary as Web and SSH. The native
+nested sandbox is not used. A `telegram_access_mode` saved by 2.0.6 or earlier
+is ignored migration input, not an authorization source. Managed
+runtime rules route ordinary Home Assistant service/config changes through
+`ha_change_propose`. Every App-managed broker `service_call`/`config_patch`
+created that way requires durable Telegram confirmation. Global policy cannot
+downgrade the broker's high-risk classification, including locks, alarms, safety
+heating/water, host or Core restarts, restores, updates, removals, or credential
+and permission changes.
 
 Antigravity 1.1.13 `stream-json` has no protocol for relaying a native interactive
-permission prompt to Telegram and resuming the same turn. App-managed Home Assistant
-changes therefore use same-session Telegram approval buttons, while an arbitrary
-native tool outside the global allow rules may be denied non-interactively under
-`request-review`. The bridge does not add a channel-specific bypass; review it in
-Web/SSH or intentionally change the global `antigravity_tool_permission`.
+permission prompt to Telegram and resuming the same turn. A Telegram button does
+not resume a stopped native tool turn. Managed operational tools pass the default
+allow rules before a prompt; ordinary Home Assistant service/config changes use a
+broker proposal and same-session Telegram approval. An arbitrary native tool covered by a user-
+added global ask/deny rule can still fail headlessly; review it in Web/SSH or
+intentionally change the global permission policy.
+
+Trusted user-installed/global native tools, `command(*)`/`mcp(*)`, direct
+`ha-api`/`supervisor-api`, and ordinary `/config` shell writes inherit the same
+administrator authority as the CLI and are not transparently intercepted by the
+broker. Mutations through those direct paths follow user-owned rules and the
+current explicit request, subject to exact denies and AppArmor. The broker
+guarantees below therefore do not cover every possible native mutation.
+Authenticated Web/SSH direct work may use its native interactive flow and is not
+automatically routed through a Telegram approval button. That is an approval
+transport difference, not a separate HOME, OAuth identity, or global permission
+runtime.
 
 ### Commands and sessions
 
@@ -292,6 +336,13 @@ acknowledges delivery. Clearly unsent 429 responses use bounded backoff; ambiguo
 delivery failures remain isolated until `/retry`. `/cancel` is not a rollback
 command for work already completed externally.
 
+Telegram acknowledges an Approve/Deny callback and performs its basic authorization
+checks immediately, but approved broker execution remains session-serialized in
+the same requester queue. Execution revalidates requester, chat, current session
+generation, conversation, proposal digest, and expiry. `/new`, `/cancel`, restart,
+expiry, and duplicate callbacks cannot execute stale approval state; the broker's
+durable idempotency record admits the same mutation exactly once.
+
 ### Approval security
 
 The Telegram model process receives neither the raw Supervisor token nor the
@@ -303,13 +354,20 @@ A one-time 256-bit capability plus an idempotency key prevents reuse and
 duplicate execution. A changed preview or precondition, or an expired approval,
 requires a new proposal.
 
-The broker-generated YAML preview shows a bounded, secret-redacted before/after
-view plus the full mutation digest. The only configuration change currently
-allowed to write and reload is the single canonical
-`input_boolean: !include <file>.yaml` target in `configuration.yaml`. It succeeds
-only after memory begin, config check, `input_boolean.reload`, and fresh-API
-memory verification; other YAML remains preview-only and is rejected at
-execution.
+Broker previews redact token/secret/password/auth/key/PIN/code/credential-like
+values while binding approval to the raw payload digest. `service_call` validates
+every Home Assistant domain/service against live `GET /api/services`, with an
+optional single entity or array of up to 100 entities and bounded plain-JSON
+`service_data`. Every broker `service_call` is high-risk and requires approval. Fresh
+`expected_state` verification is optional only for a single entity; other calls
+report only REST API completion rather than claiming a state outcome.
+
+`config_patch` supports ordinary YAML below `/config`, excluding `secrets.yaml`,
+`.storage`, and other sensitive hidden paths. It enforces an expected SHA, atomic
+backup/write, and `ha-config-check`, restoring the exact backup and checking again
+on failure. Omitting activation reports `restart_required`; explicit reloads are
+supported for `input_boolean`, `automation`, `script`, and `scene`. Every broker
+`config_patch` is also high-risk and requires approval.
 
 ## Home Assistant capabilities
 
@@ -373,13 +431,13 @@ configuration or a device state.
 
 Use this sequence even in interactive Antigravity when changing HA configuration.
 
-1. Inspect relevant files and the current Git state.
-2. Prepare the smallest diff and a recoverable checkpoint.
-3. Record a memory change expectation for supported persistent changes.
-4. Run `ha-config-check` after editing.
-5. If validation fails, do not reload or restart; fix or restore the scoped
-   change.
-6. After any required reload, verify with a fresh HA API result.
+1. Check that the target is outside sensitive deny paths and record its expected SHA.
+2. Prepare the smallest YAML patch and a secret-redacted preview.
+3. After approval, atomically back up/write and run `ha-config-check`.
+4. On validation failure, restore the exact backup and check again.
+5. Run a supported explicit reload or accurately report `restart_required`.
+6. Include a fresh HA API result in success only for operations that support
+   semantic verification.
 
 Direct `.storage` edits and Recorder database repair are not normal workflows. A
 diagnostic finding alone does not authorize a restart, update, removal, restore,
@@ -399,33 +457,39 @@ profile attach must not fall back to broader permissions.
 
 `antigravity_sensitive_data_access` is not an AppArmor on/off switch. It selects
 the **discrete top-level execution profile (`Px` transition)** used by interactive
-Antigravity started from Ingress or SSH.
+Antigravity started from Ingress, SSH, or Telegram.
 
 | Path class | Default `false` | `true` |
 | --- | --- | --- |
-| `/config/secrets.yaml` | Read/write denied | Diagnostic read-only; write denied |
-| `/config/.storage/**` | Read/write denied | Diagnostic read-only; write denied |
+| `/config/secrets.yaml` | Read/write denied | Read/write denied |
+| `/config/.storage/**` | Read/write denied | Read/write denied |
 | Recorder database and sidecars | Read/write denied | Diagnostic read-only; write denied |
 
-Even with `true`, rename, truncate, delete, locking, database repair, and full
-dumps remain disallowed. Never copy values that were read into output, memory,
-screenshots, proposals, or artifacts. Prefer supported APIs and secret key names.
+Even with `true`, direct secrets/storage access and Recorder rename, truncate,
+delete, locking, database repair, and full dumps remain disallowed. Never copy
+diagnostic values into output, memory, screenshots, proposals, or artifacts.
+Prefer supported APIs and secret key names.
 
 ### Items that stay denied
 
 Regardless of the option, browser, memory, broker, and general shells receive no
 additional sensitive-read access. Web, SSH, and Telegram Antigravity apply this
 option together. SSH private and host keys, App, browser and bot tokens, backups,
-private material under `/config/ssl`, cloud auth, and broker capabilities remain
-denied outside their owning process.
+private material under `/config/ssl`, standard cloud-auth paths, and broker
+capabilities remain denied outside their owning process. Do not place inline
+secrets in global plugin/MCP configuration; use a credential-aware wrapper or a
+protected environment reference.
 
 Web, SSH, and Telegram Antigravity intentionally share `/data/home` and
 `/config`. AppArmor therefore cannot distinguish legitimate OAuth or user-setting
 access from the same access induced by a Telegram prompt or tool. This is the
 product boundary of a primary administrator channel, not an isolation guarantee;
-exact user/chat authentication, native permissions, the sandbox, output
-redaction, and the broker remain defense in depth. Telegram is off by default;
-review the actual HAOS OAuth/AppArmor gate and documented residual risk.
+exact user/chat authentication, native permissions, the spawned-executable
+command transition, output redaction, and the broker add defense in depth. The
+primary OAuth backend's real path and same-process built-in-read non-disclosure
+are not yet verified on real HAOS.
+Telegram is off by default; review the actual HAOS OAuth/AppArmor gate and
+documented residual risk.
 
 ## Updates, migration, and rollback
 
@@ -460,6 +524,22 @@ an existing file is byte-preserved in every mode. HA MCP servers, rules, and
 skills live inside the App plugin. `refresh_managed` and `reset_v2` limit
 re-execution with per-App-version transaction state, but returning the option
 to `preserve` after review is recommended.
+
+Repository developers build source images with `tools/development/build-app`.
+It removes only the project-owned, checkout-hashed Buildx builder/cache on exit,
+never performs a global Docker prune, and keeps the two newest unreferenced local
+images owned by that checkout. Reusable release builds use the stable
+`antigravity-home-assistant` GHA cache scope. This does not manage the HAOS
+Supervisor image lifecycle.
+
+The App prunes backups only after recovery, update, or config transactions end
+successfully or unchanged. Managed-plugin transactions under
+`/data/antigravity-ha/backups/plugin-*`, native user-files refreshes under
+`backups/native-files/refresh-*`, and config patches under
+`change-broker/backups/*` each retain the two newest entries whose ownership
+manifest and root-owned, symlink-free completed tree validate. Older eligible
+entries are removed through atomic quarantine. Active journal/result backups
+and manifest-less, unsafe, or symlinked trees are never auto-deleted.
 
 ### v1 migration cautions
 

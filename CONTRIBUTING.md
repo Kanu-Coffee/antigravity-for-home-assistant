@@ -61,12 +61,15 @@ instead of copying commands from historical documents.
 For an amd64 image and its main smoke suite:
 
 ```bash
-docker build \
-  --platform linux/amd64 \
-  --tag antigravity-for-home-assistant:test \
-  antigravity_home_assistant
+tools/development/build-app build antigravity-for-home-assistant:test linux/amd64
 bash tests/docker-smoke.sh antigravity-for-home-assistant:test
 ```
+
+The build helper uses an ephemeral project-owned, per-checkout Buildx builder,
+removes only that builder's BuildKit cache on exit, and retains at most the two
+newest unreferenced images carrying this checkout's managed labels. It never runs
+a global Docker prune. Use `tools/development/build-app cache-status` or
+`cache-prune` for this checkout only.
 
 Smoke scripts are invoked with `bash` and an explicit image argument; do not rely
 on their executable bit or run `./tests/docker-smoke.sh` without an image. The CI

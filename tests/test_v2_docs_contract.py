@@ -207,9 +207,9 @@ def test_known_release_blockers_cannot_be_marked_verified() -> None:
 
     required_fragments = (
         "broker-generated secret-safe bounded structured diff",
-        "`input_boolean.reload`",
-        "`memory_begin_change`",
-        "`memory_verify_change`",
+        "expected SHA",
+        "exact restore/recheck",
+        "모든 App-managed broker config patch",
         "실제 HAOS safe change",
     )
     for fragment in required_fragments:
@@ -294,7 +294,8 @@ def test_telegram_shared_context_inheritance_is_local_and_haos_gate_remains() ->
         "test-plan.md": (
             "shared `/data/home`·`/config`",
             "positive inheritance",
-            "settings 수정 canary",
+            "shared settings policy read canary",
+            "`agy-settings patch` 일반 설정 수정",
             "실제 HAOS",
         ),
         "checklist.md": (
@@ -358,7 +359,7 @@ def test_architecture_matches_current_s6_and_runtime_socket_graph() -> None:
     assert "defaults/" not in architecture
     assert "ha-telegram-worker" not in architecture
     assert "telegram-plugin.sh" not in architecture
-    assert '"target": "input_booleans.yaml"' in architecture
+    assert '"target": "automations.yaml"' in architecture
     assert '"targets"' not in architecture
 
     telegram = read(V2 / "telegram-spec.md")
@@ -379,6 +380,9 @@ def test_architecture_matches_current_s6_and_runtime_socket_graph() -> None:
         'format: "device-test-plan-v1"',
         "expected_prior_state",
         "always: true",
+        'kind: "automation_reload" | "script_reload" | "scene_reload"',
+        'format: "ha-service-call-v1"',
+        "service_data: Record<string, unknown>",
     ):
         assert fragment in proposal_section, f"Telegram proposal schema drift: {fragment}"
     for forbidden in (
@@ -393,6 +397,140 @@ def test_architecture_matches_current_s6_and_runtime_socket_graph() -> None:
         assert forbidden not in proposal_section, (
             f"Telegram public proposal uses non-wire field: {forbidden}"
         )
+
+
+def test_v209_docs_define_shared_default_allow_and_scoped_durable_broker_boundary() -> None:
+    documents = {
+        name: re.sub(r"\s+", " ", read(path))
+        for name, path in {
+            "readme-ko": ROOT / "README.md",
+            "readme-en": ROOT / "README.en.md",
+            "docs-ko": ROOT / "antigravity_home_assistant" / "DOCS.md",
+            "docs-en": ROOT / "antigravity_home_assistant" / "DOCS.en.md",
+            "contract": V2 / "antigravity-contract.md",
+            "telegram": V2 / "telegram-spec.md",
+            "security": V2 / "security.md",
+            "migration": V2 / "migration-release.md",
+        }.items()
+    }
+    for name in ("readme-ko", "readme-en", "docs-ko", "docs-en"):
+        assert "always-proceed" in documents[name], f"{name} omits new-install default"
+        assert "service_data" in documents[name], f"{name} omits all-service payload"
+        assert "secrets.yaml" in documents[name] and ".storage" in documents[name]
+        assert "ha_change_propose" in documents[name], (
+            f"{name} omits the managed broker routing boundary"
+        )
+        assert "command(*)" in documents[name] and "mcp(*)" in documents[name], (
+            f"{name} omits direct administrator paths"
+        )
+
+    assert '"ask": []' in documents["contract"]
+    assert '"mcp(*)"' in documents["contract"]
+    assert "broker가 투명하게" in documents["contract"]
+    assert "재개하는 protocol" in documents["telegram"]
+    assert "requester FIFO" in documents["telegram"]
+    assert "exactly" in documents["telegram"] or "정확히 한 번" in documents["telegram"]
+    assert "모든 App-managed broker `service_call`과 `config_patch`" in documents["security"]
+    assert "가능한 모든 native mutation을 포괄하지 않는다" in documents["security"]
+    assert "antigravity_terminal_sandbox" in documents["contract"]
+    assert "deprecated/no-op" in documents["contract"]
+    assert "`true`와 `false`를 모두 `false`로 정규화" in documents["contract"]
+    assert "effective native argv contains no native sandbox flag" in documents["contract"]
+    assert "antigravity_home_assistant-command" in documents["contract"]
+    assert "full_access" in documents["contract"] and "SYS_ADMIN" in documents["contract"]
+    assert "`settings.json` 직접 write는 default-allow의 exact deny" in documents["contract"]
+    assert "`agy-settings sha256`" in documents["contract"]
+    assert "`agy-settings patch`" in documents["contract"]
+    for protected_key in (
+        "`permissions`",
+        "`enableTerminalSandbox`",
+        "`allowNonWorkspaceAccess`",
+        "`toolPermission`",
+        "`artifactReviewPolicy`",
+    ):
+        assert protected_key in documents["contract"]
+    assert "Telegram button으로 자동 broker되지 않는다" in documents["telegram"]
+    assert "antigravity-ha-local-<checkout-hash>" in documents["migration"]
+    assert "io.antigravity-ha.local-build.owner" in documents["migration"]
+    assert "cache-gha-scope: antigravity-home-assistant" in documents["migration"]
+    assert "experimental numeric prerelease" in documents["migration"]
+    assert "MIG-010` 완료, stable 또는 v2 수용으로 표시할 수 없" in documents["migration"]
+    assert "evidence-complete acceptance" in documents["migration"]
+    assert "managed-plugin transaction" in documents["migration"]
+    assert "최신 총 두 개" in documents["migration"]
+    assert "user-files" in documents["migration"]
+    assert "change-broker" in documents["migration"]
+
+    translation_ko = read(ROOT / "antigravity_home_assistant" / "translations" / "ko.yaml")
+    translation_en = read(ROOT / "antigravity_home_assistant" / "translations" / "en.yaml")
+    assert "터미널 샌드박스(폐기 예정)" in translation_ko
+    assert "어느 값이든 false로 정규화" in translation_ko
+    assert "terminal sandbox (deprecated)" in translation_en
+    assert "normalizes either value to false" in translation_en
+
+
+def test_v209_docs_match_native_sandbox_and_mediated_settings_policy() -> None:
+    paths = (
+        ROOT / "README.md",
+        ROOT / "README.en.md",
+        ROOT / "antigravity_home_assistant" / "DOCS.md",
+        ROOT / "antigravity_home_assistant" / "DOCS.en.md",
+        ROOT / "antigravity_home_assistant" / "CHANGELOG.md",
+        V2 / "antigravity-contract.md",
+        V2 / "architecture.md",
+        V2 / "checklist.md",
+        V2 / "decisions.md",
+        V2 / "migration-release.md",
+        V2 / "product-spec.md",
+        V2 / "security.md",
+        V2 / "telegram-spec.md",
+        V2 / "test-plan.md",
+    )
+    forbidden = (
+        "mandatory native sandbox",
+        "native `--sandbox`는 세 채널 모두 필수",
+        "native `--sandbox`를 강제",
+        "native `--sandbox`를 항상 추가",
+        "normalized to `true`",
+        "`false`도 `true`로 정규화",
+        "legacy false 입력의 true 정규화",
+    )
+    for path in paths:
+        text = read(path)
+        for fragment in forbidden:
+            assert fragment not in text, (
+                f"{path.relative_to(ROOT)} retains obsolete native sandbox claim: "
+                f"{fragment}"
+            )
+
+    contract = read(V2 / "antigravity-contract.md")
+    assert '"write_file(/data/home/.gemini/antigravity-cli/settings.json)"' in (
+        contract.split('"deny": [', 1)[1]
+    )
+    assert '"write_file(/data/home/.gemini/antigravity-cli/settings.json)"' not in (
+        contract.split('"allow": [', 1)[1].split('"ask": []', 1)[0]
+    )
+    assert "raw file tool" in contract
+    assert "`agy-settings sha256`" in contract
+    assert "`agy-settings patch`" in contract
+    for protected_key in (
+        "`permissions`",
+        "`enableTerminalSandbox`",
+        "`allowNonWorkspaceAccess`",
+        "`toolPermission`",
+        "`artifactReviewPolicy`",
+    ):
+        assert protected_key in contract
+
+    security = re.sub(r"\s+", " ", read(V2 / "security.md"))
+    for fragment in (
+        "interactive-runtime-restricted",
+        "interactive-runtime-sensitive-read",
+        "antigravity_home_assistant-command",
+        "전체 same-process credential isolation 보장이 아니다",
+        "실제 HAOS `NOT RUN`",
+    ):
+        assert fragment in security
 
 
 def test_device_test_and_transport_ownership_milestones_match_local_evidence() -> None:
@@ -499,7 +637,7 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
         "telegram_session_delivery",
     }
     template = json.loads(read(V2 / "release-evidence-template.json"))
-    assert template["version"] == "2.0.8"
+    assert template["version"] == "2.0.9"
     assert set(template["gates"]) == expected_gates
     assert "HA-008" not in json.dumps(template, sort_keys=True)
     for gate in template["gates"].values():

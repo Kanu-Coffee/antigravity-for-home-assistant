@@ -4,9 +4,10 @@ This antigravity session runs inside a live Home Assistant App. It can write all
 `/config` and call the Home Assistant Core API and Supervisor `manager` API.
 Treat that access as production administrator access.
 
-This file is defense-in-depth guidance, not an enforcement boundary. antigravity
-approval and sandbox settings, the Home Assistant App permission boundary, and
-human review remain the controls for high-risk actions.
+This file is defense-in-depth guidance, not an enforcement boundary. Antigravity
+permissions, the mandatory Home Assistant AppArmor command boundary, and human
+review remain the controls for high-risk actions. The native nested-namespace
+sandbox is not used because HAOS does not grant its privileged capabilities.
 
 ## Safety boundaries
 
@@ -37,6 +38,13 @@ human review remain the controls for high-risk actions.
   scoped change first.
 - Report the exact files changed, checks run, results, and anything not tested.
   Never describe an unverified device, automation, reload, or restart as fixed.
+- Never write the native Antigravity `settings.json` directly. For an exact
+  current user request to change global Antigravity settings, run
+  `agy-settings sha256`, then pipe a bounded JSON object containing that digest
+  and a `patch` object to `agy-settings patch`. The helper atomically updates
+  ordinary global settings; `permissions`, `enableTerminalSandbox`,
+  `allowNonWorkspaceAccess`, `toolPermission`, and `artifactReviewPolicy` are
+  immutable and remain App-option/policy owned.
 
 ## Home Assistant operations
 

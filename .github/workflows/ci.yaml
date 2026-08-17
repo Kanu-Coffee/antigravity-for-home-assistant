@@ -263,22 +263,10 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
       - name: Build local Home Assistant App image
-        run: |
-          source_revision=$(git rev-parse HEAD)
-          source_rootfs_sha256=$(python3 .github/scripts/source-rootfs-manifest.py \
-            create \
-            --root antigravity_home_assistant/rootfs \
-            --manifest antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/source-rootfs-manifest.json)
-          python3 .github/scripts/source-rootfs-manifest.py verify-installed \
-            --root antigravity_home_assistant/rootfs \
-            --manifest antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
-            --exact >/dev/null
-          docker build \
-            --platform linux/amd64 \
-            --build-arg "SOURCE_REVISION=${source_revision}" \
-            --build-arg "SOURCE_ROOTFS_SHA256=${source_rootfs_sha256}" \
-            --tag antigravity-for-home-assistant:test \
-            antigravity_home_assistant
+        run: >-
+          tools/development/build-app build
+          antigravity-for-home-assistant:test
+          linux/amd64
 
       - name: Export the image once for independent smoke jobs
         run: |
@@ -386,25 +374,10 @@ jobs:
           platforms: arm64
 
       - name: Build local arm64 Home Assistant App image under QEMU
-        env:
-          DOCKER_BUILDKIT: "1"
-        run: |
-          source_revision=$(git rev-parse HEAD)
-          source_rootfs_sha256=$(python3 .github/scripts/source-rootfs-manifest.py \
-            create \
-            --root antigravity_home_assistant/rootfs \
-            --manifest antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/source-rootfs-manifest.json)
-          python3 .github/scripts/source-rootfs-manifest.py verify-installed \
-            --root antigravity_home_assistant/rootfs \
-            --manifest antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
-            --exact >/dev/null
-          docker build \
-            --platform linux/arm64 \
-            --build-arg BUILD_ARCH=aarch64 \
-            --build-arg "SOURCE_REVISION=${source_revision}" \
-            --build-arg "SOURCE_ROOTFS_SHA256=${source_rootfs_sha256}" \
-            --tag antigravity-for-home-assistant:arm64-test \
-            antigravity_home_assistant
+        run: >-
+          tools/development/build-app build
+          antigravity-for-home-assistant:arm64-test
+          linux/arm64
 
       - name: Run arm64 packaging smoke under QEMU
         run: >-

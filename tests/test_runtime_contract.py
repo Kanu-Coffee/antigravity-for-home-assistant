@@ -151,7 +151,7 @@ def test_native_self_updater_is_disabled_at_every_antigravity_boundary(
         launcher = (rootfs / "usr/local/libexec" / launcher_name).read_text(
             encoding="utf-8"
         )
-        assert "exec /usr/bin/env -i" in launcher
+        assert "exec /usr/local/libexec/antigravity-native-env -i" in launcher
         assert disable_contract in launcher
     assert disable_contract in telegram_runtime
     assert 'AGY_CLI_DISABLE_AUTO_UPDATE: "true"' in telegram_bridge
@@ -212,8 +212,11 @@ def test_ci_builds_and_smokes_both_supported_architectures(
     assert "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130" in (
         workflow
     )
-    assert "--platform linux/arm64" in workflow
-    assert "--build-arg BUILD_ARCH=aarch64" in workflow
+    assert workflow.count("tools/development/build-app build") == 2
+    assert "docker build" not in workflow
+    assert "docker buildx" not in workflow
+    assert "linux/amd64" in workflow
+    assert "linux/arm64" in workflow
     assert "tests/arm64-emulated-smoke.sh" in workflow
     assert "--platform linux/arm64" in arm64_smoke
     assert "AGY_CLI_DISABLE_AUTO_UPDATE" in arm64_smoke
@@ -361,7 +364,12 @@ def test_native_plugin_has_home_assistant_safety_rules(rootfs: Path) -> None:
 
     assert "live Home Assistant App" in guidance
     assert "Diagnosis does not authorize" in guidance
-    assert "Run `ha-config-check`" in guidance
+    assert "run `ha-config-check`" in normalized_guidance
+    assert "requester-bound Telegram session" in guidance
+    assert "route every\n  Home Assistant service call" in guidance
+    assert "authenticated interactive Web-terminal or SSH session" in guidance
+    assert "shared native home" in normalized_guidance
+    assert "no separate inline approval card" in normalized_guidance
     assert "SUPERVISOR_TOKEN" in guidance
     assert "http://127.0.0.1:8099/" in guidance
     assert "logs, web pages" in normalized_guidance
@@ -480,10 +488,14 @@ def test_supervisor_credential_is_not_inherited_by_agent_surfaces(rootfs: Path) 
 def test_antigravity_cli_uses_only_native_cli_contract(rootfs: Path) -> None:
     wrapper = (rootfs / "usr/local/bin/antigravity").read_text(encoding="utf-8")
     assert "antigravity_ha_config_bool" in wrapper
-    assert "antigravity_terminal_sandbox true" in wrapper
-    assert "antigravity_HA_NATIVE_ARGS+=(--sandbox)" in wrapper
+    assert "terminal_sandbox" not in wrapper
+    assert "antigravity_HA_NATIVE_ARGS" not in wrapper
+    assert "terminal_sandbox=$(" not in wrapper
     assert "--dangerously-skip-permissions is disabled" in wrapper
-    assert '"${antigravity_HA_NATIVE_ARGS[@]}" "$@"' in wrapper
+    assert "native sandbox overrides are disabled" in wrapper
+    for override in ("--sandbox", "--no-sandbox"):
+        assert override in wrapper
+    assert 'exec "${antigravity_HA_LAUNCHER}" "$@"' in wrapper
     assert "approval_policy" not in wrapper
     assert "sandbox_mode" not in wrapper
     assert "ANTIGRAVITY_TOKEN" not in wrapper
@@ -529,7 +541,8 @@ def test_sensitive_data_option_selects_only_the_gated_interactive_launcher(
     assert "stat -c '%u:%a:%h'" in sensitive
     assert "!= 0:400:1" in sensitive
     for launcher in (restricted, sensitive):
-        assert "exec /usr/bin/env -i" in launcher
+        assert "exec /usr/local/libexec/antigravity-native-env -i" in launcher
+        assert "PATH=/usr/local/libexec/antigravity-command-bin:" in launcher
         assert "/usr/local/libexec/antigravity-real" in launcher
 
     assert (
@@ -541,6 +554,38 @@ def test_sensitive_data_option_selects_only_the_gated_interactive_launcher(
     assert 'mv -f "${sensitive_access_tmp}" "${SENSITIVE_DATA_ACCESS_MARKER}"' in (
         init_script
     )
+
+
+def test_global_settings_updates_use_the_validated_atomic_helper(rootfs: Path) -> None:
+    wrapper = (rootfs / "usr/local/bin/agy-settings").read_text(encoding="utf-8")
+    helper = (
+        rootfs
+        / "usr/local/share/antigravity-ha/antigravity-settings-update.mjs"
+    ).read_text(encoding="utf-8")
+
+    assert wrapper.splitlines()[:3] == [
+        "#!/bin/bash -p",
+        "set -Eeuo pipefail",
+        "unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN",
+    ]
+    assert "user-files-update.lock" in wrapper
+    assert "/usr/bin/flock --exclusive --nonblock 9" in wrapper
+    assert "exec /usr/bin/node" in wrapper
+    for protected in (
+        '"permissions"',
+        '"enableTerminalSandbox"',
+        '"allowNonWorkspaceAccess"',
+        '"toolPermission"',
+        '"artifactReviewPolicy"',
+    ):
+        assert protected in helper
+    assert "expected_sha256" in helper
+    assert "O_NOFOLLOW" in helper
+    assert "O_EXCL" in helper
+    assert "fsyncSync" in helper
+    assert "renameSync(temporary, SETTINGS_PATH)" in helper
+    assert "request accepts only expected_sha256 and patch" in helper
+    assert "JSON patch exceeds the structural limit" in helper
 
 
 def test_init_starts_background_tmux(rootfs: Path) -> None:

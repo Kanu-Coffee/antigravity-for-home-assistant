@@ -1,0 +1,13 @@
+#!/bin/bash -p
+set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
+
+readonly LOCK_PATH=/run/antigravity-ha/user-files-update.lock
+exec 9>"${LOCK_PATH}"
+if ! /usr/bin/flock --exclusive --nonblock 9; then
+  printf '%s\n' 'agy-settings: another settings update is active' >&2
+  exit 75
+fi
+
+exec /usr/bin/node \
+  /usr/local/share/antigravity-ha/antigravity-settings-update.mjs "$@"

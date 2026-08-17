@@ -36,7 +36,7 @@ Web/SSH/Telegram Antigravity, browser와 memory process는 원문 대신 scoped 
 | --- | --- | --- |
 | App init과 credential file boundary | 최고 | 원본 Supervisor credential, option secret, root-only runtime file 생성 |
 | change broker | 높음 | typed proposal 검증, 원자적 `/config` 변경, 제한된 HA mutation |
-| Web/SSH/Telegram Antigravity | 관리자 에이전트 | 공유 `/data/home`, `/config`, OAuth, global/workspace plugin·agent·rule·MCP와 native 권한. option에 따라 민감정보 제한/진단-read child 선택 |
+| Web/SSH/Telegram Antigravity | 관리자 에이전트 | 공유 `/data/home`, `/config`, OAuth, global/workspace plugin·agent·rule·MCP와 native 권한. option에 따라 restricted/diagnostic-read runtime 선택; spawned command/tool은 별도 profile |
 | Telegram bridge | 신뢰된 transport orchestrator | user/chat 인증, session binding, queue, sealed reply outbox, delivery retry와 approval callback 검증 |
 | browser gateway/Chromium | 비신뢰 web content 처리 | loopback HA frontend와 read-only identity |
 | memory daemon/MCP | 제한된 data processor | bounded catalog와 semantic memory. raw credential 없음 |
@@ -84,6 +84,8 @@ base
 
 /usr/local/libexec/
 ├─ antigravity-real
+├─ antigravity-native-env
+├─ antigravity-command-bin/bash
 ├─ antigravity-interactive-restricted
 ├─ antigravity-interactive-sensitive-read
 ├─ ha-sshd-runtime
@@ -205,12 +207,23 @@ Telegram token을 파일명, argv 또는 persisted queue에 넣지 않는다. `s
    global plugin 경로에 다시 설치한다. marker 없는 same-name plugin은 fail closed한다.
 5. `agy plugin validate <path>`와 `agy plugin list`가 실패하면 plugin capability를
    시작하지 않는다.
-6. interactive wrapper는 `/config`에서 native binary를 `exec`하고 option에 따라
-   `--sandbox`를 추가한다.
+6. interactive wrapper는 `/config`에서 native binary를 실행한다. 비특권 HAOS에서
+   namespace clone이 실패하는 native `--sandbox`는 추가하지 않고 enable/disable
+   override를 모두 거부한다. legacy `antigravity_terminal_sandbox`는 deprecated/no-op
+   compatibility 입력으로 받아 어느 값이든 `false`로 정규화하고 warning을 남긴다.
 7. `antigravity_sensitive_data_access=false`면 `interactive-restricted`, `true`면
-   `interactive-sensitive-read` 별도 top-level 실행 프로필로 `Px` 전환한다. 두 경우
-   모두 AppArmor는 enforce이며 조건부 세 경로의 write와 나머지 민감 경로 접근은
-   거부한다.
+   `interactive-sensitive-read` bootstrap profile로 discrete `Px` transition한다. 이
+   bootstrap은 HOME/OAuth를 열지 않고 clean environment copy를 통해 image-owned
+   `antigravity-real`로 한 번 더 전환한다. 실제 CLI는 각각
+   `interactive-runtime-restricted` 또는 `interactive-runtime-sensitive-read`에서 shared
+   HOME/OAuth와 global customization을 로드한다. 두 경우 모두 AppArmor는 enforce이며
+   true runtime만 Recorder DB 진단 read를 추가한다.
+8. runtime profile에서 시작하는 `/bin`, `/usr/bin`, `/usr/sbin`, `/config`, `/tmp`와
+   executable global customization은 discrete `Px` transition으로
+   `antigravity_home_assistant-command` profile에 들어간다. managed helper는 더 좁은
+   기존 specialized profile을 유지한다. command descendant는 일반 `/config`, network와
+   제한 helper를 쓸 수 있지만 OAuth backend, App 관리 settings/MCP config와 runtime
+   credential을 읽거나 쓸 수 없다.
 
 ## 6. 주요 데이터 흐름
 
@@ -219,19 +232,32 @@ Telegram token을 파일명, argv 또는 persisted queue에 넣지 않는다. `s
 ```text
 user → Ingress/SSH/Telegram → agy → native permissions → plugin MCP → broker/API
                              │
-                             └→ AppArmor interactive 실행 프로필 선택
-                                 ├─ restricted: 세 조건부 경로 read/write deny
-                                 └─ sensitive-read: 세 조건부 경로 read-only
+                             └→ AppArmor bootstrap `Px` → CLI runtime profile
+                                 ├─ restricted: Recorder DB read/write deny
+                                 └─ sensitive-read: Recorder DB read-only
+                                      │
+                                      └→ spawned executable `Px`
+                                          → command: OAuth/settings/token deny
 ```
 
-세 조건부 경로는 `secrets.yaml`, `.storage/**`와 `/config` 아래 configurable/nested
-Recorder SQLite DB(`*.db`, `*.sqlite`, `*.sqlite3` 및 wal/shm/journal/backup 후보)다.
+`secrets.yaml`과 `.storage/**`는 두 profile 모두 직접 접근을 거부한다. 선택 profile의
+유일한 차이는 `/config` 아래 configurable/nested Recorder SQLite DB(`*.db`,
+`*.sqlite`, `*.sqlite3` 및 wal/shm/journal/backup 후보)의 진단용 읽기다.
 browser, memory, broker, 일반 shell과 SSH key/App token/backup/SSL/cloud auth 경로는
 이 선택의 영향을 받지 않는다. Telegram Antigravity에는 Web/SSH와 같은 profile을
 적용한다.
 
 사용자가 TUI에서 승인해도 AppArmor deny와 broker의 고위험 정책은 해제되지
 않는다.
+
+native CLI의 built-in file tool처럼 runtime process 안에서 끝나는 동작과 trusted
+extension은 executable transition으로 투명하게 가로챌 수 없다. App 관리
+`settings.json`의 raw write는 native permission exact deny로 막되, 일반 전역 설정은
+digest-bound `agy-settings patch`가 별도 settings-update profile에서 매개 수정한다.
+helper는 `permissions`, `enableTerminalSandbox`, `allowNonWorkspaceAccess`,
+`toolPermission`, `artifactReviewPolicy`를 거부한다. spawned command와 stdio MCP는
+command profile에 둔다. 인증된 Web/SSH의 현재 명시적 요청은 trusted direct tool
+경로를 사용할 수 있으며 Telegram broker button으로 자동 변환하지 않는다.
 
 SSH daemon은 `/usr/local/libexec/ha-sshd-runtime`이 `Px`로 전환한 별도 top-level
 실행 프로필에서 host private key와 `authorized_keys`만 read한다. 인증된 shell은 root
@@ -259,6 +285,18 @@ terminal result를 검증한 뒤 Telegram-safe text로 변환한다. 이 실행�
 회전하지 않는다. 결과는 암호화된 영속 outbox에 기록한 뒤 Telegram API가 전송을
 확인하면 제거한다. 429처럼 미전송이 명확한 실패만 bounded retry하고 crash·network·
 timeout·5xx처럼 전달 여부가 모호한 send는 `/retry`까지 격리한다.
+
+승인/거절 callback의 Telegram ACK와 기본 인증, `/new`·`/cancel` 같은 control update는
+즉시 처리한다. 승인된 broker 실행은 같은 requester FIFO에서 session-serialized되며
+실행 직전 durable approval과 현재 session generation,
+conversation, requester, chat, proposal/digest/expiry를 모두 다시 맞춘다. restart와
+duplicate callback에도 broker의 idempotency key가 같은 mutation을 한 번만 접수한다.
+이는 session/control routing 원칙이며 native headless tool prompt의 resume protocol은
+아니다. 운영 native tool은 managed default allow에서 통과시키고, 관리형 runtime rule은
+일반 HA service/config 변경을 `ha_change_propose` broker proposal 경계로 라우팅한다.
+이 경계의 durable Telegram 확인은 모든 App-managed broker `service_call`/
+`config_patch`에 적용된다. 신뢰된 사용자 전역 native tool과 direct command/API
+helper는 관리자 권한을 상속하며 broker가 투명하게 가로채지 않는다.
 
 ### 6.3 브라우저
 
@@ -307,6 +345,13 @@ credential lifecycle 권한이 필요하므로 scoped privileged helper로 분�
 
 ## 7. 변경 broker 계약
 
+이 계약은 `ha_change_propose`로 제출된 App-managed broker operation에 적용된다.
+`command(*)`/`mcp(*)`, 직접 `ha-api`/`supervisor-api`, 일반 `/config` shell write와
+신뢰된 사용자 설치·전역 native tool은 같은 관리자 채널의 권한을 상속하며 broker가
+투명하게 intercept하지 않는다. 관리형 runtime rule은 일반 HA service/config 변경을
+broker로 라우팅하지만, 직접 경로의 mutation은 exact deny와 AppArmor 안에서 사용자
+rule과 현재 명시적 요청을 따른다.
+
 proposal은 최소 다음 필드를 가진 typed envelope다.
 
 ```json
@@ -317,7 +362,7 @@ proposal은 최소 다음 필드를 가진 typed envelope다.
   "requester": {"surface": "telegram", "user_id": "...", "chat_id": "..."},
   "preview": {
     "format": "yaml-line-diff-v1",
-    "target": "input_booleans.yaml",
+    "target": "automations.yaml",
     "change_kind": "update",
     "expected_sha256": "sha256:...",
     "replacement_sha256": "sha256:...",
@@ -330,12 +375,7 @@ proposal은 최소 다음 필드를 가진 typed envelope다.
     "omitted_before_lines": 0,
     "omitted_after_lines": 0,
     "truncated": false,
-    "activation": {
-      "kind": "input_boolean_reload",
-      "reload_service": "input_boolean.reload",
-      "configuration_sha256": "sha256:...",
-      "changes": []
-    }
+    "activation": {"kind": "automation_reload"}
   },
   "preview_digest": "sha256:...",
   "expires_at": "RFC3339 timestamp"
@@ -371,12 +411,19 @@ transient `device_test`는 persistent `service_call`과 다른 preview 형식을
 - target은 canonical path로 정규화하고 symlink, hardlink, device와 path traversal을
   거부한다.
 - 승인 capability는 proposal, requester, digest와 expiry에 묶인 1회용 값이다.
-- 실행 가능한 첫 config 변경은 canonical root-level input boolean include에 한정한다.
-  기존 fresh state와 backup → memory begin → atomic candidate → config check →
-  `input_boolean.reload` → fresh API memory verify 순서다.
-- 실패 시 원자 교체 전에는 원본이 유지되고, 교체 후 실패는 검증된 backup으로
-  rollback/reload/API verify하거나 명시적 in-doubt 상태를 보고한다. 다른 YAML은
-  human-reviewable preview만 제공하고 실행 시 fail closed한다.
+- `service_call`은 live `GET /api/services`로 모든 domain/service를 검증한다. target은
+  optional 단일 entity 또는 최대 100개 배열이고 `service_data`는 prototype key를
+  거부하는 bounded plain JSON이다. 모든 broker service call은 high-risk durable
+  Telegram confirmation 대상이다.
+  `expected_state`/`verify_state`는 단일 entity에서만 선택 지원하며 그 밖에는 REST API
+  completion 이상을 주장하지 않는다.
+- `config_patch`는 민감 exact deny 경로를 제외한 `/config` 내 일반 YAML을 대상으로
+  expected SHA → atomic backup/write → config check 순서로 실행한다. 검사 실패는 exact
+  backup restore와 재검사로 rollback한다. activation 생략은 `restart_required`, 명시적
+  activation은 `input_boolean_reload`, `automation_reload`, `script_reload`,
+  `scene_reload`만 지원한다. 모든 broker config patch는 high-risk durable Telegram
+  confirmation 대상이다.
+- preview는 credential 계열 값을 redaction하되 승인 digest는 raw payload에 묶는다.
 - `device_test`는 `light`, `switch`, `input_boolean`의 `turn_on`/`turn_off`만 허용하고
   expected prior와 test target이 같으면 거부한다. fresh prior read → test call → fresh
   test verify 뒤 성공/실패와 무관하게 prior-state service → fresh restore verify를

@@ -1,12 +1,13 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
 import {
   chmod,
-  copyFile,
   lstat,
   mkdir,
   open,
   readFile,
+  readdir,
   realpath,
   rename,
   rm,
@@ -24,31 +25,49 @@ export const DEFAULT_CONFIG_ROOT = "/config";
 export const DEFAULT_DATA_ROOT = "/data/antigravity-ha/change-broker";
 
 const SERVER_NAME = "antigravity-ha-change-broker";
-const SERVER_VERSION = "1.2.0";
+const SERVER_VERSION = "1.3.0";
 const STATE_VERSION = 1;
 const MAX_SOCKET_MESSAGE_BYTES = 1024 * 1024;
 const MAX_CONFIG_BYTES = 1024 * 1024;
 const MAX_API_RESPONSE_BYTES = 1024 * 1024;
+// GET /api/services includes descriptions and field selectors for every
+// integration, so a large installation legitimately exceeds the ordinary
+// state/execute response ceiling. Keep this endpoint bounded separately.
+const MAX_SERVICE_REGISTRY_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_PUBLIC_PREVIEW_BYTES = 16 * 1024;
 const MAX_PREVIEW_LINES_PER_SIDE = 12;
 const MAX_PREVIEW_LINE_CODEPOINTS = 80;
 const MAX_MEMORY_COMMAND_BYTES = 64 * 1024;
+const MAX_SERVICE_DATA_BYTES = 64 * 1024;
+const MAX_SERVICE_DATA_DEPTH = 12;
+const MAX_SERVICE_DATA_NODES = 2048;
+const MAX_SERVICE_DATA_ARRAY_ITEMS = 512;
 const MAX_ACTIVATION_HELPERS = 50;
 const MAX_PROPOSALS = 128;
 const MAX_COMPLETED_ENTRIES = 256;
+const BACKUP_MANIFEST_VERSION = 2;
+const BACKUP_OWNER = "antigravity-for-home-assistant";
+const BACKUP_KIND = "ha-config-patch";
+const BACKUP_RETENTION = 2;
+const BACKUP_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/u;
+const BACKUP_PRUNE_QUARANTINE_PATTERN =
+  /^\.([A-Za-z0-9_-]{22})\.prune-([0-9a-f]{12})$/u;
 const DEFAULT_PROPOSAL_TTL_SECONDS = 120;
 const MAX_PROPOSAL_TTL_SECONDS = 300;
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 const SUPPORTED_CONFIG_EXTENSIONS = new Set([".yaml", ".yml"]);
-const SUPPORTED_CONFIG_ACTIVATIONS = new Set(["input_boolean_reload"]);
-const SUPPORTED_SERVICE_CALLS = new Set([
-  "input_boolean.turn_off",
-  "input_boolean.turn_on",
-  "light.turn_off",
-  "light.turn_on",
-  "switch.turn_off",
-  "switch.turn_on",
+const CONFIG_ACTIVATION_SERVICES = new Map([
+  ["input_boolean_reload", "input_boolean.reload"],
+  ["automation_reload", "automation.reload"],
+  ["script_reload", "script.reload"],
+  ["scene_reload", "scene.reload"],
 ]);
+const CONFIG_ACTIVATION_TARGETS = new Map([
+  ["automation_reload", "automations.yaml"],
+  ["script_reload", "scripts.yaml"],
+  ["scene_reload", "scenes.yaml"],
+]);
+const SUPPORTED_CONFIG_ACTIVATIONS = new Set(CONFIG_ACTIVATION_SERVICES.keys());
 // Keep transient tests as a separate operation contract even though the first
 // service leg currently has the same narrow domain/service allowlist as a
 // persistent service call. A device test must always execute and verify its
@@ -62,16 +81,10 @@ const SUPPORTED_DEVICE_TESTS = new Set([
   "switch.turn_on",
 ]);
 const UNSUPPORTED_OPERATIONS = new Set(["restart", "update", "restore", "delete"]);
-const HIGH_RISK_CONFIG_NAMES = new Set([
-  "automations.yaml",
-  "configuration.yaml",
-  "scenes.yaml",
-  "scripts.yaml",
-]);
-const HIGH_RISK_TEXT = /(?:\b(?:alarm|boiler|credential|delete|door|garage|gate|heat|host|lock|password|restart|restore|secret|token|valve|water)\b|(?:경보|난방|도어|문|물|밸브|보일러|비밀번호|삭제|열기|잠금|재시작|토큰))/iu;
-const HIGH_RISK_CONFIG_CONTENT = /(?:alarm_control_panel\s*\.\s*alarm_disarm|cover\s*\.\s*open_cover|homeassistant\s*\.\s*(?:restart|stop)|lock\s*\.\s*unlock|shell_command\s*:|command_line\s*:|rest_command\s*:|python_script\s*:|update\s*\.\s*install)/iu;
 const SENSITIVE_YAML_KEY = /(?:^|[_\s-])(?:access[_\s-]?key|api[_\s-]?key|auth(?:orization)?|bearer|client[_\s-]?secret|credential|email|key|latitude|location|longitude|pass(?:code|phrase|word)?|pin|private[_\s-]?key|secret|ssid|token|username|webhook)(?:$|[_\s-])|(?:비밀|암호|토큰|인증|자격)/iu;
 const SENSITIVE_YAML_VALUE = /(?:!secret\b|-----BEGIN [A-Z ]*PRIVATE KEY-----|\bbearer\s+\S|(?:password|passcode|secret|token|api[_-]?key|authorization)\s*[=:]|[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b)/iu;
+const SENSITIVE_SERVICE_KEY = /(?:^|[_\s-])(?:access[_\s-]?key|api[_\s-]?key|auth(?:orization)?|bearer|client[_\s-]?secret|code|credential|key|pass(?:code|phrase|word)?|pin|private[_\s-]?key|secret|token)(?:$|[_\s-])/iu;
+const UNSAFE_JSON_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const SENSITIVE_PATH_SEGMENTS = new Set([
   ".cloud",
   ".ssh",
@@ -85,10 +98,13 @@ const SOCKET_ACTIONS = Object.freeze({
 });
 
 export class BrokerError extends Error {
-  constructor(code, message) {
+  constructor(code, message, { httpStatus = null } = {}) {
     super(message);
     this.name = "BrokerError";
     this.code = code;
+    this.httpStatus = Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599
+      ? httpStatus
+      : null;
   }
 }
 
@@ -572,6 +588,26 @@ function yamlLines(value) {
   return value.toString("utf8").split("\n").map((line) => line.replace(/\r$/u, ""));
 }
 
+function publicConfigActivation(activationPlan) {
+  if (activationPlan === null) {
+    return {
+      kind: "none",
+      executable: true,
+      apply_result: "restart_required",
+    };
+  }
+  const result = {
+    kind: activationPlan.kind,
+    reload_service: activationPlan.reload_service,
+    executable: true,
+  };
+  if (activationPlan.kind === "input_boolean_reload") {
+    result.configuration_sha256 = activationPlan.configuration_sha256;
+    result.changes = activationPlan.changes;
+  }
+  return result;
+}
+
 function buildConfigPatchPreview(payload, current, activationPlan) {
   const beforeLines = yamlLines(current.content);
   const afterLines = yamlLines(Buffer.from(payload.content));
@@ -604,18 +640,7 @@ function buildConfigPatchPreview(payload, current, activationPlan) {
     target: payload.path,
     expected_sha256: payload.expected_sha256,
     replacement_sha256: replacementSha256,
-    activation: activationPlan
-      ? {
-          kind: activationPlan.kind,
-          reload_service: activationPlan.reload_service,
-          configuration_sha256: activationPlan.configuration_sha256,
-          changes: activationPlan.changes,
-        }
-      : {
-          kind: "none",
-          executable: false,
-          reason: "supported_activation_contract_required",
-        },
+    activation: publicConfigActivation(activationPlan),
   }));
   const preview = {
     format: "yaml-line-diff-v1",
@@ -636,18 +661,7 @@ function buildConfigPatchPreview(payload, current, activationPlan) {
     truncated: beforeSelection.omitted > 0 || afterSelection.omitted > 0 ||
       [...beforeSanitized.values(), ...afterSanitized.values()]
         .some((line) => line.truncated),
-    activation: activationPlan
-      ? {
-          kind: activationPlan.kind,
-          reload_service: activationPlan.reload_service,
-          configuration_sha256: activationPlan.configuration_sha256,
-          changes: activationPlan.changes,
-        }
-      : {
-          kind: "none",
-          executable: false,
-          reason: "supported_activation_contract_required",
-        },
+    activation: publicConfigActivation(activationPlan),
   };
   if (Buffer.byteLength(JSON.stringify(preview)) > MAX_PUBLIC_PREVIEW_BYTES) {
     throw new BrokerError("preview_too_large", "safe configuration preview exceeded the limit");
@@ -749,11 +763,119 @@ function normalizeEntityId(value) {
   });
 }
 
+function normalizeServiceEntityTarget(value) {
+  if (value === undefined) return null;
+  if (typeof value === "string") return normalizeEntityId(value);
+  if (!Array.isArray(value) || value.length < 1 || value.length > 100) {
+    throw new BrokerError(
+      "invalid_request",
+      "payload.entity_id must be one entity or a bounded entity array",
+    );
+  }
+  const normalized = value.map((item) => normalizeEntityId(item));
+  if (new Set(normalized).size !== normalized.length) {
+    throw new BrokerError("invalid_request", "payload.entity_id contains duplicates");
+  }
+  return normalized;
+}
+
+function normalizeServiceData(value) {
+  if (value === undefined) return {};
+  if (!isPlainObject(value)) {
+    throw new BrokerError("invalid_request", "payload.service_data must be an object");
+  }
+  const state = { nodes: 0 };
+  const visit = (candidate, depth) => {
+    state.nodes += 1;
+    if (state.nodes > MAX_SERVICE_DATA_NODES || depth > MAX_SERVICE_DATA_DEPTH) {
+      throw new BrokerError("invalid_request", "payload.service_data exceeds its structure limit");
+    }
+    if (
+      candidate === null ||
+      typeof candidate === "boolean" ||
+      (typeof candidate === "number" && Number.isFinite(candidate))
+    ) {
+      return candidate;
+    }
+    if (typeof candidate === "string") {
+      if (
+        candidate.length > MAX_SERVICE_DATA_BYTES ||
+        /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(candidate)
+      ) {
+        throw new BrokerError("invalid_request", "payload.service_data contains an invalid string");
+      }
+      return candidate;
+    }
+    if (Array.isArray(candidate)) {
+      if (candidate.length > MAX_SERVICE_DATA_ARRAY_ITEMS) {
+        throw new BrokerError("invalid_request", "payload.service_data array exceeds its limit");
+      }
+      return candidate.map((item) => visit(item, depth + 1));
+    }
+    if (!isPlainObject(candidate)) {
+      throw new BrokerError("invalid_request", "payload.service_data contains a non-JSON value");
+    }
+    const entries = [];
+    for (const [key, item] of Object.entries(candidate)) {
+      if (
+        key.length < 1 ||
+        key.length > 128 ||
+        UNSAFE_JSON_KEYS.has(key) ||
+        /[\u0000-\u001f\u007f]/u.test(key)
+      ) {
+        throw new BrokerError("invalid_request", "payload.service_data contains an unsafe key");
+      }
+      entries.push([key, visit(item, depth + 1)]);
+    }
+    return Object.fromEntries(entries);
+  };
+  const normalized = visit(value, 0);
+  if (Buffer.byteLength(JSON.stringify(normalized)) > MAX_SERVICE_DATA_BYTES) {
+    throw new BrokerError("invalid_request", "payload.service_data exceeds its byte limit");
+  }
+  return normalized;
+}
+
+function servicePreviewValue(value, key = "", depth = 0) {
+  if (SENSITIVE_SERVICE_KEY.test(key)) return "<redacted>";
+  if (typeof value === "string") {
+    if (
+      SENSITIVE_YAML_VALUE.test(value) ||
+      /-----BEGIN [A-Z ]*PRIVATE KEY-----/u.test(value) ||
+      /[A-Za-z0-9_+/-]{48,}={0,2}/u.test(value)
+    ) {
+      return "<redacted>";
+    }
+    const bounded = previewCodePoints(value, 160);
+    return bounded.truncated ? bounded.value : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => servicePreviewValue(item, key, depth + 1));
+  }
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([childKey, item]) => [
+        childKey,
+        servicePreviewValue(item, childKey, depth + 1),
+      ]),
+    );
+  }
+  return value;
+}
+
 function normalizeServiceCallPayload(value) {
   const payload = assertPlainObject(value, "payload");
   assertOnlyKeys(
     payload,
-    new Set(["domain", "service", "entity_id", "expected_state"]),
+    new Set([
+      "domain",
+      "service",
+      "entity_id",
+      "service_data",
+      "return_response",
+      "expected_state",
+      "verify_state",
+    ]),
     "payload",
   );
   const domain = requireString(payload.domain, "payload.domain", {
@@ -764,23 +886,53 @@ function normalizeServiceCallPayload(value) {
     max: 64,
     pattern: /^[a-z][a-z0-9_]*$/u,
   });
-  if (!SUPPORTED_SERVICE_CALLS.has(`${domain}.${service}`)) {
-    throw new BrokerError("unsupported_service", "service call is outside the minimal allowlist");
+  const entityId = normalizeServiceEntityTarget(payload.entity_id);
+  const serviceData = normalizeServiceData(payload.service_data);
+  if (own(serviceData, "entity_id")) {
+    throw new BrokerError(
+      "invalid_request",
+      "payload.service_data.entity_id must use payload.entity_id",
+    );
   }
-  const entityId = normalizeEntityId(payload.entity_id);
-  if (!entityId.startsWith(`${domain}.`)) {
-    throw new BrokerError("invalid_request", "entity domain does not match service domain");
+  const singularEntityId = typeof entityId === "string" ? entityId : null;
+  const returnResponse = payload.return_response === undefined
+    ? false
+    : payload.return_response;
+  if (typeof returnResponse !== "boolean") {
+    throw new BrokerError("invalid_request", "payload.return_response must be a boolean");
   }
-  const expectedState = requireString(payload.expected_state, "payload.expected_state", {
-    max: 16,
-    pattern: /^(?:off|on)$/u,
-  });
+  const expectedState = payload.expected_state === undefined
+    ? null
+    : requireString(payload.expected_state, "payload.expected_state", { max: 255 });
+  let verifyState = payload.verify_state === undefined
+    ? null
+    : requireString(payload.verify_state, "payload.verify_state", { max: 255 });
+  if ((expectedState !== null || verifyState !== null) && singularEntityId === null) {
+    throw new BrokerError(
+      "invalid_request",
+      "state preconditions and verification require one payload.entity_id",
+    );
+  }
+  if (verifyState !== null && expectedState === null) {
+    throw new BrokerError(
+      "invalid_request",
+      "payload.verify_state requires payload.expected_state",
+    );
+  }
+  if (verifyState === null && expectedState !== null && service === "turn_on") {
+    verifyState = "on";
+  }
+  if (verifyState === null && expectedState !== null && service === "turn_off") {
+    verifyState = "off";
+  }
   return {
     domain,
     service,
     entity_id: entityId,
+    service_data: serviceData,
+    return_response: returnResponse,
     expected_state: expectedState,
-    verify_state: service === "turn_on" ? "on" : "off",
+    verify_state: verifyState,
   };
 }
 
@@ -831,35 +983,11 @@ function normalizeDeviceTestPayload(value) {
   };
 }
 
-function classifyRisk(operation, payload, summary, activationPlan = null) {
-  if (operation === "config_patch") {
-    if (
-      payload.activation?.kind !== "input_boolean_reload" ||
-      activationPlan?.kind !== "input_boolean_reload" ||
-      !Array.isArray(activationPlan.changes) ||
-      !activationPlan.changes.every((change) => change.change_kind === "update") ||
-      !/^[a-z][a-z0-9_-]*\.ya?ml$/u.test(payload.path)
-    ) {
-      return "high";
-    }
-    if (
-      HIGH_RISK_CONFIG_NAMES.has(basename(payload.path)) ||
-      HIGH_RISK_TEXT.test(payload.path.replace(/[./_-]+/gu, " ")) ||
-      HIGH_RISK_TEXT.test(summary) ||
-      HIGH_RISK_CONFIG_CONTENT.test(payload.content) ||
-      SENSITIVE_YAML_KEY.test(payload.content) ||
-      SENSITIVE_YAML_VALUE.test(payload.content)
-    ) {
-      return "high";
-    }
-    return "low";
-  }
-  if (operation === "service_call") {
-    return "high";
-  }
-  if (operation === "device_test") {
-    return "high";
-  }
+function classifyRisk() {
+  // Every persisted file replacement and service action is shown to and
+  // confirmed by the bound Telegram requester. This avoids treating a
+  // syntactically small request as autonomous when its semantic impact depends
+  // on Home Assistant integration behavior.
   return "high";
 }
 
@@ -935,6 +1063,74 @@ async function fsyncDirectory(path) {
     await handle.sync();
   } finally {
     await handle.close();
+  }
+}
+
+function exactIsoTimestamp(value, label) {
+  const milliseconds = typeof value === "string" ? Date.parse(value) : Number.NaN;
+  if (
+    !Number.isFinite(milliseconds) ||
+    new Date(milliseconds).toISOString() !== value
+  ) {
+    throw new BrokerError("unsafe_storage", `${label} timestamp is invalid`);
+  }
+  return milliseconds;
+}
+
+async function readPrivateBackupFile(path, requiredUid, maximum = MAX_CONFIG_BYTES) {
+  let handle;
+  try {
+    handle = await open(
+      path,
+      fsConstants.O_RDONLY |
+        fsConstants.O_NOFOLLOW |
+        fsConstants.O_NONBLOCK,
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") return undefined;
+    throw error;
+  }
+  try {
+    const before = await handle.stat();
+    if (
+      !before.isFile() ||
+      before.isSymbolicLink() ||
+      before.uid !== requiredUid ||
+      before.nlink !== 1 ||
+      (before.mode & 0o777) !== 0o600 ||
+      before.size > maximum
+    ) {
+      throw new BrokerError("unsafe_storage", "change backup file metadata is unsafe");
+    }
+    const content = await handle.readFile();
+    const after = await handle.stat();
+    if (
+      !after.isFile() ||
+      after.uid !== requiredUid ||
+      after.nlink !== 1 ||
+      (after.mode & 0o777) !== 0o600 ||
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      before.ctimeMs !== after.ctimeMs
+    ) {
+      throw new BrokerError("unsafe_storage", "change backup changed while it was read");
+    }
+    return content;
+  } finally {
+    await handle.close();
+  }
+}
+
+function parseBackupJson(content, label) {
+  if (content === undefined) {
+    throw new BrokerError("unsafe_storage", `${label} is missing`);
+  }
+  try {
+    return JSON.parse(content.toString("utf8"));
+  } catch {
+    throw new BrokerError("unsafe_storage", `${label} is invalid JSON`);
   }
 }
 
@@ -1159,6 +1355,7 @@ export class ChangeBroker {
     this.capabilities = new Map();
     this.idempotency = new Map();
     this.executionJobs = new Map();
+    this.activeBackupIds = new Set();
     this.servers = new Map();
     this.executionTail = Promise.resolve();
     this.configRootReal = null;
@@ -1193,6 +1390,9 @@ export class ChangeBroker {
     await ensurePrivateDirectory(this.dataRoot, this.requiredUid);
     await ensurePrivateDirectory(this.backupRoot, this.requiredUid);
     await this.#loadIdempotencyState();
+    await this.#pruneCompletedBackups().catch(() => {
+      this.audit("backup_retention_deferred", { reason: "safe_cleanup_failed" });
+    });
     this.initialized = true;
   }
 
@@ -1303,23 +1503,41 @@ export class ChangeBroker {
           "config target does not match the proposed expected digest",
         );
       }
-      if (normalized.payload.activation !== null) {
-        const configurationTarget = await this.#resolveConfigTarget("configuration.yaml");
-        const configuration = await this.#readConfigTarget(configurationTarget);
-        if (!configuration.exists) {
-          throw new BrokerError("unsupported_activation", "configuration.yaml is unavailable");
-        }
-        activationPlan = inputBooleanActivationPlan(normalized.payload, current, configuration);
-      }
+      activationPlan = await this.#prepareConfigActivation(
+        normalized.payload,
+        current,
+      );
       preview = buildConfigPatchPreview(normalized.payload, current, activationPlan);
     } else if (normalized.operation === "service_call") {
+      await this.#assertServiceAvailable(
+        normalized.payload.domain,
+        normalized.payload.service,
+      );
       preview = {
+        format: "ha-service-call-v1",
         summary: normalized.summary,
         service: `${normalized.payload.domain}.${normalized.payload.service}`,
         entity_id: normalized.payload.entity_id,
-        expected_state: normalized.payload.expected_state,
-        verify_state: normalized.payload.verify_state,
+        service_data: servicePreviewValue(normalized.payload.service_data),
+        return_response: normalized.payload.return_response,
+        precondition: normalized.payload.expected_state === null
+          ? { kind: "none" }
+          : {
+              kind: "fresh_entity_state",
+              entity_id: normalized.payload.entity_id,
+              expected_state: normalized.payload.expected_state,
+            },
+        verification: normalized.payload.verify_state === null
+          ? { kind: "api_completion" }
+          : {
+              kind: "fresh_entity_state",
+              entity_id: normalized.payload.entity_id,
+              expected_state: normalized.payload.verify_state,
+            },
       };
+      if (Buffer.byteLength(JSON.stringify(preview)) > MAX_PUBLIC_PREVIEW_BYTES) {
+        throw new BrokerError("preview_too_large", "safe service preview exceeded the limit");
+      }
     } else {
       preview = {
         format: "device-test-plan-v1",
@@ -1548,12 +1766,13 @@ export class ChangeBroker {
       result = safeExecutionResult(error, proposal.operation);
     }
     const completedAtMs = this.now();
+    const completedAt = new Date(completedAtMs).toISOString();
     const completedEntry = {
       status: "completed",
       proposal_id: proposal.proposal_id,
       preview_digest: proposal.preview_digest,
       operation: proposal.operation,
-      completed_at: new Date(completedAtMs).toISOString(),
+      completed_at: completedAt,
       expires_at_ms: completedAtMs + IDEMPOTENCY_TTL_MS,
       result,
     };
@@ -1562,22 +1781,43 @@ export class ChangeBroker {
       await this.#persistIdempotencyState();
     } catch {
       this.idempotency.set(scopeDigest, inProgressEntry);
+      this.executionJobs.delete(scopeDigest);
       throw new BrokerError(
         "execution_in_doubt",
         "execution result could not be durably recorded",
       );
+    }
+    try {
+      try {
+        await this.#markBackupCompleted(proposal, result, completedAt);
+      } catch {
+        this.audit("backup_completion_deferred", {
+          operation: proposal.operation,
+          reason: "ownership_or_durability_check_failed",
+        });
+      } finally {
+        this.activeBackupIds.delete(proposal.proposal_id);
+      }
+      await this.#pruneCompletedBackups(new Set([proposal.proposal_id])).catch(() => {
+        this.audit("backup_retention_deferred", {
+          operation: proposal.operation,
+          reason: "safe_cleanup_failed",
+        });
+      });
+      this.proposals.delete(proposal.proposal_id);
+      this.audit("execution_completed", {
+        operation: proposal.operation,
+        risk: proposal.risk,
+        status: result.status,
+        reason: result.reason || "ok",
+        requester: requesterHash(requester),
+      });
+      return result;
     } finally {
+      // execute_status must not expose the durable result as completed until
+      // backup completion and retention have also reached a terminal state.
       this.executionJobs.delete(scopeDigest);
     }
-    this.proposals.delete(proposal.proposal_id);
-    this.audit("execution_completed", {
-      operation: proposal.operation,
-      risk: proposal.risk,
-      status: result.status,
-      reason: result.reason || "ok",
-      requester: requesterHash(requester),
-    });
-    return result;
   }
 
   async startExecution(input) {
@@ -1774,26 +2014,284 @@ export class ChangeBroker {
     }
   }
 
+  #protectedBackupIds(extra = new Set()) {
+    const protectedIds = new Set([...this.activeBackupIds, ...extra]);
+    for (const entry of this.idempotency.values()) {
+      if (
+        entry.status === "in_progress" &&
+        typeof entry.proposal_id === "string" &&
+        BACKUP_ID_PATTERN.test(entry.proposal_id)
+      ) {
+        protectedIds.add(entry.proposal_id);
+      }
+    }
+    return protectedIds;
+  }
+
+  async #inspectCompletedBackup(path, proposalId, { requireCompletion = true } = {}) {
+    const rootStats = await lstat(path);
+    if (
+      rootStats.isSymbolicLink() ||
+      !rootStats.isDirectory() ||
+      rootStats.uid !== this.requiredUid ||
+      (rootStats.mode & 0o777) !== 0o700
+    ) {
+      throw new BrokerError("unsafe_storage", "change backup directory is unsafe");
+    }
+    const names = (await readdir(path)).sort();
+    const allowed = new Set(["completed.json", "manifest.json", "original"]);
+    if (
+      names.length < 1 ||
+      new Set(names).size !== names.length ||
+      names.some((name) => !allowed.has(name))
+    ) {
+      throw new BrokerError("unsafe_storage", "change backup has unexpected content");
+    }
+    const manifestContent = await readPrivateBackupFile(
+      join(path, "manifest.json"),
+      this.requiredUid,
+      MAX_SOCKET_MESSAGE_BYTES,
+    );
+    const manifest = parseBackupJson(manifestContent, "change backup manifest");
+    if (
+      !isPlainObject(manifest) ||
+      manifest.version !== BACKUP_MANIFEST_VERSION ||
+      manifest.owner !== BACKUP_OWNER ||
+      manifest.kind !== BACKUP_KIND ||
+      manifest.proposal_id !== proposalId ||
+      manifest.config_root !== this.configRootReal ||
+      typeof manifest.target !== "string" ||
+      manifest.target.length < 1 ||
+      manifest.target.length > 1024 ||
+      typeof manifest.existed !== "boolean" ||
+      typeof manifest.original_sha256 !== "string" ||
+      !Number.isInteger(manifest.original_mode) ||
+      manifest.original_mode < 0 ||
+      manifest.original_mode > 0o777
+    ) {
+      throw new BrokerError("unsafe_storage", "change backup manifest is not App-owned");
+    }
+    exactIsoTimestamp(manifest.created_at, "change backup creation");
+    const expectedNames = new Set(["manifest.json"]);
+    if (manifest.existed) {
+      if (!/^sha256:[0-9a-f]{64}$/u.test(manifest.original_sha256)) {
+        throw new BrokerError("unsafe_storage", "change backup digest is invalid");
+      }
+      expectedNames.add("original");
+      const original = await readPrivateBackupFile(
+        join(path, "original"),
+        this.requiredUid,
+        MAX_CONFIG_BYTES,
+      );
+      if (
+        original === undefined ||
+        sha256Digest(original) !== manifest.original_sha256
+      ) {
+        throw new BrokerError("unsafe_storage", "change backup content failed verification");
+      }
+    } else if (manifest.original_sha256 !== "missing") {
+      throw new BrokerError("unsafe_storage", "missing-target backup digest is invalid");
+    }
+    let completedAtMs = null;
+    if (requireCompletion) {
+      expectedNames.add("completed.json");
+      const completion = parseBackupJson(
+        await readPrivateBackupFile(
+          join(path, "completed.json"),
+          this.requiredUid,
+          MAX_SOCKET_MESSAGE_BYTES,
+        ),
+        "change backup completion marker",
+      );
+      if (
+        !isPlainObject(completion) ||
+        completion.version !== BACKUP_MANIFEST_VERSION ||
+        completion.owner !== BACKUP_OWNER ||
+        completion.kind !== BACKUP_KIND ||
+        completion.proposal_id !== proposalId ||
+        !new Set(["failed", "succeeded"]).has(completion.result_status) ||
+        typeof completion.result_sha256 !== "string" ||
+        !/^sha256:[0-9a-f]{64}$/u.test(completion.result_sha256)
+      ) {
+        throw new BrokerError(
+          "unsafe_storage",
+          "change backup completion marker is not App-owned",
+        );
+      }
+      completedAtMs = exactIsoTimestamp(
+        completion.completed_at,
+        "change backup completion",
+      );
+    }
+    if (
+      names.length !== expectedNames.size ||
+      names.some((name) => !expectedNames.has(name))
+    ) {
+      throw new BrokerError(
+        "unsafe_storage",
+        "change backup is incomplete or contains extra files",
+      );
+    }
+    return { completedAtMs, manifest, rootStats };
+  }
+
+  async #markBackupCompleted(proposal, result, completedAt) {
+    if (
+      result.backup_id !== proposal.proposal_id ||
+      !new Set(["failed", "succeeded"]).has(result.status)
+    ) {
+      return false;
+    }
+    const backupDirectory = join(this.backupRoot, proposal.proposal_id);
+    await this.#inspectCompletedBackup(backupDirectory, proposal.proposal_id, {
+      requireCompletion: false,
+    });
+    await atomicWrite(
+      join(backupDirectory, "completed.json"),
+      `${JSON.stringify({
+        version: BACKUP_MANIFEST_VERSION,
+        owner: BACKUP_OWNER,
+        kind: BACKUP_KIND,
+        proposal_id: proposal.proposal_id,
+        result_status: result.status,
+        result_sha256: sha256Digest(stableStringify(result)),
+        completed_at: completedAt,
+      })}\n`,
+      0o600,
+    );
+    await fsyncDirectory(backupDirectory);
+    await this.#inspectCompletedBackup(backupDirectory, proposal.proposal_id);
+    return true;
+  }
+
+  async #removeCompletedBackup(path, proposalId) {
+    const before = await lstat(path);
+    await this.#inspectCompletedBackup(path, proposalId);
+    const quarantine = join(
+      this.backupRoot,
+      `.${proposalId}.prune-${randomBytes(6).toString("hex")}`,
+    );
+    await rename(path, quarantine);
+    await fsyncDirectory(this.backupRoot);
+    try {
+      const moved = await lstat(quarantine);
+      if (
+        moved.isSymbolicLink() ||
+        !moved.isDirectory() ||
+        moved.uid !== this.requiredUid ||
+        moved.dev !== before.dev ||
+        moved.ino !== before.ino
+      ) {
+        throw new BrokerError("unsafe_storage", "change backup changed during quarantine");
+      }
+      await this.#inspectCompletedBackup(quarantine, proposalId);
+      await rm(quarantine, {
+        force: false,
+        maxRetries: 2,
+        recursive: true,
+        retryDelay: 20,
+      });
+      await fsyncDirectory(this.backupRoot);
+    } catch (error) {
+      try {
+        await lstat(path);
+      } catch (pathError) {
+        if (pathError?.code === "ENOENT") {
+          await rename(quarantine, path).catch(() => {});
+          await fsyncDirectory(this.backupRoot).catch(() => {});
+        }
+      }
+      throw error;
+    }
+  }
+
+  async #pruneCompletedBackups(extraPreserve = new Set()) {
+    const preserve = this.#protectedBackupIds(extraPreserve);
+    const candidates = [];
+    for (const name of (await readdir(this.backupRoot)).sort()) {
+      const quarantined = BACKUP_PRUNE_QUARANTINE_PATTERN.exec(name);
+      if (quarantined) {
+        const proposalId = quarantined[1];
+        if (preserve.has(proposalId)) continue;
+        const path = join(this.backupRoot, name);
+        try {
+          await this.#inspectCompletedBackup(path, proposalId);
+          await rm(path, {
+            force: false,
+            maxRetries: 2,
+            recursive: true,
+            retryDelay: 20,
+          });
+          await fsyncDirectory(this.backupRoot);
+        } catch {
+          // Unsafe, incomplete, or concurrently changed entries stay untouched.
+        }
+        continue;
+      }
+      if (!BACKUP_ID_PATTERN.test(name)) continue;
+      const path = join(this.backupRoot, name);
+      try {
+        const inspected = await this.#inspectCompletedBackup(path, name);
+        candidates.push({ name, path, ...inspected });
+      } catch {
+        // Exact App ownership and a completed transaction were not established.
+      }
+    }
+    candidates.sort((left, right) =>
+      right.completedAtMs - left.completedAtMs ||
+        right.name.localeCompare(left.name));
+    const retained = new Set(
+      candidates.filter(({ name }) => preserve.has(name)).map(({ name }) => name),
+    );
+    for (const candidate of candidates) {
+      if (retained.has(candidate.name)) continue;
+      if (retained.size < BACKUP_RETENTION) {
+        retained.add(candidate.name);
+        continue;
+      }
+      try {
+        await this.#removeCompletedBackup(candidate.path, candidate.name);
+      } catch {
+        // Retention must not change a completed execution into an App failure.
+      }
+    }
+  }
+
   async #createBackup(proposal, current) {
     const backupDirectory = join(this.backupRoot, proposal.proposal_id);
     await mkdir(backupDirectory, { mode: 0o700 });
+    await fsyncDirectory(this.backupRoot);
+    this.activeBackupIds.add(proposal.proposal_id);
     const info = await lstat(backupDirectory);
-    if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== this.requiredUid) {
+    if (
+      !info.isDirectory() ||
+      info.isSymbolicLink() ||
+      info.uid !== this.requiredUid ||
+      (info.mode & 0o777) !== 0o700
+    ) {
       throw new BrokerError("unsafe_storage", "change backup directory is unsafe");
     }
     if (current.exists) {
-      const source = await this.#resolveConfigTarget(proposal.payload.path);
       const backup = join(backupDirectory, "original");
-      await copyFile(source, backup, 1);
-      await chmod(backup, 0o600);
-      const backupContent = await readFile(backup);
-      if (sha256Digest(backupContent) !== current.digest) {
+      await atomicWrite(backup, current.content, 0o600);
+      const backupContent = await readPrivateBackupFile(
+        backup,
+        this.requiredUid,
+        MAX_CONFIG_BYTES,
+      );
+      if (
+        backupContent === undefined ||
+        sha256Digest(backupContent) !== current.digest
+      ) {
         throw new BrokerError("backup_failed", "change backup verification failed");
       }
     }
     const manifest = {
-      version: 1,
+      version: BACKUP_MANIFEST_VERSION,
+      owner: BACKUP_OWNER,
+      kind: BACKUP_KIND,
       proposal_id: proposal.proposal_id,
+      config_root: this.configRootReal,
       target: proposal.payload.path,
       existed: current.exists,
       original_sha256: current.digest,
@@ -1814,8 +2312,12 @@ export class ChangeBroker {
       await fsyncDirectory(dirname(target));
       return;
     }
-    const backup = await readFile(join(backupDirectory, "original"));
-    if (sha256Digest(backup) !== current.digest) {
+    const backup = await readPrivateBackupFile(
+      join(backupDirectory, "original"),
+      this.requiredUid,
+      MAX_CONFIG_BYTES,
+    );
+    if (backup === undefined || sha256Digest(backup) !== current.digest) {
       throw new BrokerError("rollback_failed", "backup digest changed before rollback");
     }
     await atomicWrite(target, backup, current.mode);
@@ -1823,6 +2325,25 @@ export class ChangeBroker {
 
   async #prepareConfigActivation(payload, current) {
     if (payload.activation === null) return null;
+    if (payload.activation.kind !== "input_boolean_reload") {
+      const reloadService = CONFIG_ACTIVATION_SERVICES.get(
+        payload.activation.kind,
+      );
+      const activationTarget = CONFIG_ACTIVATION_TARGETS.get(
+        payload.activation.kind,
+      );
+      if (!reloadService || payload.path !== activationTarget) {
+        throw new BrokerError(
+          "unsupported_activation",
+          "configuration activation is not supported for this target",
+        );
+      }
+      return {
+        kind: payload.activation.kind,
+        reload_service: reloadService,
+        target: activationTarget,
+      };
+    }
     const configurationTarget = await this.#resolveConfigTarget("configuration.yaml");
     const configuration = await this.#readConfigTarget(configurationTarget);
     if (!configuration.exists) {
@@ -1832,11 +2353,7 @@ export class ChangeBroker {
   }
 
   #assertActivationPlan(proposal, candidate) {
-    if (
-      proposal.activation_plan === null ||
-      candidate === null ||
-      stableStringify(proposal.activation_plan) !== stableStringify(candidate)
-    ) {
+    if (stableStringify(proposal.activation_plan) !== stableStringify(candidate)) {
       throw new BrokerError(
         "activation_precondition_failed",
         "configuration activation contract changed after proposal creation",
@@ -1916,10 +2433,17 @@ export class ChangeBroker {
   }
 
   async #reloadConfigActivation(plan) {
-    if (plan.kind !== "input_boolean_reload") {
+    const reloadService = CONFIG_ACTIVATION_SERVICES.get(plan.kind);
+    const activationTarget = CONFIG_ACTIVATION_TARGETS.get(plan.kind);
+    if (
+      !reloadService ||
+      reloadService !== plan.reload_service ||
+      activationTarget !== plan.target
+    ) {
       throw new BrokerError("unsupported_activation", "configuration activation is not supported");
     }
-    await this.#requestJson(`${this.haUrl}/services/input_boolean/reload`, {
+    const [domain, service] = reloadService.split(".");
+    await this.#requestJson(`${this.haUrl}/services/${domain}/${service}`, {
       method: "POST",
       body: {},
     });
@@ -2010,6 +2534,132 @@ export class ChangeBroker {
   }
 
   async #executeConfigPatch(proposal) {
+    if (proposal.activation_plan?.kind === "input_boolean_reload") {
+      return this.#executeInputBooleanConfigPatch(proposal);
+    }
+    const target = await this.#resolveConfigTarget(proposal.payload.path);
+    const current = await this.#readConfigTarget(target);
+    if (current.digest !== proposal.payload.expected_sha256) {
+      throw new BrokerError("precondition_failed", "config target changed after proposal creation");
+    }
+    const activationPlan = await this.#prepareConfigActivation(
+      proposal.payload,
+      current,
+    );
+    this.#assertActivationPlan(proposal, activationPlan);
+    const replacementDigest = sha256Digest(proposal.payload.content);
+    await this.#checkConfiguration();
+    if (replacementDigest === current.digest) {
+      return {
+        status: "succeeded",
+        operation: "config_patch",
+        target: proposal.payload.path,
+        changed: false,
+        current_sha256: current.digest,
+        config_check: "passed",
+        reload: "not_required",
+      };
+    }
+
+    const backupDirectory = await this.#createBackup(proposal, current);
+    const beforeWrite = await this.#readConfigTarget(target);
+    if (beforeWrite.digest !== current.digest) {
+      throw new BrokerError("precondition_failed", "config target changed while preparing its backup");
+    }
+    const refreshedPlan = await this.#prepareConfigActivation(
+      proposal.payload,
+      beforeWrite,
+    );
+    this.#assertActivationPlan(proposal, refreshedPlan);
+
+    let candidateWritten = false;
+    let reloadAttempted = false;
+    let failure = null;
+    try {
+      await atomicWrite(target, proposal.payload.content, current.mode);
+      candidateWritten = true;
+      const staged = await this.#readConfigTarget(target);
+      if (staged.digest !== replacementDigest) {
+        throw new BrokerError("write_verification_failed", "config replacement digest did not match");
+      }
+      await this.#checkConfiguration();
+      if (activationPlan !== null) {
+        reloadAttempted = true;
+        await this.#reloadConfigActivation(activationPlan);
+      }
+    } catch (error) {
+      failure = error;
+    }
+
+    if (failure === null) {
+      const verified = await this.#readConfigTarget(target);
+      if (verified.digest !== replacementDigest) {
+        throw new BrokerError("config_verification_in_doubt", "config target changed after validation");
+      }
+      return {
+        status: "succeeded",
+        operation: "config_patch",
+        target: proposal.payload.path,
+        changed: true,
+        previous_sha256: current.digest,
+        current_sha256: verified.digest,
+        config_check: "passed",
+        backup_id: proposal.proposal_id,
+        reload: activationPlan === null
+          ? "restart_required"
+          : activationPlan.reload_service,
+        fresh_verification: activationPlan === null
+          ? "file_digest_and_config_check"
+          : "reload_api_completed",
+      };
+    }
+
+    const failureCode = failure instanceof BrokerError
+      ? failure.code
+      : "internal_error";
+    let observed;
+    try {
+      observed = await this.#readConfigTarget(target);
+    } catch {
+      throw new BrokerError("rollback_failed", "config target could not be observed after failure");
+    }
+    if (observed.digest !== current.digest && observed.digest !== replacementDigest) {
+      throw new BrokerError("rollback_failed", "config target diverged before rollback");
+    }
+    let rollback = "not_required";
+    if (candidateWritten || observed.digest === replacementDigest) {
+      try {
+        await this.#restoreConfigTarget(proposal, backupDirectory, current);
+        const restored = await this.#readConfigTarget(target);
+        if (restored.digest !== current.digest) {
+          throw new BrokerError("rollback_failed", "configuration rollback digest did not match");
+        }
+        await this.#checkConfiguration();
+        if (reloadAttempted && activationPlan !== null) {
+          await this.#reloadConfigActivation(activationPlan);
+        }
+        rollback = "verified";
+      } catch {
+        throw new BrokerError("rollback_failed", "configuration rollback was not fully verified");
+      }
+    }
+    return {
+      status: "failed",
+      operation: "config_patch",
+      target: proposal.payload.path,
+      reason: failureCode,
+      changed: false,
+      current_sha256: current.digest,
+      config_check: failureCode === "config_check_failed"
+        ? "failed"
+        : "passed_or_not_reached",
+      backup_id: proposal.proposal_id,
+      reload: reloadAttempted ? "rolled_back" : "not_performed",
+      rollback: { status: rollback },
+    };
+  }
+
+  async #executeInputBooleanConfigPatch(proposal) {
     const target = await this.#resolveConfigTarget(proposal.payload.path);
     const current = await this.#readConfigTarget(target);
     if (current.digest !== proposal.payload.expected_sha256) {
@@ -2164,6 +2814,32 @@ export class ChangeBroker {
     }
   }
 
+  async #assertServiceAvailable(domain, service) {
+    const response = await this.#requestJson(`${this.haUrl}/services`, {
+      method: "GET",
+      maxResponseBytes: MAX_SERVICE_REGISTRY_RESPONSE_BYTES,
+    });
+    if (!Array.isArray(response)) {
+      throw new BrokerError(
+        "ha_protocol_error",
+        "Home Assistant returned an invalid service registry",
+      );
+    }
+    const domainEntry = response.find(
+      (item) => isPlainObject(item) && item.domain === domain,
+    );
+    if (!domainEntry) {
+      throw new BrokerError("unsupported_service", "service domain is not currently registered");
+    }
+    const services = domainEntry.services;
+    const available = Array.isArray(services)
+      ? services.includes(service)
+      : isPlainObject(services) && own(services, service);
+    if (!available) {
+      throw new BrokerError("unsupported_service", "service is not currently registered");
+    }
+  }
+
   async #readEntityState(entityId) {
     const response = await this.#requestJson(
       `${this.haUrl}/states/${encodeURIComponent(entityId)}`,
@@ -2180,11 +2856,43 @@ export class ChangeBroker {
     return response.state;
   }
 
-  async #callService(domain, service, entityId) {
-    await this.#requestJson(`${this.haUrl}/services/${domain}/${service}`, {
-      method: "POST",
-      body: { entity_id: entityId },
-    });
+  async #callService(
+    domain,
+    service,
+    entityId,
+    serviceData = {},
+    returnResponse = false,
+  ) {
+    const body = {
+      ...serviceData,
+      ...(entityId === null ? {} : { entity_id: entityId }),
+    };
+    try {
+      const responseQuery = returnResponse ? "?return_response" : "";
+      await this.#requestJson(
+        `${this.haUrl}/services/${domain}/${service}${responseQuery}`,
+        {
+          method: "POST",
+          body,
+        },
+      );
+    } catch (error) {
+      if (
+        error instanceof BrokerError &&
+        error.code === "ha_request_failed" &&
+        error.httpStatus >= 400 &&
+        error.httpStatus < 500
+      ) {
+        throw error;
+      }
+      // Once fetch has been attempted, a connection loss, HTTP 5xx, malformed
+      // or oversized 2xx body, and response-stream failure can all occur after
+      // Home Assistant committed the service. Never make those cases retryable.
+      throw new BrokerError(
+        "execution_in_doubt",
+        "service response was not definitive after dispatch and its effect is unknown",
+      );
+    }
   }
 
   async #verifyEntityState(entityId, expected) {
@@ -2199,11 +2907,21 @@ export class ChangeBroker {
 
   async #executeServiceCall(proposal) {
     const payload = proposal.payload;
-    const priorState = await this.#readEntityState(payload.entity_id);
-    if (priorState !== payload.expected_state) {
+    const priorState = payload.expected_state === null
+      ? null
+      : await this.#readEntityState(payload.entity_id);
+    if (payload.expected_state !== null && priorState !== payload.expected_state) {
       throw new BrokerError("precondition_failed", "entity state changed after proposal creation");
     }
-    if (priorState === payload.verify_state) {
+    const stateOnlyNoop =
+      ["turn_on", "turn_off"].includes(payload.service) &&
+      Object.keys(payload.service_data).length === 0 &&
+      payload.return_response === false;
+    if (
+      stateOnlyNoop &&
+      payload.verify_state !== null &&
+      priorState === payload.verify_state
+    ) {
       return {
         status: "succeeded",
         operation: "service_call",
@@ -2212,11 +2930,33 @@ export class ChangeBroker {
         previous_state: priorState,
         current_state: priorState,
         changed: false,
+        verification: "fresh_entity_state",
       };
     }
     try {
-      await this.#callService(payload.domain, payload.service, payload.entity_id);
-      const observed = await this.#verifyEntityState(payload.entity_id, payload.verify_state);
+      await this.#callService(
+        payload.domain,
+        payload.service,
+        payload.entity_id,
+        payload.service_data,
+        payload.return_response,
+      );
+      if (payload.verify_state === null) {
+        return {
+          status: "succeeded",
+          operation: "service_call",
+          service: `${payload.domain}.${payload.service}`,
+          entity_id: payload.entity_id,
+          previous_state: priorState,
+          current_state: null,
+          changed: null,
+          verification: "api_completed",
+        };
+      }
+      const observed = await this.#verifyEntityState(
+        payload.entity_id,
+        payload.verify_state,
+      );
       return {
         status: "succeeded",
         operation: "service_call",
@@ -2225,8 +2965,12 @@ export class ChangeBroker {
         previous_state: priorState,
         current_state: observed,
         changed: true,
+        verification: "fresh_entity_state",
       };
     } catch (error) {
+      if (payload.verify_state === null || payload.expected_state === null) {
+        throw error;
+      }
       let observed;
       try {
         observed = await this.#readEntityState(payload.entity_id);
@@ -2237,7 +2981,17 @@ export class ChangeBroker {
         );
       }
       if (observed === priorState) throw error;
-      const rollbackService = priorState === "on" ? "turn_on" : "turn_off";
+      const rollbackService =
+        ["turn_on", "turn_off"].includes(payload.service) &&
+        ["on", "off"].includes(priorState)
+          ? (priorState === "on" ? "turn_on" : "turn_off")
+          : null;
+      if (rollbackService === null) {
+        throw new BrokerError(
+          "execution_in_doubt",
+          "service verification failed and no generic rollback is safe",
+        );
+      }
       try {
         await this.#callService(payload.domain, rollbackService, payload.entity_id);
         await this.#verifyEntityState(payload.entity_id, priorState);
@@ -2343,7 +3097,22 @@ export class ChangeBroker {
     };
   }
 
-  async #requestJson(url, { method, body, allowNotFound = false } = {}) {
+  async #requestJson(
+    url,
+    {
+      method,
+      body,
+      allowNotFound = false,
+      maxResponseBytes = MAX_API_RESPONSE_BYTES,
+    } = {},
+  ) {
+    if (
+      !Number.isSafeInteger(maxResponseBytes) ||
+      maxResponseBytes < 1 ||
+      maxResponseBytes > MAX_SERVICE_REGISTRY_RESPONSE_BYTES
+    ) {
+      throw new BrokerError("invalid_request", "Home Assistant response limit is invalid");
+    }
     const headers = {
       Accept: "application/json",
       Authorization: `Bearer ${this.supervisorToken}`,
@@ -2368,12 +3137,16 @@ export class ChangeBroker {
       throw new BrokerError("ha_protocol_error", "Home Assistant returned an invalid response");
     }
     const raw = await response.text();
-    if (Buffer.byteLength(raw) > MAX_API_RESPONSE_BYTES) {
+    if (Buffer.byteLength(raw) > maxResponseBytes) {
       throw new BrokerError("ha_protocol_error", "Home Assistant response exceeded the limit");
     }
     if (allowNotFound && response.status === 404) return null;
     if (response.status < 200 || response.status >= 300) {
-      throw new BrokerError("ha_request_failed", `Home Assistant request failed with HTTP ${response.status}`);
+      throw new BrokerError(
+        "ha_request_failed",
+        `Home Assistant request failed with HTTP ${response.status}`,
+        { httpStatus: response.status },
+      );
     }
     if (raw === "") return null;
     try {

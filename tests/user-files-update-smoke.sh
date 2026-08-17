@@ -16,6 +16,8 @@ SCRIPT_DIRECTORY=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 FIXTURE_DIRECTORY="${SCRIPT_DIRECTORY}/fixtures"
 PUBLIC_2_0_6_SETTINGS_SHA256=ee34d8fd24909a90f1afafd4303dc5402571cf73105c8983a083a1101b25749c
 PUBLIC_2_0_6_STATE_SHA256=78353795eadafcb552e8aeae049741d88fec378265bb133ac60e2950fd72e56c
+PUBLIC_2_0_8_SETTINGS_SHA256=e2590f1f1b4a61aec2afabbfbc4df884a3a47423749367dec249acd056bfa108
+PUBLIC_2_0_8_STATE_SHA256=ac108d3d3c43158f22f831c7c8e5bf9bd45de63a4cb40cd3ed620b2a6545a4d7
 TEST_ID="antigravity-ha-native-files-${RANDOM}-$$"
 MAIN_VOLUME="${TEST_ID}-main"
 RESET_VOLUME="${TEST_ID}-reset"
@@ -26,11 +28,14 @@ LEGACY_VOLUME="${TEST_ID}-legacy"
 CRASH_VOLUME="${TEST_ID}-crash"
 CONTROL_CONFLICT_VOLUME="${TEST_ID}-control-conflict"
 PERMISSION_MIGRATION_VOLUME="${TEST_ID}-permission-migration"
+PERMISSION_V208_MIGRATION_VOLUME="${TEST_ID}-permission-v208-migration"
+PERMISSION_V208_AMBIGUOUS_VOLUME="${TEST_ID}-permission-v208-ambiguous"
 PERMISSION_UNOWNED_VOLUME="${TEST_ID}-permission-unowned"
 PERMISSION_AMBIGUOUS_VOLUME="${TEST_ID}-permission-ambiguous"
 PUBLIC_V1_VOLUME="${TEST_ID}-public-v1"
 PUBLIC_V1_COMMITTED_VOLUME="${TEST_ID}-public-v1-committed"
 PUBLIC_V1_CONFLICT_VOLUME="${TEST_ID}-public-v1-conflict"
+RETENTION_VOLUME="${TEST_ID}-retention"
 VOLUMES=(
   "${MAIN_VOLUME}"
   "${RESET_VOLUME}"
@@ -41,11 +46,14 @@ VOLUMES=(
   "${CRASH_VOLUME}"
   "${CONTROL_CONFLICT_VOLUME}"
   "${PERMISSION_MIGRATION_VOLUME}"
+  "${PERMISSION_V208_MIGRATION_VOLUME}"
+  "${PERMISSION_V208_AMBIGUOUS_VOLUME}"
   "${PERMISSION_UNOWNED_VOLUME}"
   "${PERMISSION_AMBIGUOUS_VOLUME}"
   "${PUBLIC_V1_VOLUME}"
   "${PUBLIC_V1_COMMITTED_VOLUME}"
   "${PUBLIC_V1_CONFLICT_VOLUME}"
+  "${RETENTION_VOLUME}"
 )
 SETTINGS_SECRET="${TEST_ID}-settings-secret"
 MCP_SECRET="${TEST_ID}-mcp-secret"
@@ -139,6 +147,10 @@ docker image inspect "${IMAGE}" >/dev/null 2>&1 \
   || fail 'public 2.0.6 preserve settings fixture hash changed'
 [[ $(sha256sum "${FIXTURE_DIRECTORY}/public-2.0.6-preserve-state.json" | cut -d " " -f 1) == "${PUBLIC_2_0_6_STATE_SHA256}" ]] \
   || fail 'public 2.0.6 preserve state fixture hash changed'
+[[ $(sha256sum "${FIXTURE_DIRECTORY}/public-2.0.8-preserve-settings.json" | cut -d " " -f 1) == "${PUBLIC_2_0_8_SETTINGS_SHA256}" ]] \
+  || fail 'public 2.0.8 preserve settings fixture hash changed'
+[[ $(sha256sum "${FIXTURE_DIRECTORY}/public-2.0.8-preserve-state.json" | cut -d " " -f 1) == "${PUBLIC_2_0_8_STATE_SHA256}" ]] \
+  || fail 'public 2.0.8 preserve state fixture hash changed'
 for volume in "${VOLUMES[@]}"; do
   docker volume create "${volume}" >/dev/null
 done
@@ -180,22 +192,11 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
   test "$(stat -c "%a:%U:%G" /data/home/.gemini/config/mcp_config.json)" = 600:root:root
   jq --exit-status '
     .toolPermission == "strict"
-    and .enableTerminalSandbox == true
+    and .enableTerminalSandbox == false
     and .altScreenMode == "never"
-    and (.permissions.allow | index("mcp(ha_change/ha_change_propose)") != null)
-    and (.permissions.allow | index("mcp(ha_memory/memory_search)") != null)
-    and (.permissions.allow | index("mcp(ha_read/ha_read_state)") != null)
-    and (.permissions.allow | index("mcp(ha_read/ha_read_system_info)") != null)
-    and (.permissions.allow | index("mcp(ha_read/ha_read_registry)") != null)
-    and (.permissions.allow | index("mcp(ha_read/ha_read_history)") != null)
-    and (.permissions.allow | index("mcp(ha_read/ha_read_traces)") != null)
-    and (.permissions.allow | index("mcp(ha_validate/ha_validate_config)") != null)
-    and (.permissions.allow | index("mcp(ha_validate/ha_verify_state)") != null)
-    and (.permissions.ask | index("command(*)") != null)
-    and (.permissions.ask | index("mcp(home-assistant/*)") != null)
-    and (.permissions.deny | index("command(sudo)") != null)
-    and (.permissions.deny | index("command(rm -rf)") != null)
-    and (.permissions.deny | index("write_file(.git/)") != null)
+    and (.permissions.allow | index("command(*)") != null)
+    and (.permissions.allow | index("mcp(*)") != null)
+    and (.permissions.ask | length == 0)
     and (.permissions.deny | index("read_file(/config/secrets.yaml)") != null)
     and (.permissions.allow | index("read_file(/config)") != null)
     and (.permissions.allow | index("write_file(/config)") != null)
@@ -210,11 +211,30 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
     and (.permissions.allow | index("read_file(/data/home/.gemini/GEMINI.md)") != null)
     and (.permissions.allow | index("write_file(/data/home/.gemini/GEMINI.md)") != null)
     and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
+    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") == null)
+    and (.permissions.deny | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
+    and (([
+      "read_file(/data/home/.aws)",
+      "write_file(/data/home/.aws)",
+      "read_file(/data/home/.azure)",
+      "write_file(/data/home/.azure)",
+      "read_file(/data/home/.config/gcloud)",
+      "write_file(/data/home/.config/gcloud)",
+      "read_file(/data/home/.kube)",
+      "write_file(/data/home/.kube)",
+      "read_file(/data/home/.docker/config.json)",
+      "write_file(/data/home/.docker/config.json)",
+      "read_file(/data/home/.netrc)",
+      "write_file(/data/home/.netrc)",
+      "read_file(/data/home/.npmrc)",
+      "write_file(/data/home/.npmrc)"
+    ] - .permissions.deny) | length == 0)
+    and (.permissions.allow | length == (unique | length))
+    and (.permissions.deny | length == (unique | length))
     and (.permissions.deny | index("read_file(/data)") == null)
     and (.permissions.deny | index("write_file(/data)") == null)
     and (.permissions.allow | index("mcp(playwright/browser_snapshot)") != null)
-    and (.permissions.ask | index("mcp(playwright/browser_click)") != null)
+    and (.permissions.allow | index("mcp(playwright/browser_click)") != null)
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
   jq --exit-status '.mcpServers == {}' \
     /data/home/.gemini/config/mcp_config.json >/dev/null
@@ -222,13 +242,99 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
   jq --exit-status '
     (.managed.settings.keys | index("toolPermission") != null)
     and (.managed.settings.keys | index("permissions") != null)
-    and (.managed.settings.permission_rules
-      | index("mcp(ha_change/ha_change_propose)") != null)
     and (.managed.settings.permission_rules | index("command(*)") != null)
-    and (.managed.settings.permission_rules | index("command(sudo)") != null)
+    and (.managed.settings.permission_rules | index("mcp(*)") != null)
+    and (.managed.settings.permission_rules
+      | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
   ' /data/antigravity-ha/migration/native-files-state.json >/dev/null
   AGY_CLI_DISABLE_AUTO_UPDATE=true HOME=/data/home \
     /usr/local/libexec/antigravity-real agent </dev/null >/dev/null
+SCRIPT
+
+run_script "${MAIN_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  install -d -m 0700 /run/antigravity-ha
+  test "$(stat -c "%a" /usr/local/bin/agy-settings)" = 755
+  test "$(stat -c "%a" /usr/local/share/antigravity-ha/antigravity-settings-update.mjs)" = 644
+
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  protected_before=$(jq -c \
+    '{permissions,enableTerminalSandbox,allowNonWorkspaceAccess,toolPermission,artifactReviewPolicy}' "${settings}")
+  digest=$(/usr/local/bin/agy-settings sha256)
+  printf '%s\n' "$(jq -nc --arg digest "${digest}" \
+    '{expected_sha256:$digest,patch:{colorScheme:"tokyo night",showTips:true}}')" \
+    | /usr/local/bin/agy-settings patch >/tmp/agy-settings-result.json
+  jq --exit-status \
+    '.status == "updated" and (.changed_keys == ["colorScheme","showTips"])' \
+    /tmp/agy-settings-result.json >/dev/null
+  test "$(jq -c '{permissions,enableTerminalSandbox,allowNonWorkspaceAccess,toolPermission,artifactReviewPolicy}' \
+    "${settings}")" = "${protected_before}"
+  jq --exit-status \
+    '.colorScheme == "tokyo night" and .showTips == true' "${settings}" >/dev/null
+
+  digest=$(/usr/local/bin/agy-settings sha256)
+  printf '%s\n' "$(jq -nc --arg digest "${digest}" \
+    '{expected_sha256:$digest,patch:{ui:{permissions:"display-only"}}}')" \
+    | /usr/local/bin/agy-settings patch >/tmp/agy-settings-nested.json
+  jq --exit-status '.ui.permissions == "display-only"' "${settings}" >/dev/null
+  test "$(jq -c '{permissions,enableTerminalSandbox,allowNonWorkspaceAccess,toolPermission,artifactReviewPolicy}' \
+    "${settings}")" = "${protected_before}"
+
+  stable_hash=$(sha256sum "${settings}" | cut -d " " -f 1)
+  set +e
+  printf '%s\n' "$(jq -nc --arg digest "${digest}" \
+    '{expected_sha256:$digest,patch:{showTips:false}}')" \
+    | /usr/local/bin/agy-settings patch >/tmp/stale.out 2>/tmp/stale.err
+  stale_status=$?
+  set -e
+  test "${stale_status}" = 65
+  grep -Fq 'settings.json changed' /tmp/stale.err
+  test "$(sha256sum "${settings}" | cut -d " " -f 1)" = "${stable_hash}"
+
+  for protected_patch in \
+    '{"permissions":{"allow":[]}}' \
+    '{"enableTerminalSandbox":true}' \
+    '{"allowNonWorkspaceAccess":true}' \
+    '{"toolPermission":"always-proceed"}' \
+    '{"artifactReviewPolicy":"never"}'; do
+    digest=$(/usr/local/bin/agy-settings sha256)
+    set +e
+    printf '%s\n' "$(jq -nc --arg digest "${digest}" --argjson patch "${protected_patch}" \
+      '{expected_sha256:$digest,patch:$patch}')" \
+      | /usr/local/bin/agy-settings patch >/tmp/protected.out 2>/tmp/protected.err
+    protected_status=$?
+    set -e
+    test "${protected_status}" = 65
+    grep -Fq 'is App-managed' /tmp/protected.err
+    test "$(sha256sum "${settings}" | cut -d " " -f 1)" = "${stable_hash}"
+  done
+
+  chmod 0644 "${settings}"
+  set +e
+  /usr/local/bin/agy-settings sha256 >/tmp/mode.out 2>/tmp/mode.err
+  mode_status=$?
+  set -e
+  test "${mode_status}" = 65
+  chmod 0600 "${settings}"
+
+  mv "${settings}" "${settings}.real"
+  ln -s "${settings}.real" "${settings}"
+  set +e
+  /usr/local/bin/agy-settings sha256 >/tmp/link.out 2>/tmp/link.err
+  link_status=$?
+  set -e
+  test "${link_status}" = 65
+  unlink "${settings}"
+  mv "${settings}.real" "${settings}"
+
+  exec 8>/run/antigravity-ha/user-files-update.lock
+  /usr/bin/flock --exclusive --nonblock 8
+  set +e
+  /usr/local/bin/agy-settings sha256 >/tmp/lock.out 2>/tmp/lock.err
+  lock_status=$?
+  set -e
+  test "${lock_status}" = 75
+  grep -Fq 'another settings update is active' /tmp/lock.err
 SCRIPT
 
 run_script "${MAIN_VOLUME}" \
@@ -302,8 +408,11 @@ run_script "${MAIN_VOLUME}" "${SETTINGS_SECRET}" "${MANAGED_BACKUP_DIRECTORY}" <
     and (.permissions.allow | index("user(custom/read)") != null)
     and (.permissions.allow | index("mcp(playwright/browser_snapshot)") != null)
     and (.permissions.ask | index("mcp(playwright/browser_snapshot)") == null)
-    and (.permissions.ask | index("command(*)") != null)
-    and (.permissions.deny | index("command(sudo)") != null)
+    and (.permissions.allow | index("command(*)") != null)
+    and (.permissions.allow | index("mcp(*)") != null)
+    and (.permissions.ask | length == 0)
+    and (.permissions.deny
+      | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
     and .permissions.user_bucket == ["user(custom/permission)"]
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
   test -f "$2/settings.before"
@@ -391,7 +500,8 @@ run_script "${RESET_VOLUME}" "${BACKUP_DIRECTORY}" "${SETTINGS_SECRET}" "${MCP_S
     and .user_reset_key == $marker
     and (.permissions.deny | index("user(custom/deny)") != null)
     and (.permissions.allow | index("mcp(playwright/browser_snapshot)") != null)
-    and (.permissions.ask | index("mcp(playwright/browser_click)") != null)
+    and (.permissions.allow | index("mcp(playwright/browser_click)") != null)
+    and (.permissions.ask | index("mcp(playwright/browser_click)") == null)
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
   jq --arg marker "$3" --exit-status '
     .user_reset_key == $marker
@@ -467,6 +577,10 @@ PERMISSION_OUTER_HASH_BEFORE=$(run_script \
       else print "<permission-value-end>"
       next
     }
+    /^  "enableTerminalSandbox": (true|false),$/ {
+      print "  \"enableTerminalSandbox\": <managed-value>,"
+      next
+    }
     !inside { print }
   ' /data/home/.gemini/antigravity-cli/settings.json \
     | sha256sum | cut -d ' ' -f 1
@@ -522,7 +636,7 @@ assert_json "${PERMISSION_MIGRATION_OUTPUT}" '
   and .recovered == true
   and .created == []
   and .refreshed == ["settings"]
-  and .warnings == []
+  and .warnings == ["antigravity_terminal_sandbox=true is deprecated and was normalized to false because the privileged native sandbox is unsupported; run_command uses the AppArmor command boundary"]
   and (.backup_directory | startswith("/data/antigravity-ha/backups/native-files/refresh-"))
 '
 PERMISSION_BACKUP_DIRECTORY=$(jq --raw-output '.backup_directory' \
@@ -542,6 +656,10 @@ PERMISSION_OUTER_HASH_AFTER=$(run_script \
       inside = 0
       if ($0 ~ /,$/) print "<permission-value-end>,"
       else print "<permission-value-end>"
+      next
+    }
+    /^  "enableTerminalSandbox": (true|false),$/ {
+      print "  \"enableTerminalSandbox\": <managed-value>,"
       next
     }
     !inside { print }
@@ -576,7 +694,26 @@ run_script "${PERMISSION_MIGRATION_VOLUME}" <<'SCRIPT'
     and (.permissions.allow | index("read_file(/data/home/.gemini/GEMINI.md)") != null)
     and (.permissions.allow | index("write_file(/data/home/.gemini/GEMINI.md)") != null)
     and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
+    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") == null)
+    and (.permissions.deny | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
+    and (([
+      "read_file(/data/home/.aws)",
+      "write_file(/data/home/.aws)",
+      "read_file(/data/home/.azure)",
+      "write_file(/data/home/.azure)",
+      "read_file(/data/home/.config/gcloud)",
+      "write_file(/data/home/.config/gcloud)",
+      "read_file(/data/home/.kube)",
+      "write_file(/data/home/.kube)",
+      "read_file(/data/home/.docker/config.json)",
+      "write_file(/data/home/.docker/config.json)",
+      "read_file(/data/home/.netrc)",
+      "write_file(/data/home/.netrc)",
+      "read_file(/data/home/.npmrc)",
+      "write_file(/data/home/.npmrc)"
+    ] - .permissions.deny) | length == 0)
+    and (.permissions.allow | length == (unique | length))
+    and (.permissions.deny | length == (unique | length))
     and (.permissions.deny | index("read_file(/data)") == null)
     and (.permissions.deny | index("write_file(/data)") == null)
     and (.permissions.deny | index("read_file(/config/secrets.yaml)") != null)
@@ -608,7 +745,7 @@ assert_json "${PERMISSION_IDEMPOTENT_OUTPUT}" '
   and .created == []
   and .refreshed == []
   and .backup_directory == null
-  and .warnings == []
+  and .warnings == ["antigravity_terminal_sandbox=true is deprecated and was normalized to false because the privileged native sandbox is unsupported; run_command uses the AppArmor command boundary"]
 '
 [[ $(path_hash "${PERMISSION_MIGRATION_VOLUME}" \
   /data/home/.gemini/antigravity-cli/settings.json) == \
@@ -621,6 +758,153 @@ assert_json "${PERMISSION_IDEMPOTENT_OUTPUT}" '
     -type d | wc -l
 SCRIPT
 ) == "${PERMISSION_BACKUP_COUNT}" ]]
+
+# Published 2.0.8 installed the shared native HOME but still placed command,
+# mutation MCP, and interactive browser tools in ask. Preserve mode must prove
+# that exact App-owned layout, replace only its permissions, and retain both
+# the user's selected request-review policy and user-owned rules.
+run_script "${PERMISSION_V208_MIGRATION_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  umask 077
+  install -d -m 0700 /data/antigravity /data/antigravity-ha/migration \
+    /data/home/.gemini/antigravity-cli /data/home/.gemini/config
+  jq -n '{
+    antigravity_tool_permission: "request-review",
+    antigravity_terminal_sandbox: true,
+    antigravity_user_files_update_mode: "preserve"
+  }' > /data/options.json
+  jq '
+    .permissions.allow += ["user(v208/allow)"]
+    | .permissions.ask += ["user(v208/ask)"]
+    | .permissions.deny += ["user(v208/deny)"]
+  ' /test-fixtures/public-2.0.8-preserve-settings.json \
+    > /data/home/.gemini/antigravity-cli/settings.json
+  install -m 0600 /test-fixtures/public-2.0.8-preserve-state.json \
+    /data/antigravity-ha/migration/native-files-state.json
+  install -m 0600 /etc/antigravity/mcp_config.json \
+    /data/home/.gemini/config/mcp_config.json
+  chmod 0600 /data/home/.gemini/antigravity-cli/settings.json
+SCRIPT
+PERMISSION_V208_OUTPUT=$(run_helper "${PERMISSION_V208_MIGRATION_VOLUME}") \
+  || fail 'public 2.0.8 preserve permission migration failed'
+assert_json "${PERMISSION_V208_OUTPUT}" '
+  .mode == "preserve"
+  and .permission_migration == "applied"
+  and .created == []
+  and .refreshed == ["settings"]
+  and .warnings == ["antigravity_terminal_sandbox=true is deprecated and was normalized to false because the privileged native sandbox is unsupported; run_command uses the AppArmor command boundary"]
+'
+run_script "${PERMISSION_V208_MIGRATION_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  jq --exit-status '
+    .toolPermission == "request-review"
+    and .enableTerminalSandbox == false
+    and (.permissions.allow | index("user(v208/allow)") != null)
+    and (.permissions.ask | index("user(v208/ask)") != null)
+    and (.permissions.deny | index("user(v208/deny)") != null)
+    and (.permissions.allow | index("read_file(/config)") != null)
+    and (.permissions.allow | index("write_file(/config)") != null)
+    and (.permissions.allow | index("read_url(*)") != null)
+    and (.permissions.allow | index("execute_url(*)") != null)
+    and (.permissions.allow | index("command(*)") != null)
+    and (.permissions.allow | index("mcp(*)") != null)
+    and (.permissions.allow | index("mcp(playwright/browser_click)") != null)
+    and (.permissions.ask | index("mcp(home-assistant/*)") == null)
+    and (.permissions.ask | index("mcp(playwright/browser_click)") == null)
+    and (.permissions.deny | index("command(sudo)") == null)
+    and (.permissions.deny | index("command(rm -rf)") == null)
+    and (.permissions.deny | index("read_file(/config/secrets.yaml)") != null)
+    and (.permissions.deny | index("write_file(/config/.storage)") != null)
+    and (.permissions.deny | index("read_file(/run/antigravity-ha/supervisor.token)") != null)
+    and (.permissions.deny | index("read_file(/data/home/.ssh)") != null)
+    and (.permissions.allow | index("read_file(*)") == null)
+    and (.permissions.allow | index("write_file(*)") == null)
+    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") == null)
+    and (.permissions.deny | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
+    and (([
+      "read_file(/data/home/.aws)",
+      "write_file(/data/home/.aws)",
+      "read_file(/data/home/.azure)",
+      "write_file(/data/home/.azure)",
+      "read_file(/data/home/.config/gcloud)",
+      "write_file(/data/home/.config/gcloud)",
+      "read_file(/data/home/.kube)",
+      "write_file(/data/home/.kube)",
+      "read_file(/data/home/.docker/config.json)",
+      "write_file(/data/home/.docker/config.json)",
+      "read_file(/data/home/.netrc)",
+      "write_file(/data/home/.netrc)",
+      "read_file(/data/home/.npmrc)",
+      "write_file(/data/home/.npmrc)"
+    ] - .permissions.deny) | length == 0)
+    and (.permissions.allow | length == (unique | length))
+    and (.permissions.deny | length == (unique | length))
+  ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
+  jq --exit-status '
+    (.managed.settings.permission_rules | index("command(*)") != null)
+    and (.managed.settings.permission_rules | index("mcp(*)") != null)
+    and (.managed.settings.permission_rules | index("mcp(home-assistant/*)") == null)
+  ' /data/antigravity-ha/migration/native-files-state.json >/dev/null
+SCRIPT
+PERMISSION_V208_IDEMPOTENT=$(run_helper "${PERMISSION_V208_MIGRATION_VOLUME}") \
+  || fail 'public 2.0.8 preserve permission migration was not idempotent'
+assert_json "${PERMISSION_V208_IDEMPOTENT}" '
+  .permission_migration == "already_applied"
+  and .created == []
+  and .refreshed == []
+  and .backup_directory == null
+  and .warnings == ["antigravity_terminal_sandbox=true is deprecated and was normalized to false because the privileged native sandbox is unsupported; run_command uses the AppArmor command boundary"]
+'
+
+# A user may deliberately move an App-owned 2.0.8 rule to a stronger bucket.
+# That is an explicit override, not proof that the old App layout is intact;
+# preserve mode must leave both settings and ownership state byte-identical.
+run_script "${PERMISSION_V208_AMBIGUOUS_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  umask 077
+  install -d -m 0700 /data/antigravity /data/antigravity-ha/migration \
+    /data/home/.gemini/antigravity-cli /data/home/.gemini/config
+  jq -n '{
+    antigravity_tool_permission: "request-review",
+    antigravity_terminal_sandbox: true,
+    antigravity_user_files_update_mode: "preserve"
+  }' > /data/options.json
+  jq '
+    .permissions.ask |= map(select(. != "command(*)"))
+    | .permissions.deny += ["command(*)"]
+  ' /test-fixtures/public-2.0.8-preserve-settings.json \
+    > /data/home/.gemini/antigravity-cli/settings.json
+  install -m 0600 /test-fixtures/public-2.0.8-preserve-state.json \
+    /data/antigravity-ha/migration/native-files-state.json
+  install -m 0600 /etc/antigravity/mcp_config.json \
+    /data/home/.gemini/config/mcp_config.json
+  chmod 0600 /data/home/.gemini/antigravity-cli/settings.json
+SCRIPT
+PERMISSION_V208_AMBIGUOUS_HASH=$(path_hash \
+  "${PERMISSION_V208_AMBIGUOUS_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json)
+PERMISSION_V208_AMBIGUOUS_STATE_HASH=$(path_hash \
+  "${PERMISSION_V208_AMBIGUOUS_VOLUME}" \
+  /data/antigravity-ha/migration/native-files-state.json)
+PERMISSION_V208_AMBIGUOUS_OUTPUT=$(run_helper \
+  "${PERMISSION_V208_AMBIGUOUS_VOLUME}") \
+  || fail 'ambiguous public 2.0.8 preserve permissions did not fail safe'
+assert_json "${PERMISSION_V208_AMBIGUOUS_OUTPUT}" '
+  .permission_migration == "skipped_ambiguous"
+  and .created == []
+  and .refreshed == []
+  and .backup_directory == null
+  and (.warnings | any(contains("2.0.8 permission layout was ambiguous")))
+'
+[[ $(path_hash "${PERMISSION_V208_AMBIGUOUS_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json) == \
+  "${PERMISSION_V208_AMBIGUOUS_HASH}" ]]
+[[ $(path_hash "${PERMISSION_V208_AMBIGUOUS_VOLUME}" \
+  /data/antigravity-ha/migration/native-files-state.json) == \
+  "${PERMISSION_V208_AMBIGUOUS_STATE_HASH}" ]]
+run_script "${PERMISSION_V208_AMBIGUOUS_VOLUME}" <<'SCRIPT'
+  test ! -e /data/antigravity-ha/migration/native-files.json
+SCRIPT
 
 # Matching contents without an ownership record are user-owned. Preserve mode
 # must report the fail-safe decision and leave every byte untouched.
@@ -803,9 +1087,10 @@ run_script "${LEGACY_VOLUME}" <<'SCRIPT'
     = 600:root:root
   jq --exit-status '
     .toolPermission == "request-review"
-    and .enableTerminalSandbox == true
+    and .enableTerminalSandbox == false
     and (.permissions.allow | index("mcp(playwright/browser_snapshot)") != null)
-    and (.permissions.ask | index("mcp(playwright/browser_click)") != null)
+    and (.permissions.allow | index("mcp(playwright/browser_click)") != null)
+    and (.permissions.ask | index("mcp(playwright/browser_click)") == null)
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
 SCRIPT
 
@@ -1172,6 +1457,131 @@ run_script "${LINK_VOLUME}" <<'SCRIPT'
   test -L /data/home/.gemini/antigravity-cli/settings.json
   test "$(readlink /data/home/.gemini/antigravity-cli/settings.json)" = real-settings.json
   test ! -e /data/antigravity-ha/migration/native-files.json
+SCRIPT
+
+# Only completed transactions with an exact App ownership manifest are
+# retention candidates. Keep two, finish a crash-interrupted quarantine on the
+# next run, and leave unsafe, manifestless, and foreign-owned entries intact.
+run_script "${RETENTION_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  umask 077
+  install -d -m 0700 /data/antigravity
+  jq -n '{
+    antigravity_tool_permission: "always-proceed",
+    antigravity_terminal_sandbox: true,
+    antigravity_user_files_update_mode: "reset_v2"
+  }' > /data/options.json
+SCRIPT
+RETENTION_INITIAL=$(run_helper "${RETENTION_VOLUME}") \
+  || fail 'initial retention fixture bootstrap failed'
+assert_json "${RETENTION_INITIAL}" '
+  (.created | sort) == ["mcp", "settings"]
+  and .backup_directory == null
+'
+for RETENTION_VERSION in \
+  9.9.9-retention1 \
+  9.9.9-retention2 \
+  9.9.9-retention3 \
+  9.9.9-retention4
+do
+  RETENTION_OUTPUT=$(run_script "${RETENTION_VOLUME}" \
+    "${RETENTION_VERSION}" <<'SCRIPT'
+    set -Eeuo pipefail
+    version=$1
+    printf '%s\n' "${version}" \
+      > /usr/local/share/antigravity-ha/app-version
+    exec /usr/bin/node \
+      /usr/local/share/antigravity-ha/user-files-update.mjs
+SCRIPT
+  ) || fail "native-file retention refresh failed: ${RETENTION_VERSION}"
+  assert_json "${RETENTION_OUTPUT}" \
+    ".app_version == \"${RETENTION_VERSION}\" and .refreshed == [\"settings\"]"
+done
+
+run_script "${RETENTION_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  backup_root=/data/antigravity-ha/backups/native-files
+  mapfile -t retained < <(
+    for path in "${backup_root}"/refresh-*; do
+      if [[ -d ${path} && -f ${path}/manifest.json \
+        && -f ${path}/completed.json ]] \
+        && jq --exit-status '
+          .schema == 1
+          and .owner == "antigravity-for-home-assistant"
+          and .kind == "native-files-refresh"
+        ' "${path}/manifest.json" >/dev/null 2>&1; then
+        basename "${path}"
+      fi
+    done | sort
+  )
+  test "${#retained[@]}" -eq 2
+  for transaction in "${retained[@]}"; do
+    path=${backup_root}/${transaction}
+    test "$(stat -c '%a:%U:%G' "${path}")" = 700:root:root
+    test -z "$(find -P "${path}" -type l -print -quit)"
+    jq --exit-status --arg transaction "${transaction}" '
+      .transaction == $transaction
+      and .state_path == "/data/antigravity-ha/migration/native-files-state.json"
+      and .target_root == "/data/home"
+      and (.metadata_sha256 | test("^[0-9a-f]{64}$"))
+    ' "${path}/manifest.json" >/dev/null
+    jq --exit-status --arg transaction "${transaction}" '
+      .owner == "antigravity-for-home-assistant"
+      and .kind == "native-files-refresh"
+      and .transaction == $transaction
+      and (.outcome == "committed" or .outcome == "rolled_back")
+    ' "${path}/completed.json" >/dev/null
+  done
+
+  sentinel=/data/native-files-retention-sentinel
+  printf '%s\n' preserve > "${sentinel}"
+  unsafe=${backup_root}/refresh-19990101T000000Z-deadbeefcafe
+  mkdir -m 0700 "${unsafe}"
+  ln -s "${sentinel}" "${unsafe}/original"
+
+  manifestless=${backup_root}/refresh-19990101T000001Z-cafebabefeed
+  mkdir -m 0700 "${manifestless}"
+  printf '%s\n' preserve > "${manifestless}/metadata.json"
+
+  unowned=${backup_root}/refresh-19990101T000002Z-abcdef123456
+  mkdir -m 0700 "${unowned}"
+  jq -n '{schema: 1, owner: "someone-else"}' > "${unowned}/manifest.json"
+
+  crash_source=${backup_root}/${retained[0]}
+  crash_quarantine=${backup_root}/.${retained[0]}.prune-0123456789ab
+  mv "${crash_source}" "${crash_quarantine}"
+SCRIPT
+
+RETENTION_RESTART=$(run_helper "${RETENTION_VOLUME}") \
+  || fail 'retention restart did not finish a safe quarantine'
+assert_json "${RETENTION_RESTART}" '
+  .created == []
+  and .refreshed == []
+  and .backup_directory == null
+'
+run_script "${RETENTION_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  backup_root=/data/antigravity-ha/backups/native-files
+  unsafe=${backup_root}/refresh-19990101T000000Z-deadbeefcafe
+  manifestless=${backup_root}/refresh-19990101T000001Z-cafebabefeed
+  unowned=${backup_root}/refresh-19990101T000002Z-abcdef123456
+  test -L "${unsafe}/original"
+  test "$(cat /data/native-files-retention-sentinel)" = preserve
+  test "$(cat "${manifestless}/metadata.json")" = preserve
+  jq --exit-status '.owner == "someone-else"' \
+    "${unowned}/manifest.json" >/dev/null
+  test -z "$(find "${backup_root}" -mindepth 1 -maxdepth 1 \
+    -type d -name '.refresh-*.prune-*' -print -quit)"
+  owned_count=0
+  for path in "${backup_root}"/refresh-*; do
+    if [[ -f ${path}/manifest.json && -f ${path}/completed.json ]] \
+      && jq --exit-status \
+        '.owner == "antigravity-for-home-assistant"' \
+        "${path}/manifest.json" >/dev/null 2>&1; then
+      owned_count=$((owned_count + 1))
+    fi
+  done
+  test "${owned_count}" -le 2
 SCRIPT
 
 printf 'native user-files smoke: PASS\n'

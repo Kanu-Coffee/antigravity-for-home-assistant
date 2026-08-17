@@ -125,7 +125,7 @@ def test_change_broker_source_has_fail_closed_contract(rootfs: Path) -> None:
     assert 'status: "completed"' in source
     assert 'operation === "config_patch"' in source
     assert 'operation === "service_call"' in source
-    assert 'operation === "device_test"' in source
+    assert '"device_test"' in source
     assert "normalizeDeviceTestPayload" in source
     assert "#executeDeviceTest" in source
     assert 'format: "device-test-plan-v1"' in source
@@ -143,11 +143,30 @@ def test_change_broker_source_has_fail_closed_contract(rootfs: Path) -> None:
     assert "MAX_PUBLIC_PREVIEW_BYTES" in source
     assert "<comment omitted>" in source
     assert "<redacted>" in source
-    assert 'SUPPORTED_CONFIG_ACTIVATIONS = new Set(["input_boolean_reload"])' in source
-    assert 'payload.activation?.kind !== "input_boolean_reload"' in source
-    assert 'activationPlan?.kind !== "input_boolean_reload"' in source
+    assert 'const CONFIG_ACTIVATION_SERVICES = new Map([' in source
+    assert 'const CONFIG_ACTIVATION_TARGETS = new Map([' in source
+    for activation in (
+        "input_boolean_reload",
+        "automation_reload",
+        "script_reload",
+        "scene_reload",
+    ):
+        assert f'["{activation}"' in source
     assert 'reload_service: "input_boolean.reload"' in source
-    assert "/services/input_boolean/reload" in source
+    assert '`${this.haUrl}/services/${domain}/${service}`' in source
+    assert 'format: "ha-service-call-v1"' in source
+    assert "MAX_SERVICE_DATA_BYTES" in source
+    assert "MAX_SERVICE_REGISTRY_RESPONSE_BYTES" in source
+    assert "maxResponseBytes: MAX_SERVICE_REGISTRY_RESPONSE_BYTES" in source
+    assert "MAX_SERVICE_DATA_DEPTH" in source
+    assert "MAX_SERVICE_DATA_NODES" in source
+    assert "UNSAFE_JSON_KEYS" in source
+    assert "SENSITIVE_SERVICE_KEY" in source
+    assert "#assertServiceAvailable" in source
+    assert '`${this.haUrl}/services`' in source
+    assert 'verification: "api_completed"' in source
+    assert '? "restart_required"' in source
+    assert "#executeInputBooleanConfigPatch" in source
     assert "canonicalInputBooleanInclude" in source
     assert "parseRestrictedInputBooleanYaml" in source
     assert "#beginSemanticChange" in source
@@ -162,7 +181,12 @@ def test_change_broker_source_has_fail_closed_contract(rootfs: Path) -> None:
     assert "delete process.env.SUPERVISOR_TOKEN" in proposal
     assert 'name: "ha_change_propose"' in proposal
     assert 'required: ["operation", "summary", "payload"]' in proposal
-    assert 'enum: ["input_boolean_reload"]' in proposal
+    assert '"automation_reload"' in proposal
+    assert '"script_reload"' in proposal
+    assert '"scene_reload"' in proposal
+    assert 'required: ["domain", "service"]' in proposal
+    assert 'service_data' in proposal
+    assert 'return_response' in proposal
     assert '"device_test"' in proposal
     assert 'required: ["domain", "service", "entity_id", "expected_prior_state"]' in proposal
     assert "requester_override_forbidden" in proposal
@@ -171,6 +195,49 @@ def test_change_broker_source_has_fail_closed_contract(rootfs: Path) -> None:
     assert "DEFAULT_PROPOSAL_SOCKET_PATH" in proposal
     assert "ha_change_execute" not in proposal
     assert "ha_change_authorize" not in proposal
+
+
+def test_change_broker_backup_retention_is_owned_bounded_and_crash_safe(
+    rootfs: Path,
+    repository_root: Path,
+) -> None:
+    source = (
+        rootfs / "usr/local/share/antigravity-ha/ha-change-broker.mjs"
+    ).read_text(encoding="utf-8")
+    unit = (repository_root / "tests/ha_change_broker_test.mjs").read_text(
+        encoding="utf-8"
+    )
+
+    for required in (
+        'const BACKUP_OWNER = "antigravity-for-home-assistant"',
+        'const BACKUP_KIND = "ha-config-patch"',
+        "const BACKUP_RETENTION = 2",
+        "BACKUP_PRUNE_QUARANTINE_PATTERN",
+        "this.activeBackupIds = new Set()",
+        "entry.status === \"in_progress\"",
+        "async #inspectCompletedBackup(",
+        "async #markBackupCompleted(",
+        "async #removeCompletedBackup(",
+        "async #pruneCompletedBackups(",
+        "await rename(path, quarantine)",
+        "await fsyncDirectory(this.backupRoot)",
+        "Exact App ownership and a completed transaction were not established",
+        "^sha256:[0-9a-f]{64}$",
+    ):
+        assert required in source
+    assert "await rm(this.backupRoot" not in source
+    assert source.index("await this.#loadIdempotencyState();") < source.index(
+        "await this.#pruneCompletedBackups()"
+    )
+
+    for required in (
+        "completed config backups retain two App-owned entries",
+        "proposalIds.slice(-2).sort()",
+        '"someone-else"',
+        ".prune-0123456789ab",
+        "isSymbolicLink(), true",
+    ):
+        assert required in unit
 
 
 def test_change_broker_memory_transition_is_explicit(addon_root: Path) -> None:

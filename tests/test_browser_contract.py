@@ -163,9 +163,11 @@ def test_playwright_approval_policy_uses_native_settings_permissions(
     assert "mcp_servers.playwright" not in wrapper
     assert " -c " not in wrapper
     assert "-dangerously-skip-permissions" in wrapper
-    assert "-sandbox=true" in wrapper
-    assert "--sandbox=true" in wrapper
-    assert "-sandbox=* | --sandbox=*" in wrapper
+    assert "-sandbox | -sandbox=*" in wrapper
+    assert "--sandbox | --sandbox=*" in wrapper
+    assert "-no-sandbox | -no-sandbox=*" in wrapper
+    assert "--no-sandbox | --no-sandbox=*" in wrapper
+    assert "native sandbox overrides are disabled" in wrapper
     assert "mcp_servers.playwright" not in policy_validator
     assert "antigravity_HA_BROWSER_APPROVAL_ARGS" not in policy_validator
     assert "Configured headless browser approval policy" in init_script

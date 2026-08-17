@@ -8,6 +8,7 @@ import {
   open,
   readdir,
   rename,
+  rm,
   unlink,
 } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
@@ -29,6 +30,18 @@ const MAX_PLUGIN_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_NATIVE_OUTPUT_BYTES = 1024 * 1024;
 const JOURNAL_SCHEMA = 1;
 const OWNER = "antigravity-for-home-assistant";
+const BACKUP_RETENTION = 2;
+const PLUGIN_TRANSACTION_PATTERN =
+  /^plugin-[0-9A-Za-z._+-]+-to-[0-9A-Za-z._+-]+-[0-9a-f]{12}$/u;
+const PRUNE_QUARANTINE_PATTERN =
+  /^\.(plugin-[0-9A-Za-z._+-]+-to-[0-9A-Za-z._+-]+-[0-9a-f]{12})\.prune-[0-9a-f]{12}$/u;
+const BACKUP_CHILDREN = new Set([
+  "manifest.json",
+  "plugin.before",
+  "plugin.displaced",
+  "plugin.failed",
+  "plugin.uncommitted",
+]);
 const VALID_PHASES = new Set([
   "preflighted",
   "backed_up",
@@ -349,9 +362,7 @@ function validateJournal(value) {
     value.owner !== OWNER ||
     value.kind !== "managed-plugin-refresh" ||
     typeof value.transaction !== "string" ||
-    !/^plugin-[0-9A-Za-z._+-]+-to-[0-9A-Za-z._+-]+-[0-9a-f]{12}$/u.test(
-      value.transaction,
-    ) ||
+    !PLUGIN_TRANSACTION_PATTERN.test(value.transaction) ||
     !VALID_PHASES.has(value.phase) ||
     typeof value.before_exists !== "boolean" ||
     (value.before_exists && !/^[0-9a-f]{64}$/u.test(value.before_tree_sha256)) ||
@@ -565,6 +576,129 @@ async function recoverPendingTransaction() {
   return "rolled_back";
 }
 
+async function inspectCompletedBackup(path, transaction) {
+  const rootStats = await lstat(path);
+  if (
+    rootStats.isSymbolicLink() ||
+    !rootStats.isDirectory() ||
+    rootStats.uid !== 0
+  ) {
+    throw new Error("A managed plugin backup root is unsafe");
+  }
+  const tree = await snapshotTree(path);
+  if (!tree) throw new Error("A managed plugin backup disappeared");
+  for (const entry of tree.entries) {
+    if (entry.path === ".") continue;
+    const topLevel = entry.path.split("/")[0];
+    if (!BACKUP_CHILDREN.has(topLevel)) {
+      throw new Error("A managed plugin backup contains an unexpected path");
+    }
+  }
+  const manifestPath = join(path, "manifest.json");
+  if (!(await inspectPath(manifestPath))) {
+    throw new Error("A managed plugin backup has no ownership manifest");
+  }
+  const manifest = await readJson(manifestPath);
+  if (
+    manifest === null ||
+    typeof manifest !== "object" ||
+    Array.isArray(manifest) ||
+    manifest.schema !== 1 ||
+    manifest.owner !== OWNER ||
+    manifest.transaction !== transaction ||
+    manifest.target !== TARGET
+  ) {
+    throw new Error("A managed plugin backup manifest is not App-owned");
+  }
+  return { mtimeMs: rootStats.mtimeMs, tree_sha256: tree.tree_sha256 };
+}
+
+async function removeCompletedBackup(path, transaction) {
+  const before = await lstat(path);
+  await inspectCompletedBackup(path, transaction);
+  const quarantine = join(
+    BACKUP_ROOT,
+    `.${transaction}.prune-${randomBytes(6).toString("hex")}`,
+  );
+  await rename(path, quarantine);
+  await syncDirectory(BACKUP_ROOT);
+  try {
+    const moved = await lstat(quarantine);
+    if (
+      moved.isSymbolicLink() ||
+      !moved.isDirectory() ||
+      moved.uid !== 0 ||
+      moved.dev !== before.dev ||
+      moved.ino !== before.ino
+    ) {
+      throw new Error("A managed plugin backup changed during quarantine");
+    }
+    await inspectCompletedBackup(quarantine, transaction);
+    await rm(quarantine, {
+      force: false,
+      maxRetries: 2,
+      recursive: true,
+      retryDelay: 20,
+    });
+    await syncDirectory(BACKUP_ROOT);
+  } catch (error) {
+    if (!(await inspectPath(path)) && await inspectPath(quarantine)) {
+      await rename(quarantine, path).catch(() => {});
+      await syncDirectory(BACKUP_ROOT).catch(() => {});
+    }
+    throw error;
+  }
+}
+
+async function pruneCompletedPluginBackups(preserve = new Set()) {
+  const journal = await loadJournal();
+  if (journal) preserve.add(journal.transaction);
+  const candidates = [];
+  for (const name of (await readdir(BACKUP_ROOT)).sort()) {
+    const quarantine = PRUNE_QUARANTINE_PATTERN.exec(name);
+    if (quarantine) {
+      const transaction = quarantine[1];
+      if (preserve.has(transaction)) continue;
+      const path = join(BACKUP_ROOT, name);
+      try {
+        await inspectCompletedBackup(path, transaction);
+        await rm(path, {
+          force: false,
+          maxRetries: 2,
+          recursive: true,
+          retryDelay: 20,
+        });
+        await syncDirectory(BACKUP_ROOT);
+      } catch {
+        // Unsafe or concurrently changed entries are intentionally preserved.
+      }
+      continue;
+    }
+    if (!PLUGIN_TRANSACTION_PATTERN.test(name) || preserve.has(name)) continue;
+    const path = join(BACKUP_ROOT, name);
+    try {
+      const inspected = await inspectCompletedBackup(path, name);
+      candidates.push({ name, path, ...inspected });
+    } catch {
+      // Exact App ownership could not be established, so do not delete it.
+    }
+  }
+  candidates.sort((left, right) =>
+    right.mtimeMs - left.mtimeMs || right.name.localeCompare(left.name));
+  let retained = preserve.size;
+  for (const candidate of candidates) {
+    if (retained < BACKUP_RETENTION) {
+      retained += 1;
+      continue;
+    }
+    try {
+      await removeCompletedBackup(candidate.path, candidate.name);
+    } catch {
+      // A failed safe delete must not make the installed plugin unavailable.
+    }
+  }
+}
+
 async function createTransaction(before, marker, targetVersion) {
   const sourceVersion = marker?.installed_version ?? null;
   const sourcePart = sourceVersion ?? "none";
@@ -736,6 +870,7 @@ async function main() {
     marker = validateMarker(await readJson(MARKER_PATH));
     await validateInstalledPostcondition(installed.tree_sha256);
     if (marker.installed_version === targetVersion) {
+      await pruneCompletedPluginBackups();
       process.stdout.write(`${JSON.stringify({
         backup_directory: null,
         degraded: false,
@@ -750,6 +885,11 @@ async function main() {
 
   const result = await installManagedPlugin(installed, marker, targetVersion);
   result.recovered ||= recovery !== "none";
+  const preserve = new Set();
+  if (result.backup_directory !== null) {
+    preserve.add(basename(result.backup_directory));
+  }
+  await pruneCompletedPluginBackups(preserve);
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 

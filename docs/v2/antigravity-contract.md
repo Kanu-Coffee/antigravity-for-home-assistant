@@ -93,6 +93,9 @@ help
 - `ANTIGRAVITY_TOKEN` 또는 `GEMINI_API_KEY`가 공식 App 인증 계약이라고 가정하지
   않는다.
 - `--dangerously-skip-permissions`는 App wrapper와 Telegram에서 금지한다.
+- native `--sandbox`의 enable/disable/assignment 형태는 모두 Web/SSH/Telegram
+  wrapper에서 거부한다. 비특권 HAOS App에서 namespace 생성이 실패하므로 wrapper가
+  이 flag를 대신 추가하지도 않는다.
 
 ## 3. native 저장 경로
 
@@ -108,10 +111,11 @@ Web/SSH/Telegram App은 `HOME=/data/home`과 project `/config`를 공유하므�
 | workspace MCP | `/config/.agents/mcp_config.json` |
 | workspace plugin | `/config/.agents/plugins/<plugin_name>/` 또는 `/config/_agents/plugins/<plugin_name>/` |
 
-Telegram은 위 global/workspace plugin, agent, rule, MCP와 settings를 상속하고 사용자의
-관리 요청에 따라 수정할 수 있다. OAuth는 trusted local controlling TTY의
-`ha-antigravity-login`으로 한 번 수행하며 별도 Telegram HOME·login·bootstrap을 두지
-않는다.
+Telegram은 위 global/workspace plugin, agent, rule, MCP와 settings를 상속한다.
+plugin·agent·rule·skill은 세 채널에서 직접 수정할 수 있고, 일반 전역 settings는
+사용자의 현재 명시적 요청에 따라 `agy-settings patch`로 매개 수정한다. OAuth는 trusted
+local controlling TTY의 `ha-antigravity-login`으로 한 번 수행하며 별도 Telegram
+HOME·login·bootstrap을 두지 않는다.
 
 v2 App 관리형 `home-assistant` plugin은 global manually discovered 경로를
 canonical 배치로 사용한다. 같은 이름을 CLI staging 또는 workspace에 동시에
@@ -125,7 +129,7 @@ App이 소유한 key만 merge한다. 최소 관리 key는 다음과 같다.
 
 ```json
 {
-  "toolPermission": "request-review",
+  "toolPermission": "always-proceed",
   "permissions": {
     "allow": [
       "read_file(/config)",
@@ -141,49 +145,68 @@ App이 소유한 key만 merge한다. 최소 관리 key는 다음과 같다.
       "read_file(/data/home/.gemini/GEMINI.md)",
       "write_file(/data/home/.gemini/GEMINI.md)",
       "read_file(/data/home/.gemini/antigravity-cli/settings.json)",
-      "write_file(/data/home/.gemini/antigravity-cli/settings.json)"
-    ],
-    "ask": [
+      "read_url(*)",
+      "execute_url(*)",
       "command(*)",
-      "mcp(home-assistant/*)"
+      "mcp(*)"
     ],
+    "ask": [],
     "deny": [
-      "command(sudo)",
-      "command(rm -rf)",
-      "write_file(.git/)",
+      "read_file(/data/options.json)",
+      "write_file(/data/options.json)",
+      "read_file(/run/antigravity-ha/supervisor.token)",
+      "write_file(/run/antigravity-ha/supervisor.token)",
+      "read_file(/run/antigravity-ha/home-assistant-browser.token)",
+      "write_file(/run/antigravity-ha/home-assistant-browser.token)",
+      "write_file(/data/home/.gemini/antigravity-cli/settings.json)",
       "read_file(/config/secrets.yaml)",
-      "read_file(/config/.storage)",
       "write_file(/config/secrets.yaml)",
-      "write_file(/config/.storage)"
+      "read_file(/config/.storage)",
+      "write_file(/config/.storage)",
+      "read_file(/config/.ssh)",
+      "write_file(/config/.ssh)",
+      "read_file(/data/home/.ssh)",
+      "write_file(/data/home/.ssh)",
+      "read_file(/root/.ssh)",
+      "write_file(/root/.ssh)"
     ]
   }
 }
 ```
 
-1.1.13의 directory target은 재귀이며 deny가 ask와 allow보다 우선한다. 그래서 위
-shared customization/workspace root는 Web/SSH/Telegram에 공통으로 허용하되 OAuth가
-있는 `.gemini` 전체를 wildcard로 열지 않고, `/config`의 secret·storage 경로는 native
-deny와 AppArmor deny를 함께 유지한다. 2.0.6의 `read_file(/data)`와
-`write_file(/data)`는 새 allow보다 우선하므로 managed ownership migration에서
-명시적으로 제거한다.
+1.1.13의 directory target은 재귀이며 deny가 ask와 allow보다 우선한다. 따라서 일반
+`/config`와 정확히 열거한 shared customization root는 Web/SSH/Telegram에 공통
+허용하되 OAuth가 포함된 `.gemini` 전체를 `read_file(*)`/`write_file(*)`로 열지 않는다.
+운영 URL·command·모든 MCP는 기본 허용하고 managed ask는 비워 headless Telegram이
+native prompt에서 멈추지 않게 한다. secrets, storage, runtime option/token과 SSH key
+경로는 exact native deny와 AppArmor deny를 함께 유지한다. 사용자 소유 rule은 merge
+중 보존되며 사용자가 추가한 ask/deny는 계속 managed allow보다 우선한다. 2.0.6의
+`read_file(/data)`와 `write_file(/data)`, 2.0.8의 좁은 managed rule은 ownership
+migration에서 제거하고 위 2.0.9 기준으로 교체한다.
 
 `antigravity_tool_permission`은 `toolPermission`에 다음과 같이 1:1 매핑한다.
 
 | App option | native value | App 의미 |
 | --- | --- | --- |
 | `request-review` | `request-review` | write, command와 web action을 TUI에서 검토 |
-| `proceed-in-sandbox` | `proceed-in-sandbox` | sandbox 안의 허용 동작만 자동 진행 |
-| `always-proceed` | `always-proceed` | native prompt를 줄이지만 AppArmor와 broker는 유지 |
+| `proceed-in-sandbox` | `proceed-in-sandbox` | native enum 호환값. AppArmor 경계는 유지하지만 HAOS에서 native sandbox flag를 켜지는 않음 |
+| `always-proceed` | `always-proceed` | 새 설치 기본값. 운영 도구를 비대화형으로 진행하되 AppArmor와 broker는 유지 |
 | `strict` | `strict` | 모든 non-read 작업을 확인 |
 
 1.1.13 `stream-json`은 native permission request를 외부 channel에 전달하고 승인 뒤
-같은 turn을 재개하는 입력 protocol이 없다. Telegram의 사람 확인은 관리형 HA broker
-proposal에만 제공하며, 그 밖의 ask rule은 Web/SSH TUI 또는 global permission 변경이
+같은 turn을 재개하는 입력 protocol이 없다. Telegram 버튼은 native tool prompt의
+resume가 아니다. 관리형 운영 도구는 기본 allow에서 통과시키며, 사람 확인이 필요한
+일반 HA service/config 변경은 runtime rule이 `ha_change_propose`로 라우팅한 별도
+durable broker proposal이 App-managed 승인 경계다. 이 경로의 모든 broker
+`service_call`/`config_patch`는 durable Telegram 확인이 필요하다. 신뢰된 사용자 설치·
+전역 native tool, `command(*)`/`mcp(*)`, 직접 `ha-api`/`supervisor-api`와 일반
+`/config` shell write는 CLI와 같은 관리자 권한을 상속하고 broker가 투명하게
+가로채지 않으며, exact deny와 AppArmor 안에서 사용자 rule과 현재 명시적 요청을
+따른다. 그 밖의 사용자 ask rule은 Web/SSH TUI 또는 global permission 변경이
 필요하다. Telegram 전용 skip-permission이나 auto-approve 설정은 만들지 않는다.
 
 Antigravity 1.1.13은 system default와 같은 값을 저장하지 않는 sparse persistence를
-적용한다. 따라서 `agy agent`가 `request-review`를 읽으면 redundant
-`toolPermission` key를 제거할 수 있다. 이 경우에도 App이 생성한
+적용할 수 있다. `toolPermission` key가 native round-trip에서 생략돼도 App이 생성한
 `permissions.allow`, `permissions.ask`, `permissions.deny`가 native authorization
 계약이며 세 bucket과 ownership rule 전체를 검증해야 한다. 사용자 설정 보존 테스트는
 같은 이유로 default `colorScheme: "terminal"` 대신 CLI가 왕복 보존하는 공식
@@ -203,10 +226,27 @@ settings는 file metadata와 공식 key의 semantic 보존을, global MCP는 byt
 다른 machine field로 기록한다.
 
 permission precedence는 native 규칙대로 deny > ask > allow다. AppArmor deny와
-broker의 고위험 정책은 `always-proceed`로도 완화되지 않는다.
+App-managed broker의 고위험 정책은 `always-proceed`로도 완화되지 않는다.
 
-`antigravity_terminal_sandbox=true`는 Web/SSH/Telegram wrapper에 `--sandbox`를
-추가한다. false는 세 표면에서 이 CLI flag만 생략하며 AppArmor를 끄지 않는다.
+App 관리 permission enforcement의 self-bypass를 막기 위해 raw file tool의
+`settings.json` 직접 write는 default-allow의 exact deny다. 일반 전역 설정은 먼저
+`agy-settings sha256`으로 현재 digest를 얻고 `expected_sha256`과 JSON merge `patch`를
+stdin으로 `agy-settings patch`에 전달해 원자적으로 수정한다. helper는
+`permissions`, `enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`,
+`artifactReviewPolicy`가 patch 어느 깊이에 있어도 거부하며, 이 다섯 보안 key는 App
+option과 restart로만 변경한다. 사용자 global plugin·agent·rule·skill은 공유·직접
+수정할 수 있고 user-configured MCP executable은 별도 command profile에서 실행한다.
+기존 user-owned rule과 알 수 없는 settings key는 update merge에서 보존한다.
+
+Antigravity 1.1.13의 native `--sandbox`는 비특권 HAOS App에서 namespace clone이
+`operation not permitted`로 실패한다. 2.0.9 Web/SSH/Telegram wrapper는 이 flag를
+추가하지 않고 enable/disable override를 모두 거부한다. 대신 native가 생성한 command와
+stdio tool executable은 discrete `Px` transition으로
+`antigravity_home_assistant-command` AppArmor profile에 들어간다. parent는 OAuth와
+공유 customization을 유지하지만 command/tool descendant는 OAuth backend와 App 관리
+settings에 접근하지 못한다. 이 설계는 App의 `full_access`, `SYS_ADMIN`, seccomp 완화나
+보호 모드 해제를 요구하지 않는다. `antigravity_terminal_sandbox`는 deprecated/no-op
+schema 입력이며 `true`와 `false`를 모두 `false`로 정규화하고 warning을 남긴다.
 
 ## 5. plugin 계약
 
@@ -311,11 +351,15 @@ MCP 설정은 `mcpServers` object를 사용하는 JSON이다. App 관리 server�
 
 ```text
 agy
-agy --sandbox
+# effective native argv contains no native sandbox flag
 ```
 
-wrapper는 HOME, PATH, locale과 non-secret endpoint만 정규화한 뒤 실제 binary를
-`exec`한다. 사용자의 나머지 argv는 순서를 보존해 그대로 전달한다.
+wrapper는 HOME, PATH, locale과 non-secret endpoint를 정규화한 뒤 실제 binary를
+`exec`한다. native sandbox enable/disable 형태는 모두 거부하고 그 밖의 사용자 argv는
+순서를 보존해 그대로 전달한다. clean environment launcher는
+`/usr/local/libexec/antigravity-native-env`, no-sandbox `run_command`의 PATH shell은
+`/usr/local/libexec/antigravity-command-bin/bash`이며 둘 다 image 소유 경로다. shell과
+일반 executable은 `antigravity_home_assistant-command` profile로 전환한다.
 
 로그인 helper는 존재하지 않는 `login` subcommand를 호출하지 않는다. 공식
 first-run OAuth가 가능한 controlling TTY에서 `agy`를 실행하고 안내만 제공한다.
@@ -345,8 +389,9 @@ first-run OAuth가 가능한 controlling TTY에서 `agy`를 실행하고 안내�
 - 최초 prompt 전에 검증된 per-user/per-chat conversation ID를 영속 결합하며 모든
   후속 요청과 승인 callback에 `--conversation <id>`로 전달한다. 실행 실패는 새
   ID를 만들지 않으며 `/new`만 rotation을 허용한다.
-- 권한은 별도 Telegram mode가 아니라 native global `toolPermission`, sandbox와
-  민감정보 option에서 온다. broker형 변경의 사람 확인은 같은 conversation에 묶는다.
+- 권한은 별도 Telegram mode가 아니라 native global `toolPermission`과 민감정보
+  option에서 온다. native nested sandbox 대신 세 채널에 동일한 AppArmor command
+  경계를 적용하고 broker형 변경의 사람 확인은 같은 conversation에 묶는다.
 
 ### 7.3 금지 인수
 
@@ -410,7 +455,7 @@ Antigravity version 변경 PR은 다음을 함께 제공해야 한다.
 3. settings와 plugin schema validation
 4. interactive OAuth persistence smoke
 5. print `text`, `json`, `stream-json` parser smoke
-6. headless permission과 sandbox negative test
+6. headless permission, native sandbox flag 거부와 AppArmor command-boundary negative test
 7. 두 아키텍처 image 및 실제 HAOS 최소 1개 아키텍처 재검증
 
 CLI 자체의 `update` subcommand로 실행 중 image를 변경하지 않는다. version 변경은

@@ -1,9 +1,9 @@
 {
   "altScreenMode": "never",
-  "toolPermission": "request-review",
+  "toolPermission": "always-proceed",
   "artifactReviewPolicy": "agent-decides",
   "allowNonWorkspaceAccess": false,
-  "enableTerminalSandbox": true,
+  "enableTerminalSandbox": false,
   "showTips": false,
   "showFeedbackSurvey": false
 }

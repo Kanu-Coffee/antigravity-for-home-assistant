@@ -2463,6 +2463,17 @@ def test_workflows_encode_exact_release_invariants() -> None:
     assert 'TEST_PLATFORM: ${{ matrix.platform }}' in build
     assert 'HA_ARCH: ${{ matrix.ha_arch }}' in build
     assert build.count("suite: telegram-shared-context") == 2
+    candidate_build = next(
+        step
+        for step in build_workflow["jobs"]["build"]["steps"]
+        if step.get("id") == "build"
+    )
+    assert candidate_build["with"]["cache-gha-scope"] == (
+        "antigravity-home-assistant"
+    )
+    assert candidate_build["with"]["cache-image-tag"] == (
+        "${{ inputs.candidate_tag }}"
+    )
     assert build.count("suite: public-v1") == 1
     assert build.count("suite: public-v2") == 1
     assert "public-v1) exec bash tests/public-v1-upgrade-smoke.sh" in build

@@ -123,10 +123,9 @@ assert_permission_bucket() {
 
 probe_policy() {
   local policy=$1
-  local effective_policy=$2
+  local _effective_policy=$2
   local options_json
   local name="${TEST_ID}-${policy}"
-  local expected_bucket
   local tool
 
   if [[ "${policy}" == missing ]]; then
@@ -152,24 +151,7 @@ probe_policy() {
     || fail 'native settings did not protect Home Assistant secrets'
 
   for tool in "${ALL_TOOLS[@]}"; do
-    case "${effective_policy}" in
-      never)
-        expected_bucket=allow
-        ;;
-      always)
-        expected_bucket=ask
-        ;;
-      safe)
-        expected_bucket=ask
-        for safe_tool in "${SAFE_TOOLS[@]}"; do
-          if [[ "${safe_tool}" == "${tool}" ]]; then
-            expected_bucket=allow
-            break
-          fi
-        done
-        ;;
-    esac
-    assert_permission_bucket "${name}" "${expected_bucket}" "${tool}"
+    assert_permission_bucket "${name}" allow "${tool}"
   done
 }
 
@@ -204,7 +186,7 @@ ALWAYS_SETTINGS=$(docker exec "${TEST_ID}-always" sha256sum "${settings_path}" \
   | awk '{print $1}')
 [[ "${NEVER_SETTINGS}" == "${SAFE_SETTINGS}" \
   && "${ALWAYS_SETTINGS}" == "${SAFE_SETTINGS}" ]] \
-  || fail 'legacy browser approval modes weakened the v2 safe policy'
+  || fail 'legacy browser approval modes changed the v3 default-allow policy'
 
 docker cp tests/fake-antigravity-real.sh \
   "${TEST_ID}-safe:/usr/local/libexec/antigravity-real" >/dev/null
@@ -213,36 +195,33 @@ WRAPPER_OUTPUT=$(docker exec --workdir /config "${TEST_ID}-safe" \
   antigravity __probe__ passthrough-value)
 [[ $(grep -Fxc 'ARG=<__probe__>' <<< "${WRAPPER_OUTPUT}" || true) -eq 1 ]]
 [[ $(grep -Fxc 'ARG=<passthrough-value>' <<< "${WRAPPER_OUTPUT}" || true) -eq 1 ]]
-[[ $(grep -Fxc 'ARG=<--sandbox>' <<< "${WRAPPER_OUTPUT}" || true) -eq 1 ]] \
-  || fail 'wrapper did not inject the native --sandbox option exactly once'
+[[ $(grep -Ec '^ARG=<-{1,2}(no-)?sandbox(=.*)?>$' \
+  <<< "${WRAPPER_OUTPUT}" || true) -eq 0 ]] \
+  || fail 'wrapper injected a native sandbox override'
 [[ $(grep -Fxc 'ARG=<-c>' <<< "${WRAPPER_OUTPUT}" || true) -eq 0 ]] \
   || fail 'wrapper injected the legacy Codex -c option'
-for sandbox_argument in \
+for sandbox_override in \
   --sandbox \
   -sandbox \
   --sandbox=true \
-  -sandbox=true; do
-  SANDBOX_OUTPUT=$(docker exec --workdir /config "${TEST_ID}-safe" \
-    antigravity "${sandbox_argument}" __probe__)
-  [[ $(grep -Fxc "ARG=<${sandbox_argument}>" \
-    <<< "${SANDBOX_OUTPUT}" || true) -eq 1 ]] \
-    || fail "wrapper did not preserve the exact safe ${sandbox_argument} form"
-  [[ $(grep -Ec '^ARG=<-{1,2}sandbox(=true)?>$' \
-    <<< "${SANDBOX_OUTPUT}" || true) -eq 1 ]] \
-    || fail "wrapper duplicated the safe ${sandbox_argument} form"
-done
-unset sandbox_argument SANDBOX_OUTPUT
-for sandbox_override in \
+  -sandbox=true \
   --sandbox=false \
   -sandbox=false \
   --sandbox=TRUE \
-  -sandbox=1; do
-  if docker exec --workdir /config "${TEST_ID}-safe" \
-    antigravity "${sandbox_override}" >/dev/null 2>&1; then
-    fail "wrapper accepted unsafe or ambiguous ${sandbox_override}"
-  fi
+  -sandbox=1 \
+  --no-sandbox \
+  --no-sandbox=true \
+  -no-sandbox \
+  -no-sandbox=false; do
+  set +e
+  docker exec --workdir /config "${TEST_ID}-safe" \
+    antigravity "${sandbox_override}" >/tmp/sandbox.out 2>/tmp/sandbox.err
+  sandbox_status=$?
+  set -e
+  [[ "${sandbox_status}" -eq 78 ]] \
+    || fail "wrapper returned ${sandbox_status} for ${sandbox_override}, expected 78"
 done
-unset sandbox_override
+unset sandbox_override sandbox_status
 for dangerous_argument in \
   --dangerously-skip-permissions \
   --dangerously-skip-permissions=true \
@@ -263,22 +242,27 @@ docker exec "${TEST_ID}-safe" /bin/sh -c '
 '
 RAW_OPTIONS_OUTPUT=$(docker exec --workdir /config "${TEST_ID}-safe" \
   antigravity __probe__)
-[[ $(grep -Fxc 'ARG=<--sandbox>' <<< "${RAW_OPTIONS_OUTPUT}" || true) -eq 1 ]] \
-  || fail 'wrapper read the raw /data/options.json instead of its safe runtime snapshot'
+[[ $(grep -Ec '^ARG=<-{1,2}(no-)?sandbox(=.*)?>$' \
+  <<< "${RAW_OPTIONS_OUTPUT}" || true) -eq 0 ]] \
+  || fail 'raw options injected a native sandbox override'
 seed_wrapper_options "${TEST_ID}-safe" false
 NO_SANDBOX_OUTPUT=$(docker exec --workdir /config "${TEST_ID}-safe" \
   antigravity __probe__)
-[[ $(grep -Fxc 'ARG=<--sandbox>' <<< "${NO_SANDBOX_OUTPUT}" || true) -eq 0 ]] \
-  || fail 'wrapper ignored antigravity_terminal_sandbox=false in its safe runtime snapshot'
+[[ $(grep -Ec '^ARG=<-{1,2}(no-)?sandbox(=.*)?>$' \
+  <<< "${NO_SANDBOX_OUTPUT}" || true) -eq 0 ]] \
+  || fail 'safe snapshot injected a native sandbox override'
 docker exec "${TEST_ID}-safe" /bin/sh -c '
   jq ".antigravity_terminal_sandbox = true" /data/options.json > /tmp/options.json
   chmod 0600 /tmp/options.json
   mv /tmp/options.json /data/options.json
 '
-EXPLICIT_SANDBOX_OUTPUT=$(docker exec --workdir /config "${TEST_ID}-safe" \
-  antigravity --sandbox __probe__)
-[[ $(grep -Fxc 'ARG=<--sandbox>' <<< "${EXPLICIT_SANDBOX_OUTPUT}" || true) -eq 1 ]] \
-  || fail 'wrapper duplicated an explicit --sandbox option'
+set +e
+docker exec --workdir /config "${TEST_ID}-safe" \
+  antigravity --sandbox __probe__ >/tmp/explicit.out 2>/tmp/explicit.err
+explicit_status=$?
+set -e
+[[ "${explicit_status}" -eq 78 ]] \
+  || fail "wrapper returned ${explicit_status} for explicit --sandbox, expected 78"
 
 assert_invalid_policy invalid-enum \
   '{"browser_approval_policy":"unexpected"}'

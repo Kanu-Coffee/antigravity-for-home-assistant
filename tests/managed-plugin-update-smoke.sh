@@ -223,7 +223,7 @@ run_script "${POSTCONDITION_BACKUP}" <<'SCRIPT'
   jq --exit-status '
     .schema == 1
     and .owner == "antigravity-for-home-assistant"
-    and .source_version == "2.0.8"
+    and .source_version == "2.0.9"
     and .target_version == "2.0.0-postconditionfailure"
     and .target == "/data/home/.gemini/config/plugins/home-assistant"
     and (.before.tree_sha256 | test("^[0-9a-f]{64}$"))
@@ -235,6 +235,108 @@ run_script "${POSTCONDITION_BACKUP}" <<'SCRIPT'
       has("path") and has("mode") and has("size") and has("sha256")
     ))
   ' "${backup}/manifest.json" >/dev/null
+SCRIPT
+
+for RETENTION_VERSION in \
+  2.0.0-retention1 \
+  2.0.0-retention2 \
+  2.0.0-retention3 \
+  2.0.0-retention4
+do
+  RETENTION_OUTPUT=$(run_script "${RETENTION_VERSION}" <<'SCRIPT'
+    set -Eeuo pipefail
+    version=$1
+    printf '%s\n' "${version}" \
+      > /usr/local/share/antigravity-ha/app-version
+    exec /usr/bin/env -i \
+      AGY_CLI_DISABLE_AUTO_UPDATE=true \
+      HOME=/data/home \
+      LANG=C.UTF-8 \
+      LC_ALL=C.UTF-8 \
+      PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+      /usr/bin/node \
+      /usr/local/share/antigravity-ha/managed-plugin-update.mjs
+SCRIPT
+  ) || fail "managed plugin retention update failed: ${RETENTION_VERSION}"
+  assert_json "${RETENTION_OUTPUT}" \
+    ".updated == true and .version == \"${RETENTION_VERSION}\""
+done
+
+run_script <<'SCRIPT'
+  set -Eeuo pipefail
+  backup_root=/data/antigravity-ha/backups
+  mapfile -t retained < <(
+    for path in "${backup_root}"/plugin-*; do
+      if [[ -d ${path} && -f ${path}/manifest.json ]]; then
+        basename "${path}"
+      fi
+    done | sort
+  )
+  test "${#retained[@]}" -eq 2
+  for backup in "${retained[@]}"; do
+    test "$(stat -c '%a:%U:%G' "${backup_root}/${backup}")" = 700:root:root
+    test -f "${backup_root}/${backup}/manifest.json"
+    test -z "$(find "${backup_root}/${backup}" -type l -print -quit)"
+  done
+
+  sentinel=/data/managed-plugin-retention-sentinel
+  printf '%s\n' preserve > "${sentinel}"
+  unsafe=${backup_root}/plugin-9.9.9-to-9.9.10-deadbeefcafe
+  mkdir -m 0700 "${unsafe}"
+  ln -s "${sentinel}" "${unsafe}/plugin.before"
+
+  manifestless=${backup_root}/plugin-9.9.11-to-9.9.12-cafebabefeed
+  mkdir -m 0700 "${manifestless}"
+  printf '%s\n' preserve > "${manifestless}/plugin.before"
+
+  crash_source=${backup_root}/${retained[0]}
+  crash_quarantine=${backup_root}/.${retained[0]}.prune-0123456789ab
+  mv "${crash_source}" "${crash_quarantine}"
+SCRIPT
+
+for RETENTION_RESTART in 1 2; do
+  RESTART_OUTPUT=$(run_script <<'SCRIPT'
+    set -Eeuo pipefail
+    exec /usr/bin/env -i \
+      AGY_CLI_DISABLE_AUTO_UPDATE=true \
+      HOME=/data/home \
+      LANG=C.UTF-8 \
+      LC_ALL=C.UTF-8 \
+      PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+      /usr/bin/node \
+      /usr/local/share/antigravity-ha/managed-plugin-update.mjs
+SCRIPT
+  ) || fail "managed plugin retention restart failed: ${RETENTION_RESTART}"
+  if [[ ${RETENTION_RESTART} -eq 1 ]]; then
+    assert_json "${RESTART_OUTPUT}" '
+      .updated == true
+      and .degraded == false
+      and .version == "2.0.9"
+      and (.backup_directory | startswith("/data/antigravity-ha/backups/plugin-"))
+    '
+  else
+    assert_json "${RESTART_OUTPUT}" '
+      .updated == false
+      and .degraded == false
+      and .version == "2.0.9"
+      and .backup_directory == null
+    '
+  fi
+done
+
+run_script <<'SCRIPT'
+  set -Eeuo pipefail
+  backup_root=/data/antigravity-ha/backups
+  unsafe=${backup_root}/plugin-9.9.9-to-9.9.10-deadbeefcafe
+  test -L "${unsafe}/plugin.before"
+  manifestless=${backup_root}/plugin-9.9.11-to-9.9.12-cafebabefeed
+  test "$(cat "${manifestless}/plugin.before")" = preserve
+  test "$(cat /data/managed-plugin-retention-sentinel)" = preserve
+  test -z "$(find "${backup_root}" -mindepth 1 -maxdepth 1 \
+    -type d -name '.plugin-*.prune-*' -print -quit)"
+  safe_count=$(find "${backup_root}" -mindepth 2 -maxdepth 2 \
+    -type f -name manifest.json -printf '.\n' | wc -l)
+  test "${safe_count}" -le 2
 SCRIPT
 
 printf 'managed plugin transaction smoke: PASS\n'

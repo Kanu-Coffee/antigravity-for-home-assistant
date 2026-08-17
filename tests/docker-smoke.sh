@@ -180,27 +180,28 @@ for rejected_flag in \
   --dangerously-skip-permissions=true \
   -dangerously-skip-permissions \
   -dangerously-skip-permissions=true \
+  --no-sandbox \
+  --no-sandbox=true \
+  -no-sandbox \
+  -no-sandbox=false \
+  --sandbox \
+  -sandbox \
+  --sandbox=true \
+  -sandbox=true \
   --sandbox=false \
   -sandbox=false \
   --sandbox=TRUE \
   -sandbox=1; do
-  if docker run --rm --platform "$TEST_PLATFORM" \
-    --entrypoint /usr/local/bin/antigravity "${IMAGE}" \
-    "${rejected_flag}" --help >/dev/null 2>&1; then
-    fail "Antigravity wrapper accepted unsafe flag ${rejected_flag}"
-  fi
-done
-for safe_sandbox_flag in \
-  --sandbox \
-  -sandbox \
-  --sandbox=true \
-  -sandbox=true; do
+  set +e
   docker run --rm --platform "$TEST_PLATFORM" \
     --entrypoint /usr/local/bin/antigravity "${IMAGE}" \
-    "${safe_sandbox_flag}" --help >/dev/null 2>&1 \
-    || fail "Antigravity wrapper rejected safe flag ${safe_sandbox_flag}"
+    "${rejected_flag}" --help >/dev/null 2>&1
+  rejected_status=$?
+  set -e
+  [[ "${rejected_status}" -eq 78 ]] \
+    || fail "Antigravity wrapper returned ${rejected_status} for ${rejected_flag}, expected 78"
 done
-unset rejected_flag safe_sandbox_flag
+unset rejected_flag rejected_status
 
 for volume in \
   "${PUBLIC_DATA}" \

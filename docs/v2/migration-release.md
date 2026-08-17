@@ -9,13 +9,15 @@ public App은 사용자의 HAOS에서 source build하지 않고 GHCR prebuilt im
 받는다.
 
 ```yaml
-version: "2.0.0"
+version: "2.0.9"
 arch:
   - amd64
   - aarch64
 image: ghcr.io/kanu-coffee/antigravity-for-home-assistant
 breaking_versions:
   - "2.0.0"
+  - "2.0.7"
+  - "2.0.9"
 ```
 
 `apparmor`의 Supervisor 기본값은 `true`다. pinned App linter가 중복 기본값을
@@ -24,8 +26,9 @@ breaking_versions:
 
 Supervisor는 `version`을 image tag로 사용한다. 같은 numeric tag에 amd64와
 aarch64 manifest가 모두 있을 때만 `config.yaml`에 두 아키텍처를 선언한다.
-첫 v2와 2.0.7의 Telegram 관리자 trust-model 전환은 breaking version으로 표시하고
-자동 major update가 아니라 사용자가 release note를 읽고 선택하게 한다.
+첫 v2, 2.0.7의 Telegram 관리자 trust-model 전환, 2.0.9의 default-allow managed
+permission 및 persistent mutation 범위 전환은 breaking version으로 표시하고 사용자가
+release note를 읽고 선택하게 한다.
 
 image에 고정한 Antigravity binary는 App runtime에서 자체 갱신하지 않는다. 모든
 native launch와 `env -i` child allowlist는 공식 opt-out
@@ -86,6 +89,9 @@ version을 marker에 기록한다. 같은 이름의 기존 plugin에 marker가 �
   사용자 key와 server는 그대로 보존한다.
 - 위 공통 규칙에 따라 ownership이 확인된 App 관리 plugin은 canonical refresh하고,
   같은 이름의 사용자 소유 plugin은 conflict로 중단한다.
+- App ownership이 확인된 2.0.6/2.0.8 permission rule은 2.0.9에서 operational default
+  allow와 sensitive exact deny로 version migration한다. 사용자 소유 rule과 OAuth,
+  global plugin/agent/skill/rule은 보존한다.
 - unsafe legacy Codex식 설정은 실행하지 않으며 경고와 `refresh_managed` 안내를
   제공한다.
 
@@ -123,14 +129,15 @@ v2.0.x는 update input을 읽기 위해 deprecated v1 key와 enum을 migration-o
 | `antigravity_approval_policy=untrusted` | `antigravity_tool_permission=strict` |
 | `antigravity_approval_policy=on-request` | `antigravity_tool_permission=request-review` |
 | `antigravity_approval_policy=never` | `request-review`로 낮추고 명시적 경고. auto-approve를 승계하지 않음 |
-| `antigravity_sandbox_mode=*` | `antigravity_terminal_sandbox=true` |
+| `antigravity_sandbox_mode=*` | 폐기. `antigravity_terminal_sandbox=false`로 정규화 |
+| `antigravity_terminal_sandbox=true\|false` | 2.0.9부터 deprecated/no-op. warning 후 `false`로 정규화; AppArmor command 경계는 항상 유지 |
 | `browser_approval_policy=*` | 제거. v2 browser MCP allowlist 사용 |
 | `antigravity_user_files_update_mode=preserve` | `preserve` |
 | `...=refresh_agents` | `refresh_managed` |
 | `...=refresh_all` | `refresh_managed`; `reset_v2`는 사용자가 새로 선택해야 함 |
 | `antigravity_token` | import하지 않음. 공식 OAuth 필요 상태 보고 |
 | `telegram_allowed_chat_ids` | 유효 ID만 보존. user allowlist와 교집합을 이루거나 새 private pairing 전까지 모든 메시지를 거부 |
-| `telegram_access_mode` | 2.0.7에서는 권한으로 사용하지 않고 제거. global `antigravity_tool_permission`/sandbox/민감정보 option을 적용 |
+| `telegram_access_mode` | 2.0.7에서는 권한으로 사용하지 않고 제거. global `antigravity_tool_permission`/민감정보 option과 AppArmor command 경계를 적용 |
 | legacy Telegram pairing/session | `/data/antigravity-ha/quarantine/v1-telegram/`으로 root-only 원자 격리하고 v2에서 재사용하지 않음 |
 | `home_assistant_browser_token` | 새 secret으로 복사하지 않음. 관리 identity 재검증 또는 setup 안내 |
 
@@ -298,6 +305,21 @@ MIG-007은 `PARTIAL`이다.
 
 ## MIG-009 — CI와 publish gate
 
+이 저장소에는 목적이 다른 두 publish 단계가 있다.
+
+- `Main release`는 단일 `main` 개발선의 긴급 수정과 현장 검증을 위한 **experimental
+  numeric prerelease** 경로다. 같은 source의 성공한 automated Candidate artifact를
+  재빌드 없이 승격하고 immutable numeric tag/GHCR image/GitHub prerelease를 만들지만,
+  HAOS 수동 evidence를 입력으로 받지 않는다. 따라서 이 경로의 발행은 field-testing
+  availability일 뿐 `MIG-010` 완료, stable 또는 v2 수용으로 표시할 수 없고 release
+  notes와 최종 보고에 실제 HAOS gate를 `NOT RUN`으로 남긴다.
+- `Candidate / finalize`와 evidence-aware Builder는 아래 여덟 HAOS gate까지 결합하는
+  **evidence-complete acceptance** 경로다. `MIG-010`의 완료·stable 주장은 이 경로와
+  post-publish 수용 자료에만 적용한다.
+
+두 경로 모두 기존 numeric tag를 이동하거나 image를 덮어쓰지 않으며 실패한 발행은
+더 높은 App version으로 재시작한다.
+
 PR/push CI는 독립 job으로 다음을 수행해 첫 실패가 나머지 증거를 가리지 않게
 한다.
 
@@ -312,7 +334,7 @@ PR/push CI는 독립 job으로 다음을 수행해 첫 실패가 나머지 증�
 9. 실제 1.1.13의 `AGY_CLI_DISABLE_AUTO_UPDATE=true` propagation과 updater
    spawn/version/digest canary
 
-Candidate와 Builder workflow 조건:
+evidence-complete Candidate와 Builder workflow 조건:
 
 - numeric tag 전 수동 `Candidate / build`가 고유
   `candidate-<source-sha>-<run-id>-<run-attempt>` staging tag로 두 architecture를
@@ -393,6 +415,8 @@ Candidate와 Builder workflow 조건:
 
 ## MIG-010 — 릴리스 단계
 
+이 절은 evidence-complete acceptance 경로를 정의한다.
+
 1. 모든 자동 검사가 green인 release commit에서 `Candidate / build`를 수동 실행한다.
    Candidate attempt는 atomic artifact set이므로 실패 시 **Re-run all jobs**만 사용한다.
    **Re-run failed jobs**는 지원하지 않으며 이전 attempt의 성공 artifact를 새 attempt와
@@ -455,9 +479,10 @@ Candidate와 Builder workflow 조건:
     random identity sentinel hash는 서로 달라야 하며, 전체 post-publish 수용에는 두
     acceptance asset이 모두 필요하다.
 
-1~4의 외부 evidence가 하나라도 없거나 `NOT_RUN`이면 finalize와 Builder는 fail
-closed한다. 현재 이 repository에는 실제 HAOS final evidence와 public candidate package
-상태가 없으므로 v2 release gate는 `PARTIAL`이다.
+1~4의 외부 evidence가 하나라도 없거나 `NOT_RUN`이면 evidence-complete finalize와
+Builder는 fail closed한다. automated Candidate만 소비하는 `Main release` experimental
+prerelease는 이 finalizer를 가장하거나 대체하지 않는다. 현재 이 repository에는 실제
+HAOS final evidence가 없으므로 v2 acceptance gate는 `PARTIAL`이다.
 발행 전 bundle rehearsal은 local repository identity만 검증하므로 10의 `HA-005`나
 public numeric two-arch fresh install `HA-008`을 대체할 수 없다. 10이 통과하기 전에는
 post-publish 수용과 v2 완료를 표시하지 않는다. post-publish
@@ -542,9 +567,39 @@ digest에 양 architecture의 original public repository fresh install/start/res
 관찰을 결합한다. 고유 Actions artifact와 fixed-name Release asset은 create-once이며
 HA-005와 어느 순서로 붙어도 동일 byte resume만 허용한다.
 
-template의 `NOT_RUN`은 의도적인 fail-closed 초기값이다. 필수 완료 조건의 실제
-sanitized evidence가 없으면 final artifact, numeric image와 GitHub Release를 만들지
-않으며 v2 완료로 표시하지 않는다. 자동화가 검증하는 것은 allowlisted repository에서
-다운로드한 evidence byte와 digest, candidate/source 결합이다. 보고서 안의 실제 HAOS
-행위가 정직하게 수행됐다는 의미까지 암호학적으로 증명하지는 않으므로, finalizer를
-실행한 repository maintainer가 sanitized report를 검토한 trusted-attestor 경계로 남는다.
+template의 `NOT_RUN`은 evidence-complete 경로의 의도적인 fail-closed 초기값이다.
+필수 완료 조건의 실제 sanitized evidence가 없으면 final artifact와 stable/v2 완료
+표시를 만들지 않는다. 별도 `Main release`가 experimental numeric prerelease를
+발행했더라도 이 조건은 충족되지 않는다. 자동화가 검증하는 것은 allowlisted
+repository에서 다운로드한 evidence byte와 digest, candidate/source 결합이다. 보고서
+안의 실제 HAOS 행위가 정직하게 수행됐다는 의미까지 암호학적으로 증명하지는 않으므로,
+finalizer를 실행한 repository maintainer가 sanitized report를 검토한
+trusted-attestor 경계로 남는다.
+
+## Local build cache와 App backup 소유권·상한
+
+개발용 `tools/development/build-app build`만 checkout path hash로 분리한 App-owned
+Buildx namespace `antigravity-ha-local-<checkout-hash>`를 관리한다. helper는 Git common
+directory의 checkout별 flock으로 직렬화하고, 시작 시 이 exact 이름의 crash 잔존
+builder를 제거한 뒤 `docker-container` builder를 만들며 EXIT에서 같은 builder를
+`buildx rm --force`해 자기 BuildKit state/cache만 제거한다.
+global/default builder, system, container, volume 또는 image prune은 실행하지 않는다.
+
+local image 정리는 `io.antigravity-ha.local-build=true`,
+`io.antigravity-ha.local-build.owner=antigravity-for-home-assistant`와
+`io.antigravity-ha.local-build.checkout=<checkout-hash>` label, exact repository tag와 모든
+container에서 미참조라는 조건을 다시 검증한 image에만 적용한다. checkout별 최신 두
+개는 보존하고 그보다 오래된 project-owned local image만 제거한다. 이 계약은 개발 host
+cache에 한정하며 HAOS App runtime data나 Supervisor image lifecycle을 건드리지 않는다.
+
+reusable release build action에는 stable
+`cache-gha-scope: antigravity-home-assistant`를 전달해 run마다 새 scope가 누적되지 않게 한다.
+
+App runtime backup 상한은 `/data/antigravity-ha/backups/plugin-*`의 managed-plugin transaction,
+`backups/native-files/refresh-*`의 native user-files refresh와
+`change-broker/backups/*`의 config patch에 독립적으로 적용한다. 각 범주의 ownership
+manifest owner/transaction/target과 root-owned/no-symlink 완료 tree를 재검증해 최신 총
+두 개를 보존한다. 복구·update·transaction이 success/unchanged로 끝난 뒤 오래된
+eligible 항목을 atomic quarantine하고 삭제하며 crash 잔존 quarantine은 다음 실행에서
+같은 검증 뒤 재시도한다. active/incomplete, manifestless, unsafe, symlinked 또는 App
+ownership을 증명할 수 없는 backup은 보존한다.

@@ -19,10 +19,79 @@ redact_stream() {
 render_body() {
   local body_file=$1
   local raw=$2
-  if [[ "${raw}" == true ]] || ! jq --exit-status . "${body_file}" >/dev/null 2>&1; then
-    redact_stream < "${body_file}"
+  local response_path=$3
+  local sensitive_supervisor_response=false
+  local -a jq_args
+  if [[ "${API_PROGRAM_NAME}" == supervisor-api \
+    && "${response_path}" =~ ^/(addons|apps)/[^/]+/(info|options|config)(/|$) ]]; then
+    sensitive_supervisor_response=true
+  fi
+  if ! jq --exit-status . "${body_file}" >/dev/null 2>&1; then
+    if [[ "${sensitive_supervisor_response}" == true ]]; then
+      printf '%s\n' '[REDACTED]'
+    else
+      redact_stream < "${body_file}"
+    fi
   else
-    jq . "${body_file}" | redact_stream
+    jq_args=()
+    if [[ "${raw}" == true ]]; then
+      jq_args+=(--compact-output)
+    fi
+    jq "${jq_args[@]}" \
+      --arg api_program "${API_PROGRAM_NAME}" \
+      --arg api_path "${response_path}" '
+      def sensitive_key:
+        test(
+          "(^|[_ -])(access[_ -]?key|api[_ -]?key|auth(orization)?|bearer|client[_ -]?secret|code|cookie|credential|key|pass(code|phrase|word)?|pin|private[_ -]?key|psk|secret|session([_ -]?id)?|token|webhook)([_ -]|$)";
+          "i"
+        );
+      def sensitive_value:
+        type == "string" and test(
+          "(^|[[:space:]])bearer[[:space:]]+[^[:space:]]|-----BEGIN [A-Z ]*PRIVATE KEY-----|(^|[^A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}";
+          "i"
+        );
+      def redact_sensitive:
+        if type == "object" then
+          with_entries(
+            if (
+              (.key | sensitive_key) or
+              (
+                $api_program == "supervisor-api" and
+                ($api_path | test("^/(addons|apps)/[^/]+/(info|options|config)(/|$)")) and
+                (.key | test("^(options|config)$"; "i"))
+              )
+            ) then
+              .value = "[REDACTED]"
+            else
+              .value |= redact_sensitive
+            end
+          )
+        elif type == "array" then
+          map(redact_sensitive)
+        elif sensitive_value then
+          "[REDACTED]"
+        else
+          .
+        end;
+      if (
+        $api_program == "supervisor-api" and
+        ($api_path | test("^/(addons|apps)/[^/]+/(options|config)(/|$)"))
+      ) then
+        if type == "object" then
+          with_entries(
+            if (.key | test("^(data|options|config)$"; "i")) then
+              .value = "[REDACTED]"
+            else
+              .value |= redact_sensitive
+            end
+          )
+        else
+          "[REDACTED]"
+        end
+      else
+        redact_sensitive
+      end
+    ' "${body_file}" | redact_stream
   fi
 }
 
@@ -31,6 +100,7 @@ api_main() {
   local accept='application/json'
   local method
   local path
+  local path_only
   local body=''
   local has_body=false
   local request_dir
@@ -88,9 +158,24 @@ api_main() {
     printf '%s: invalid HTTP method\n' "${API_PROGRAM_NAME}" >&2
     return 64
   fi
-  if [[ "${path}" != /* || "${path}" == //* || "${path}" =~ [[:space:]] ]]; then
+  if [[ "${path}" != /* || "${path}" == //* || "${path}" =~ [[:space:]] \
+    || ${#path} -gt 2048 || "${path}" == *'#'* || "${path}" == *\\* ]]; then
     printf '%s: path must be a relative API path beginning with one slash\n' "${API_PROGRAM_NAME}" >&2
     return 64
+  fi
+  path_only=${path%%\?*}
+  if [[ "${path_only}" == *'%'* || "${path_only}" == *'//'* \
+    || "${path_only}" =~ (^|/)\.{1,2}(/|$) ]]; then
+    printf '%s: path contains a non-canonical segment\n' "${API_PROGRAM_NAME}" >&2
+    return 64
+  fi
+  if [[ "${API_PROGRAM_NAME}" == supervisor-api ]] && {
+    [[ "${path_only}" =~ ^/backups/[^/]+/download$ ]] \
+      || [[ "${path_only}" =~ ^/ingress/ ]];
+  }; then
+    printf '%s: sensitive credential-bearing endpoint is unavailable\n' \
+      "${API_PROGRAM_NAME}" >&2
+    return 77
   fi
 
   if (( $# == 3 )); then
@@ -161,7 +246,7 @@ api_main() {
 
   if (( http_status < 200 || http_status >= 300 )); then
     printf '%s: HTTP %s\n' "${API_PROGRAM_NAME}" "${http_status}" >&2
-    render_body "${response_file}" "${raw}" >&2
+    render_body "${response_file}" "${raw}" "${path_only}" >&2
     return 1
   fi
 
@@ -170,15 +255,15 @@ api_main() {
       "${response_file}" >/dev/null 2>&1; then
       if jq --exit-status '.result != "ok"' "${response_file}" >/dev/null 2>&1; then
         printf '%s: Supervisor result was not ok\n' "${API_PROGRAM_NAME}" >&2
-        render_body "${response_file}" "${raw}" >&2
+        render_body "${response_file}" "${raw}" "${path_only}" >&2
         return 1
       fi
     elif [[ "${raw}" != true ]]; then
       printf '%s: Supervisor response is missing the result field\n' "${API_PROGRAM_NAME}" >&2
-      render_body "${response_file}" "${raw}" >&2
+      render_body "${response_file}" "${raw}" "${path_only}" >&2
       return 1
     fi
   fi
 
-  render_body "${response_file}" "${raw}"
+  render_body "${response_file}" "${raw}" "${path_only}"
 }

@@ -4,7 +4,9 @@ import {
   lstat,
   mkdir,
   open,
+  readdir,
   rename,
+  rm,
   unlink,
 } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
@@ -56,6 +58,25 @@ let activeUserBackupsDirectory = USER_BACKUPS_DIRECTORY;
 const MAX_CONTROL_FILE_BYTES = 1024 * 1024;
 const MAX_USER_FILE_BYTES = 16 * 1024 * 1024;
 const STATE_SCHEMA = 2;
+const BACKUP_MANIFEST_SCHEMA = 1;
+const BACKUP_OWNER = "antigravity-for-home-assistant";
+const BACKUP_KIND = "native-files-refresh";
+const BACKUP_RETENTION = 2;
+const TRANSACTION_PATTERN =
+  /^refresh-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}$/u;
+const PRUNE_QUARANTINE_PATTERN =
+  /^\.(refresh-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12})\.prune-[0-9a-f]{12}$/u;
+const BACKUP_CHILDREN = new Set([
+  "completed.json",
+  "manifest.json",
+  "metadata.json",
+  "mcp.before",
+  "mcp.image-default",
+  "settings.before",
+  "settings.image-default",
+  "state.before",
+  "state.candidate",
+]);
 const TRANSACTION_PHASES = new Set([
   "prepared",
   "targets_installed",
@@ -122,12 +143,15 @@ const HA_VALIDATE_TOOLS = [
   "ha_validate_config",
   "ha_verify_state",
 ];
-// Telegram and the interactive CLI intentionally share this native HOME.  A
-// directory permission is recursive in Antigravity 1.1.13, so these exact
-// roots cover both the App-managed plugin and user-created global
-// plugins/agents/rules without granting the model access to OAuth material in
-// the rest of ~/.gemini.  Explicit workspace rules are needed because
-// request-review cannot show an interactive file review in headless mode.
+// Telegram and the interactive CLI intentionally share this native HOME and
+// one native permission policy.  Antigravity evaluates deny before ask before
+// allow, so the v3 default can make every supported action usable from the
+// headless Telegram transport while the explicit sensitive-path rules remain
+// authoritative. File access stays on the operational /config and global
+// customization roots instead of read_file(*)/write_file(*), because the
+// shared native HOME also contains OAuth material that is not model data.
+// User-owned rules are preserved by the managed merge; an explicit user
+// ask/deny therefore continues to override these broad defaults.
 const SHARED_NATIVE_FILE_RULES = [
   "read_file(/config)",
   "write_file(/config)",
@@ -142,11 +166,17 @@ const SHARED_NATIVE_FILE_RULES = [
   "read_file(/data/home/.gemini/GEMINI.md)",
   "write_file(/data/home/.gemini/GEMINI.md)",
   "read_file(/data/home/.gemini/antigravity-cli/settings.json)",
+];
+const LEGACY_SHARED_NATIVE_FILE_RULES = [
+  ...SHARED_NATIVE_FILE_RULES,
+  // Public 2.0.8 managed this write grant. It is migration source state only:
+  // allowing the model to rewrite its own deny policy would make the OAuth and
+  // sensitive-path boundary self-removable.
   "write_file(/data/home/.gemini/antigravity-cli/settings.json)",
 ];
-const HA_PERMISSION_RULES = {
+const PRE_V3_HA_PERMISSION_RULES = {
   allow: [
-    ...SHARED_NATIVE_FILE_RULES,
+    ...LEGACY_SHARED_NATIVE_FILE_RULES,
     "mcp(ha_change/ha_change_propose)",
     "mcp(ha_memory/memory_search)",
     "mcp(ha_memory/memory_show)",
@@ -177,23 +207,83 @@ const HA_PERMISSION_RULES = {
     "write_file(/config/.storage)",
   ],
 };
-const SHARED_NATIVE_FILE_RULE_SET = new Set(SHARED_NATIVE_FILE_RULES);
+const DEFAULT_ALLOW_PERMISSION_RULES = [
+  ...SHARED_NATIVE_FILE_RULES,
+  "read_url(*)",
+  "execute_url(*)",
+  "command(*)",
+  "mcp(*)",
+];
+const SENSITIVE_DENY_PERMISSION_RULES = [
+  // The shared runtime must read its own settings/OAuth state, but a model
+  // must not rewrite the permission policy that confines its built-in tools.
+  "write_file(/data/home/.gemini/antigravity-cli/settings.json)",
+  "read_file(/data/options.json)",
+  "write_file(/data/options.json)",
+  "read_file(/run/antigravity-ha/supervisor.token)",
+  "write_file(/run/antigravity-ha/supervisor.token)",
+  "read_file(/run/antigravity-ha/home-assistant-browser.token)",
+  "write_file(/run/antigravity-ha/home-assistant-browser.token)",
+  "read_file(/config/secrets.yaml)",
+  "write_file(/config/secrets.yaml)",
+  "read_file(/config/.storage)",
+  "write_file(/config/.storage)",
+  "read_file(/config/.ssh)",
+  "write_file(/config/.ssh)",
+  "read_file(/data/home/.ssh)",
+  "write_file(/data/home/.ssh)",
+  "read_file(/data/home/.aws)",
+  "write_file(/data/home/.aws)",
+  "read_file(/data/home/.azure)",
+  "write_file(/data/home/.azure)",
+  "read_file(/data/home/.config/gcloud)",
+  "write_file(/data/home/.config/gcloud)",
+  "read_file(/data/home/.kube)",
+  "write_file(/data/home/.kube)",
+  "read_file(/data/home/.docker/config.json)",
+  "write_file(/data/home/.docker/config.json)",
+  "read_file(/data/home/.netrc)",
+  "write_file(/data/home/.netrc)",
+  "read_file(/data/home/.npmrc)",
+  "write_file(/data/home/.npmrc)",
+  "read_file(/root/.ssh)",
+  "write_file(/root/.ssh)",
+];
+const HA_PERMISSION_RULES = {
+  allow: [...DEFAULT_ALLOW_PERMISSION_RULES],
+  ask: [],
+  deny: [...SENSITIVE_DENY_PERMISSION_RULES],
+};
+const LEGACY_SHARED_NATIVE_FILE_RULE_SET = new Set(
+  LEGACY_SHARED_NATIVE_FILE_RULES,
+);
 const LEGACY_2_0_6_PERMISSION_RULES = {
   allow: [
-    ...HA_PERMISSION_RULES.allow.filter(
-      (rule) => !SHARED_NATIVE_FILE_RULE_SET.has(rule),
+    ...PRE_V3_HA_PERMISSION_RULES.allow.filter(
+      (rule) => !LEGACY_SHARED_NATIVE_FILE_RULE_SET.has(rule),
     ),
     ...PLAYWRIGHT_SAFE_TOOLS.map((tool) => `mcp(playwright/${tool})`),
   ],
   ask: [
-    ...HA_PERMISSION_RULES.ask,
+    ...PRE_V3_HA_PERMISSION_RULES.ask,
     ...PLAYWRIGHT_INTERACTIVE_TOOLS.map((tool) => `mcp(playwright/${tool})`),
   ],
   deny: [
-    ...HA_PERMISSION_RULES.deny,
+    ...PRE_V3_HA_PERMISSION_RULES.deny,
     "read_file(/data)",
     "write_file(/data)",
   ],
+};
+const LEGACY_2_0_8_PERMISSION_RULES = {
+  allow: [
+    ...PRE_V3_HA_PERMISSION_RULES.allow,
+    ...PLAYWRIGHT_SAFE_TOOLS.map((tool) => `mcp(playwright/${tool})`),
+  ],
+  ask: [
+    ...PRE_V3_HA_PERMISSION_RULES.ask,
+    ...PLAYWRIGHT_INTERACTIVE_TOOLS.map((tool) => `mcp(playwright/${tool})`),
+  ],
+  deny: [...PRE_V3_HA_PERMISSION_RULES.deny],
 };
 const LEGACY_2_0_6_MANAGED_SETTINGS_KEYS = [
   "altScreenMode",
@@ -222,6 +312,13 @@ const RETIRED_MANAGED_PERMISSION_RULES = new Set([
   // ownership state so an upgrade can remove them during the managed merge.
   "read_file(/data)",
   "write_file(/data)",
+  // 2.0.7/2.0.8 enumerated image tools and placed mutation-capable tools in
+  // ask.  v3 replaces that layout with supported-action wildcards so a
+  // headless Telegram request cannot be auto-denied merely because a user
+  // installed a new global plugin or agent.
+  ...LEGACY_2_0_8_PERMISSION_RULES.allow,
+  ...LEGACY_2_0_8_PERMISSION_RULES.ask,
+  ...LEGACY_2_0_8_PERMISSION_RULES.deny,
   // Pre-release 2.0.7 candidates briefly managed individual App skill reads.
   // Recognizing them makes interrupted candidate upgrades converge safely.
   ...[
@@ -585,7 +682,7 @@ function validateJournal(value) {
     Array.isArray(value) ||
     value.schema !== STATE_SCHEMA ||
     typeof value.transaction !== "string" ||
-    !/^refresh-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}$/u.test(value.transaction) ||
+    !TRANSACTION_PATTERN.test(value.transaction) ||
     !TRANSACTION_PHASES.has(value.phase) ||
     typeof value.state_sha256 !== "string" ||
     !/^[0-9a-f]{64}$/u.test(value.state_sha256)
@@ -682,6 +779,305 @@ async function loadTransaction(journal) {
     journal,
   );
   return { metadata, transactionDirectory };
+}
+
+function validateIsoTimestamp(value, label) {
+  const milliseconds = typeof value === "string" ? Date.parse(value) : Number.NaN;
+  if (
+    !Number.isFinite(milliseconds) ||
+    new Date(milliseconds).toISOString() !== value
+  ) {
+    throw new Error(`${label} timestamp is invalid`);
+  }
+  return milliseconds;
+}
+
+function validateBackupManifest(value, transaction) {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    value.schema !== BACKUP_MANIFEST_SCHEMA ||
+    value.owner !== BACKUP_OWNER ||
+    value.kind !== BACKUP_KIND ||
+    value.transaction !== transaction ||
+    value.state_path !== STATE_PATH ||
+    value.target_root !== HOME_DIRECTORY ||
+    typeof value.metadata_sha256 !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(value.metadata_sha256) ||
+    typeof value.state_sha256 !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(value.state_sha256)
+  ) {
+    throw new Error("A user-file backup manifest is not App-owned");
+  }
+  validateVersion(value.app_version);
+  validateScopes(value.scopes);
+  validateIsoTimestamp(value.created_at, "Backup creation");
+  return value;
+}
+
+function validateBackupCompletion(value, manifest) {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    value.schema !== BACKUP_MANIFEST_SCHEMA ||
+    value.owner !== BACKUP_OWNER ||
+    value.kind !== BACKUP_KIND ||
+    value.transaction !== manifest.transaction ||
+    value.metadata_sha256 !== manifest.metadata_sha256 ||
+    !new Set(["committed", "rolled_back"]).has(value.outcome)
+  ) {
+    throw new Error("A user-file backup completion marker is not App-owned");
+  }
+  return validateIsoTimestamp(value.completed_at, "Backup completion");
+}
+
+async function readOwnedBackupFile(path) {
+  const snapshot = await readSafeSnapshot(path, MAX_CONTROL_FILE_BYTES);
+  if (snapshot === undefined || snapshot.mode !== 0o600) {
+    throw new Error("A user-file backup control file is unsafe");
+  }
+  return snapshot.content;
+}
+
+async function readOwnedBackupPayload(path, expectedHash) {
+  const snapshot = await readSafeSnapshot(path);
+  if (
+    snapshot === undefined ||
+    snapshot.mode !== 0o600 ||
+    sha256(snapshot.content) !== expectedHash
+  ) {
+    throw new Error("A user-file backup payload is unsafe or failed verification");
+  }
+  return snapshot.content;
+}
+
+async function inspectCompletedBackup(path, transaction) {
+  const rootStats = await lstat(path);
+  if (
+    rootStats.isSymbolicLink() ||
+    !rootStats.isDirectory() ||
+    rootStats.uid !== 0 ||
+    (rootStats.mode & 0o777) !== 0o700
+  ) {
+    throw new Error("A user-file backup root is unsafe");
+  }
+  const names = (await readdir(path)).sort();
+  if (
+    names.length < 4 ||
+    new Set(names).size !== names.length ||
+    names.some((name) => !BACKUP_CHILDREN.has(name))
+  ) {
+    throw new Error("A user-file backup contains an unexpected path");
+  }
+  const manifestContent = await readOwnedBackupFile(join(path, "manifest.json"));
+  let manifest;
+  try {
+    manifest = validateBackupManifest(
+      JSON.parse(manifestContent.toString("utf8")),
+      transaction,
+    );
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error("A user-file backup manifest is invalid JSON");
+    }
+    throw error;
+  }
+  const metadataContent = await readOwnedBackupFile(join(path, "metadata.json"));
+  if (sha256(metadataContent) !== manifest.metadata_sha256) {
+    throw new Error("A user-file backup metadata digest is invalid");
+  }
+  let metadata;
+  try {
+    metadata = validateMetadata(JSON.parse(metadataContent.toString("utf8")), {
+      app_version: manifest.app_version,
+      scopes: manifest.scopes,
+      state_sha256: manifest.state_sha256,
+    });
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error("A user-file backup metadata file is invalid JSON");
+    }
+    throw error;
+  }
+  if (
+    Object.keys(metadata.files).sort().join("\0") !==
+      [...manifest.scopes].sort().join("\0")
+  ) {
+    throw new Error("A user-file backup has unexpected file metadata");
+  }
+  const expectedNames = new Set([
+    "completed.json",
+    "manifest.json",
+    "metadata.json",
+    "state.candidate",
+  ]);
+  if (metadata.state.existed) expectedNames.add("state.before");
+  await readOwnedBackupPayload(
+    join(path, "state.candidate"),
+    metadata.state.candidate_sha256,
+  );
+  if (metadata.state.existed) {
+    await readOwnedBackupPayload(
+      join(path, "state.before"),
+      metadata.state.before_sha256,
+    );
+  }
+  for (const scope of manifest.scopes) {
+    expectedNames.add(candidateName(scope));
+    await readOwnedBackupPayload(
+      join(path, candidateName(scope)),
+      metadata.files[scope].candidate_sha256,
+    );
+    if (metadata.files[scope].existed) {
+      expectedNames.add(backupName(scope));
+      await readOwnedBackupPayload(
+        join(path, backupName(scope)),
+        metadata.files[scope].before_sha256,
+      );
+    }
+  }
+  if (
+    names.length !== expectedNames.size ||
+    names.some((name) => !expectedNames.has(name))
+  ) {
+    throw new Error("A user-file backup is incomplete or contains extra files");
+  }
+  const completionContent = await readOwnedBackupFile(join(path, "completed.json"));
+  let completion;
+  try {
+    completion = JSON.parse(completionContent.toString("utf8"));
+  } catch {
+    throw new Error("A user-file backup completion marker is invalid JSON");
+  }
+  const completedAtMs = validateBackupCompletion(completion, manifest);
+  return { completedAtMs, rootStats };
+}
+
+async function markTransactionCompleted(journal, transactionDirectory, outcome) {
+  const manifestPath = join(transactionDirectory, "manifest.json");
+  const manifestContent = await readSafeFile(manifestPath, MAX_CONTROL_FILE_BYTES);
+  // Transactions created by older App versions have no explicit ownership
+  // manifest. Recover them, but never retroactively claim or prune them.
+  if (manifestContent === undefined) return false;
+  let manifest;
+  try {
+    manifest = validateBackupManifest(
+      JSON.parse(manifestContent.toString("utf8")),
+      journal.transaction,
+    );
+  } catch (error) {
+    throw new Error(`The user-file backup ownership manifest is unsafe: ${error.message}`);
+  }
+  if (
+    manifest.app_version !== journal.app_version ||
+    JSON.stringify(manifest.scopes) !== JSON.stringify(journal.scopes) ||
+    manifest.state_sha256 !== journal.state_sha256
+  ) {
+    throw new Error("The user-file backup ownership manifest changed before completion");
+  }
+  await writePrivateJson(join(transactionDirectory, "completed.json"), {
+    schema: BACKUP_MANIFEST_SCHEMA,
+    owner: BACKUP_OWNER,
+    kind: BACKUP_KIND,
+    transaction: journal.transaction,
+    metadata_sha256: manifest.metadata_sha256,
+    outcome,
+    completed_at: new Date().toISOString(),
+  });
+  await syncDirectory(transactionDirectory);
+  return true;
+}
+
+async function removeCompletedBackup(path, transaction) {
+  const before = await lstat(path);
+  await inspectCompletedBackup(path, transaction);
+  const quarantine = join(
+    USER_BACKUPS_DIRECTORY,
+    `.${transaction}.prune-${randomBytes(6).toString("hex")}`,
+  );
+  await rename(path, quarantine);
+  await syncDirectory(USER_BACKUPS_DIRECTORY);
+  try {
+    const moved = await lstat(quarantine);
+    if (
+      moved.isSymbolicLink() ||
+      !moved.isDirectory() ||
+      moved.uid !== 0 ||
+      moved.dev !== before.dev ||
+      moved.ino !== before.ino
+    ) {
+      throw new Error("A user-file backup changed during quarantine");
+    }
+    await inspectCompletedBackup(quarantine, transaction);
+    await rm(quarantine, {
+      force: false,
+      maxRetries: 2,
+      recursive: true,
+      retryDelay: 20,
+    });
+    await syncDirectory(USER_BACKUPS_DIRECTORY);
+  } catch (error) {
+    if (!(await inspectPath(path)) && await inspectPath(quarantine)) {
+      await rename(quarantine, path).catch(() => {});
+      await syncDirectory(USER_BACKUPS_DIRECTORY).catch(() => {});
+    }
+    throw error;
+  }
+}
+
+async function pruneCompletedBackups(preserve = new Set()) {
+  const journal = await loadJournal();
+  if (journal) preserve.add(journal.transaction);
+  const candidates = [];
+  for (const name of (await readdir(USER_BACKUPS_DIRECTORY)).sort()) {
+    const quarantined = PRUNE_QUARANTINE_PATTERN.exec(name);
+    if (quarantined) {
+      const transaction = quarantined[1];
+      if (preserve.has(transaction)) continue;
+      const path = join(USER_BACKUPS_DIRECTORY, name);
+      try {
+        await inspectCompletedBackup(path, transaction);
+        await rm(path, {
+          force: false,
+          maxRetries: 2,
+          recursive: true,
+          retryDelay: 20,
+        });
+        await syncDirectory(USER_BACKUPS_DIRECTORY);
+      } catch {
+        // Unsafe, incomplete, or concurrently changed entries stay untouched.
+      }
+      continue;
+    }
+    if (!TRANSACTION_PATTERN.test(name)) continue;
+    const path = join(USER_BACKUPS_DIRECTORY, name);
+    try {
+      const inspected = await inspectCompletedBackup(path, name);
+      candidates.push({ name, path, ...inspected });
+    } catch {
+      // Exact App ownership and completion could not be established.
+    }
+  }
+  candidates.sort((left, right) =>
+    right.completedAtMs - left.completedAtMs ||
+      right.name.localeCompare(left.name));
+  const retained = new Set(
+    candidates.filter(({ name }) => preserve.has(name)).map(({ name }) => name),
+  );
+  for (const candidate of candidates) {
+    if (retained.has(candidate.name)) continue;
+    if (retained.size < BACKUP_RETENTION) {
+      retained.add(candidate.name);
+      continue;
+    }
+    try {
+      await removeCompletedBackup(candidate.path, candidate.name);
+    } catch {
+      // Cleanup is best-effort and must never make update recovery unavailable.
+    }
+  }
 }
 
 async function readVerifiedTransactionFile(path, expectedHash) {
@@ -824,6 +1220,11 @@ async function recoverPendingTransaction() {
           transaction.transactionDirectory,
           transaction.metadata,
         );
+        await markTransactionCompleted(
+          journal,
+          transaction.transactionDirectory,
+          "committed",
+        );
         await removeSafeRegular(activeJournalPath);
         return "committed";
       } catch (verificationError) {
@@ -831,6 +1232,11 @@ async function recoverPendingTransaction() {
           await rollbackTransaction(
             transaction.transactionDirectory,
             transaction.metadata,
+          );
+          await markTransactionCompleted(
+            journal,
+            transaction.transactionDirectory,
+            "rolled_back",
           );
           await removeSafeRegular(activeJournalPath);
           return "rolled_back";
@@ -845,6 +1251,11 @@ async function recoverPendingTransaction() {
     await rollbackTransaction(
       transaction.transactionDirectory,
       transaction.metadata,
+    );
+    await markTransactionCompleted(
+      journal,
+      transaction.transactionDirectory,
+      "rolled_back",
     );
     await removeSafeRegular(activeJournalPath);
     return "rolled_back";
@@ -1267,6 +1678,27 @@ async function prepareTransaction(scopes, appVersion, defaults, stateContent) {
     metadata.files[scope] = file;
   }
   await writePrivateJson(join(transaction.path, "metadata.json"), metadata);
+  const metadataContent = await readSafeFile(
+    join(transaction.path, "metadata.json"),
+    MAX_CONTROL_FILE_BYTES,
+  );
+  if (metadataContent === undefined) {
+    throw new Error("The user-file backup metadata disappeared before ownership binding");
+  }
+  await writePrivateJson(join(transaction.path, "manifest.json"), {
+    schema: BACKUP_MANIFEST_SCHEMA,
+    owner: BACKUP_OWNER,
+    kind: BACKUP_KIND,
+    transaction: transaction.name,
+    app_version: appVersion,
+    scopes,
+    state_sha256: metadata.state.candidate_sha256,
+    metadata_sha256: sha256(metadataContent),
+    state_path: STATE_PATH,
+    target_root: HOME_DIRECTORY,
+    created_at: new Date().toISOString(),
+  });
+  await syncDirectory(transaction.path);
   return { metadata, transaction };
 }
 
@@ -1341,6 +1773,11 @@ async function performRefresh(
     await writePrivateJson(activeJournalPath, journal);
     await verifyInstalledTargets(prepared.transaction.path, prepared.metadata);
     await verifyCommittedState(prepared.transaction.path, prepared.metadata);
+    await markTransactionCompleted(
+      journal,
+      prepared.transaction.path,
+      "committed",
+    );
     await removeSafeRegular(activeJournalPath);
     return prepared.transaction.path;
   } catch (error) {
@@ -1382,7 +1819,7 @@ function parseOptions(value) {
   let toolPermission = value.antigravity_tool_permission;
   if (toolPermission === undefined) {
     if (value.antigravity_approval_policy === undefined) {
-      toolPermission = "request-review";
+      toolPermission = "always-proceed";
     } else {
       const legacyMapping = {
         untrusted: "strict",
@@ -1398,24 +1835,36 @@ function parseOptions(value) {
   if (typeof toolPermission !== "string" || !TOOL_PERMISSIONS.has(toolPermission)) {
     throw new Error("antigravity_tool_permission is invalid");
   }
+  if (toolPermission === "proceed-in-sandbox") {
+    toolPermission = "always-proceed";
+    migrationWarnings.push(
+      "antigravity_tool_permission=proceed-in-sandbox was normalized to always-proceed because the privileged native sandbox is unsupported; tools remain confined by AppArmor",
+    );
+  }
 
   let terminalSandbox = value.antigravity_terminal_sandbox;
   if (terminalSandbox === undefined) {
     if (value.antigravity_sandbox_mode === undefined) {
-      terminalSandbox = true;
+      terminalSandbox = false;
     } else {
       const legacySandbox = value.antigravity_sandbox_mode;
       if (!new Set(["workspace-write", "danger-full-access"]).has(legacySandbox)) {
         throw new Error("antigravity_sandbox_mode is invalid");
       }
-      terminalSandbox = true;
+      terminalSandbox = false;
       migrationWarnings.push(
-        "Legacy antigravity_sandbox_mode was conservatively mapped to terminal sandboxing enabled",
+        "Legacy antigravity_sandbox_mode was retired; run_command uses the AppArmor command boundary",
       );
     }
   }
   if (typeof terminalSandbox !== "boolean") {
     throw new Error("antigravity_terminal_sandbox is invalid");
+  }
+  if (terminalSandbox === true) {
+    terminalSandbox = false;
+    migrationWarnings.push(
+      "antigravity_terminal_sandbox=true is deprecated and was normalized to false because the privileged native sandbox is unsupported; run_command uses the AppArmor command boundary",
+    );
   }
 
   const browserPolicy = value.browser_approval_policy ?? "safe";
@@ -1473,7 +1922,7 @@ function browserPermissionRules() {
   const interactive = PLAYWRIGHT_INTERACTIVE_TOOLS.map(
     (tool) => `mcp(playwright/${tool})`,
   );
-  return { allow: safe, ask: interactive };
+  return { allow: [...safe, ...interactive], ask: [] };
 }
 
 function defaultSettings(template, options) {
@@ -1549,6 +1998,30 @@ function hasLegacy206PermissionOwnership(ownership) {
       [...LEGACY_2_0_6_PERMISSION_RULE_SET],
     )
   );
+}
+
+function permissionRuleSet(rules) {
+  return [
+    ...rules.allow,
+    ...rules.ask,
+    ...rules.deny,
+  ];
+}
+
+function permissionMigrationSource(ownership, desiredOwnership) {
+  if (hasLegacy206PermissionOwnership(ownership)) {
+    return { label: "2.0.6", rules: LEGACY_2_0_6_PERMISSION_RULES };
+  }
+  if (
+    sameStringSet(ownership.keys, desiredOwnership.keys) &&
+    sameStringSet(
+      ownership.permission_rules,
+      permissionRuleSet(LEGACY_2_0_8_PERMISSION_RULES),
+    )
+  ) {
+    return { label: "2.0.8", rules: LEGACY_2_0_8_PERMISSION_RULES };
+  }
+  return null;
 }
 
 function skipJsonWhitespace(text, start) {
@@ -1658,16 +2131,58 @@ function preparePreservePermissionMigration(
   ownership,
   desiredOwnership,
 ) {
-  if (!hasLegacy206PermissionOwnership(ownership)) {
-    const currentOwnership =
-      sameStringSet(ownership.keys, desiredOwnership.keys) &&
-      sameStringSet(
-        ownership.permission_rules,
-        desiredOwnership.permission_rules,
-      );
-    if (currentOwnership) {
-      return { candidate: null, status: "not_needed", warning: null };
+  const currentOwnership =
+    sameStringSet(ownership.keys, desiredOwnership.keys) &&
+    sameStringSet(
+      ownership.permission_rules,
+      desiredOwnership.permission_rules,
+    );
+  if (currentOwnership) {
+    try {
+      const current = parseSettings(currentContent, "Existing settings.json");
+      let candidate = currentContent;
+      let changed = false;
+      if (current.enableTerminalSandbox === true) {
+        candidate = replaceTopLevelJsonPropertyValue(
+          candidate,
+          "enableTerminalSandbox",
+          false,
+        );
+        changed = true;
+      } else if (current.enableTerminalSandbox !== false) {
+        throw new Error("The managed native sandbox setting is invalid");
+      }
+      if (current.toolPermission === "proceed-in-sandbox") {
+        candidate = replaceTopLevelJsonPropertyValue(
+          candidate,
+          "toolPermission",
+          "always-proceed",
+        );
+        changed = true;
+      }
+      if (!changed) {
+        return { candidate: null, status: "not_needed", warning: null };
+      }
+      return {
+        candidate,
+        status: "applied",
+        warning:
+          "Preserve mode retired unsupported native-sandbox settings; tools use the AppArmor command boundary",
+      };
+    } catch {
+      return {
+        candidate: null,
+        status: "skipped_ambiguous",
+        warning:
+          "Preserve mode left settings.json unchanged because its managed native sandbox setting was ambiguous",
+      };
     }
+  }
+  const migrationSource = permissionMigrationSource(
+    ownership,
+    desiredOwnership,
+  );
+  if (migrationSource === null) {
     const emptyOwnership =
       ownership.keys.length === 0 && ownership.permission_rules.length === 0;
     return {
@@ -1686,7 +2201,7 @@ function preparePreservePermissionMigration(
     permissionRules(desired, "The image default settings.json");
 
     for (const bucket of ["allow", "ask", "deny"]) {
-      for (const rule of LEGACY_2_0_6_PERMISSION_RULES[bucket]) {
+      for (const rule of migrationSource.rules[bucket]) {
         const occurrences = ["allow", "ask", "deny"].reduce(
           (count, candidateBucket) =>
             count +
@@ -1705,9 +2220,10 @@ function preparePreservePermissionMigration(
     }
 
     const permissions = { ...current.permissions };
+    const sourceRuleSet = new Set(permissionRuleSet(migrationSource.rules));
     for (const bucket of ["allow", "ask", "deny"]) {
       const userRules = current.permissions[bucket].filter(
-        (rule) => !LEGACY_2_0_6_PERMISSION_RULE_SET.has(rule),
+        (rule) => !sourceRuleSet.has(rule),
       );
       permissions[bucket] = [...userRules];
       for (const rule of desired.permissions[bucket]) {
@@ -1715,19 +2231,44 @@ function preparePreservePermissionMigration(
       }
     }
 
-    const candidate = replaceTopLevelJsonPropertyValue(
+    let candidate = replaceTopLevelJsonPropertyValue(
       currentContent,
       "permissions",
       permissions,
     );
+    if (current.enableTerminalSandbox === true) {
+      candidate = replaceTopLevelJsonPropertyValue(
+        candidate,
+        "enableTerminalSandbox",
+        false,
+      );
+    } else if (current.enableTerminalSandbox !== false) {
+      throw new Error("The App-owned native sandbox setting changed");
+    }
+    if (current.toolPermission === "proceed-in-sandbox") {
+      candidate = replaceTopLevelJsonPropertyValue(
+        candidate,
+        "toolPermission",
+        "always-proceed",
+      );
+    }
     const installed = parseSettings(candidate, "Migrated settings.json");
     const currentNonPermissions = { ...current };
     const installedNonPermissions = { ...installed };
     delete currentNonPermissions.permissions;
     delete installedNonPermissions.permissions;
+    delete currentNonPermissions.enableTerminalSandbox;
+    delete installedNonPermissions.enableTerminalSandbox;
+    delete currentNonPermissions.toolPermission;
+    delete installedNonPermissions.toolPermission;
+    const expectedToolPermission = current.toolPermission === "proceed-in-sandbox"
+      ? "always-proceed"
+      : current.toolPermission;
     if (
       JSON.stringify(currentNonPermissions) !==
-      JSON.stringify(installedNonPermissions)
+        JSON.stringify(installedNonPermissions) ||
+      installed.enableTerminalSandbox !== false ||
+      installed.toolPermission !== expectedToolPermission
     ) {
       throw new Error("A non-permission setting changed during migration");
     }
@@ -1737,7 +2278,7 @@ function preparePreservePermissionMigration(
       candidate: null,
       status: "skipped_ambiguous",
       warning:
-        "Preserve mode left settings.json unchanged because its App-owned 2.0.6 permission layout was ambiguous",
+        `Preserve mode left settings.json unchanged because its App-owned ${migrationSource.label} permission layout was ambiguous`,
     };
   }
 }
@@ -1987,6 +2528,17 @@ async function main() {
     if (scopes.some((scope) => preflight.targets[scope].existed)) {
       backupDirectory = transactionDirectory;
     }
+  }
+
+  const preservedBackups = new Set();
+  if (backupDirectory !== null) {
+    preservedBackups.add(basename(backupDirectory));
+  }
+  try {
+    await ensurePrivateDirectory(USER_BACKUPS_DIRECTORY);
+    await pruneCompletedBackups(preservedBackups);
+  } catch {
+    warnings.push("Completed user-file backup retention was deferred safely");
   }
 
   process.stdout.write(

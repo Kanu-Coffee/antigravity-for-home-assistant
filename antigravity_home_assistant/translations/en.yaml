@@ -23,17 +23,18 @@ configuration:
     description: Shared session used to restore the terminal after a browser reconnect.
   antigravity_tool_permission:
     name: Antigravity tool permission
-    description: Native Antigravity toolPermission policy shared by Web, SSH, and Telegram. request-review is the safe default; always-proceed grants the most autonomy inside the App boundary.
+    description: Native Antigravity toolPermission policy shared by Web, SSH, and Telegram. The new-install default, always-proceed, grants the most autonomy inside the App boundary.
   antigravity_terminal_sandbox:
-    name: Enable the Antigravity terminal sandbox
-    description: Keep native Antigravity command execution inside its Linux terminal sandbox where supported.
+    name: Antigravity terminal sandbox (deprecated)
+    description: Legacy option for the native sandbox, which is incompatible with a non-privileged HAOS App. Version 2.0.9 normalizes either value to false and always uses the AppArmor command boundary.
   antigravity_sensitive_data_access:
     name: Allow diagnostic reads of sensitive HA data
     description: >-
       Keep disabled to block Antigravity from secrets.yaml, .storage, and the
-      Recorder database. When enabled, Web, SSH, and Telegram Antigravity
-      children may read those three areas for diagnostics; writes remain blocked
-      and browser, memory, App tokens, SSH keys, backups, SSL, and cloud
+      Recorder database. When enabled, Web, SSH, and Telegram Antigravity may
+      read only the Recorder database for diagnostics. Reads and writes of
+      secrets.yaml and .storage, plus Recorder writes, remain blocked. Browser,
+      memory, App tokens, SSH keys, backups, SSL, and cloud
       credentials remain isolated. Restart the App after changing this option.
   antigravity_user_files_update_mode:
     name: Antigravity user-file update mode

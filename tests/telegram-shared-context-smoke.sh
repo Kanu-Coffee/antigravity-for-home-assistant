@@ -11,6 +11,7 @@ HA_ARCH=${HA_ARCH:-$EXPECTED_HA_ARCH}
 [[ $HA_ARCH == "$EXPECTED_HA_ARCH" ]] || exit 64
 export TEST_PLATFORM HA_ARCH
 
+SCRIPT_DIRECTORY=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 IMAGE=${1:-antigravity-for-home-assistant:test}
 EXPECTED_VERSION=$(sed -n \
   's/^ARG ANTIGRAVITY_VERSION=//p' antigravity_home_assistant/Dockerfile)
@@ -80,7 +81,6 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       timeout 12s /usr/local/bin/antigravity \
         --output-format stream-json \
         --print-timeout 5s \
-        --sandbox \
         >/tmp/shared-native.out 2>/tmp/shared-native.err
     native_status=$?
     set -e
@@ -103,6 +103,7 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       "[[ \"\${HA_TELEGRAM_USER_ID:-}\" == 123456789 ]]" \
       "[[ \"\${HA_TELEGRAM_CHAT_ID:-}\" == -100123456789 ]]" \
       "[[ ! -v SUPERVISOR_TOKEN && ! -v NODE_OPTIONS && ! -v NODE_PATH ]]" \
+      "[[ \"\${PATH%%:*}\" == /usr/local/libexec/antigravity-command-bin ]]" \
       "grep -Fxq \"shared global rule marker\" /data/home/.gemini/config/rules/shared-context.md" \
       "grep -Fxq \"shared global plugin marker\" /data/home/.gemini/config/plugins/user-global-marker/marker.txt" \
       "grep -Fq \"shared_global_marker\" /data/home/.gemini/config/mcp_config.json" \
@@ -123,7 +124,7 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       /usr/local/bin/antigravity --version
     [[ -f /data/home/.gemini/config/rules/telegram-wrote-rule.marker ]]
     [[ -f /data/home/.gemini/config/plugins/user-global-marker/telegram-wrote-plugin.marker ]]
-    grep -Fxq -- --sandbox /tmp/shared-launcher-args
+    ! grep -Eq -- "(^|=)(--|-)?(no-)?sandbox($|=)" /tmp/shared-launcher-args
 
     set +e
     ANTIGRAVITY_HA_CHANNEL=telegram \
@@ -388,7 +389,6 @@ NODE
       timeout 20s /usr/local/libexec/antigravity-real \
         --output-format stream-json \
         --print-timeout 10s \
-        --sandbox \
         > "${first_stdout}" 2> "${first_stderr}"
 
     first_request_count=$(jq -s \
@@ -450,7 +450,6 @@ NODE
         --output-format stream-json \
         --print-timeout 10s \
         --conversation "${conversation_id}" \
-        --sandbox \
         > "${second_stdout}" 2> "${second_stderr}"
 
     FIRST_STREAM_PATH="${first_stdout}" \
@@ -516,7 +515,6 @@ NODE
         --output-format stream-json \
         --print-timeout 10s \
         --json-schema "${legacy_schema}" \
-        --sandbox \
         > "${legacy_stdout}" 2> "${legacy_stderr}"
 
     legacy_conversation_id=$(
@@ -563,7 +561,6 @@ NODE
         --output-format stream-json \
         --print-timeout 10s \
         --conversation "${legacy_conversation_id}" \
-        --sandbox \
         > "${transition_stdout}" 2> "${transition_stderr}"
 
     NATIVE_STREAM_PATH="${transition_stdout}" \
@@ -617,6 +614,182 @@ NODE
       all(.[]; .kind != \"request\" or .output_format_literal == false)
     " "${mock_log}" >/dev/null
   ' || fail 'native 1.1.13 shared HOME stdin stream-json resume canary failed'
+
+# Exercise the pinned headless runtime under request-review and the new
+# always-proceed default. The exact settings write deny must win in both modes,
+# while command(*) and mcp(*) remain usable without the unsupported privileged
+# native namespace sandbox. AppArmor path isolation is a separate enforcing
+# profile contract; an ordinary Docker fixture is not real HAOS evidence.
+docker run --rm --platform "$TEST_PLATFORM" --network none \
+  --tmpfs /data:rw,nosuid,nodev,noexec,mode=0755 \
+  --tmpfs /run:rw,nosuid,nodev,noexec,mode=0755 \
+  --volume "${SCRIPT_DIRECTORY}/fixtures:/test-fixtures:ro" \
+  --entrypoint /bin/bash "${IMAGE}" -ceu '
+    install -d -m 0700 /data/antigravity /run/antigravity-ha /config
+    jq -n "{
+      antigravity_tool_permission: \"request-review\",
+      antigravity_terminal_sandbox: false,
+      antigravity_user_files_update_mode: \"preserve\"
+    }" > /data/options.json
+    chmod 0600 /data/options.json
+    /usr/local/bin/antigravity-user-files-update \
+      > /run/permission-canary-user-files.json
+    printf "%s\n" "OAUTH_PATH_SENTINEL_MUST_NOT_LEAK_89e74a" \
+      > /data/home/.gemini/antigravity-cli/oauth-credential-canary.json
+    chmod 0600 \
+      /data/home/.gemini/antigravity-cli/oauth-credential-canary.json
+    install -d -m 0700 /data/home/.aws
+    printf "%s\n" "CLOUD_AUTH_SENTINEL_MUST_NOT_LEAK_b31f6c" \
+      > /data/home/.aws/credentials
+    chmod 0600 /data/home/.aws/credentials
+    ln -s /data/home/.gemini/antigravity-cli/settings.json \
+      /config/permission-settings-alias
+    ln -s /data/home/.gemini/antigravity-cli/oauth-credential-canary.json \
+      /config/permission-oauth-alias
+    ln -s /data/home/.aws/credentials \
+      /config/permission-cloud-auth-alias
+    permission_settings=$(mktemp)
+    jq ".modelProvider = \"gemini\"" \
+      /data/home/.gemini/antigravity-cli/settings.json \
+      > "${permission_settings}"
+    install -m 0600 "${permission_settings}" \
+      /data/home/.gemini/antigravity-cli/settings.json
+    jq --exit-status "
+      .toolPermission == \"request-review\"
+      and .enableTerminalSandbox == false
+      and (.permissions.allow | index(\"command(*)\") != null)
+      and (.permissions.allow | index(\"mcp(*)\") != null)
+      and (.permissions.ask | index(\"command(*)\") == null)
+      and (.permissions.ask | index(\"mcp(*)\") == null)
+      and (.permissions.allow
+        | index(\"write_file(/data/home/.gemini/antigravity-cli/settings.json)\") == null)
+      and (.permissions.deny
+        | index(\"write_file(/data/home/.gemini/antigravity-cli/settings.json)\") != null)
+      and (.permissions.deny | index(\"read_file(/data/home/.aws)\") != null)
+      and (.permissions.deny | index(\"write_file(/data/home/.aws)\") != null)
+    " /data/home/.gemini/antigravity-cli/settings.json >/dev/null
+
+    install -m 0600 /test-fixtures/telegram-permission-canary-mcp.cjs \
+      /config/permission-canary-mcp.cjs
+    jq -n "{
+      mcpServers: {
+        permission_canary: {
+          command: \"/usr/bin/node\",
+          args: [\"/config/permission-canary-mcp.cjs\"],
+          env: {PERMISSION_CANARY_REQUIRE_APPARMOR: \"false\"}
+        }
+      }
+    }" > /data/home/.gemini/config/mcp_config.json
+    chmod 0600 /data/home/.gemini/config/mcp_config.json
+
+    mock_pid=
+    cleanup_mock() {
+      if [[ -n "${mock_pid}" ]] && kill -0 "${mock_pid}" 2>/dev/null; then
+        kill "${mock_pid}" 2>/dev/null || true
+        wait "${mock_pid}" 2>/dev/null || true
+      fi
+    }
+    trap cleanup_mock EXIT
+
+    run_permission_canary() {
+      local permission_mode=$1
+      local mode_settings mock_log native_stdout native_stderr settings_hash
+      local warmup_stdout warmup_stderr
+      mode_settings=$(mktemp)
+      jq --arg mode "${permission_mode}" \
+        ".toolPermission = \$mode | .deny_canary_marker = \"MUST_REMAIN\"" \
+        /data/home/.gemini/antigravity-cli/settings.json > "${mode_settings}"
+      install -m 0600 "${mode_settings}" \
+        /data/home/.gemini/antigravity-cli/settings.json
+      mock_log=$(mktemp)
+      native_stdout=$(mktemp)
+      native_stderr=$(mktemp)
+      warmup_stdout=$(mktemp)
+      warmup_stderr=$(mktemp)
+      /usr/bin/node /test-fixtures/telegram-permission-canary-endpoint.cjs \
+        > "${mock_log}" 2>&1 &
+      mock_pid=$!
+      for _ in $(seq 1 100); do
+        grep -Fq "\"kind\":\"ready\"" "${mock_log}" && break
+        kill -0 "${mock_pid}" 2>/dev/null \
+          || { printf "permission synthetic endpoint stopped during startup\n" >&2; return 1; }
+        sleep 0.05
+      done
+      grep -Fq "\"kind\":\"ready\"" "${mock_log}"
+
+      cd /config
+      printf "%s\n" "PERMISSION_CANARY_WARMUP" | /usr/bin/env -i \
+        AGY_CLI_DISABLE_AUTO_UPDATE=true \
+        ANTIGRAVITY_HA_CHANNEL=telegram \
+        GEMINI_API_KEY=synthetic-telegram-canary \
+        GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:18788 \
+        HOME=/data/home \
+        HA_TELEGRAM_USER_ID=123456789 \
+        HA_TELEGRAM_CHAT_ID=-100123456789 \
+        LANG=C.UTF-8 \
+        LC_ALL=C.UTF-8 \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        TERM=dumb \
+        NO_COLOR=1 \
+        timeout 30s /usr/local/libexec/antigravity-real \
+          --output-format stream-json \
+          --print-timeout 20s \
+          > "${warmup_stdout}" 2> "${warmup_stderr}"
+      ! grep -Eqi "auto-denied|headless mode cannot prompt" "${warmup_stderr}"
+      settings_hash=$(sha256sum \
+        /data/home/.gemini/antigravity-cli/settings.json | cut -d " " -f 1)
+
+      printf "%s\n" "TELEGRAM_PERMISSION_CANARY_SENTINEL" | /usr/bin/env -i \
+        AGY_CLI_DISABLE_AUTO_UPDATE=true \
+        ANTIGRAVITY_HA_CHANNEL=telegram \
+        GEMINI_API_KEY=synthetic-telegram-canary \
+        GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:18788 \
+        HOME=/data/home \
+        HA_TELEGRAM_USER_ID=123456789 \
+        HA_TELEGRAM_CHAT_ID=-100123456789 \
+        LANG=C.UTF-8 \
+        LC_ALL=C.UTF-8 \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        TERM=dumb \
+        NO_COLOR=1 \
+        timeout 30s /usr/local/libexec/antigravity-real \
+          --output-format stream-json \
+          --print-timeout 20s \
+          > "${native_stdout}" 2> "${native_stderr}"
+
+      kill "${mock_pid}" 2>/dev/null || true
+      wait "${mock_pid}" 2>/dev/null || true
+      mock_pid=
+      test "$(sha256sum /data/home/.gemini/antigravity-cli/settings.json \
+        | cut -d " " -f 1)" = "${settings_hash}"
+      jq --exit-status \
+        ".deny_canary_marker == \"MUST_REMAIN\" and .compromised == null" \
+        /data/home/.gemini/antigravity-cli/settings.json >/dev/null
+      grep -Fxq COMMAND_PERMISSION_CANARY_OK \
+        /config/command-permission-canary.marker
+      grep -Fxq MCP_PERMISSION_CANARY_OK \
+        /config/mcp-permission-canary.marker
+      ! grep -Eqi "auto-denied|headless mode cannot prompt" "${native_stderr}"
+      NATIVE_STREAM_PATH="${native_stdout}" \
+        PERMISSION_CANARY_REQUIRE_APPARMOR=false \
+        /usr/bin/node /test-fixtures/telegram-permission-canary-assert.mjs
+      jq -s -e "
+        any(.[]; .kind == \"request\" and
+          .state == \"await_write_deny\" and .write_to_file_advertised == true) and
+        any(.[]; .kind == \"request\" and .state == \"await_command\") and
+        any(.[]; .kind == \"request\" and
+          .state == \"await_mcp\" and .call_mcp_tool_advertised == true) and
+        any(.[]; .kind == \"request\" and .state == \"complete\") and
+        any(.[]; .kind == \"request\" and .has_sentinel == true) and
+        all(.[]; .kind != \"request\" or
+          (.state != \"settings_alias_write_succeeded\" and
+           .state != \"sensitive_alias_leaked\"))
+      " "${mock_log}" >/dev/null
+    }
+
+    run_permission_canary request-review
+    run_permission_canary always-proceed
+  ' || fail 'native 1.1.13 request-review command/MCP permission canary failed'
 
 printf 'telegram shared-context smoke passed for Antigravity %s\n' \
   "${EXPECTED_VERSION}"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -18,6 +19,7 @@ RUNTIME_GUIDANCE = (
 DEVELOPMENT_FILES = {
     DEVELOPMENT_GUIDANCE,
     ".codex/config.toml",
+    "tools/development/build-app",
     "tools/development/setup",
     "tools/development/ha-memory-mcp",
     "tools/development/ha-feedback",
@@ -50,6 +52,7 @@ def test_host_development_assets_are_complete_and_executable(
 
     for relative_path in (
         "tools/development/setup",
+        "tools/development/build-app",
         "tools/development/ha-memory-mcp",
         "tools/development/ha-feedback",
     ):
@@ -150,6 +153,50 @@ def test_setup_is_repository_scoped(repository_root: Path) -> None:
         assert forbidden not in setup
     assert "AGENTS.override.md" not in setup
     assert set(PINNED_IMAGE.findall(setup)) == set(PINNED_IMAGE.findall(memory))
+
+
+def test_local_app_builder_owns_only_ephemeral_project_resources(
+    repository_root: Path,
+) -> None:
+    builder = _read(repository_root, "tools/development/build-app")
+    guidance = _read(repository_root, DEVELOPMENT_GUIDANCE)
+    normalized = _normalized_shell(builder)
+
+    for required in (
+        "docker-container",
+        "buildx create",
+        "buildx build",
+        "buildx rm --force",
+        "--load",
+        "SOURCE_REVISION",
+        "SOURCE_ROOTFS_SHA256",
+        "source-rootfs-manifest.py",
+        "LOCAL_IMAGE_RETENTION 2",
+        "ps --all --quiet",
+        "sha256sum",
+        "git-common-dir",
+    ):
+        assert required in normalized
+    for required in (
+        "io.antigravity-ha.local-build=true",
+        "io.antigravity-ha.local-build.owner",
+        "io.antigravity-ha.local-build.checkout",
+    ):
+        assert required in builder
+    for forbidden in (
+        "builder prune",
+        "buildx prune",
+        "docker system prune",
+        "image prune",
+        "volume prune",
+        "container prune",
+        "--all-inactive",
+    ):
+        assert forbidden not in normalized
+    assert '[[ $repo_tag == "${LOCAL_IMAGE_REPOSITORY}:"* ]]' in builder
+    assert "referenced by a container" in builder
+    assert "tools/development/build-app build" in guidance
+    assert "shared default builder" in " ".join(guidance.split())
 
 
 def test_development_memory_wrapper_is_digest_pinned_and_hardened(
@@ -444,6 +491,186 @@ def test_development_docker_override_requires_explicit_test_mode(
     )
     assert result.returncode != 0
     assert not override_marker.exists(), "test-only Docker override escaped test mode"
+
+
+def test_local_app_build_removes_only_its_ephemeral_builder(
+    repository_root: Path,
+    tmp_path: Path,
+) -> None:
+    checkout = tmp_path / "checkout"
+    (checkout / "tools/development").mkdir(parents=True)
+    (checkout / ".github/scripts").mkdir(parents=True)
+    shutil.copy2(
+        repository_root / "tools/development/build-app",
+        checkout / "tools/development/build-app",
+    )
+    shutil.copy2(
+        repository_root / ".github/scripts/source-rootfs-manifest.py",
+        checkout / ".github/scripts/source-rootfs-manifest.py",
+    )
+    shutil.copytree(
+        repository_root / "antigravity_home_assistant",
+        checkout / "antigravity_home_assistant",
+    )
+    subprocess.run(
+        ["git", "init", "--quiet"], cwd=checkout, check=True, timeout=10
+    )
+    subprocess.run(
+        ["git", "add", "."], cwd=checkout, check=True, timeout=10
+    )
+    commit_environment = os.environ.copy()
+    commit_environment.update(
+        {
+            "GIT_AUTHOR_NAME": "Contract Test",
+            "GIT_AUTHOR_EMAIL": "contract@example.invalid",
+            "GIT_COMMITTER_NAME": "Contract Test",
+            "GIT_COMMITTER_EMAIL": "contract@example.invalid",
+        }
+    )
+    subprocess.run(
+        ["git", "commit", "--quiet", "-m", "fixture"],
+        cwd=checkout,
+        env=commit_environment,
+        check=True,
+        timeout=10,
+    )
+
+    docker_log = tmp_path / "docker.log"
+    builder_state = tmp_path / "builder.state"
+    fake_docker = tmp_path / "docker"
+    image_id = "sha256:" + "1" * 64
+    fake_docker.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$*\" >> {docker_log}\n"
+        "if [ \"$1 $2\" = 'buildx inspect' ]; then\n"
+        f"  test -e {builder_state}\n"
+        "elif [ \"$1 $2\" = 'buildx create' ]; then\n"
+        f"  : > {builder_state}\n"
+        "  if [ \"${ANTIGRAVITY_HA_FAKE_CREATE_FAIL:-0}\" = 1 ]; then exit 82; fi\n"
+        "elif [ \"$1 $2\" = 'buildx rm' ]; then\n"
+        f"  rm -f {builder_state}\n"
+        "elif [ \"$1 $2\" = 'buildx build' ]; then\n"
+        "  if [ \"${ANTIGRAVITY_HA_FAKE_BUILD_FAIL:-0}\" = 1 ]; then exit 81; fi\n"
+        "elif [ \"$1 $2\" = 'image inspect' ]; then\n"
+        f"  printf '%s\\n' '{image_id}'\n"
+        "elif [ \"$1 $2\" = 'image ls' ]; then\n"
+        f"  printf '%s\\n' '{image_id}'\n"
+        "else\n"
+        "  exit 70\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    builder_state.touch()
+    environment = os.environ.copy()
+    environment["ANTIGRAVITY_HA_DEV_TEST_MODE"] = "1"
+    environment["ANTIGRAVITY_HA_DEV_DOCKER_BIN"] = str(fake_docker)
+    environment["TMPDIR"] = str(tmp_path)
+    result = subprocess.run(
+        [
+            str(checkout / "tools/development/build-app"),
+            "build",
+            "antigravity-for-home-assistant:contract-test",
+            "linux/amd64",
+        ],
+        cwd=checkout,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not builder_state.exists()
+    invocations = docker_log.read_text(encoding="utf-8")
+    checkout_identity = hashlib.sha256(str(checkout).encode()).hexdigest()[:12]
+    builder_name = f"antigravity-ha-local-{checkout_identity}"
+    for fragment in (
+        f"buildx create --name {builder_name} --driver docker-container --bootstrap",
+        f"buildx build --builder {builder_name} --platform linux/amd64 --load",
+        "--label io.antigravity-ha.local-build=true",
+        f"--label io.antigravity-ha.local-build.checkout={checkout_identity}",
+        f"buildx rm --force {builder_name}",
+    ):
+        assert fragment in invocations
+    assert invocations.count(f"buildx rm --force {builder_name}") == 2
+    for forbidden in (
+        "system prune",
+        "buildx prune",
+        "builder prune",
+        "image prune",
+        "volume rm",
+        "container rm",
+    ):
+        assert forbidden not in invocations
+
+    docker_log.write_text("", encoding="utf-8")
+    environment["ANTIGRAVITY_HA_FAKE_BUILD_FAIL"] = "1"
+    failed = subprocess.run(
+        [
+            str(checkout / "tools/development/build-app"),
+            "build",
+            "antigravity-for-home-assistant:contract-failure",
+            "linux/amd64",
+        ],
+        cwd=checkout,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    assert failed.returncode == 81
+    assert not builder_state.exists()
+    failed_invocations = docker_log.read_text(encoding="utf-8")
+    assert failed_invocations.count(f"buildx rm --force {builder_name}") == 1
+    for forbidden in (
+        "system prune",
+        "buildx prune",
+        "builder prune",
+        "image prune",
+        "volume rm",
+        "container rm",
+    ):
+        assert forbidden not in failed_invocations
+
+    docker_log.write_text("", encoding="utf-8")
+    environment.pop("ANTIGRAVITY_HA_FAKE_BUILD_FAIL")
+    environment["ANTIGRAVITY_HA_FAKE_CREATE_FAIL"] = "1"
+    create_failed = subprocess.run(
+        [
+            str(checkout / "tools/development/build-app"),
+            "build",
+            "antigravity-for-home-assistant:contract-create-failure",
+            "linux/amd64",
+        ],
+        cwd=checkout,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    assert create_failed.returncode == 82
+    assert not builder_state.exists()
+    create_failed_invocations = docker_log.read_text(encoding="utf-8")
+    assert create_failed_invocations.count(
+        f"buildx create --name {builder_name} --driver docker-container --bootstrap"
+    ) == 1
+    assert create_failed_invocations.count(f"buildx rm --force {builder_name}") == 1
+    assert "buildx build" not in create_failed_invocations
+    for forbidden in (
+        "system prune",
+        "buildx prune",
+        "builder prune",
+        "image prune",
+        "volume rm",
+        "container rm",
+    ):
+        assert forbidden not in create_failed_invocations
 
 
 def test_setup_prepares_tools_without_creating_instruction_files(

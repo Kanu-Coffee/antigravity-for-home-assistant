@@ -37,9 +37,14 @@ const configPatchSchema = {
       properties: {
         kind: {
           type: "string",
-          enum: ["input_boolean_reload"],
+          enum: [
+            "input_boolean_reload",
+            "automation_reload",
+            "script_reload",
+            "scene_reload",
+          ],
           description:
-            "Request the only v2 executable YAML activation contract. The broker independently validates the canonical input_boolean !include, derives affected entities, reloads input_boolean, and verifies fresh API state through semantic memory.",
+            "Optional post-check reload. input_boolean_reload retains semantic verification; automation/script/scene reloads require Telegram confirmation and broker-controlled API completion. Omit it when no safe reload is known; the validated file replacement remains executable and reports restart_required.",
         },
       },
       required: ["kind"],
@@ -55,24 +60,61 @@ const serviceCallSchema = {
   properties: {
     domain: {
       type: "string",
-      enum: ["light", "switch", "input_boolean"],
+      pattern: "^[a-z][a-z0-9_]*$",
+      maxLength: 64,
     },
     service: {
       type: "string",
-      enum: ["turn_on", "turn_off"],
+      pattern: "^[a-z][a-z0-9_]*$",
+      maxLength: 64,
     },
     entity_id: {
-      type: "string",
-      pattern: "^[a-z0-9_]+\\.[a-z0-9_]+$",
-      maxLength: 255,
+      oneOf: [
+        {
+          type: "string",
+          pattern: "^[a-z0-9_]+\\.[a-z0-9_]+$",
+          maxLength: 255,
+        },
+        {
+          type: "array",
+          minItems: 1,
+          maxItems: 100,
+          uniqueItems: true,
+          items: {
+            type: "string",
+            pattern: "^[a-z0-9_]+\\.[a-z0-9_]+$",
+            maxLength: 255,
+          },
+        },
+      ],
+      description: "Optional Home Assistant entity target. Services without an entity target may omit it.",
+    },
+    service_data: {
+      type: "object",
+      description:
+        "Bounded JSON service data. The broker rejects unsafe prototype keys and redacts credential-like values from the Telegram preview while binding the full value into its digest.",
+      additionalProperties: true,
+    },
+    return_response: {
+      type: "boolean",
+      default: false,
+      description:
+        "Set true for a Home Assistant service whose REST contract requires response data (?return_response).",
     },
     expected_state: {
       type: "string",
-      enum: ["on", "off"],
-      description: "Fresh state precondition observed before proposing the call.",
+      minLength: 1,
+      maxLength: 255,
+      description: "Optional fresh state precondition; requires one entity_id.",
+    },
+    verify_state: {
+      type: "string",
+      minLength: 1,
+      maxLength: 255,
+      description: "Optional fresh post-call state; requires expected_state and one entity_id.",
     },
   },
-  required: ["domain", "service", "entity_id", "expected_state"],
+  required: ["domain", "service"],
   additionalProperties: false,
 };
 
@@ -108,7 +150,7 @@ const tools = [
     name: "ha_change_propose",
     title: "Propose a bounded Home Assistant change",
     description:
-      "Create a short-lived, broker-validated preview for one YAML replacement, one persistent allowlisted on/off service call, or one separate transient device test with mandatory verified restoration. Only a canonical input_boolean include with activation.kind=input_boolean_reload has an executable YAML reload/fresh-verification contract; other YAML replacements remain preview-only and fail closed at execution. This tool never executes the change, never issues a capability, and cannot approve its own proposal. Show the returned preview to the bound Telegram user/chat; a separate trusted coordinator must authorize and execute it.",
+      "Create a short-lived, broker-validated preview for one YAML replacement, any currently registered Home Assistant service call, or one separate transient device test with mandatory verified restoration. YAML replacements use digest preconditions, atomic backup/write, Home Assistant configuration checking, and verified rollback; files without a safe reload report restart_required. This tool never executes the change, never issues a capability, and cannot approve its own proposal. Show the returned preview to the bound Telegram user/chat; a separate trusted coordinator must authorize and execute it.",
     inputSchema: {
       type: "object",
       properties: {

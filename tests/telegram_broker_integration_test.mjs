@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { BrokerError } from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/ha-change-broker.mjs";
 import {
+  applyNewSessionControl,
   bindSessionConversation,
   ensureSession,
   getPendingApproval,
@@ -629,6 +630,35 @@ try {
 
   brokerRequests.length = 0;
   requestedSocketPaths.length = 0;
+  telegramRequests.length = 0;
+  const deniedApproval = createDurableApproval("tg:100:-200:approval-denied-restart");
+  bridge.pendingApprovals.clear();
+  await bridge.handleCallback(
+    { botToken: VALID_BOT_TOKEN },
+    {
+      ...callback,
+      updateId: nextCallbackUpdateId(),
+      id: "callback-denied-after-restart",
+      data: `v2d:${deniedApproval.id}`,
+    },
+    callbackOptions,
+  );
+  assert.equal(
+    getPendingApproval(deniedApproval.id, VALID_BOT_TOKEN, sessionOptions),
+    null,
+  );
+  assert.deepEqual(brokerRequests, [], "a denied approval must never reach the broker");
+  assert.deepEqual(requestedSocketPaths, []);
+  assert.equal(
+    telegramRequests.some((request) =>
+      request.url.endsWith("/answerCallbackQuery") &&
+      request.body.callback_query_id === "callback-denied-after-restart" &&
+      request.body.text === "취소했습니다."),
+    true,
+  );
+
+  brokerRequests.length = 0;
+  requestedSocketPaths.length = 0;
   inspectResult = PROPOSAL;
   const transitionApproval = createDurableApproval("tg:100:-200:approval-transition");
   const transitionUpdateId = nextCallbackUpdateId();
@@ -745,6 +775,136 @@ try {
       request.url.endsWith("/sendMessage") &&
       request.body.text.includes("Broker 실행 결과") &&
       request.body.text.includes('"status": "succeeded"')),
+    true,
+  );
+
+  brokerRequests.length = 0;
+  requestedSocketPaths.length = 0;
+  telegramRequests.length = 0;
+  let releaseCancellationBlocker;
+  let cancellationBlockerStarted;
+  const cancellationBlockerReady = new Promise((resolve) => {
+    cancellationBlockerStarted = resolve;
+  });
+  const cancellationBlocker = bridge.enqueueRequester(
+    REQUESTER.user_id,
+    REQUESTER.chat_id,
+    async () => {
+      cancellationBlockerStarted();
+      await new Promise((resolve) => { releaseCancellationBlocker = resolve; });
+    },
+  );
+  await cancellationBlockerReady;
+  const cancelledApproval = createDurableApproval("tg:100:-200:queued-cancel");
+  const cancelledUpdateId = nextCallbackUpdateId();
+  let cancelledAcknowledgements = 0;
+  const cancelledCallback = bridge.handleCallback(
+    { botToken: VALID_BOT_TOKEN },
+    {
+      ...callback,
+      updateId: cancelledUpdateId,
+      id: "callback-queued-cancel",
+      data: `v2a:${cancelledApproval.id}`,
+    },
+    {
+      ...callbackOptions,
+      acknowledgeInput: () => { cancelledAcknowledgements += 1; },
+    },
+  );
+  assert.equal(
+    getPendingApproval(cancelledApproval.id, VALID_BOT_TOKEN, sessionOptions)
+      .approved_update_id,
+    cancelledUpdateId,
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    telegramRequests.some((request) =>
+      request.url.endsWith("/answerCallbackQuery") &&
+      request.body.callback_query_id === "callback-queued-cancel" &&
+      request.body.text === "승인했습니다."),
+    true,
+    "Telegram callback acknowledgement must not wait behind the requester queue",
+  );
+  assert.deepEqual(brokerRequests, [], "queued approval execution must remain serialized");
+  assert.deepEqual(
+    bridge.cancelRequesterWork(REQUESTER.user_id, REQUESTER.chat_id, {
+      botToken: VALID_BOT_TOKEN,
+      statePath: callbackOptions.statePath,
+    }),
+    {
+      queued_cancelled: 1,
+      running_cancel_requested: 1,
+      approvals_cancelled: 0,
+      durable_in_progress: 0,
+      workers_terminated: 0,
+    },
+  );
+  releaseCancellationBlocker();
+  await cancellationBlocker;
+  await cancelledCallback;
+  assert.equal(cancelledAcknowledgements, 1);
+  assert.equal(
+    getPendingApproval(cancelledApproval.id, VALID_BOT_TOKEN, sessionOptions),
+    null,
+  );
+  assert.deepEqual(brokerRequests, [], "a queued cancelled approval must never reach the broker");
+
+  brokerRequests.length = 0;
+  requestedSocketPaths.length = 0;
+  telegramRequests.length = 0;
+  let releaseSessionBlocker;
+  let sessionBlockerStarted;
+  const sessionBlockerReady = new Promise((resolve) => { sessionBlockerStarted = resolve; });
+  const sessionBlocker = bridge.enqueueRequester(
+    REQUESTER.user_id,
+    REQUESTER.chat_id,
+    async () => {
+      sessionBlockerStarted();
+      await new Promise((resolve) => { releaseSessionBlocker = resolve; });
+    },
+  );
+  await sessionBlockerReady;
+  const staleApproval = createDurableApproval("tg:100:-200:queued-session-reset");
+  const staleUpdateId = nextCallbackUpdateId();
+  let staleAcknowledgements = 0;
+  const staleCallback = bridge.handleCallback(
+    { botToken: VALID_BOT_TOKEN },
+    {
+      ...callback,
+      updateId: staleUpdateId,
+      id: "callback-queued-session-reset",
+      data: `v2a:${staleApproval.id}`,
+    },
+    {
+      ...callbackOptions,
+      acknowledgeInput: () => { staleAcknowledgements += 1; },
+    },
+  );
+  assert.equal(
+    getPendingApproval(staleApproval.id, VALID_BOT_TOKEN, sessionOptions)
+      .approved_update_id,
+    staleUpdateId,
+  );
+  const reset = applyNewSessionControl({
+    update_id: 9_000_000,
+    user_id: REQUESTER.user_id,
+    chat_id: REQUESTER.chat_id,
+    command: "new",
+    result: "synthetic reset",
+  }, VALID_BOT_TOKEN, sessionOptions);
+  assert.equal(reset.session.generation, callbackSession.generation + 1);
+  releaseSessionBlocker();
+  await sessionBlocker;
+  await staleCallback;
+  assert.equal(staleAcknowledgements, 1);
+  assert.equal(
+    getPendingApproval(staleApproval.id, VALID_BOT_TOKEN, sessionOptions),
+    null,
+  );
+  assert.deepEqual(brokerRequests, [], "an approval from an old session must never reach the broker");
+  assert.equal(
+    telegramRequests.some((request) => request.url.endsWith("/sendMessage") &&
+      request.body.text.includes("이전 승인 요청을 실행하지 않았습니다")),
     true,
   );
 } finally {

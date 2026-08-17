@@ -26,10 +26,16 @@ Antigravity native plugin으로 제공한다.
    따라 보존되며 실패 시 복구할 수 있다.
 4. Telegram은 허용된 사용자와 채팅만 처리하며 CLI의 OAuth·전역 customization·
    native permission을 상속한다. `/new`까지 stable session과 same-session approval,
-   durable reply delivery를 유지하고 고위험 항상 확인을 강제한다.
+   durable reply delivery를 유지한다. approval callback ACK/control은 즉시 처리하되
+   broker 실행은 requester FIFO에서 직렬화하고, 실행 직전 requester/session을
+   재검증한다. `ha_change_propose`로 제출된 모든 App-managed broker
+   `service_call`/`config_patch`에 고위험 확인과 exactly-once broker 접수를 강제한다.
+   관리형 runtime rule은 일반 HA service/config 변경을 broker로 라우팅하지만, 신뢰된
+   사용자 전역 native tool과 direct command/API helper는 관리자 권한을 상속하며
+   broker가 투명하게 가로채지 않는다.
 5. AppArmor는 항상 활성화된다. 민감정보 option이 꺼지면 보호 경로를 읽지
-   못하고, 켜져도 명시한 Home Assistant 민감 설정과 Recorder 자료만 read-only로
-   허용한다. raw App·SSH credential은 계속 차단하고, 공유 native OAuth는
+   못하고, 켜져도 Recorder 자료만 진단 read-only로 허용한다. secrets, `.storage`,
+   raw App·SSH credential은 계속 직접 차단하고, 공유 native OAuth는
    Antigravity 실행에만 사용하며 model output·로그·Telegram reply로 노출하지 않는다.
 6. HA API, 로그, 메모리와 브라우저 기능이 비밀을 model, 로그, artifact 또는
    Telegram으로 노출하지 않는다.

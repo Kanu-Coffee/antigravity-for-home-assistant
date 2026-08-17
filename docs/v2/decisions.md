@@ -39,10 +39,16 @@
 
 - 상태: `Accepted`
 - AppArmor를 끄는 option은 제공하지 않는다.
-- `antigravity_sensitive_data_access`는 Web/SSH/Telegram Antigravity child를 restricted와
-  sensitive-read profile 중 하나로 전환할 뿐이다.
-- sensitive-read도 지정된 세 진단 경로의 read-only만 허용하며 broker,
-  browser와 memory 권한은 바꾸지 않는다.
+- `antigravity_sensitive_data_access`는 Web/SSH/Telegram Antigravity를 restricted와
+  sensitive-read bootstrap/runtime 쌍 중 하나로 전환할 뿐이다.
+- 비특권 HAOS App에서 namespace 생성이 실패하는 native `--sandbox`는 사용하지 않는다.
+  bootstrap은 shared HOME을 열지 않고 image-owned native binary로 전환하며, runtime이
+  시작한 일반 command와 stdio tool은 공통 command profile로 다시 `Px` 전환한다. 이를
+  위해 host privilege를 늘리지 않는다.
+- secrets, `.storage`, runtime token/options와 SSH/private key는 두 runtime 모두
+  read/write를 거부한다. sensitive-read는 Recorder DB 진단 read만 추가하며 broker,
+  browser와 memory 권한은 바꾸지 않는다. command profile은 OAuth, App 관리 settings/
+  MCP config와 token을 읽거나 쓸 수 없다.
 
 ## ADR-004 — Telegram bridge 전면 교체
 
@@ -54,7 +60,13 @@
 - Telegram 전용 `telegram_access_mode`, `ha-telegram-login`, HOME/bootstrap과 fixed
   customization copy를 제거한다. legacy mode 값은 migration에서 무시·제거한다.
 - user/chat 교집합, 최초 실행 전 stable conversation binding, explicit `/new`,
-  per-session 직렬화, same-session approval과 암호화 reply outbox를 사용한다.
+  per-session model 직렬화, 즉시 control/approval ACK·기본 인증, requester FIFO의
+  broker 실행, 실행 직전 session 재검증, durable same-session approval/idempotency와 암호화 reply outbox를
+  사용한다. native headless tool prompt는 Telegram으로 resume하지 않는다. 관리형
+  runtime rule은 일반 HA service/config 변경을 `ha_change_propose`로 라우팅하며 이
+  App-managed broker proposal을 durable Telegram 승인 경계로 둔다. 신뢰된 사용자
+  설치·전역 native tool과 direct command/API helper는 같은 관리자 권한을 상속하고
+  broker가 투명하게 intercept하지 않으며 사용자 rule과 현재 명시적 요청을 따른다.
 - 설계 비교 기준은 Hermes의
   [결정적 session key와 single-flight](https://github.com/NousResearch/hermes-agent/blob/7095e23eb2066fe9a2f93b99cdbfe0e2b5ece397/gateway/session.py#L1090-L1211),
   [session-bound Telegram approval](https://github.com/NousResearch/hermes-agent/blob/7095e23eb2066fe9a2f93b99cdbfe0e2b5ece397/plugins/platforms/telegram/adapter.py#L6140-L6214),

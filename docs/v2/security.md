@@ -26,7 +26,7 @@ untrusted data이며 다음 행위를 직접 승인하지 못한다.
 - SSH private host key와 사용자 key material
 - `/config/secrets.yaml`, `/config/.storage/**`
 - Recorder SQLite DB와 WAL/SHM
-- backup, credential, certificate private key와 cloud auth 자료
+- backup, App 소유 credential, certificate private key와 표준 cloud-auth 경로
 - memory DB의 사용자 semantic 정보
 - dashboard screenshot, state, history와 로그의 사생활 정보
 
@@ -48,6 +48,10 @@ untrusted data이며 다음 행위를 직접 승인하지 못한다.
 로그, web response, integration metadata, blueprint와 ordinary data file의 명령형
 문장은 data다. 인증된 Telegram sender가 보낸 직접 요청은 Web/SSH 입력과 동일한
 instruction source이며, global/workspace plugin·agent·rule/MCP도 의도적으로 상속한다.
+새 설치의 `always-proceed` managed policy는 ordinary `/config`, 정확한 global
+customization root, URL, command와 MCP를 운영 기본 허용한다. 이는 비밀 전체 wildcard가
+아니며 secrets/storage/runtime token/options/SSH key의 exact deny가 항상 우선한다.
+사용자가 추가한 ask/deny도 보존되고 managed allow보다 우선한다.
 
 ## SEC-004 — AppArmor 항상 ON
 
@@ -61,24 +65,28 @@ custom policy는 s6 root profile과 `Px`로 전환하는 별도 top-level 실행
 포함한다. 이들은 AppArmor local profile(`//...`)이 아니라 각각 독립적으로
 load되는 named profile이다. `antigravity_sensitive_data_access`는 profile을
 비활성화하는 switch가 아니라 Ingress/SSH/Telegram에서 시작한 Antigravity가 사용할
-별도 실행 프로필(discrete `Px` transition) 선택 값이다.
+bootstrap/runtime 쌍(discrete `Px` transition) 선택 값이다. runtime이 시작하는 일반
+command와 stdio tool executable은 다시 공통 command profile로 전환한다.
 
 | profile | 허용 | 주요 deny |
 | --- | --- | --- |
 | init/broker | options 읽기, 제한된 `/data`, Supervisor socket/API | 임의 host path, kernel/admin capability |
 | ordinary shell | 일반 `/config` 프로젝트 파일과 shell 도구 | native OAuth Home, SSH/App credential, broker state, 다른 PID의 env/fd/root |
-| interactive-restricted | Web/SSH/Telegram의 `/config` 일반 프로젝트 파일, native CLI/OAuth Home, 사용자 customization, plugin socket | 세 조건부 민감 경로 read/write, broker state, Supervisor/App credential |
-| interactive-sensitive-read | restricted 허용 범위 + 세 조건부 민감 경로 진단용 read | 세 조건부 민감 경로 write, broker state, Supervisor/App credential |
+| interactive bootstrap | clean environment copy와 image-owned `antigravity-real`로 단일 전환 | HOME/OAuth, `/config` data, runtime credential |
+| interactive-runtime-restricted | Web/SSH/Telegram의 `/config` 일반 프로젝트 파일, native CLI/OAuth Home read, 사용자 customization, plugin socket, 매개 settings update helper 실행 | raw settings direct write; secrets/storage/Recorder read/write; runtime token/options, SSH/private key, broker state |
+| interactive-runtime-sensitive-read | restricted runtime 허용 범위 + Recorder DB 진단용 read | raw settings direct write; secrets/storage read/write; Recorder write, runtime token/options, SSH/private key, broker state |
+| `antigravity_home_assistant-command` | 일반 `/config`, network, user plugin/agent/rule/skill과 scoped helper | OAuth backend, App 관리 settings/MCP config, token, secrets/storage/Recorder, broker state |
 | sshd daemon | public-key 인증에 필요한 exact `/data/ssh` host key와 `authorized_keys` read | `/config`, key write/exec, App credential와 broker socket |
 | browser | Chromium runtime, loopback gateway, `/run` profile | `/data`, `/config`, Supervisor network/credential |
 | memory | memory DB, readonly catalog endpoint | OAuth, Telegram/SSH/browser credential, `/config` write |
 
-두 interactive profile 사이에서만 달라지는 경로는 다음 세 종류다.
+두 interactive runtime profile 사이에서 달라지는 경로는 Recorder DB 진단 read뿐이다.
+secrets와 `.storage`는 두 profile 모두 직접 read/write를 거부한다.
 
 | 경로 | option `false` | option `true` |
 | --- | --- | --- |
-| `/config/secrets.yaml` | read/write deny | diagnostic read-only, write deny |
-| `/config/.storage/**` | read/write deny | diagnostic read-only, write deny |
+| `/config/secrets.yaml` | read/write deny | read/write deny |
+| `/config/.storage/**` | read/write deny | read/write deny |
 | `/config/{,**/}*.{db,sqlite,sqlite3}{,.*,-*,~}` | read/write deny | diagnostic read-only, write deny |
 
 마지막 pattern은 기본 `home-assistant_v2.db`뿐 아니라 configured/nested SQLite
@@ -100,9 +108,14 @@ option 값과 profile 종류에 관계없이 다음 경로와 그 하위·보조
 /data/antigravity-ha/change-broker/** # change broker 외 deny
 ```
 
-`/data/home/.gemini/**`는 image-managed launcher가 `Px`로 전환한 Web/SSH/Telegram
-Antigravity 실행 프로필만의 예외이며 settings/plugin을 위해 `/data/home/**`
-read-write를 받는다.
+`/data/home/.gemini/**`는 image-managed launcher가 bootstrap을 거쳐 `Px`로 전환한
+Web/SSH/Telegram Antigravity runtime만의 예외다. runtime은 인증과 global
+customization을 위해 shared HOME을 읽고 일반 사용자 전역 파일을 쓸 수 있지만 App
+관리 `settings.json`의 raw direct write는 native permission exact deny다. 일반 전역
+설정은 digest-bound `agy-settings patch`가 별도 settings-update profile에서 원자적으로
+매개 수정하며, `permissions`, `enableTerminalSandbox`, `allowNonWorkspaceAccess`,
+`toolPermission`, `artifactReviewPolicy`는 거부한다. command profile은 OAuth backend와
+App 관리 settings/MCP config를 읽거나 쓸 수 없다.
 Ingress/SSH/SFTP의 ordinary shell과 s6 root profile은 이 경로를 거부하고 다른 PID의
 `environ`, `cmdline`, `mem`, `fd`, `root`, `map_files`를 통한 우회도 거부한다. 성공한 HAOS
 OAuth의 primary credential backend와 exact path는 아직 검증하지 않았으므로 어느
@@ -124,9 +137,10 @@ AppArmor syntax는 generic Linux container에서만 확정하지 않는다. 처�
 release candidate는 enforce 상태로 시험한다. public image와 `VERIFIED` 판정은
 enforce 상태에서만 가능하다.
 
-browser, memory, broker와 일반 shell은 option 값으로 `interactive-sensitive-read`
-권한을 얻지 않는다. Web/SSH/Telegram Antigravity에는 동일한 option을 적용하며
-profile attach/enforce 실패는 권한 확대로 fallback하지 않고 실행을 중단한다.
+browser, memory, broker와 일반 shell은 option 값으로 sensitive runtime 권한을 얻지
+않는다. Web/SSH/Telegram Antigravity에는 동일한 option을 적용하며 bootstrap/runtime/
+command profile attach 또는 enforce가 실패하면 권한 확대로 fallback하지 않고 실행을
+중단한다.
 
 ## SEC-005 — credential boundary와 scoped broker
 
@@ -164,23 +178,37 @@ failure로 취급하지 않는다. 특정 `.gemini` credential 파일명이나 b
 workspace plugin·agent·rule·MCP 상속과 수정을 제품 계약으로 채택한다.
 
 AppArmor는 정상 OAuth·settings 접근과 Telegram prompt/tool이 유도한 동일-process
-접근을 구분할 수 없다. 따라서 exact user/chat 인증과 Telegram 계정·bot token 보호가
-관리자 경계다. terminal sandbox, shell-free transport, output redaction과 broker는
-추가 방어층이며 credential isolation 보장이 아니다.
+접근을 구분할 수 없다. 2.0.9의 command/stdio MCP executable은 별도 command profile로
+전환되어 OAuth·settings·MCP config를 읽지 못하지만, native built-in file tool이나
+trusted extension처럼 runtime process 안에서 끝나는 동작은 executable transition으로
+투명하게 가로챌 수 없다. App 관리 `settings.json`의 raw write는 native permission
+exact deny로 별도 차단하고, 일반 전역 설정만 `agy-settings patch`로 매개 수정한다.
+따라서 exact user/chat 인증과 Telegram 계정·bot token 보호가 여전히 관리자 경계다.
+shell-free transport, output redaction과 broker는 추가 방어층이며 전체 same-process
+credential isolation 보장이 아니다.
 
-release 후보는 공유 Antigravity profile에서 OAuth canary가 command/tool output,
-Telegram reply, App log와 artifact로 유출되지 않는 negative test를 통과해야 한다.
-동일 process가 임의 file-read command로 native auth 원문을 출력할 수 있거나 이를
-차단했다는 증거가 없으면 공개 v2의 보안 release blocker 또는 명시적으로 승인된
-known residual이다. 이 잔여 위험을 `SEC-012` 증거에서 누락한 채 보안을
-`VERIFIED`로 표시할 수 없다.
+release 후보는 공유 Antigravity runtime에서 command/tool OAuth canary가 command
+profile에 들어가고 Telegram reply, App log와 artifact로 유출되지 않는 negative test를
+통과해야 한다. generic container에서 functional transition 입력과 정적 policy를
+검증해도 실제 HAOS enforce 결과는 아니다. 동일 process의 임의 native file read를
+차단했다는 증거가 없으면 공개 v2의 보안 release blocker 또는 명시적으로 승인된 known
+residual이다. 이 잔여 위험과 실제 HAOS `NOT RUN`을 `SEC-012` 증거에서 누락한 채
+보안을 `VERIFIED`로 표시할 수 없다.
 
 ## SEC-006 — 민감 파일 정책
 
-- 기본값은 `.storage`, Recorder DB와 `secrets.yaml` 직접 읽기·쓰기를 모두
-  거부하며 API history/statistics와 key 이름을 우선 사용한다.
-- 사용자가 `antigravity_sensitive_data_access=true`를 선택한 경우에만 Web/SSH/Telegram
-  Antigravity child가 이 세 종류를 진단 목적으로 읽을 수 있다. 직접 편집, rename, truncate,
+- `.storage`, `secrets.yaml`, App 소유 runtime option/token, SSH/private key와 표준
+  cloud-auth 경로의 직접 읽기·쓰기는 option과 관계없이 거부하며 API와 secret key
+  이름을 우선 사용한다. spawned command/stdio tool은 native OAuth backend도 AppArmor로
+  읽을 수 없다.
+- 사용자가 관리하는 전역 plugin/MCP 설정에 inline한 secret은 신뢰된 확장 컨텍스트로
+  분류하며 이 exact-deny 보장 밖이다. inline header/client secret 대신
+  credential-aware wrapper나 보호된 환경 참조를 사용한다.
+- OAuth를 사용하는 native parent는 `/data/home`을 읽어야 하므로 same-process built-in
+  read와 정상 인증 read를 AppArmor로 구분하지 못한다. primary backend 실제 경로와
+  비유출은 HAOS에서 미검증이며 `SEC-012`의 잔여 위험으로 유지한다.
+- `antigravity_sensitive_data_access=true`일 때만 Web/SSH/Telegram Antigravity child가
+  Recorder DB와 sidecar를 진단 목적으로 읽을 수 있다. 직접 편집, rename, truncate,
   delete, lock과 DB repair는 계속 거부한다.
 - Recorder DB는 SQLite read-only 방식으로만 열고 WAL/SHM도 read-only다. 전체 DB
   dump나 context 적재는 허용하지 않는다.
@@ -197,10 +225,18 @@ read broker의 state redaction은 무제한 비밀 탐지 보장이 아니다. e
 allowlist attribute 진단은 유지한다. 이 규칙에 걸리지 않은 state도 사생활 정보일 수
 있으므로 SEC-002의 민감 자산 및 공유 제한은 그대로 적용한다.
 
-## SEC-007 — 변경 승인과 위험도
+## SEC-007 — App-managed broker 변경 승인과 위험도
 
-진단 결과는 변경 권한이 아니다. broker가 operation과 target을 기준으로 위험을
-재분류한다.
+진단 결과는 변경 권한이 아니다. 관리형 runtime rule은 일반 HA service/config 변경을
+`ha_change_propose`로 라우팅하며 broker가 operation과 target을 기준으로 위험을
+재분류한다. 이 절의 always-confirm 보장은 `ha_change_propose`로 제출된 App-managed
+broker operation에 적용된다.
+
+신뢰된 사용자 설치·전역 native tool, `command(*)`/`mcp(*)`, 직접 `ha-api`/
+`supervisor-api`와 일반 `/config` shell write는 CLI와 같은 관리자 권한을 상속하며
+broker가 투명하게 가로채지 않는다. 이 직접 경로의 mutation은 exact deny와 AppArmor
+안에서 사용자가 소유한 rule과 현재 명시적 요청을 따른다. 따라서 broker 보장은
+가능한 모든 native mutation을 포괄하지 않는다.
 
 ### 항상 고위험
 
@@ -214,12 +250,15 @@ allowlist attribute 진단은 유지한다. 이 규칙에 걸리지 않은 state
 - AppArmor, 보호 모드, broker policy 또는 audit 기능 약화
 - secrets, SSH key, browser identity 또는 Telegram 인증 자료 변경
 
-global native permission과 관계없이 위 작업은 같은 현재 conversation·사용자·채팅의
-명시적 확인이 필요하다.
+App-managed broker에 제출된 위 작업은 global native permission과 관계없이 같은 현재
+conversation·사용자·채팅의 명시적 확인이 필요하다.
 작업 종류가 애매하면 높은 위험으로 분류한다.
 
-v2 최소 구현은 안전 metadata가 검증되지 않은 모든 `service_call`을 높은 위험으로
-분류하고 사람 확인 없이는 실행하지 않는다.
+모든 App-managed broker `service_call`과 `config_patch`는 높은 위험으로 분류하고
+durable Telegram 확인 없이는 실행하지 않는다. service call은 live `/api/services`에서
+domain/service를 검증하고 bounded plain-JSON `service_data`만 받는다. config patch는
+민감 경로 밖의 `/config` YAML에 expected SHA, atomic backup/write, config check와
+exact rollback을 적용한다.
 
 ### 저위험 조건
 
@@ -234,11 +273,9 @@ v2 최소 구현은 안전 metadata가 검증되지 않은 모든 `service_call`
 
 하나라도 충족하지 않으면 확인 대상으로 승격한다.
 
-현재 구현에서 이 조건을 모두 만족하는 typed operation은 canonical root-level
-`input_boolean: !include`를 대상으로 restricted helper parser와
-`input_boolean_reload` activation/rollback plan을 통과하고 fresh API로 완전히 확인되는
-기존 helper의 `name`/`icon` metadata update뿐이다. helper create/remove, 기존 metadata
-제거, 임의 YAML과 모든 `service_call`은 low로 분류하지 않는다.
+현재 App-managed broker 구현은 service call과 config patch를 모두 high로 승격하므로
+broker에서 저위험 자동 실행하는 mutation은 없다. `expected_state`/`verify_state`는
+단일 entity의 선택적 결과 검증일 뿐 risk를 낮추지 않는다.
 
 ## SEC-008 — Telegram 보안 불변조건
 
@@ -247,9 +284,16 @@ v2 최소 구현은 안전 metadata가 검증되지 않은 모든 `service_call`
   않는다.
 - callback은 최초 conversation·requester·chat에서 눌러야 하고 승인 결과도 그
   conversation에 전달한다.
+- approval callback ACK와 기본 인증/control 처리는 즉시 수행하되 승인된 broker 실행은
+  requester FIFO에서 session-serialized한다. 실행 직전 현재 session generation·
+  conversation과 durable approval binding을 다시 검증한다. `/new`, `/cancel`,
+  restart, expiry 또는 duplicate callback은 stale proposal을 실행하지 않는다.
+- broker idempotency record는 동일 requester/proposal 실행을 정확히 한 번만 접수한다.
 - preview 내용이 바뀌면 기존 confirmation은 무효다.
-- Telegram 전용 mode는 없다. `antigravity_tool_permission`, sandbox와 민감정보
-  option을 Web/SSH와 동일하게 사용한다.
+- Telegram 전용 mode는 없다. `antigravity_tool_permission`과 민감정보 option을
+  Web/SSH와 동일하게 사용한다. 비특권 HAOS에서 실패하는 native sandbox는 세 채널
+  모두 사용하지 않고 일반 command/stdio tool executable을 공통 command profile로
+  전환한다. legacy `antigravity_terminal_sandbox`는 어느 값이든 `false`로 정규화한다.
 - 최초 prompt 실행 전에 conversation binding을 영속화하고 `/new` 외에는 Antigravity
   실패·재시작·전송 실패를 이유로 conversation을 회전하지 않는다.
 - 완료 응답은 Telegram 전송 전에 암호화된 영속 outbox에 기록하고 API ack 뒤
@@ -258,6 +302,19 @@ v2 최소 구현은 안전 metadata가 검증되지 않은 모든 `service_call`
 - raw prompt를 shell source, filename, tmux command 또는 log message에 넣지 않는다.
 - Telegram 실행은 Web/SSH와 같은 Antigravity AppArmor profile과 native 사용자
   customization을 사용한다.
+- native `stream-json` permission prompt는 Telegram callback으로 resume할 수 없다.
+  관리형 운영 도구는 global default allow에서 처리하고 관리형 runtime rule은 일반 HA
+  service/config mutation을 durable broker proposal 경계로 라우팅한다. 직접 native
+  관리자 도구는 broker가 투명하게 intercept하지 않는다.
+- App-managed broker proposal의 승인 transport는 Telegram requester-bound inline
+  button이다. 인증된 Web/SSH에서 사용자가 명시한 trusted direct tool 작업은 native
+  interactive flow를 사용할 수 있고 Telegram button으로 자동 broker되지 않는다. 두
+  경로는 HOME/OAuth/global permission을 분리한 별도 runtime이 아니다.
+- App 관리 settings raw direct write는 exact deny다. 일반 전역 setting은 digest-bound
+  `agy-settings patch`로 매개 수정할 수 있지만 `permissions`,
+  `enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`,
+  `artifactReviewPolicy`는 App option+restart로만 변경한다. user
+  plugin·agent·rule·skill은 세 채널에서 계속 공유·직접 수정할 수 있다.
 
 ## SEC-009 — 브라우저 보안
 
@@ -318,7 +375,8 @@ credential 노출이 의심되면 해당 service를 중지하고 token을 revoke
 
 - AppArmor enforce HAOS E2E와 예상 deny audit
 - prompt/command/callback injection 회귀
-- child environment allowlist와 token canary 비노출
+- command environment allowlist와 token canary 비노출
+- bootstrap → runtime → command discrete `Px` transition과 native sandbox 무사용 검증
 - 공유 Web/SSH/Telegram native OAuth canary 비유출과 동일-process 잔여 위험 기록
 - 실제 1.1.13에서 Telegram이 user global/workspace plugin·agent·rule·MCP와 permission을
   CLI와 동일하게 상속하고 수정할 수 있는 positive canary

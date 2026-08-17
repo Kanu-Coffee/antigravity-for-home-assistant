@@ -40,7 +40,7 @@
 - 명시적 사실과 검증된 후보만 보존하는 bounded HA memory
 - `/config`와 전역 Antigravity 환경을 그대로 사용하는 비대화형 Telegram bridge
 - requester·chat·preview digest·TTL에 묶인 승인 broker
-- 항상 enforce되는 AppArmor와 선택형 민감정보 진단 read-only profile
+- 항상 enforce되는 AppArmor, exact 민감정보 deny와 선택형 Recorder 진단 read-only profile
 - `amd64`와 `aarch64`용 GHCR prebuilt release image
 
 ## 빠른 설치
@@ -134,10 +134,34 @@ Telegram을 먼저 활성화했더라도 bridge는 Bot API에 연결하지 않�
 ### 공유 권한 정책
 
 Telegram 전용 mode는 없습니다. Telegram은 Web/SSH와 같은
-`antigravity_tool_permission`, `antigravity_terminal_sandbox`와
-`antigravity_sensitive_data_access` 설정을 따릅니다. 2.0.6 이하의
+`antigravity_tool_permission`과 `antigravity_sensitive_data_access` 설정을 따릅니다.
+Antigravity 1.1.13의 native `--sandbox`는 비특권 HAOS App에서 필요한 namespace를
+만들 수 없어 `operation not permitted`로 실패합니다. 2.0.9는 세 채널 모두 이 nested
+sandbox를 사용하지 않고, model이 시작한 command와 stdio tool을 별도
+`antigravity_home_assistant-command` AppArmor 프로필로 `Px` 전환합니다. 이 경계는
+공유 OAuth와 App 관리 settings를 command/tool descendant에서 차단하면서 일반
+`/config`, network와 제한 helper 작업은 유지합니다. 이를 위해 `full_access`,
+`SYS_ADMIN`, 보호 모드 해제 같은 HAOS 권한을 추가하지 않습니다.
+`antigravity_terminal_sandbox`는 deprecated/no-op compatibility 입력이며 `true`와
+`false` 모두 `false`로 정규화됩니다. wrapper는 사용자가 native sandbox flag를
+덮어쓰는 것도 거부합니다. 2.0.6 이하의
 `telegram_access_mode` 값은 권한으로 사용하지 않는 migration-only 입력입니다.
-별도 사람 확인이 필요한 고위험 작업은 전역 tool policy로 낮출 수 없습니다.
+새 설치의 기본값은 `always-proceed`이며 `/config`와 사용자 전역
+plugin·agent·skill·rule, URL, command와 MCP 같은 운영 도구를 세 채널에
+동일하게 허용합니다. 반대로 `secrets.yaml`, `.storage`, App 소유
+runtime/browser/bot token, SSH/private key와 표준 cloud-auth 경로의 직접 읽기·쓰기는
+exact deny로 항상 차단합니다. spawned command/stdio tool은 native OAuth backend도
+AppArmor로 읽을 수 없습니다. 사용자가 전역 plugin/MCP
+설정에 직접 넣은 inline secret은 신뢰된 확장 컨텍스트이므로 이 보장 밖입니다.
+raw file tool로 `settings.json`을 직접 쓰는 작업은 이 default-allow 정책의
+예외입니다. 사용자의 현재 명시적 요청으로 일반 전역 설정을 바꿀 때는
+`agy-settings sha256`으로 현재 digest를 얻고 `expected_sha256`과 JSON merge `patch`를
+stdin으로 `agy-settings patch`에 전달합니다. 이 helper는 원자적으로 갱신하지만
+App 소유 보안 key인 `permissions`, `enableTerminalSandbox`,
+`allowNonWorkspaceAccess`, `toolPermission`, `artifactReviewPolicy`는 거부하므로 해당
+정책은 App 옵션과 재시작으로만 바꿉니다.
+사용자 plugin·agent·skill·rule은 계속 공유되고 직접 수정할 수 있으며 기존 user-owned
+rule은 update에서 보존됩니다.
 bridge는 pipe된 stdin으로 질문을 받고 같은 `/data/home`과 `/config`에서 공유
 `antigravity --output-format stream-json` launcher를 실행합니다. 별도 shell이나 공유
 tmux에 입력을 주입하지 않지만 CLI와 같은 전역
@@ -145,26 +169,46 @@ tmux에 입력을 주입하지 않지만 CLI와 같은 전역
 기록한 뒤 Telegram 전송 확인 시 제거합니다. 429처럼 미전송이 명확한 오류만 bounded
 backoff로 재시도하고 전달 여부가 모호하면 `/retry` 전까지 격리합니다.
 1.1.13 `stream-json`이 native permission prompt 재개 protocol을 제공하지 않으므로,
-관리형 HA 변경은 Telegram 승인 버튼을 사용하고 global allow 밖의 임의 tool 검토는
-Web/SSH 또는 전역 permission 변경이 필요합니다. Telegram만의 auto-approve는 없습니다.
+native prompt를 Telegram 버튼으로 이어서 재개할 수 없습니다. 관리형 runtime rule은
+일반 HA service/config 변경을 `ha_change_propose`로 라우팅합니다. broker는 모든 live
+HA domain/service와 bounded `service_data`, 일반 YAML patch를 지원합니다. 이 경로로
+생성된 App-managed broker `service_call`/`config_patch`는 모두 고위험이며 requester·chat·
+session에 영속 결합된 승인/거절 버튼이 필요합니다. 이 broker 분류는 전역 tool
+policy로 낮출 수 없습니다. 승인된 service call은 live `/api/services` 검증 뒤
+실행하며 YAML은 expected digest, atomic backup/write와 `ha-config-check`를 거쳐 실패 시
+exact rollback합니다.
+
+신뢰된 사용자 설치·전역 native tool, `command(*)`/`mcp(*)`, 직접 `ha-api`/
+`supervisor-api`와 일반 `/config` shell write는 CLI와 같은 관리자 권한을 상속하며
+broker가 투명하게 가로채지 않습니다. 이 경로의 변경은 exact deny와 AppArmor 안에서
+사용자가 소유한 rule과 현재 명시적 요청을 따릅니다. 인증된 Web/SSH의 명시적 작업은
+이 신뢰된 direct tool 경로를 사용할 수 있고 Telegram approval button으로 자동
+broker되지 않습니다. 따라서 broker 보장은 가능한 모든 native 변경을 포괄한다는
+뜻이 아닙니다. native prompt는 Telegram에서 재개할 수 없으며 Telegram만의
+auto-approve도 없습니다.
 
 ## 안전 기본값
 
 - AppArmor는 항상 켜져 있으며 App 옵션으로 끌 수 없습니다.
-- `antigravity_sensitive_data_access: false`가 기본값입니다. 이때 대화형
-  Web/SSH/Telegram Antigravity도 `secrets.yaml`, `.storage`, Recorder DB를 읽거나
-  쓸 수 없습니다.
-- 값을 `true`로 바꾸면 Web/SSH/Telegram Antigravity child가 세 종류를 진단용으로
-  읽을 수 있고 쓰기·이름 변경·삭제는 계속 거부됩니다.
+- `secrets.yaml`, `.storage`, App 소유 runtime token/options, SSH/private key와 표준
+  cloud-auth 경로는 `antigravity_sensitive_data_access` 값과 관계없이 직접
+  읽기·쓰기가 거부됩니다. spawned command/stdio tool은 native OAuth backend도 읽을
+  수 없습니다.
+- `antigravity_sensitive_data_access: false`가 기본값이며 Recorder DB도 읽거나 쓸 수
+  없습니다. 값을 `true`로 바꾸면 Web/SSH/Telegram Antigravity runtime에 Recorder DB와
+  sidecar의 진단용 읽기만 허용하고 쓰기·이름 변경·삭제는 계속 거부합니다.
 - browser, memory, broker와 일반 shell에는 이 권한이 전달되지 않습니다.
-- SSH private key, App token, backup, SSL private material, cloud auth는 두 설정 모두
-  차단됩니다.
-- `always-proceed`나 terminal sandbox 해제도 AppArmor와 Telegram broker 정책을
-  우회하지 못합니다.
+- SSH private key, App token, backup, SSL private material과 표준 cloud-auth 경로는
+  두 설정 모두 차단됩니다. 전역 plugin/MCP 설정에는 inline secret을 넣지 말고
+  credential-aware wrapper나 보호된 환경 참조를 사용하세요.
+- `always-proceed`도 AppArmor와 Telegram broker 정책을 우회하지 못하며, command
+  profile 전환은 설정으로 해제할 수 없습니다. native terminal sandbox는 사용하지
+  않습니다.
 - Web/SSH/Telegram Antigravity는 의도적으로 `/data/home`의 OAuth와 사용자 설정,
   `/config` 프로젝트를 공유합니다. 따라서 Telegram prompt가 유도한 credential·설정
   접근과 정상 접근을 AppArmor만으로 구분할 수 없으며, 정확한 user/chat 인증과
-  Telegram 계정 보호가 관리자 경계입니다.
+  Telegram 계정 보호가 관리자 경계입니다. primary OAuth backend의 실제 경로와
+  same-process built-in read 비유출은 실제 HAOS에서 아직 검증되지 않았습니다.
 
 SSH는 공개키만 허용합니다. TCP `2224`를 인터넷에 직접 노출하지 말고 신뢰하는
 VPN을 사용하세요.
@@ -187,6 +231,15 @@ plugin은 사용자 소유 충돌로 보고 시작을 중단합니다. 업데이
 전체 backup과 현재 동작 version/image를 기록하고, 실패하면
 `preserve`로 되돌린 뒤 이전 immutable version과 검증된 scoped backup으로
 복구하세요. 자동 HAOS rollback은 보장하지 않습니다.
+
+개발용 source image는 `tools/development/build-app`으로만 빌드합니다. 이 helper는
+checkout hash로 분리한 project-owned Buildx builder/cache만 종료 시 제거하고 global
+Docker prune을 하지 않으며, 이 checkout label을 가진 미참조 local image도 최신 두 개를
+보존합니다. release workflow는 stable `antigravity-home-assistant` GHA cache scope를
+사용합니다. App runtime에서는 성공한 복구·갱신·config transaction 뒤 소유
+manifest가 검증된 완료 managed-plugin, native user-files refresh, change-broker config
+backup을 각 범주별 최신 두 개로 제한합니다. active journal/result, 소유 불명·
+malformed·unsafe backup은 자동 삭제하지 않습니다.
 
 ## 문서와 검증 상태
 

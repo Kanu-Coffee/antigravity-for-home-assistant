@@ -22,7 +22,7 @@ def test_main_release_is_manual_main_only_and_minimally_authorized() -> None:
         "candidate_run_attempt",
         "confirm",
     }
-    assert inputs["version"]["default"] == "2.0.8"
+    assert inputs["version"]["default"] == "2.0.9"
     assert workflow["permissions"] == {"contents": "read"}
     publish = workflow["jobs"]["publish"]
     assert publish["if"] == "github.ref == 'refs/heads/main'"
@@ -117,7 +117,7 @@ def test_repository_advertises_the_numeric_tag_published_by_main_release() -> No
         )
     )
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
-    assert config["version"] == inputs["version"]["default"] == "2.0.8"
+    assert config["version"] == inputs["version"]["default"] == "2.0.9"
     assert (
         config["image"]
         == "ghcr.io/kanu-coffee/antigravity-for-home-assistant"

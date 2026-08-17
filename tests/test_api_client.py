@@ -64,6 +64,7 @@ expected_accept=$(cat "${fixture_dir}/expected-accept")
 expected_url=$(cat "${fixture_dir}/expected-url")
 mock_status=$(cat "${fixture_dir}/response-status")
 mock_exit=$(cat "${fixture_dir}/curl-exit")
+touch "${fixture_dir}/curl-called"
 for forbidden_name in CURL_BIN API_CURL_BIN HA_URL SUPERVISOR_URL http_proxy https_proxy \
   HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy NO_PROXY no_proxy CURL_HOME; do
   if [[ -v "${forbidden_name}" ]]; then
@@ -129,6 +130,7 @@ def run_api(
     token: str | None = TOKEN,
     curl_exit: str = "0",
     expected_accept: str = "application/json",
+    program_name: str = "test-api",
 ) -> subprocess.CompletedProcess[str]:
     bash, harness, library = api_harness
     mock_curl = harness.parent / "mock-curl"
@@ -145,6 +147,7 @@ def run_api(
     }
     for filename, value in fixture_values.items():
         (harness.parent / filename).write_text(value, encoding="utf-8")
+    (harness.parent / "curl-called").unlink(missing_ok=True)
     env = os.environ.copy()
     env.update(
         {
@@ -157,6 +160,7 @@ def run_api(
             "ALL_PROXY": "socks5://attacker.invalid:1080",
             "CURL_HOME": "/attacker-controlled/curl-home",
             "TEST_API_CHECK_RESULT": "true" if check_result else "false",
+            "TEST_API_PROGRAM_NAME": program_name,
         }
     )
     if token is None:
@@ -180,6 +184,194 @@ def test_mock_success_returns_pretty_json(api_harness: tuple[str, Path, Path]) -
     assert '"value": 1' in result.stdout
     assert result.stderr == ""
     assert TOKEN not in result.stdout + result.stderr
+
+
+def test_supervisor_self_options_are_recursively_redacted(
+    api_harness: tuple[str, Path, Path]
+) -> None:
+    synthetic_bot_token = "synthetic-telegram-bot-token-should-never-print"
+    synthetic_password = "synthetic-password-should-never-print"
+    body = (
+        '{"result":"ok","data":{"options":'
+        f'{{"telegram_bot_token":"{synthetic_bot_token}",'
+        f'"nested":{{"password":"{synthetic_password}"}},'
+        '"telegram_enabled":true}}}'
+    )
+    result = run_api(
+        api_harness,
+        "GET",
+        "/addons/self/options",
+        body=body,
+        check_result=True,
+        program_name="supervisor-api",
+    )
+
+    assert result.returncode == 0
+    assert synthetic_bot_token not in result.stdout + result.stderr
+    assert synthetic_password not in result.stdout + result.stderr
+    assert result.stdout.count("[REDACTED]") >= 1
+    assert '"data": "[REDACTED]"' in result.stdout
+
+
+@pytest.mark.parametrize("path", ["/addons/self/options", "/apps/example/config"])
+def test_direct_supervisor_options_and_config_responses_redact_whole_data(
+    api_harness: tuple[str, Path, Path], path: str
+) -> None:
+    synthetic_option = "synthetic-benign-direct-option-should-never-print"
+    result = run_api(
+        api_harness,
+        "--raw",
+        "GET",
+        f"{path}?verbose=true",
+        body=(
+            '{"result":"ok","data":'
+            f'{{"innocent_label":"{synthetic_option}"}}'
+            "}"
+        ),
+        check_result=True,
+        program_name="supervisor-api",
+    )
+
+    assert result.returncode == 0
+    assert synthetic_option not in result.stdout + result.stderr
+    assert '"data":"[REDACTED]"' in result.stdout
+
+
+def test_non_json_supervisor_info_response_is_fail_closed(
+    api_harness: tuple[str, Path, Path]
+) -> None:
+    synthetic_option = "synthetic-non-json-option-should-never-print"
+    result = run_api(
+        api_harness,
+        "GET",
+        "/addons/self/info?verbose=true",
+        body=f"innocent_label={synthetic_option}",
+        status="500",
+        program_name="supervisor-api",
+    )
+
+    assert result.returncode == 1
+    assert synthetic_option not in result.stdout + result.stderr
+    assert result.stderr.endswith("[REDACTED]\n")
+
+
+def test_raw_json_cannot_bypass_sensitive_response_redaction(
+    api_harness: tuple[str, Path, Path]
+) -> None:
+    synthetic_api_key = "synthetic-api-key-should-never-print"
+    result = run_api(
+        api_harness,
+        "--raw",
+        "GET",
+        "/addons/self/info",
+        body=f'{{"result":"ok","data":{{"api_key":"{synthetic_api_key}"}}}}',
+        check_result=True,
+        program_name="supervisor-api",
+    )
+
+    assert result.returncode == 0
+    assert synthetic_api_key not in result.stdout + result.stderr
+    assert '"api_key":"[REDACTED]"' in result.stdout
+
+
+@pytest.mark.parametrize("raw_arg", [(), ("--raw",)])
+def test_query_cannot_bypass_whole_options_redaction_for_benign_keys(
+    api_harness: tuple[str, Path, Path], raw_arg: tuple[str, ...]
+) -> None:
+    synthetic_option = "synthetic-benign-option-secret-should-never-print"
+    result = run_api(
+        api_harness,
+        *raw_arg,
+        "GET",
+        "/addons/self/info?verbose=true",
+        body=(
+            '{"result":"ok","data":{"options":'
+            f'{{"innocent_label":"{synthetic_option}"}}'
+            "}}"
+        ),
+        check_result=True,
+        program_name="supervisor-api",
+    )
+
+    assert result.returncode == 0
+    assert synthetic_option not in result.stdout + result.stderr
+    if raw_arg:
+        assert '"options":"[REDACTED]"' in result.stdout
+    else:
+        assert '"options": "[REDACTED]"' in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "expected_code"),
+    [
+        ("GET", "/backups/fixture/download", 77),
+        ("POST", "/ingress/session", 77),
+        ("POST", "/ingress/validate_session", 77),
+        ("GET", "/backups/fixture/../secret/download", 64),
+        ("GET", "/backups/%66ixture/download", 64),
+        ("GET", "/backups//fixture/download", 64),
+        ("GET", r"/backups\fixture\download", 64),
+    ],
+)
+def test_supervisor_sensitive_endpoints_and_noncanonical_bypasses_fail_before_request(
+    api_harness: tuple[str, Path, Path],
+    method: str,
+    path: str,
+    expected_code: int,
+) -> None:
+    result = run_api(
+        api_harness,
+        method,
+        path,
+        body="archive-or-session-secret-must-not-print",
+        program_name="supervisor-api",
+    )
+
+    assert result.returncode == expected_code
+    assert "archive-or-session-secret-must-not-print" not in (
+        result.stdout + result.stderr
+    )
+    assert not (api_harness[1].parent / "curl-called").exists()
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/../../addons/self/info",
+        "/%2e%2e/%2e%2e/addons/self/info",
+        r"/..\../addons/self/info",
+    ],
+)
+def test_ha_api_rejects_cross_namespace_path_traversal_before_request(
+    api_harness: tuple[str, Path, Path], path: str
+) -> None:
+    result = run_api(
+        api_harness,
+        "GET",
+        path,
+        body="cross-namespace-secret-must-not-print",
+        program_name="ha-api",
+    )
+
+    assert result.returncode == 64
+    assert "cross-namespace-secret-must-not-print" not in (
+        result.stdout + result.stderr
+    )
+    assert not (api_harness[1].parent / "curl-called").exists()
+
+
+def test_canonical_query_is_preserved_for_non_sensitive_endpoint(
+    api_harness: tuple[str, Path, Path]
+) -> None:
+    result = run_api(
+        api_harness,
+        "GET",
+        "/core/info?verbose=true%20fixture",
+        body='{"value":1}',
+    )
+
+    assert result.returncode == 0
+    assert '"value": 1' in result.stdout
 
 
 def test_mock_http_error_is_nonzero_and_redacted(

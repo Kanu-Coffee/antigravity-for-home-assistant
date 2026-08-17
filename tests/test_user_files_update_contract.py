@@ -162,6 +162,7 @@ def test_user_file_update_runtime_is_image_managed(
     init_script = (rootfs / "usr/local/bin/antigravity-ha-init").read_text(
         encoding="utf-8"
     )
+    assert "antigravity_terminal_sandbox=true is deprecated and ignored" in init_script
     wrapper = (rootfs / "usr/local/bin/antigravity-user-files-update").read_text(
         encoding="utf-8"
     )
@@ -194,7 +195,7 @@ def test_user_file_update_runtime_is_image_managed(
     assert 'requestedMode === "refresh_agents"' in helper
     assert 'requestedMode === "refresh_all"' in helper
     assert 'never: "request-review"' in helper
-    assert "terminalSandbox = true" in helper
+    assert "terminalSandbox = false" in helper
     assert "Legacy browser_approval_policy was retired" in helper
 
 
@@ -254,6 +255,7 @@ def test_user_file_update_has_fixed_scopes_and_private_recovery_state(
     assert "0o600" in helper
     assert "mergeManagedSettings(" in helper
     assert "preparePreservePermissionMigration(" in helper
+    assert "antigravity_terminal_sandbox=true is deprecated" in helper
     assert "hasLegacy206PermissionOwnership(" in helper
     assert 'options.mode === "preserve"' in helper
     assert 'permission_migration: permissionMigration' in helper
@@ -281,6 +283,52 @@ def test_user_file_update_has_fixed_scopes_and_private_recovery_state(
         '"/data/browser-auth"',
     ):
         assert excluded_path not in helper
+
+
+def test_user_file_backup_retention_requires_exact_app_ownership(
+    rootfs: Path,
+    repository_root: Path,
+) -> None:
+    helper = (
+        rootfs / "usr/local/share/antigravity-ha/user-files-update.mjs"
+    ).read_text(encoding="utf-8")
+    smoke = (repository_root / "tests/user-files-update-smoke.sh").read_text(
+        encoding="utf-8"
+    )
+
+    for required in (
+        'const BACKUP_OWNER = "antigravity-for-home-assistant"',
+        'const BACKUP_KIND = "native-files-refresh"',
+        "const BACKUP_RETENTION = 2",
+        "PRUNE_QUARANTINE_PATTERN",
+        'join(transaction.path, "manifest.json")',
+        'join(transactionDirectory, "completed.json")',
+        "async function inspectCompletedBackup(",
+        "async function removeCompletedBackup(",
+        "async function pruneCompletedBackups(",
+        "await rename(path, quarantine)",
+        "await syncDirectory(USER_BACKUPS_DIRECTORY)",
+        "if (journal) preserve.add(journal.transaction)",
+        "Transactions created by older App versions have no explicit ownership",
+        "Unsafe, incomplete, or concurrently changed entries stay untouched",
+    ):
+        assert required in helper
+    assert "await rm(USER_BACKUPS_DIRECTORY" not in helper
+    assert helper.index("const recovery = await recoverPendingTransaction();") < helper.index(
+        "await pruneCompletedBackups(preservedBackups);"
+    )
+
+    for required in (
+        'RETENTION_VOLUME="${TEST_ID}-retention"',
+        "9.9.9-retention4",
+        'test "${#retained[@]}" -eq 2',
+        "someone-else",
+        ".prune-0123456789ab",
+        'test -L "${unsafe}/original"',
+        'test "${owned_count}" -le 2',
+    ):
+        assert required in smoke
+    subprocess.run(["bash", "-n", str(repository_root / "tests/user-files-update-smoke.sh")], check=True)
 
 
 def test_public_2_0_6_preserve_permission_fixture_is_source_bound(
@@ -320,6 +368,49 @@ def test_public_2_0_6_preserve_permission_fixture_is_source_bound(
     assert "read_file(/data)" in settings["permissions"]["deny"]
     assert "write_file(/data)" in settings["permissions"]["deny"]
     assert "read_file(/config)" not in settings["permissions"]["allow"]
+    assert state["managed"]["settings"]["permission_rules"] == [
+        *settings["permissions"]["allow"],
+        *settings["permissions"]["ask"],
+        *settings["permissions"]["deny"],
+    ]
+
+
+def test_public_2_0_8_preserve_permission_fixture_is_source_bound(
+    repository_root: Path,
+) -> None:
+    fixture_root = repository_root / "tests/fixtures"
+    settings_path = fixture_root / "public-2.0.8-preserve-settings.json"
+    state_path = fixture_root / "public-2.0.8-preserve-state.json"
+    source_path = fixture_root / "public-2.0.8-preserve-source.json"
+
+    settings_bytes = settings_path.read_bytes()
+    state_bytes = state_path.read_bytes()
+    source = json.loads(source_path.read_text(encoding="utf-8"))
+    settings = json.loads(settings_bytes)
+    state = json.loads(state_bytes)
+
+    assert source == {
+        "image": "ghcr.io/kanu-coffee/antigravity-for-home-assistant:2.0.8",
+        "image_digest": (
+            "sha256:ba07b803b1d57a13656d248eb8d2c36204988d34ba64f884670d799c30358980"
+        ),
+        "source_revision": "ac8197d907d2a77decf6beb6b5515531ef7ae0eb",
+        "options": {
+            "antigravity_tool_permission": "request-review",
+            "antigravity_terminal_sandbox": True,
+            "antigravity_user_files_update_mode": "preserve",
+        },
+        "settings_sha256": (
+            "e2590f1f1b4a61aec2afabbfbc4df884a3a47423749367dec249acd056bfa108"
+        ),
+        "state_sha256": (
+            "ac108d3d3c43158f22f831c7c8e5bf9bd45de63a4cb40cd3ed620b2a6545a4d7"
+        ),
+    }
+    assert hashlib.sha256(settings_bytes).hexdigest() == source["settings_sha256"]
+    assert hashlib.sha256(state_bytes).hexdigest() == source["state_sha256"]
+    assert "command(*)" in settings["permissions"]["ask"]
+    assert "mcp(home-assistant/*)" in settings["permissions"]["ask"]
     assert state["managed"]["settings"]["permission_rules"] == [
         *settings["permissions"]["allow"],
         *settings["permissions"]["ask"],
@@ -432,7 +523,7 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
     assert '"ha_validate"' in plugin_mcp
     assert "/usr/local/bin/ha-validate-mcp" in plugin_mcp
     assert "mcp(ha_change/ha_change_propose)" in helper
-    for native_file_rule in (
+    expected_shared_file_rules = (
         "read_file(/config)",
         "write_file(/config)",
         "read_file(/data/home/.gemini/config)",
@@ -446,14 +537,72 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
         "read_file(/data/home/.gemini/GEMINI.md)",
         "write_file(/data/home/.gemini/GEMINI.md)",
         "read_file(/data/home/.gemini/antigravity-cli/settings.json)",
-        "write_file(/data/home/.gemini/antigravity-cli/settings.json)",
-    ):
+    )
+    for native_file_rule in expected_shared_file_rules:
         assert f'"{native_file_rule}"' in helper
+    assert (
+        '"write_file(/data/home/.gemini/antigravity-cli/settings.json)"'
+        in helper
+    ), "the public 2.0.8 migration source must remain registered"
     active_permissions = helper.split("const HA_PERMISSION_RULES =", 1)[1].split(
-        "const SHARED_NATIVE_FILE_RULE_SET =", 1
+        "const LEGACY_SHARED_NATIVE_FILE_RULE_SET =", 1
     )[0]
     assert '"read_file(/data)"' not in active_permissions
     assert '"write_file(/data)"' not in active_permissions
+    shared_file_rules = helper.split(
+        "const SHARED_NATIVE_FILE_RULES =", 1
+    )[1].split("const LEGACY_SHARED_NATIVE_FILE_RULES =", 1)[0]
+    assert tuple(
+        re.findall(r'^\s*"([^"]+)",$', shared_file_rules, re.MULTILINE)
+    ) == expected_shared_file_rules
+    default_allow_rules = helper.split(
+        "const DEFAULT_ALLOW_PERMISSION_RULES =", 1
+    )[1].split("const SENSITIVE_DENY_PERMISSION_RULES =", 1)[0]
+    assert re.findall(
+        r'^\s*"([^"]+)",$', default_allow_rules, re.MULTILINE
+    ) == ["read_url(*)", "execute_url(*)", "command(*)", "mcp(*)"]
+    assert (
+        '"write_file(/data/home/.gemini/antigravity-cli/settings.json)"'
+        not in shared_file_rules
+    )
+    sensitive_denies = helper.split(
+        "const SENSITIVE_DENY_PERMISSION_RULES =", 1
+    )[1].split("const HA_PERMISSION_RULES =", 1)[0]
+    assert re.findall(
+        r'^\s*"([^"]+)",$', sensitive_denies, re.MULTILINE
+    ) == [
+        "write_file(/data/home/.gemini/antigravity-cli/settings.json)",
+        "read_file(/data/options.json)",
+        "write_file(/data/options.json)",
+        "read_file(/run/antigravity-ha/supervisor.token)",
+        "write_file(/run/antigravity-ha/supervisor.token)",
+        "read_file(/run/antigravity-ha/home-assistant-browser.token)",
+        "write_file(/run/antigravity-ha/home-assistant-browser.token)",
+        "read_file(/config/secrets.yaml)",
+        "write_file(/config/secrets.yaml)",
+        "read_file(/config/.storage)",
+        "write_file(/config/.storage)",
+        "read_file(/config/.ssh)",
+        "write_file(/config/.ssh)",
+        "read_file(/data/home/.ssh)",
+        "write_file(/data/home/.ssh)",
+        "read_file(/data/home/.aws)",
+        "write_file(/data/home/.aws)",
+        "read_file(/data/home/.azure)",
+        "write_file(/data/home/.azure)",
+        "read_file(/data/home/.config/gcloud)",
+        "write_file(/data/home/.config/gcloud)",
+        "read_file(/data/home/.kube)",
+        "write_file(/data/home/.kube)",
+        "read_file(/data/home/.docker/config.json)",
+        "write_file(/data/home/.docker/config.json)",
+        "read_file(/data/home/.netrc)",
+        "write_file(/data/home/.netrc)",
+        "read_file(/data/home/.npmrc)",
+        "write_file(/data/home/.npmrc)",
+        "read_file(/root/.ssh)",
+        "write_file(/root/.ssh)",
+    ]
     assert 'const RETIRED_MANAGED_PERMISSION_RULES = new Set([' in helper
     assert 'const REGISTERED_MANAGED_PERMISSION_RULES = new Set([' in helper
     assert "!REGISTERED_MANAGED_PERMISSION_RULES.has(rule)" in helper
@@ -511,5 +660,15 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
     assert "managed ha-telegram agent" not in plugin_update
     assert 'const MIGRATION_ROOT = join(APP_DATA_ROOT, "migration")' in plugin_update
     assert 'const BACKUP_ROOT = join(APP_DATA_ROOT, "backups")' in plugin_update
+    assert "const BACKUP_RETENTION = 2" in plugin_update
+    assert "PRUNE_QUARANTINE_PATTERN" in plugin_update
+    assert "A managed plugin backup has no ownership manifest" in plugin_update
+    assert "if (journal) preserve.add(journal.transaction)" in plugin_update
+    assert "await rename(path, quarantine)" in plugin_update
+    assert "await rm(quarantine" in plugin_update
+    assert "rm(BACKUP_ROOT" not in plugin_update
+    assert plugin_update.index(
+        "const recovery = await recoverPendingTransaction();"
+    ) < plugin_update.index("await pruneCompletedPluginBackups();")
     assert 'AGY_CLI_DISABLE_AUTO_UPDATE: "true"' in plugin_update
     assert "SUPERVISOR_TOKEN" not in plugin_update

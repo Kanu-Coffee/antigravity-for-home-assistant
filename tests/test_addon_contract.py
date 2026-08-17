@@ -62,7 +62,7 @@ def test_release_is_multi_arch_with_generic_registry_image(
     )
     assert "{arch}" not in addon_config["image"]
     assert addon_config["stage"] == "experimental"
-    assert addon_config["breaking_versions"] == ["2.0.0", "2.0.7"]
+    assert addon_config["breaking_versions"] == ["2.0.0", "2.0.7", "2.0.9"]
 
 
 def test_registry_release_workflow_is_tag_gated(repository_root: Path) -> None:
@@ -292,16 +292,32 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
 ) -> None:
     profile_path = addon_root / "apparmor.txt"
     profile = profile_path.read_text(encoding="utf-8")
-    main_profile, interactive_profiles = profile.split(
+    main_profile, _interactive_profiles = profile.split(
         "profile antigravity_home_assistant-interactive-restricted", maxsplit=1
     )
-    restricted_profile, sensitive_tail = interactive_profiles.split(
-        "profile antigravity_home_assistant-interactive-sensitive-read",
-        maxsplit=1,
+    restricted_profile = _apparmor_profile(
+        profile,
+        "antigravity_home_assistant-interactive-runtime-restricted",
     )
-    sensitive_profile, remaining_profiles = sensitive_tail.split(
+    sensitive_profile = _apparmor_profile(
+        profile,
+        "antigravity_home_assistant-interactive-runtime-sensitive-read",
+    )
+    command_profile = _apparmor_profile(
+        profile, "antigravity_home_assistant-command"
+    )
+    settings_profile = _apparmor_profile(
+        profile, "antigravity_home_assistant-settings-update"
+    )
+    restricted_bootstrap = _apparmor_profile(
+        profile, "antigravity_home_assistant-interactive-restricted"
+    )
+    sensitive_bootstrap = _apparmor_profile(
+        profile, "antigravity_home_assistant-interactive-sensitive-read"
+    )
+    remaining_profiles = profile.split(
         "profile antigravity_home_assistant-init", maxsplit=1
-    )
+    )[1]
     sshd_profile = remaining_profiles.split(
         "profile antigravity_home_assistant-sshd", maxsplit=1
     )[1].split("profile antigravity_home_assistant-ha-helper", maxsplit=1)[0]
@@ -408,6 +424,56 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
         "/usr/local/libexec/antigravity-interactive-sensitive-read Px -> "
         "antigravity_home_assistant-interactive-sensitive-read,"
     ) in main_profile
+    assert (
+        "/usr/local/libexec/antigravity-real Px -> "
+        "antigravity_home_assistant-interactive-runtime-restricted,"
+    ) in restricted_bootstrap
+    assert (
+        "/usr/local/libexec/antigravity-real Px -> "
+        "antigravity_home_assistant-interactive-runtime-sensitive-read,"
+    ) in sensitive_bootstrap
+    assert "/usr/bin/stat rix," not in restricted_bootstrap
+    assert "/usr/bin/stat rix," in sensitive_bootstrap
+    for runtime_profile in (restricted_profile, sensitive_profile):
+        assert "/bin/** Px -> antigravity_home_assistant-command," in runtime_profile
+        assert "/usr/bin/** Px -> antigravity_home_assistant-command," in runtime_profile
+        assert "/usr/local/libexec/antigravity-native-env r," in runtime_profile
+        assert "/usr/local/libexec/antigravity-real r," in runtime_profile
+        assert "/usr/local/libexec/antigravity-real rix," not in runtime_profile
+        assert (
+            "deny /data/home/.gemini/antigravity-cli/settings.json wklm,"
+            in runtime_profile
+        )
+    for credential_profile in (
+        main_profile,
+        restricted_profile,
+        sensitive_profile,
+        command_profile,
+        shell_profile,
+    ):
+        for credential_directory in (
+            ".aws",
+            ".azure",
+            ".config/gcloud",
+            ".kube",
+        ):
+            assert (
+                f"deny /data/home/{credential_directory}/ rwklm,"
+                in credential_profile
+            )
+            assert (
+                f"deny /data/home/{credential_directory}/** rwklm,"
+                in credential_profile
+            )
+        for credential_file in (
+            ".docker/config.json{,.*}",
+            ".netrc",
+            ".npmrc",
+        ):
+            assert (
+                f"deny /data/home/{credential_file} rwklm,"
+                in credential_profile
+            )
     assert "deny /run/antigravity-ha/supervisor.token rwklm," in (
         main_profile
     )
@@ -534,17 +600,19 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
     ):
         assert f"deny {sensitive_path} rwklm," in main_profile
 
-    diagnostic_paths = (
+    always_blocked_paths = (
         "/config/secrets.yaml",
         "/config/secrets.yaml.*",
         "/config/.storage/",
         "/config/.storage/**",
-        recorder_glob,
     )
-    for sensitive_path in diagnostic_paths:
+    for sensitive_path in always_blocked_paths:
         assert f"deny {sensitive_path} rwklmx," in restricted_profile
-        assert f"{sensitive_path} r," in sensitive_profile
-        assert f"deny {sensitive_path} wklmx," in sensitive_profile
+        assert f"deny {sensitive_path} rwklmx," in sensitive_profile
+        assert f"{sensitive_path} r," not in sensitive_profile
+    assert f"deny {recorder_glob} rwklmx," in restricted_profile
+    assert f"{recorder_glob} r," in sensitive_profile
+    assert f"deny {recorder_glob} wklmx," in sensitive_profile
 
     # One recursive AppArmor rule covers the default Recorder name, configured
     # nested SQLite locations, runtime journals, and adjacent recovery copies.
@@ -592,6 +660,25 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
     assert "deny /data/home/.gemini/** rwklm," in shell_profile
     assert "/data/home/** rwkl," in restricted_profile
     assert "/data/home/** rwkl," in sensitive_profile
+    assert "/data/home/**" not in command_profile
+    assert "/data/home/.gemini/GEMINI.md rwkl," in command_profile
+    assert (
+        "deny /data/home/.gemini/antigravity-cli/settings.json rwklm,"
+        in command_profile
+    )
+    assert "deny /run/antigravity-ha/supervisor.token rwklm," in command_profile
+    assert "deny /config/secrets.yaml rwklmx," in command_profile
+    assert (
+        "/usr/local/bin/agy-settings Px -> "
+        "antigravity_home_assistant-settings-update,"
+    ) in command_profile
+    assert (
+        "/data/home/.gemini/antigravity-cli/settings.json rwk,"
+        in settings_profile
+    )
+    assert "/data/home/**" not in settings_profile
+    assert "deny /data/home/.gemini/antigravity-cli/oauth* rwklm," in settings_profile
+    assert "deny /data/options.json rwklm," in settings_profile
     proc_denies = (
         "deny @{PROC}@{pid}/{cmdline,environ,mem} rwklm,",
         "deny @{PROC}@{pid}/fd/ r,",
@@ -608,6 +695,8 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
         main_profile,
         restricted_profile,
         sensitive_profile,
+        command_profile,
+        settings_profile,
         init_profile,
         helper_profile_exact,
         change_broker_profile,
@@ -656,6 +745,11 @@ def test_apparmor_bash_transition_targets_reject_startup_injection(
 
     checked: set[str] = set()
     for absolute_path in expanded_paths:
+        # Generic model-spawned binaries intentionally cross into the command
+        # child profile. They are image/runtime globs, not local startup
+        # wrappers whose shell prologue can be inspected here.
+        if any(character in absolute_path for character in ("*", "?", "[")):
+            continue
         source_path = rootfs / absolute_path.removeprefix("/")
         if not source_path.is_file():
             # These binaries are installed or downloaded and verified at image
@@ -706,12 +800,12 @@ def test_security_sensitive_defaults(addon_config: dict) -> None:
     assert "telegram_access_mode" not in addon_config["options"]
     assert "telegram_access_mode" not in addon_config["schema"]
     assert addon_config["options"]["antigravity_tool_permission"] == (
-        "request-review"
+        "always-proceed"
     )
     assert addon_config["schema"]["antigravity_tool_permission"] == (
         "list(request-review|proceed-in-sandbox|always-proceed|strict)"
     )
-    assert addon_config["options"]["antigravity_terminal_sandbox"] is True
+    assert addon_config["options"]["antigravity_terminal_sandbox"] is False
     assert addon_config["schema"]["antigravity_terminal_sandbox"] == "bool"
     assert addon_config["options"]["antigravity_sensitive_data_access"] is False
     assert addon_config["schema"]["antigravity_sensitive_data_access"] == "bool"

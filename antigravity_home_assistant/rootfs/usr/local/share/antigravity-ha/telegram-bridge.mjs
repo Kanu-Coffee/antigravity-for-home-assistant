@@ -848,7 +848,7 @@ function queueTextDelivery(config, delivery) {
   return queueResponseDelivery(textDeliveryRecord(delivery), config.botToken, stateOptions);
 }
 
-function buildAgyArgs(_mode = null, sandboxEnabled = null, conversationId = null) {
+function buildAgyArgs(_mode = null, _sandboxEnabled = null, conversationId = null) {
   const args = [
     "--output-format",
     "stream-json",
@@ -861,10 +861,10 @@ function buildAgyArgs(_mode = null, sandboxEnabled = null, conversationId = null
     }
     args.push("--conversation", conversationId);
   }
-  // Production goes through the same launcher as the terminal, which applies
-  // the global sandbox setting. The explicit form remains only for focused
-  // runner tests and callers that intentionally request the same restriction.
-  if (sandboxEnabled === true) args.push("--sandbox");
+  // The Home Assistant App cannot grant Antigravity's nested namespace
+  // sandbox without privileged container capabilities.  Every native channel
+  // instead uses the AppArmor command-child boundary applied by the shared
+  // launcher; never add a native sandbox override here.
   return args;
 }
 
@@ -1346,6 +1346,13 @@ class ExecutionResultDeliveryError extends Error {
   }
 }
 
+class ApprovalSessionChangedError extends Error {
+  constructor() {
+    super("Telegram approval no longer matches the active session");
+    this.name = "ApprovalSessionChangedError";
+  }
+}
+
 function assertJobActive(ticket) {
   if (ticket?.cancelled === true) throw new RequestCancelledError();
 }
@@ -1498,6 +1505,46 @@ function approvalFromDurable(record) {
   };
 }
 
+function assertApprovalRunBinding(id, request, botToken, stateOptions) {
+  const session = getSession(
+    request.requester.user_id,
+    request.requester.chat_id,
+    stateOptions,
+  );
+  const durable = getPendingApproval(id, botToken, stateOptions);
+  if (!session || !durable ||
+      session.generation !== request.generation ||
+      session.conversation_id !== request.conversationId ||
+      durable.user_id !== request.requester.user_id ||
+      durable.chat_id !== request.requester.chat_id ||
+      durable.generation !== request.generation ||
+      durable.conversation_id !== request.conversationId ||
+      durable.proposal_id !== request.proposal.proposal_id ||
+      durable.preview_digest !== request.proposal.preview_digest ||
+      durable.idempotency_key !== request.idempotencyKey ||
+      durable.approved_update_id !== request.approvedUpdateId) {
+    throw new ApprovalSessionChangedError();
+  }
+  return session;
+}
+
+function cancelApprovedRequestBeforeExecution(id, request, config, {
+  statePath,
+  acknowledgeInput,
+} = {}) {
+  deleteApprovalRecord(id, request, {
+    botToken: config.botToken,
+    statePath,
+  });
+  recordApproval("cancelled", request.proposal.risk);
+  audit("approval_cancelled_before_execution", {
+    chat: opaqueId(request.requester.chat_id),
+    user: opaqueId(request.requester.user_id),
+    risk: request.proposal.risk,
+  });
+  if (typeof acknowledgeInput === "function") acknowledgeInput();
+}
+
 function createApproval({ requester, proposal, idempotencyKey, session }, {
   botToken,
   statePath,
@@ -1643,6 +1690,11 @@ function proposalDisposition(toolPermission, risk) {
   if (!TOOL_PERMISSIONS.has(toolPermission) || !["low", "high"].includes(risk)) {
     throw new Error("proposal disposition input is invalid");
   }
+  // Antigravity's native permission prompt is not a resumable headless
+  // protocol and therefore cannot be translated into a Telegram callback.
+  // Shared runtime permissions must let the model reach ha_change_propose;
+  // this broker boundary is where a durable Telegram approval can safely
+  // bind preview digest, requester, session, and exactly-once execution.
   if (toolPermission === "always-proceed" && risk === "low") return "autonomous_policy";
   return "human_confirmation";
 }
@@ -2240,8 +2292,19 @@ async function handleCallback(config, callback, {
   });
   const approvedRun = enqueueRequester(userId, chatId, async (ticket) => {
     let completion = "success";
+    let executionSession = currentSession;
     try {
       assertJobActive(ticket);
+      // The callback is authenticated before it enters the per-requester queue,
+      // but /new can be queued ahead of it. Revalidate the encrypted approval
+      // and session binding at the execution boundary so an old button can
+      // never authorize work in a replacement Antigravity conversation.
+      executionSession = assertApprovalRunBinding(
+        match[2],
+        request,
+        config.botToken,
+        stateOptions,
+      );
       setJobPhase(ticket, "authorizing");
       const current = await inspectProposal(request.proposal.proposal_id, request.requester);
       assertJobActive(ticket);
@@ -2262,7 +2325,7 @@ async function handleCallback(config, callback, {
       const durable = {
         userId,
         updateId: durableApprovalUpdateId,
-        generation: currentSession.generation,
+        generation: executionSession.generation,
         statePath,
         api,
         onQueued: () => {
@@ -2276,7 +2339,39 @@ async function handleCallback(config, callback, {
       await sendExecutionResult(config.botToken, chatId, result, durable);
     } catch (error) {
       completion = ticket.cancelled ? "cancelled" : jobResultClass(error);
-      if (error instanceof RequestCancelledError || ticket.cancelled) return;
+      if (error instanceof RequestCancelledError || ticket.cancelled) {
+        cancelApprovedRequestBeforeExecution(match[2], request, config, {
+          statePath,
+          acknowledgeInput,
+        });
+        return;
+      }
+      if (error instanceof ApprovalSessionChangedError) {
+        completion = "cancelled";
+        deleteApprovalRecord(match[2], request, {
+          botToken: config.botToken,
+          statePath,
+        });
+        recordApproval("denied", request.proposal.risk);
+        audit("approval_session_changed", {
+          chat: opaqueId(chatId),
+          user: opaqueId(userId),
+          risk: request.proposal.risk,
+        });
+        const activeSession = ensureSession(userId, chatId, stateOptions);
+        const staleDelivery = queueTextDelivery(config, {
+          userId,
+          chatId,
+          updateId: durableApprovalUpdateId,
+          generation: activeSession.generation,
+          stage: "approval_stale",
+          text: "대화 또는 승인 상태가 변경되어 이전 승인 요청을 실행하지 않았습니다.",
+          statePath,
+        });
+        if (typeof acknowledgeInput === "function") acknowledgeInput();
+        await drainResponseDelivery(staleDelivery, config.botToken, { statePath, api });
+        return;
+      }
       if (error instanceof ExecutionResultDeliveryError) throw error;
       audit("approved_run_failed", { chat: opaqueId(chatId), error: safeError(error) });
       const failureDelivery = queueTextDelivery(config, {
@@ -2298,12 +2393,28 @@ async function handleCallback(config, callback, {
       incrementBounded(metricState.jobsCompleted, completion);
     }
   });
-  void approvedRun.catch(() => {});
+  const settledApprovedRun = approvedRun.catch((error) => {
+    // A queued ticket is rejected by enqueueRequester before its task callback
+    // starts. Clean up the durable approved record here as well; otherwise a
+    // /cancel issued while another turn is running can leave the requester
+    // permanently blocked by an approval that will never execute. Attach this
+    // observer before calling Telegram so cleanup also happens if the callback
+    // acknowledgement itself encounters a transport error.
+    if (error instanceof RequestCancelledError) {
+      cancelApprovedRequestBeforeExecution(match[2], request, config, {
+        statePath,
+        acknowledgeInput,
+      });
+      return;
+    }
+    throw error;
+  });
+  void settledApprovedRun.catch(() => {});
   await api(config.botToken, "answerCallbackQuery", {
     callback_query_id: callbackId,
     text: "승인했습니다.",
   });
-  await approvedRun;
+  await settledApprovedRun;
 }
 
 async function handleMessage(config, message, {

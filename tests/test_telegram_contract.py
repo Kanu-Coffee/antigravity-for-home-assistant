@@ -342,6 +342,26 @@ def test_telegram_uses_shared_native_home_and_interactive_policy(
     assert "shared native OAuth/config marker" in canary_source
     assert '"[[ \\\"\\${HOME:-}\\\" == /data/home ]]"' in canary_source
     assert '"[[ \\\"\\$(pwd -P)\\\" == /config ]]"' in canary_source
+    for alias_path in (
+        "/config/permission-settings-alias",
+        "/config/permission-oauth-alias",
+        "/config/permission-cloud-auth-alias",
+    ):
+        assert alias_path in canary_source
+    canary_endpoint = (
+        repository_root / "tests/fixtures/telegram-permission-canary-endpoint.cjs"
+    ).read_text(encoding="utf-8")
+    for state in (
+        "await_alias_write_deny",
+        "await_sensitive_alias_deny",
+        "settings_alias_write_succeeded",
+        "sensitive_alias_leaked",
+    ):
+        assert f'"{state}"' in canary_endpoint
+    canary_mcp = (
+        repository_root / "tests/fixtures/telegram-permission-canary-mcp.cjs"
+    ).read_text(encoding="utf-8")
+    assert "MCP_SENSITIVE_ALIASES_DENIED" in canary_mcp
     docker_smoke = (repository_root / "tests/docker-smoke.sh").read_text(
         encoding="utf-8"
     )

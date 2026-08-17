@@ -1,5 +1,17 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -54,21 +66,43 @@ function parseFixtureInputBooleans(value) {
 function createFakeHomeAssistant({
   configRoot,
   configCheckOk = true,
+  configCheckOutcomes = [],
   failFirstServiceMutation = false,
   serviceOutcomes = [],
   failStateReadsAfterServiceCalls = null,
+  serviceRegistryPaddingBytes = 0,
+  reloadOutcomes = [],
 } = {}) {
   const states = new Map([
+    ["climate.fixture", "cool"],
     ["light.fixture", "off"],
     ["switch.water_pump", "off"],
   ]);
   const attributes = new Map([
+    ["climate.fixture", { temperature: 25 }],
     ["light.fixture", { ignored: "private fixture attribute" }],
     ["switch.water_pump", { ignored: "private fixture attribute" }],
   ]);
+  const services = {
+    automation: ["reload", "trigger"],
+    climate: ["set_hvac_mode", "set_temperature"],
+    cover: ["close_cover", "open_cover", "set_cover_position"],
+    fan: ["set_percentage", "turn_off", "turn_on"],
+    input_boolean: ["reload", "turn_off", "turn_on"],
+    light: ["turn_off", "turn_on"],
+    lock: ["lock", "unlock"],
+    media_player: ["media_pause", "media_play", "volume_set"],
+    notify: ["send_message"],
+    scene: ["reload", "turn_on"],
+    script: ["reload", "turn_on"],
+    switch: ["turn_off", "turn_on"],
+    vacuum: ["return_to_base", "start", "stop"],
+  };
   const calls = [];
   let serviceMutationCalls = 0;
   const pendingServiceOutcomes = [...serviceOutcomes];
+  const pendingConfigCheckOutcomes = [...configCheckOutcomes];
+  const pendingReloadOutcomes = [...reloadOutcomes];
   const syncInputBooleans = async () => {
     let contents = "";
     try {
@@ -104,9 +138,26 @@ function createFakeHomeAssistant({
       body: options.body,
     });
     if (url.endsWith("/core/check")) {
-      const passed = configCheckOk;
-      if (!passed) configCheckOk = true;
+      const passed = pendingConfigCheckOutcomes.length > 0
+        ? pendingConfigCheckOutcomes.shift()
+        : configCheckOk;
+      if (!passed && pendingConfigCheckOutcomes.length === 0) configCheckOk = true;
       return jsonResponse(200, passed ? { result: "ok" } : { result: "error" });
+    }
+    if (url.endsWith("/services") && options.method === "GET") {
+      const registry = Object.entries(services).map(([domain, names]) => ({
+        domain,
+        services: Object.fromEntries(names.map((name) => [name, {}])),
+      }));
+      if (serviceRegistryPaddingBytes > 0) {
+        registry.push({
+          domain: "fixture_padding",
+          services: {
+            noop: { description: "x".repeat(serviceRegistryPaddingBytes) },
+          },
+        });
+      }
+      return jsonResponse(200, registry);
     }
     const stateMarker = "/states/";
     if (url.includes(stateMarker) && options.method === "GET") {
@@ -126,14 +177,27 @@ function createFakeHomeAssistant({
     }
     const serviceMarker = "/services/";
     if (url.includes(serviceMarker) && options.method === "POST") {
-      const [domain, service] = url.split(serviceMarker)[1].split("/");
+      const [domain, service] = new URL(url).pathname
+        .split(serviceMarker)[1].split("/");
       const body = JSON.parse(options.body);
-      if (domain === "input_boolean" && service === "reload") {
+      if (
+        service === "reload" &&
+        ["automation", "input_boolean", "scene", "script"].includes(domain)
+      ) {
         assert.deepEqual(body, {});
-        await syncInputBooleans();
+        const reloadOutcome = pendingReloadOutcomes.shift() ?? "normal";
+        if (reloadOutcome === "transport_error") {
+          throw new Error("fixture reload transport failure");
+        }
+        if (reloadOutcome === "http_error") {
+          return jsonResponse(503, { message: "fixture reload rejected" });
+        }
+        if (reloadOutcome !== "normal") {
+          throw new Error(`unsupported fixture reload outcome: ${reloadOutcome}`);
+        }
+        if (domain === "input_boolean") await syncInputBooleans();
         return jsonResponse(200, []);
       }
-      assert.equal(body.entity_id.startsWith(`${domain}.`), true);
       serviceMutationCalls += 1;
       const outcome = pendingServiceOutcomes.shift() ??
         (failFirstServiceMutation ? "unexpected" : "normal");
@@ -144,10 +208,36 @@ function createFakeHomeAssistant({
       if (outcome === "http_error_no_change") {
         return jsonResponse(503, { message: "fixture service rejected" });
       }
+      if (outcome === "http_client_error_no_change") {
+        return jsonResponse(400, { message: "fixture service request is invalid" });
+      }
+      if (outcome === "invalid_json_response") {
+        return {
+          status: 200,
+          async text() {
+            return "not-json";
+          },
+        };
+      }
+      if (outcome === "response_read_error") {
+        return {
+          status: 200,
+          async text() {
+            throw new Error("fixture response stream failed");
+          },
+        };
+      }
       if (outcome === "unexpected") {
-        states.set(body.entity_id, "unexpected");
+        if (typeof body.entity_id === "string") {
+          states.set(body.entity_id, "unexpected");
+        }
       } else if (outcome === "normal") {
-        states.set(body.entity_id, service === "turn_on" ? "on" : "off");
+        if (
+          typeof body.entity_id === "string" &&
+          ["turn_on", "turn_off"].includes(service)
+        ) {
+          states.set(body.entity_id, service === "turn_on" ? "on" : "off");
+        }
       } else if (outcome !== "no_change") {
         throw new Error(`unsupported fixture service outcome: ${outcome}`);
       }
@@ -407,7 +497,7 @@ test("socket config proposal reloads and verifies memory before persistent succe
         { kind: "input_boolean_reload" },
       ),
     }, { socketPath: fixture.proposalSocketPath });
-    assert.equal(proposal.risk, "low");
+    assert.equal(proposal.risk, "high");
     assert.equal(proposal.preview.target, "input_boolean.yaml");
     assert.equal(proposal.preview.format, "yaml-line-diff-v1");
     assert.equal(proposal.preview.change_kind, "update");
@@ -448,7 +538,11 @@ test("socket config proposal reloads and verifies memory before persistent succe
       (error) => error instanceof BrokerError && error.code === "requester_mismatch",
     );
 
-    const authorization = await authorize(fixture.socketPath, proposal, "autonomous_policy");
+    await assert.rejects(
+      authorize(fixture.socketPath, proposal, "autonomous_policy"),
+      (error) => error.code === "human_confirmation_required",
+    );
+    const authorization = await authorize(fixture.socketPath, proposal, "human_confirmed");
     assert.match(authorization.capability, /^[A-Za-z0-9_-]{43}$/u);
     const result = await execute(
       fixture.socketPath,
@@ -684,7 +778,7 @@ test("failed configuration check restores the exact original and replays the fai
   }
 });
 
-test("configuration execution fails closed without a supported activation contract", async () => {
+test("configuration without a reload contract is checked, written, and reports restart required", async () => {
   const fixture = await createFixture();
   try {
     const target = join(fixture.configRoot, "themes", "preview-only.yaml");
@@ -710,7 +804,8 @@ test("configuration execution fails closed without a supported activation contra
       ),
     }, { socketPath: fixture.proposalSocketPath });
     assert.equal(proposal.risk, "high");
-    assert.equal(proposal.preview.activation.executable, false);
+    assert.equal(proposal.preview.activation.executable, true);
+    assert.equal(proposal.preview.activation.apply_result, "restart_required");
     await assert.rejects(
       authorize(fixture.socketPath, proposal, "autonomous_policy"),
       (error) => error instanceof BrokerError && error.code === "human_confirmation_required",
@@ -722,11 +817,193 @@ test("configuration execution fails closed without a supported activation contra
       authorization.capability,
       "config-preview-only-0001",
     );
-    assert.equal(result.status, "failed");
-    assert.equal(result.reason, "unsupported_activation");
-    assert.equal(result.changed, false);
-    assert.equal(await readFile(target, "utf8"), original);
+    assert.equal(result.status, "succeeded");
+    assert.equal(result.changed, true);
+    assert.equal(result.reload, "restart_required");
+    assert.equal(result.fresh_verification, "file_digest_and_config_check");
+    assert.equal(await readFile(target, "utf8"), "primary-color: green\n");
     assert.equal(fixture.memory.calls.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("generic YAML replacement restores exact bytes when the staged config check fails", async () => {
+  const fixture = await createFixture({
+    configCheckOutcomes: [true, false, true],
+  });
+  try {
+    const target = join(fixture.configRoot, "themes", "generic-rollback.yaml");
+    const original = "primary-color: blue\n";
+    await writeFile(target, original, { mode: 0o640 });
+    await chmod(target, 0o640);
+    const proposal = await sendBrokerRequest("propose", {
+      proposal: configProposal(
+        "themes/generic-rollback.yaml",
+        sha256Digest(original),
+        "primary-color: red\n",
+      ),
+    }, { socketPath: fixture.proposalSocketPath });
+    const authorization = await authorize(
+      fixture.socketPath,
+      proposal,
+      "human_confirmed",
+    );
+    const result = await execute(
+      fixture.socketPath,
+      proposal,
+      authorization.capability,
+      "generic-config-rollback-0001",
+    );
+    assert.equal(result.status, "failed");
+    assert.equal(result.reason, "config_check_failed");
+    assert.equal(result.changed, false);
+    assert.equal(result.rollback.status, "verified");
+    assert.equal(await readFile(target, "utf8"), original);
+    assert.equal((await stat(target)).mode & 0o777, 0o640);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("failed validation of a new generic YAML file removes the candidate", async () => {
+  const fixture = await createFixture({
+    configCheckOutcomes: [true, false, true],
+  });
+  try {
+    const target = join(fixture.configRoot, "themes", "new-rollback.yaml");
+    const proposal = await sendBrokerRequest("propose", {
+      proposal: configProposal(
+        "themes/new-rollback.yaml",
+        "missing",
+        "primary-color: amber\n",
+      ),
+    }, { socketPath: fixture.proposalSocketPath });
+    const authorization = await authorize(
+      fixture.socketPath,
+      proposal,
+      "human_confirmed",
+    );
+    const result = await execute(
+      fixture.socketPath,
+      proposal,
+      authorization.capability,
+      "new-generic-config-rollback-0001",
+    );
+    assert.equal(result.status, "failed");
+    assert.equal(result.reason, "config_check_failed");
+    assert.equal(result.rollback.status, "verified");
+    await assert.rejects(stat(target), (error) => error.code === "ENOENT");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("known automation YAML activation reloads only after a passed configuration check", async () => {
+  const fixture = await createFixture();
+  try {
+    const target = join(fixture.configRoot, "automations.yaml");
+    const original = "[]\n";
+    const replacement = "- id: fixture\n  alias: Fixture\n  triggers: []\n  actions: []\n";
+    await writeFile(target, original, { mode: 0o644 });
+    const proposal = await sendBrokerRequest("propose", {
+      proposal: configProposal(
+        "automations.yaml",
+        sha256Digest(original),
+        replacement,
+        "Update and reload an automation",
+        { kind: "automation_reload" },
+      ),
+    }, { socketPath: fixture.proposalSocketPath });
+    assert.equal(proposal.preview.activation.reload_service, "automation.reload");
+    const authorization = await authorize(
+      fixture.socketPath,
+      proposal,
+      "human_confirmed",
+    );
+    const result = await execute(
+      fixture.socketPath,
+      proposal,
+      authorization.capability,
+      "automation-config-reload-0001",
+    );
+    assert.equal(result.status, "succeeded");
+    assert.equal(result.reload, "automation.reload");
+    assert.equal(result.fresh_verification, "reload_api_completed");
+    assert.equal(await readFile(target, "utf8"), replacement);
+    assert.equal(
+      fixture.ha.calls.some((call) =>
+        call.url.endsWith("/services/automation/reload")),
+      true,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("known reload activations reject a mismatched YAML target", async () => {
+  const fixture = await createFixture();
+  try {
+    const original = "[]\n";
+    await writeFile(join(fixture.configRoot, "automations.yaml"), original, {
+      mode: 0o644,
+    });
+    await assert.rejects(
+      sendBrokerRequest("propose", {
+        proposal: configProposal(
+          "automations.yaml",
+          sha256Digest(original),
+          "- id: mismatched\n  alias: Mismatched\n  triggers: []\n  actions: []\n",
+          "Reject a mismatched reload kind",
+          { kind: "script_reload" },
+        ),
+      }, { socketPath: fixture.proposalSocketPath }),
+      (error) => error.code === "unsupported_activation",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("failed known reload restores bytes and reloads the prior configuration", async () => {
+  const fixture = await createFixture({ reloadOutcomes: ["http_error", "normal"] });
+  try {
+    const target = join(fixture.configRoot, "automations.yaml");
+    const original = "[]\n";
+    const replacement = "- id: rollback\n  alias: Rollback\n  triggers: []\n  actions: []\n";
+    await writeFile(target, original, { mode: 0o640 });
+    await chmod(target, 0o640);
+    const proposal = await sendBrokerRequest("propose", {
+      proposal: configProposal(
+        "automations.yaml",
+        sha256Digest(original),
+        replacement,
+        "Rollback a failed automation reload",
+        { kind: "automation_reload" },
+      ),
+    }, { socketPath: fixture.proposalSocketPath });
+    const authorization = await authorize(
+      fixture.socketPath,
+      proposal,
+      "human_confirmed",
+    );
+    const result = await execute(
+      fixture.socketPath,
+      proposal,
+      authorization.capability,
+      "automation-reload-rollback-0001",
+    );
+    assert.equal(result.status, "failed");
+    assert.equal(result.reason, "ha_request_failed");
+    assert.equal(result.rollback.status, "verified");
+    assert.equal(result.reload, "rolled_back");
+    assert.equal(await readFile(target, "utf8"), original);
+    assert.equal((await stat(target)).mode & 0o777, 0o640);
+    assert.equal(
+      fixture.ha.calls.filter((call) =>
+        call.url.endsWith("/services/automation/reload")).length,
+      2,
+    );
   } finally {
     await fixture.close();
   }
@@ -1094,6 +1371,461 @@ test("service verification failure restores the observed prior state", async () 
   }
 });
 
+test("same-state service data is dispatched instead of treated as a no-op", async () => {
+  const fixture = await createFixture();
+  try {
+    fixture.ha.states.set("light.fixture", "on");
+    const proposal = await sendBrokerRequest("propose", {
+      proposal: {
+        requester: REQUESTER,
+        operation: "service_call",
+        summary: "Change brightness while the fixture light remains on",
+        payload: {
+          domain: "light",
+          service: "turn_on",
+          entity_id: "light.fixture",
+          service_data: { brightness_pct: 37 },
+          expected_state: "on",
+          verify_state: "on",
+        },
+      },
+    }, { socketPath: fixture.proposalSocketPath });
+    const authorization = await authorize(
+      fixture.socketPath,
+      proposal,
+      "human_confirmed",
+    );
+    const result = await execute(
+      fixture.socketPath,
+      proposal,
+      authorization.capability,
+      "service-same-state-data-0001",
+    );
+
+    assert.equal(result.status, "succeeded");
+    assert.equal(result.verification, "fresh_entity_state");
+    const calls = fixture.ha.calls.filter((call) =>
+      call.url.endsWith("/services/light/turn_on"));
+    assert.equal(calls.length, 1);
+    assert.deepEqual(JSON.parse(calls[0].body), {
+      brightness_pct: 37,
+      entity_id: "light.fixture",
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("registered climate service accepts bounded data and redacts approval secrets", async () => {
+  const fixture = await createFixture();
+  try {
+    const secretCode = "door-code-should-not-appear-819274";
+    const proposalInput = {
+      requester: REQUESTER,
+      operation: "service_call",
+      summary: "Set the fixture climate temperature",
+      payload: {
+        domain: "climate",
+        service: "set_temperature",
+        entity_id: "climate.fixture",
+        service_data: {
+          temperature: 24,
+          hvac_mode: "cool",
+          nested: { door_code: secretCode },
+        },
+      },
+    };
+    const proposal = await sendBrokerRequest("propose", {
+      proposal: proposalInput,
+    }, { socketPath: fixture.proposalSocketPath });
+    assert.equal(proposal.risk, "high");
+    assert.equal(proposal.preview.format, "ha-service-call-v1");
+    assert.equal(proposal.preview.service, "climate.set_temperature");
+    assert.equal(proposal.preview.service_data.temperature, 24);
+    assert.equal(proposal.preview.service_data.nested.door_code, "<redacted>");
+    assert.equal(JSON.stringify(proposal).includes(secretCode), false);
+    assert.deepEqual(proposal.preview.precondition, { kind: "none" });
+    assert.deepEqual(proposal.preview.verification, { kind: "api_completion" });
+
+    const changedSecret = await sendBrokerRequest("propose", {
+      proposal: {
+        ...proposalInput,
+        payload: {
+          ...proposalInput.payload,
+          service_data: {
+            ...proposalInput.payload.service_data,
+            nested: { door_code: `${secretCode}-changed` },
+          },
+        },
+      },
+    }, { socketPath: fixture.proposalSocketPath });
+    assert.deepEqual(changedSecret.preview, proposal.preview);
+    assert.notEqual(changedSecret.preview_digest, proposal.preview_digest);
+
+    await assert.rejects(
+      authorize(fixture.socketPath, proposal, "autonomous_policy"),
+      (error) => error.code === "human_confirmation_required",
+    );
+    const authorization = await authorize(
+      fixture.socketPath,
+      proposal,
+      "human_confirmed",
+    );
+    const result = await execute(
+      fixture.socketPath,
+      proposal,
+      authorization.capability,
+      "climate-service-data-0001",
+    );
+    assert.equal(result.status, "succeeded");
+    assert.equal(result.changed, null);
+    assert.equal(result.verification, "api_completed");
+    const serviceCall = fixture.ha.calls.find((call) =>
+      call.url.endsWith("/services/climate/set_temperature"));
+    assert.deepEqual(JSON.parse(serviceCall.body), {
+      temperature: 24,
+      hvac_mode: "cool",
+      nested: { door_code: secretCode },
+      entity_id: "climate.fixture",
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("service proposals reject unregistered actions and hostile or excessive data", async () => {
+  const fixture = await createFixture();
+  try {
+    await assert.rejects(
+      sendBrokerRequest("propose", {
+        proposal: {
+          requester: REQUESTER,
+          operation: "service_call",
+          summary: "Call a missing climate service",
+          payload: { domain: "climate", service: "missing_action" },
+        },
+      }, { socketPath: fixture.proposalSocketPath }),
+      (error) => error.code === "unsupported_service",
+    );
+    const hostile = JSON.parse('{"__proto__":{"polluted":true}}');
+    await assert.rejects(
+      sendBrokerRequest("propose", {
+        proposal: {
+          requester: REQUESTER,
+          operation: "service_call",
+          summary: "Reject hostile service data",
+          payload: {
+            domain: "climate",
+            service: "set_temperature",
+            service_data: hostile,
+          },
+        },
+      }, { socketPath: fixture.proposalSocketPath }),
+      (error) => error.code === "invalid_request",
+    );
+    const tooDeep = {};
+    let cursor = tooDeep;
+    for (let index = 0; index < 14; index += 1) {
+      cursor.next = {};
+      cursor = cursor.next;
+    }
+    await assert.rejects(
+      sendBrokerRequest("propose", {
+        proposal: {
+          requester: REQUESTER,
+          operation: "service_call",
+          summary: "Reject deeply nested service data",
+          payload: {
+            domain: "climate",
+            service: "set_temperature",
+            service_data: tooDeep,
+          },
+        },
+      }, { socketPath: fixture.proposalSocketPath }),
+      (error) => error.code === "invalid_request",
+    );
+    await assert.rejects(
+      sendBrokerRequest("propose", {
+        proposal: {
+          requester: REQUESTER,
+          operation: "service_call",
+          summary: "Reject oversized service data",
+          payload: {
+            domain: "climate",
+            service: "set_temperature",
+            service_data: { text: "x".repeat(70 * 1024) },
+          },
+        },
+      }, { socketPath: fixture.proposalSocketPath }),
+      (error) => error.code === "invalid_request",
+    );
+    assert.equal({}.polluted, undefined);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("large service registries use a separate bounded response ceiling", async () => {
+  const largeFixture = await createFixture({
+    serviceRegistryPaddingBytes: 2 * 1024 * 1024,
+  });
+  try {
+    const proposal = await sendBrokerRequest("propose", {
+      proposal: {
+        requester: REQUESTER,
+        operation: "service_call",
+        summary: "Use a service from a large registry",
+        payload: {
+          domain: "climate",
+          service: "set_temperature",
+          entity_id: "climate.fixture",
+          service_data: { temperature: 23 },
+        },
+      },
+    }, { socketPath: largeFixture.proposalSocketPath });
+    assert.equal(proposal.preview.service, "climate.set_temperature");
+  } finally {
+    await largeFixture.close();
+  }
+
+  const excessiveFixture = await createFixture({
+    serviceRegistryPaddingBytes: 9 * 1024 * 1024,
+  });
+  try {
+    await assert.rejects(
+      sendBrokerRequest("propose", {
+        proposal: {
+          requester: REQUESTER,
+          operation: "service_call",
+          summary: "Reject an excessive service registry",
+          payload: {
+            domain: "climate",
+            service: "set_temperature",
+            entity_id: "climate.fixture",
+            service_data: { temperature: 23 },
+          },
+        },
+      }, { socketPath: excessiveFixture.proposalSocketPath }),
+      (error) => error.code === "ha_protocol_error",
+    );
+  } finally {
+    await excessiveFixture.close();
+  }
+});
+
+test("cover, media, and entity-less registered services preserve exact REST data", async () => {
+  const fixture = await createFixture();
+  try {
+    const cases = [
+      {
+        id: "cover-service-0001",
+        payload: {
+          domain: "cover",
+          service: "set_cover_position",
+          entity_id: ["cover.kitchen", "cover.bedroom"],
+          service_data: { position: 55 },
+        },
+        expectedBody: {
+          position: 55,
+          entity_id: ["cover.kitchen", "cover.bedroom"],
+        },
+      },
+      {
+        id: "media-service-0001",
+        payload: {
+          domain: "media_player",
+          service: "volume_set",
+          entity_id: "media_player.fixture",
+          service_data: { volume_level: 0.35 },
+        },
+        expectedBody: {
+          volume_level: 0.35,
+          entity_id: "media_player.fixture",
+        },
+      },
+      {
+        id: "notify-service-0001",
+        payload: {
+          domain: "notify",
+          service: "send_message",
+          service_data: { message: "Synthetic notification" },
+          return_response: true,
+        },
+        expectedBody: { message: "Synthetic notification" },
+      },
+    ];
+    for (const item of cases) {
+      const proposal = await sendBrokerRequest("propose", {
+        proposal: {
+          requester: REQUESTER,
+          operation: "service_call",
+          summary: `Execute ${item.payload.domain}.${item.payload.service}`,
+          payload: item.payload,
+        },
+      }, { socketPath: fixture.proposalSocketPath });
+      const authorization = await authorize(
+        fixture.socketPath,
+        proposal,
+        "human_confirmed",
+      );
+      const result = await execute(
+        fixture.socketPath,
+        proposal,
+        authorization.capability,
+        item.id,
+      );
+      assert.equal(result.status, "succeeded");
+      assert.equal(result.verification, "api_completed");
+      const call = fixture.ha.calls.find((candidate) =>
+        candidate.url.includes(
+          `/services/${item.payload.domain}/${item.payload.service}`,
+        ));
+      assert.deepEqual(JSON.parse(call.body), item.expectedBody);
+      assert.equal(
+        call.url.endsWith("?return_response"),
+        item.payload.return_response === true,
+      );
+    }
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("service transport loss after dispatch is durably reported as in doubt", async () => {
+  const fixture = await createFixture({
+    serviceOutcomes: ["transport_error_no_change"],
+  });
+  try {
+    const proposal = await sendBrokerRequest("propose", {
+      proposal: {
+        requester: REQUESTER,
+        operation: "service_call",
+        summary: "Send a synthetic notification",
+        payload: {
+          domain: "notify",
+          service: "send_message",
+          service_data: { message: "Synthetic notification" },
+        },
+      },
+    }, { socketPath: fixture.proposalSocketPath });
+    const authorization = await authorize(
+      fixture.socketPath,
+      proposal,
+      "human_confirmed",
+    );
+    const result = await execute(
+      fixture.socketPath,
+      proposal,
+      authorization.capability,
+      "service-transport-in-doubt-0001",
+    );
+    assert.equal(result.status, "in_doubt");
+    assert.equal(result.reason, "execution_in_doubt");
+    assert.equal(result.changed, null);
+    const replay = await execute(
+      fixture.socketPath,
+      proposal,
+      "consumed-capability",
+      "service-transport-in-doubt-0001",
+    );
+    assert.equal(replay.status, "in_doubt");
+    assert.equal(replay.replayed, true);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("service HTTP 5xx after dispatch is durable in doubt while a clear 4xx fails", async () => {
+  const fixture = await createFixture({
+    serviceOutcomes: ["http_error_no_change", "http_client_error_no_change"],
+  });
+  try {
+    const propose = () => sendBrokerRequest("propose", {
+      proposal: {
+        requester: REQUESTER,
+        operation: "service_call",
+        summary: "Send a synthetic notification",
+        payload: {
+          domain: "notify",
+          service: "send_message",
+          service_data: { message: "Synthetic notification" },
+        },
+      },
+    }, { socketPath: fixture.proposalSocketPath });
+
+    const serverErrorProposal = await propose();
+    const serverAuthorization = await authorize(
+      fixture.socketPath,
+      serverErrorProposal,
+      "human_confirmed",
+    );
+    const serverError = await execute(
+      fixture.socketPath,
+      serverErrorProposal,
+      serverAuthorization.capability,
+      "service-http-5xx-in-doubt-0001",
+    );
+    assert.equal(serverError.status, "in_doubt");
+    assert.equal(serverError.reason, "execution_in_doubt");
+
+    const clientErrorProposal = await propose();
+    const clientAuthorization = await authorize(
+      fixture.socketPath,
+      clientErrorProposal,
+      "human_confirmed",
+    );
+    const clientError = await execute(
+      fixture.socketPath,
+      clientErrorProposal,
+      clientAuthorization.capability,
+      "service-http-4xx-failed-0001",
+    );
+    assert.equal(clientError.status, "failed");
+    assert.equal(clientError.reason, "ha_request_failed");
+    assert.equal(fixture.ha.serviceMutationCalls, 2);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("service malformed 2xx and response-stream loss are durable in doubt", async () => {
+  const fixture = await createFixture({
+    serviceOutcomes: ["invalid_json_response", "response_read_error"],
+  });
+  try {
+    for (const [index, suffix] of ["invalid-json", "response-stream"].entries()) {
+      const proposal = await sendBrokerRequest("propose", {
+        proposal: {
+          requester: REQUESTER,
+          operation: "service_call",
+          summary: "Send a synthetic notification",
+          payload: {
+            domain: "notify",
+            service: "send_message",
+            service_data: { message: `Synthetic notification ${index}` },
+          },
+        },
+      }, { socketPath: fixture.proposalSocketPath });
+      const authorization = await authorize(
+        fixture.socketPath,
+        proposal,
+        "human_confirmed",
+      );
+      const result = await execute(
+        fixture.socketPath,
+        proposal,
+        authorization.capability,
+        `service-${suffix}-in-doubt-0001`,
+      );
+      assert.equal(result.status, "in_doubt");
+      assert.equal(result.reason, "execution_in_doubt");
+    }
+    assert.equal(fixture.ha.serviceMutationCalls, 2);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("device test verifies the transient state, always restores, and replays durably", async () => {
   const fixture = await createFixture();
   try {
@@ -1215,7 +1947,7 @@ test("device test initial call error with no change still executes the restore l
       "device-test-initial-error-0001",
     );
     assert.equal(result.status, "failed");
-    assert.equal(result.reason, "ha_request_failed");
+    assert.equal(result.reason, "execution_in_doubt");
     assert.equal(result.restore.status, "verified");
     assert.equal(result.current_state, "off");
     assert.equal(fixture.ha.states.get("light.fixture"), "off");
@@ -1396,6 +2128,108 @@ test("risk, requester, digest, expiry, capability, and unsupported operations fa
       }, { socketPath: fixture.proposalSocketPath }),
       (error) => error.code === "unsafe_target",
     );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("completed config backups retain two App-owned entries and preserve unsafe history", async () => {
+  const fixture = await createFixture();
+  try {
+    const relativeTarget = "themes/retention.yaml";
+    let expectedDigest = "missing";
+    const proposalIds = [];
+    for (let index = 1; index <= 4; index += 1) {
+      const replacement = `retention_fixture:\n  generation: ${index}\n`;
+      const proposal = await sendBrokerRequest("propose", {
+        proposal: configProposal(
+          relativeTarget,
+          expectedDigest,
+          replacement,
+          `Write retention fixture generation ${index}`,
+        ),
+      }, { socketPath: fixture.proposalSocketPath });
+      const authorization = await authorize(
+        fixture.socketPath,
+        proposal,
+        "human_confirmed",
+      );
+      const result = await execute(
+        fixture.socketPath,
+        proposal,
+        authorization.capability,
+        `retention-config-${index.toString().padStart(4, "0")}`,
+      );
+      assert.equal(result.status, "succeeded");
+      assert.equal(result.backup_id, proposal.proposal_id);
+      proposalIds.push(proposal.proposal_id);
+      expectedDigest = sha256Digest(replacement);
+      fixture.advance(1_000);
+    }
+
+    const backupRoot = join(fixture.dataRoot, "backups");
+    let retained = [];
+    const retentionDeadline = Date.now() + 2_000;
+    do {
+      retained = (await readdir(backupRoot))
+        .filter((name) => proposalIds.includes(name))
+        .sort();
+      if (retained.length === 2) break;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+    } while (Date.now() < retentionDeadline);
+    assert.deepEqual(retained, proposalIds.slice(-2).sort());
+    for (const proposalId of retained) {
+      const directory = join(backupRoot, proposalId);
+      assert.equal((await stat(directory)).mode & 0o777, 0o700);
+      const manifest = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8"));
+      const completion = JSON.parse(await readFile(join(directory, "completed.json"), "utf8"));
+      assert.equal(manifest.owner, "antigravity-for-home-assistant");
+      assert.equal(manifest.kind, "ha-config-patch");
+      assert.equal(manifest.proposal_id, proposalId);
+      assert.equal(completion.owner, manifest.owner);
+      assert.equal(completion.proposal_id, proposalId);
+      assert.match(completion.result_sha256, /^sha256:[0-9a-f]{64}$/u);
+    }
+
+    const sentinel = join(fixture.root, "retention-sentinel");
+    await writeFile(sentinel, "preserve\n", { mode: 0o600 });
+    const unsafeId = "S".repeat(22);
+    const unsafe = join(backupRoot, unsafeId);
+    await mkdir(unsafe, { mode: 0o700 });
+    await symlink(sentinel, join(unsafe, "original"));
+    const manifestlessId = "M".repeat(22);
+    const manifestless = join(backupRoot, manifestlessId);
+    await mkdir(manifestless, { mode: 0o700 });
+    await writeFile(join(manifestless, "original"), "preserve\n", { mode: 0o600 });
+    const unownedId = "U".repeat(22);
+    const unowned = join(backupRoot, unownedId);
+    await mkdir(unowned, { mode: 0o700 });
+    await writeFile(
+      join(unowned, "manifest.json"),
+      `${JSON.stringify({ version: 2, owner: "someone-else" })}\n`,
+      { mode: 0o600 },
+    );
+
+    const quarantinedId = retained[0];
+    const quarantined = join(
+      backupRoot,
+      `.${quarantinedId}.prune-0123456789ab`,
+    );
+    await rename(join(backupRoot, quarantinedId), quarantined);
+    await fixture.broker.close();
+    fixture.broker = new ChangeBroker(fixture.brokerOptions);
+    await fixture.broker.start();
+
+    await assert.rejects(lstat(quarantined), (error) => error?.code === "ENOENT");
+    assert.equal((await lstat(join(unsafe, "original"))).isSymbolicLink(), true);
+    assert.equal(await readFile(sentinel, "utf8"), "preserve\n");
+    assert.equal(await readFile(join(manifestless, "original"), "utf8"), "preserve\n");
+    assert.equal(
+      JSON.parse(await readFile(join(unowned, "manifest.json"), "utf8")).owner,
+      "someone-else",
+    );
+    retained = (await readdir(backupRoot)).filter((name) => proposalIds.includes(name));
+    assert.ok(retained.length <= 2);
   } finally {
     await fixture.close();
   }

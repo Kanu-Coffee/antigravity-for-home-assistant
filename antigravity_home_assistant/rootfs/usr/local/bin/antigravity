@@ -35,39 +35,14 @@ for argument in "$@"; do
       echo 'antigravity: --dangerously-skip-permissions is disabled in this App' >&2
       exit 78
       ;;
+    -sandbox | -sandbox=* | --sandbox | --sandbox=* \
+      | -no-sandbox | -no-sandbox=* | --no-sandbox | --no-sandbox=*)
+      echo 'antigravity: native sandbox overrides are disabled; run_command uses the AppArmor command boundary' >&2
+      exit 78
+      ;;
   esac
 done
 unset argument
-
-terminal_sandbox=true
-if [[ -e "${ANTIGRAVITY_HA_OPTIONS_FILE}" ]]; then
-  if ! terminal_sandbox=$(antigravity_ha_config_bool \
-    antigravity_terminal_sandbox true); then
-    echo 'antigravity: antigravity_terminal_sandbox must be a boolean' >&2
-    exit 78
-  fi
-fi
-
-antigravity_HA_NATIVE_ARGS=()
-if [[ "${terminal_sandbox}" == true ]]; then
-  sandbox_present=false
-  for argument in "$@"; do
-    case "${argument}" in
-      -sandbox | --sandbox | -sandbox=true | --sandbox=true)
-        sandbox_present=true
-        ;;
-      -sandbox=* | --sandbox=*)
-        echo 'antigravity: sandbox overrides must use the exact value true' >&2
-        exit 78
-        ;;
-    esac
-  done
-  if [[ "${sandbox_present}" == false ]]; then
-    antigravity_HA_NATIVE_ARGS+=(--sandbox)
-  fi
-  unset sandbox_present
-fi
-unset terminal_sandbox argument
 
 sensitive_data_access=false
 if [[ -e "${ANTIGRAVITY_HA_OPTIONS_FILE}" ]]; then
@@ -84,5 +59,4 @@ else
 fi
 unset sensitive_data_access
 
-exec "${antigravity_HA_LAUNCHER}" \
-  "${antigravity_HA_NATIVE_ARGS[@]}" "$@"
+exec "${antigravity_HA_LAUNCHER}" "$@"

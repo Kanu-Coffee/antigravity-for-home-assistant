@@ -19,12 +19,12 @@ if [[ -v ANTIGRAVITY_HA_CHANNEL || -v HA_TELEGRAM_USER_ID \
 fi
 unset ANTIGRAVITY_HA_CHANNEL HA_TELEGRAM_USER_ID HA_TELEGRAM_CHAT_ID
 
-exec /usr/bin/env -i \
+exec /usr/local/libexec/antigravity-native-env -i \
   AGY_CLI_DISABLE_AUTO_UPDATE=true \
   HOME=/data/home \
   LANG=C.UTF-8 \
   LC_ALL=C.UTF-8 \
-  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  PATH=/usr/local/libexec/antigravity-command-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
   TERM=xterm-256color \
   "${requester_environment[@]}" \
   /usr/local/libexec/antigravity-real "$@"

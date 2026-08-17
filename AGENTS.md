@@ -35,6 +35,12 @@ Keep host-development evidence separate from real HAOS evidence.
   `validate`, and `render` operations in test mode; GitHub submission is disabled.
 - Use the image-installed runtime helpers, live memory, `/ha-feedback`, and the
   managed Antigravity plugin only when actually running inside the App.
+- Build local App images through `tools/development/build-app build`. It owns an
+  ephemeral Buildx builder isolated by the canonical checkout-path digest,
+  removes that builder and its cache on exit, and retains at most two explicitly
+  labelled images owned by that checkout and not referenced by containers. Never
+  automate a prune of Docker's shared default builder, images, containers, or
+  volumes from this repository.
 
 ## Working agreement
 

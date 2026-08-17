@@ -2,6 +2,69 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.0.9] - 2026-08-17
+
+### Changed
+
+- Make `always-proceed` the new-install native permission default and give
+  Telegram the same operational `/config`, global plugin/agent/skill/rule,
+  URL, command, and MCP access as Web/SSH. Exact denies still protect
+  `secrets.yaml`, `.storage`, App-owned runtime tokens/options, SSH/private keys,
+  and named standard cloud-auth paths. Spawned command/stdio tools also cannot
+  read the native OAuth backend. User-authored plugin/MCP inline credentials are
+  an explicitly trusted extension boundary. Existing user-owned rules remain
+  preserved. Raw writes to native
+  `settings.json` stay denied, while the new digest-bound `agy-settings patch`
+  helper atomically updates ordinary global settings and rejects the App-owned
+  `permissions`, `enableTerminalSandbox`, `allowNonWorkspaceAccess`,
+  `toolPermission`, and `artifactReviewPolicy` keys.
+- Retire Antigravity's native nested `--sandbox`, which cannot create namespaces
+  in a non-privileged HAOS App. Web, SSH, and Telegram instead transition every
+  spawned command or stdio tool into the discrete
+  `antigravity_home_assistant-command` AppArmor profile without adding host
+  privileges. The legacy `antigravity_terminal_sandbox` option is a deprecated
+  no-op; either value normalizes to `false`, and native sandbox flag overrides
+  are rejected.
+- Expand brokered Home Assistant changes to every live-validated service
+  domain/service with bounded `service_data`, and to ordinary `/config` YAML
+  patches with expected digest, atomic backup/write, configuration validation,
+  exact rollback, and supported reload or explicit `restart_required` reporting.
+- Classify every App-managed broker `service_call` and `config_patch` as a
+  high-risk durable Telegram approval operation. Native headless permission
+  prompts remain non-resumable; trusted user/global native tools and direct
+  command/API helpers retain CLI-equivalent administrator authority and are not
+  transparently intercepted by the broker.
+- Scope local multi-architecture builds to a project-owned per-checkout
+  `antigravity-ha-local-<checkout-hash>` Buildx builder. The helper removes only
+  its own stale and completed BuildKit state, never runs a global prune, and
+  retains at most the two newest unreferenced, project-labelled local images.
+- Give reusable release builds one stable `antigravity-home-assistant` GHA cache
+  scope. Independently bound verified, completed App-owned managed-plugin,
+  native user-files refresh, and change-broker config backups to the two newest
+  entries after successful recovery/update/transaction; active, unowned,
+  malformed, or unsafe backup trees remain untouched.
+
+### Fixed
+
+- Persist Telegram approval records and revalidate requester, chat, current
+  session generation/conversation, proposal digest, expiry, and idempotency at
+  the execution boundary. Callback acknowledgement and authorization checks are
+  immediate, while approved broker execution remains serialized in the requester
+  queue. `/new`, `/cancel`, restart, expiry, and duplicate callbacks cannot execute
+  a stale proposal or dispatch a mutation twice; stale-session and queued-cancel
+  outcomes are cleaned up and delivered through the existing durable outbox.
+
+### Security
+
+- Keep `secrets.yaml` and `.storage` directly unreadable and unwritable even when
+  diagnostic sensitive-data access is enabled; that option now broadens only
+  Recorder database diagnostic reads. This default-permission and trust-boundary
+  change is declared in `breaking_versions` for 2.0.9.
+- Keep OAuth and App-managed settings in the interactive Antigravity profile but
+  deny them to command/tool descendants through a discrete `Px` transition.
+  Generic container contracts cover the policy and functional command path;
+  enforce-mode AppArmor and live Telegram/OAuth E2E on HAOS remain `NOT RUN`.
+
 ## [2.0.8] - 2026-08-17
 
 ### Fixed

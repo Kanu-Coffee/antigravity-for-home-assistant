@@ -142,6 +142,7 @@ jobs:
           build-args: |
             SOURCE_REVISION=${{ github.sha }}
             SOURCE_ROOTFS_SHA256=${{ steps.source-rootfs.outputs.source_rootfs_sha256 }}
+          cache-gha-scope: antigravity-home-assistant
           cache-image-tag: ${{ inputs.candidate_tag }}
           container-registry-password: ${{ github.token }}
           context: ./${{ inputs.app }}

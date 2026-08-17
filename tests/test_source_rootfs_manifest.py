@@ -203,6 +203,9 @@ def test_build_and_workflows_bind_revision_and_rootfs_digest() -> None:
         encoding="utf-8"
     )
     ci_workflow = (ROOT / ".github/workflows/ci.yaml").read_text(encoding="utf-8")
+    local_builder = (ROOT / "tools/development/build-app").read_text(
+        encoding="utf-8"
+    )
 
     for fragment in (
         "ARG SOURCE_REVISION=",
@@ -217,12 +220,13 @@ def test_build_and_workflows_bind_revision_and_rootfs_digest() -> None:
     ):
         assert fragment in dockerfile
 
-    for workflow in (build_workflow, ci_workflow):
+    for workflow in (build_workflow, local_builder):
         assert ".github/scripts/source-rootfs-manifest.py" in workflow
         assert "source_rootfs_sha256" in workflow
         assert "verify-installed" in workflow
         assert "SOURCE_REVISION" in workflow or "org.opencontainers.image.revision" in workflow
 
+    assert "tools/development/build-app build" in ci_workflow
     assert "build-args: |" in build_workflow
 
 
