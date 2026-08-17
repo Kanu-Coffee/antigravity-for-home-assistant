@@ -1007,7 +1007,7 @@ MAPPING_FIXTURE
     | .[1] as $state
     | ($settings
       | .toolPermission == "request-review"
-      and .enableTerminalSandbox == true
+      and .enableTerminalSandbox == false
       and ((.permissions | keys | sort) == ["allow", "ask", "deny"])
       and ((.permissions.allow | length) == (.permissions.allow | unique | length))
       and ((.permissions.ask | length) == (.permissions.ask | unique | length))
@@ -1027,12 +1027,19 @@ MAPPING_FIXTURE
       and (.permissions.allow | index("read_file(/data/home/.gemini/GEMINI.md)") != null)
       and (.permissions.allow | index("write_file(/data/home/.gemini/GEMINI.md)") != null)
       and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
-      and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
-      and (.permissions.ask | index("command(*)") != null)
-      and (.permissions.ask | index("mcp(home-assistant/*)") != null)
-      and (.permissions.ask | index("mcp(playwright/browser_click)") != null)
-      and (.permissions.deny | index("command(sudo)") != null)
+      and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") == null)
+      and (.permissions.allow | index("read_url(*)") != null)
+      and (.permissions.allow | index("execute_url(*)") != null)
+      and (.permissions.allow | index("command(*)") != null)
+      and (.permissions.allow | index("mcp(*)") != null)
+      and (.permissions.ask == [])
+      and (.permissions.deny | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
       and (.permissions.deny | index("read_file(/config/secrets.yaml)") != null)
+      and (.permissions.deny | index("write_file(/config/secrets.yaml)") != null)
+      and (.permissions.deny | index("read_file(/config/.storage)") != null)
+      and (.permissions.deny | index("write_file(/config/.storage)") != null)
+      and (.permissions.deny | index("read_file(/data/home/.aws)") != null)
+      and (.permissions.deny | index("write_file(/data/home/.aws)") != null)
       and (.permissions.deny | index("read_file(/data)") == null)
       and (.permissions.deny | index("write_file(/data)") == null)
       and (has("browser_approval_policy") | not)

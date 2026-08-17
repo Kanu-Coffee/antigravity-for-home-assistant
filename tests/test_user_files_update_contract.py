@@ -83,6 +83,14 @@ def test_public_v1_upgrade_rehearsal_is_source_and_candidate_bound(
         'contains_credentials: false',
         "preserve mode unexpectedly claimed ownership of user native files",
         '.toolPermission == "request-review"',
+        ".enableTerminalSandbox == false",
+        '.permissions.allow | index("command(*)") != null',
+        '.permissions.allow | index("mcp(*)") != null',
+        ".permissions.ask == []",
+        (
+            '.permissions.deny | index("write_file('
+            '/data/home/.gemini/antigravity-cli/settings.json)") != null'
+        ),
         '$state.managed.settings.permission_rules',
         'colorScheme:"tokyo night"',
         "settings_metadata_and_semantics_preserved: true",
