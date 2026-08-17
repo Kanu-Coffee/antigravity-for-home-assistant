@@ -225,6 +225,8 @@ try {
   let bridgeSource = await readFile(fileURLToPath(bridgeUrl), "utf8");
   for (const dependency of [
     "ha-change-broker.mjs",
+    "telegram-action-coordinator.mjs",
+    "telegram-action-proposal-mcp.mjs",
     "telegram-pairing.mjs",
     "telegram-state.mjs",
   ]) {

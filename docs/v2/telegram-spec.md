@@ -5,7 +5,7 @@
 
 ## TG-001 — 범위
 
-2.0.10 Telegram 브리지는 Antigravity와 별개인 축소 agent가 아니라 같은 관리자
+2.0.11 Telegram 브리지는 Antigravity와 별개인 축소 agent가 아니라 같은 관리자
 환경을 노출하는 transport adapter다. Bot API long polling, 인증, stable session,
 per-session queue, print transport, 암호화 reply outbox와 confirmation routing을
 담당한다. shell, interactive TUI와 tmux pane scraping은 범위 밖이다.
@@ -181,6 +181,7 @@ bridge는 Node `spawn`과 `shell: false`를 사용한다.
 argv = [
   "--output-format", "stream-json",
   "--print-timeout", "5m",
+  "--disable-slash-commands",
   "--conversation", "<bound-id>"
 ]
 cwd = "/config"
@@ -190,8 +191,8 @@ stdin = normalized prompt
 
 Antigravity 1.1.13은 non-TTY stdin이 pipe되면 print mode를 자동 선택한다. 값 없는
 `--print`/`-p`는 boolean switch가 아니라 다음 argv를 prompt 값으로 소비하므로 넣지
-않는다. global agent·plugin의 slash command를 그대로 상속하므로
-`--disable-slash-commands`도 넣지 않는다. 이 규칙으로 prompt는 argv나 environment에
+않는다. Telegram local control과 model slash command의 충돌을 막기 위해 정확히 하나의
+`--disable-slash-commands`를 넣는다. 이 규칙으로 prompt는 argv나 environment에
 노출되지 않고 stdin에만 남는다.
 
 첫 실행 전에 App이 생성·보관한 conversation ID를 결합하고 항상
@@ -203,7 +204,8 @@ worker environment는 Web/SSH wrapper와 같은 HOME, PATH, locale, native permi
 AppArmor runtime/command profile 선택과 requester binding을 사용한다. Supervisor,
 Telegram, browser raw credential과 shell startup 변수는 environment value로 전달하지
 않는다. HOME은 `/data/home`, cwd는 `/config`이며 OAuth와 user global/workspace
-plugin·agent·rule·MCP를 의도적으로 상속하고 수정할 수 있다. 별도 Telegram settings,
+plugin·agent·rule·MCP를 의도적으로 상속한다. mutation은 approved proposal을 통해서만
+수행한다. 별도 Telegram settings,
 plugin copy, safe cwd, HOME bootstrap 또는 login helper는 없다.
 
 actual Antigravity 1.1.11 shared-HOME canary는 user global stdio MCP가 OAuth 인증 완료
@@ -222,16 +224,16 @@ terminal result는 같은 conversation ID여야 하며 terminal은
 채팅에는 `--json-schema`나 generated `finish` tool을 강제하지 않으며 terminal
 response를 App 전용 JSON으로 다시 parse하지 않는다. proposal 없는 빈 response,
 legacy `type`, 실패 status, 다른 conversation ID와 recursive fallback payload는
-거부한다. 정확히 하나의 완료된 유효 HA proposal receipt가 존재하고 terminal text만
-비어 있으면 2.0.10은 고정된 `Home Assistant 변경 제안을 준비했습니다.` 문구를
-사용해 approval card delivery를 계속한다. non-string, 32 KiB 초과, proposal receipt가
+거부한다. 정확히 하나의 완료된 유효 HA/action proposal receipt가 존재하고 terminal text만
+비어 있으면 2.0.11은 kind별 고정된 `Home Assistant 변경 제안을 준비했습니다.` 또는
+`Telegram에서 확인할 작업 제안을 준비했습니다.` 문구를 사용해 approval card delivery를 계속한다. non-string, 32 KiB 초과, proposal receipt가
 없거나 중복된 빈 response는 계속 fail closed한다.
 
-HA 변경 proposal ID는 정확한 `call_mcp_tool`의
-`ha_change/ha_change_propose` step이 `DONE`으로 완료한 tool output에서만 추출한다.
+proposal ID는 정확한 `call_mcp_tool`의 `ha_change/ha_change_propose` 또는
+`telegram_action/telegram_action_propose` step이 `DONE`으로 완료한 tool output에서만 추출한다.
 시작됐지만 완료되지 않은 call, malformed/중복 receipt와 임의 model text의 ID는
 거부한다. receipt를 얻은 뒤에도 bridge가 durable conversation binding을 별도로
-확인하고 trusted broker에서 동일 requester와 live proposal metadata를 검증해야
+확인하고 trusted broker/coordinator에서 동일 requester와 live proposal metadata를 검증해야
 approval을 만든다.
 
 receipt의 `parameters`는 `Arguments`, `ServerName`, `ToolName`을 필수로 하고
@@ -247,14 +249,20 @@ pinned 1.1.13 native child의 stderr는 원문을 저장·로그·회신하지 �
 판정한다. exit 1과 이 marker가 모두 있으면 `authentication_required`로 분류한다.
 그 밖의 nonzero는 `worker_failed`다. 인증 필요 응답은 trusted local TTY의
 `ha-antigravity-login`을 안내한다.
-exit 0, stdout 0 byte와 pinned headless auto-denial marker가 정확히 함께 있을 때만
-`headless_read_denied`로 분류한다. marker가 있어도 nonzero, malformed
-nonempty stream 또는 정상 terminal result이면 이 분류를 적용하지 않는다. stderr의
-마지막 줄이나 tool target은 저장·로그·회신하지 않는다.
+exit 0, stdout 0 byte와 pinned stderr-only headless auto-denial marker가 정확히 함께
+있을 때는 legacy `headless_read_denied`로 분류한다. stderr marker만 있고 정상 terminal
+result가 있으면 이 분류를 적용하지 않는다. 별도로 valid stream의 tool
+`step_update.state == "ERROR"`에서 bounded `tool_info.output`/`error.message`가 고정
+permission-denied pattern과 일치하고 proposal receipt가 없으면 terminal 사과문이
+non-empty여도 `headless_permission_denied`다. 이 stream evidence는 한 번의
+proposal-first same-conversation replan을 시작하지만 denied tool을 resume하거나
+승인하지 않는다. malformed stream은 기존 stream failure로 남는다. stderr 마지막 줄,
+tool target과 raw diagnostic은 저장·로그·회신하지 않는다.
 
 `/status`의 transport 정상은 Bot API command가 bridge에서 처리된다는 뜻일 뿐이다.
 공유 AI runtime 상태는 App 시작 뒤 `아직 확인되지 않음`에서 시작해 완료된 최근
 native child 결과만 `ready`, `authentication_required`, `headless_read_denied`,
+`headless_permission_denied`,
 `stream_contract_failed`, `terminal_missing`, `terminal_status_failed`,
 `terminal_response_invalid`, `conversation_mismatch`, `proposal_result_invalid` 또는
 `worker_failed`로 갱신한다. 이 상태에는 identifier, prompt, stderr 또는 credential
@@ -449,46 +457,42 @@ legacy `antigravity_terminal_sandbox`는 deprecated/no-op compatibility 입력�
 늘리지 않는다. 2.0.6 이하의 `telegram_access_mode`는 무시하는 migration 입력이며 권한
 source가 아니다.
 
-새 설치의 global managed policy는 `always-proceed`와 ordinary `/config`, exact global
-customization root, URL, command, MCP allow를 사용하며 managed ask는 비어 있다.
-secrets/storage/runtime token/options/SSH key exact deny와 사용자가 추가한 ask/deny가
-항상 우선한다.
+2.0.11 새 설치와 Telegram effective global managed policy는 유일하게
+`request-review`, bounded native/HA reads, exact
+`ha_change_propose`/`telegram_action_propose`와 upstream `readOnly: true` Playwright 네
+도구 allow를 사용한다. `strict`, `always-proceed`, `proceed-in-sandbox` schema 값은
+upgrade input 호환용이며 user-files updater가 모두 `request-review`로 정규화한다.
+ordinary write, URL execute, command, mutation-capable browser와 arbitrary mutation MCP는 unattended allow와
+ask에 넣지 않는다. safely identified 2.0.9/2.0.10 App-owned broad allow는 이 policy로
+migration하며 user-owned rule과 stronger deny는 보존한다. secrets/storage/runtime
+token/options/native MCP config/SSH key exact deny는 항상 우선한다.
 
-App 관리 `settings.json`의 raw direct write는 default-allow의 exact deny다. 사용자의
-현재 명시적 요청으로 일반 전역 설정을 바꿀 때는 digest-bound `agy-settings patch`로
-매개 수정한다. helper는 `permissions`, `enableTerminalSandbox`,
-`allowNonWorkspaceAccess`, `toolPermission`, `artifactReviewPolicy`를 거부하며 이 다섯
-보안 key만 App option과 restart로 바꾼다. 사용자 global plugin·agent·rule·skill은
-계속 공유·직접 수정할 수 있고 user-configured MCP executable은 command profile에서
-실행한다.
+Playwright 네 auto-allow는 `browser_console_messages`,
+`browser_network_requests`, `browser_snapshot`, `browser_take_screenshot`이다.
+`browser_navigate`, `browser_navigate_back`, `browser_tabs`, `browser_hover`,
+`browser_wait_for`, `browser_resize`, `browser_close` 등 upstream `readOnly: false` 도구는
+typed adapter 전까지 Telegram에서 fail closed한다.
 
-1.1.13 `stream-json`은 native interactive permission request를 외부 transport에
-노출하거나 승인 뒤 같은 turn을 재개하는 protocol을 제공하지 않는다. 따라서 공유
-global allow rule에 포함된 plugin·agent·rule·`/config` file action과
-`agy-settings patch`의 일반 전역 설정 변경은 headless-compatible하게 처리한다.
-관리형 runtime rule로 라우팅되는 일반 HA
-service/config mutation의 사람 확인은 same-session broker proposal/button으로
-수행한다. 관리형 runtime rule은 일반 HA service/config
-변경을 `ha_change_propose`로 라우팅한다. 이 경로로 제출된 모든 App-managed broker
-`service_call`/`multi_choice_service_call`/`config_patch`는 durable Telegram 확인이
-필요하다. 그 밖의 native
-tool이 `request-review`를 요구하면 Telegram 전용 auto-approve를 만들지 않고
-비대화형 거부한다. 사용자는 Web/SSH에서 검토하거나 global
-`antigravity_tool_permission`을 명시적으로 변경해야 한다.
+1.1.13 `--print --output-format stream-json`은 native interactive permission request를
+외부 transport에 노출하거나 승인 뒤 같은 tool 지점에서 재개하는 protocol을 제공하지
+않는다. 따라서 Telegram callback은 native prompt resume가 아니다. HA service/config
+mutation은 `ha_change_propose`, terminal command·bounded inline script·command choices·
+finite question은 `telegram_action_propose`로 먼저 등록한다. 둘 다 실행하지 않고 exact
+digest/public preview만 broker/coordinator에 등록한다. native permission denial을
+감지하면 bridge는 같은 conversation에 proposal-first 재계획을 최대 한 번 요청할 수
+있지만 거부된 invocation을 승인·resume·retry하지 않는다. 임의 future/user plugin MCP
+side effect는 transparent intercept할 수 없으며 두 proposal이 표현하지 못하면 fail
+closed한다.
 
 App-managed broker의 모든 `config_patch`, `service_call`,
 `multi_choice_service_call`, `device_test`는 `high`이며 global native policy와
 관계없이 human confirmation이 필요하다. model의 risk 표시는 이 판정을 낮출 수 없다.
 
-신뢰된 사용자 설치·전역 native tool, `command(*)`/`mcp(*)`, 직접 `ha-api`/
-`supervisor-api`와 일반 `/config` shell write는 CLI와 같은 관리자 권한을 상속하고
-broker가 투명하게 가로채지 않는다. 이 경로의 mutation은 exact deny와 AppArmor
-안에서 사용자 rule과 현재 명시적 요청을 따른다. 따라서 broker 보장은 가능한 모든
-native mutation을 포괄하지 않는다. broker 고위험 목록은
-[security.md](security.md)에 정의하며 global policy로 낮출 수 없다.
 인증된 Web/SSH의 명시적 direct operation은 native TUI 또는 현재 사용자 요청을
 승인 근거로 사용할 수 있고 Telegram button으로 자동 broker되지 않는다. 이것은 승인
 transport 차이이지 HOME, OAuth, global permission을 나눈 별도 runtime이 아니다.
+shared OAuth가 없으면 최초 login은 controlling TTY가 필요하므로 Web/SSH에서
+`ha-antigravity-login`을 한 번 실행한다.
 
 coordinator 내부 logical record는 wire JSON이 아니다. callback data에는 random
 approval ID와 multi-choice일 때만 opaque choice token을 두고 durable state에는 다음
@@ -507,6 +511,26 @@ type PendingApproval = {
   state: "pending" | "approved";
   choiceTokens?: Array<{token: string; choiceId: string; label: string}>;
   selectedChoiceId?: string | null;
+};
+```
+
+2.0.11 action approval은 별도 AES-GCM sealed record로 다음 불변조건을 보관한다.
+
+```ts
+type TelegramActionApproval = {
+  approvalId: string;
+  proposalId: string;
+  operation: "terminal_command" | "multi_choice_terminal" | "question";
+  requester: {userId: string; chatId: string};
+  sessionGeneration: number;
+  updateId: string;
+  runNonce: string;
+  conversationId: string;
+  requestDigest: `sha256:${string}`;
+  previewDigest: `sha256:${string}`;
+  status: "pending" | "approved" | "answered" | "denied" | "committed" |
+    "completed" | "failed" | "in_doubt";
+  choiceTokens?: Array<{token: string; choiceId: string; label: string}>;
 };
 ```
 
@@ -534,6 +558,23 @@ type PendingApproval = {
   status/result와 결합한다. 이미 broker가 접수한 실행은 restart 또는 duplicate
   callback 뒤에도 동일 mutation을 정확히 한 번만 접수하며 replay는 저장된
   status/result만 회수한다.
+- action card는 `v4a:<approval_id>`/`v4d:<approval_id>` 또는
+  `v4c:<approval_id>:<opaque_choice_token>`을 사용한다. callback에는 command,
+  script, cwd, timeout이나 raw `choice_id`를 넣지 않는다. 1~31개 action/question
+  choice와 cancel은 같은 4×8 bound를 지킨다.
+- `/cancel`은 pending/approved action을 terminal 취소 상태로 만들지만 committed action을
+  rollback하지 않는다. committed replay는 executor를 다시 시작하지 않고 기존
+  terminal result 또는 `in_doubt`만 전달한다.
+- TTL cleanup은 아무 결정도 없는 `pending` card만 만료한다. `approved`, `answered`,
+  `denied`, `committed`, `completed`, `failed`, `in_doubt` record는 callback input을
+  durable ACK할 때까지 TTL 때문에 삭제하지 않는다. 이 보존은 결정 또는 sealed result를
+  App outage 중 잃어 이미 승인된 action을 미승인처럼 오인하는 것을 막는다. ACK 완료,
+  explicit session invalidation 또는 정상 lifecycle cleanup만 해당 record를 제거한다.
+- proposal MCP가 coordinator에 register한 사실만으로는 durable approval이 아니다.
+  register 성공 뒤 bridge가 encrypted approval record와 card/outbox를 seal하기 전에
+  crash하면 복구 가능한 card가 없으므로 사용자가 원 요청을 다시 보내야 한다.
+  registration 자체를 crash-durable로 주장하지 않으며 sealing 이후 decision/result와
+  이미 접수된 execution만 durable 범위다.
 
 ## TG-010 — 실행과 결과
 
@@ -546,6 +587,37 @@ idempotency key로 `execute_status`를 조회해 `completed` result 또는 재�
 broker가 capability·proposal digest·idempotency record의 선택과 다시 대조한 뒤 해당
 proposal 안의 사전 검증된 service call 하나만 실행한다. 다른 선택지를 같은 key로
 재시도하거나 binary approval에 choice를 붙이는 요청은 거부한다.
+
+action 실행:
+
+이 경로의 executor는 Supervisor/bot/native OAuth credential을 받지 않는
+credential-free executor다.
+
+1. proposal MCP는 active Telegram run의 private 0600
+   `telegram-action-proposal.sock`에 exact proposal/digest/preview만 등록하고 실행하지 않음
+2. bridge가 receipt와 coordinator record의 requester/update/run/conversation/digest를
+   맞춘 뒤 encrypted approval과 card를 durable queue에 기록
+3. callback ACK 뒤 selected action을 durable `committed`로 먼저 저장
+4. executor에 `{proposal_id, operation, selection_id, action, execution_digest}` exact
+   envelope만 전달; clean environment와 fixed protected shell/AppArmor command profile 사용
+5. stdout 4 KiB, stderr 2 KiB와 timeout을 bound한 `completed`/`failed`/`in_doubt` result를
+   seal하고 same conversation의 새 turn으로 전달
+6. `question`은 executor를 실행하지 않고 selected label만 same conversation에 전달
+7. commit 이후 process/result 불확실성은 `in_doubt`이며 같은 command/script를 재실행하지 않음
+
+1과 2 사이의 coordinator registration은 process-local이다. 이 구간에서 bridge가
+종료되면 registration을 재구성하거나 자동 실행하지 않고 사용자가 요청을 반복한다.
+2의 encrypted approval/card sealing부터 durable state로 취급한다.
+
+지원 command/script는 canonical `/config` 또는 allowlisted Antigravity customization
+cwd, 120초 이하 timeout과 16 KiB 이하 source로 제한되고 sensitive path/value,
+credential dump를 proposal 단계에서 거부한다. executor는 spawn 직전에 shell source에서
+식별 가능한 detached/daemon/job-control pattern을 best-effort로 거부하지만, opaque
+interpreter나 custom binary의 double-fork를 cgroup 수준으로 봉쇄하지는 않는다. 따라서
+background/daemon 작업은 지원 범위가 아니며 이 경계가 불명확한 실행은 `in_doubt`로
+끝나고 자동 재실행되지 않는다. executor에는
+Supervisor token, bot token, native OAuth, App settings 또는 proposal socket을 전달하지
+않는다. 이 protocol은 arbitrary plugin MCP의 transparent interceptor가 아니다.
 
 config 변경:
 
@@ -644,6 +716,8 @@ reason/result/status class만 허용하며 재시작 시 0부터 시작한다. �
 - timeout/cancel/restart 뒤 child와 capability가 남지 않는다. bridge-only restart는
   broker가 살아 있을 때 encrypted choice mapping을 복구하고, full App/broker restart는
   미접수 in-memory proposal을 실행하지 않으며 접수된 결과만 durable status로 회수한다.
+- proposal register 직후 approval/card sealing 전 bridge crash fixture는 durable
+  registration을 주장하지 않고 사용자 재시도 경로로 끝난다.
 - token/prompt/raw output canary가 App log, Telegram reply와 artifact에 없다.
 - split stderr marker와 대용량 stderr에서도 matcher state가 bounded이고 원문을
   남기지 않으며 exit 1+exact marker, exit 70, 나머지 실패가 서로 오인되지 않는다.

@@ -6,6 +6,8 @@ import { join } from "node:path";
 import {
   ANTIGRAVITY_AUTH_REQUIRED_MARKER,
   ANTIGRAVITY_HEADLESS_PERMISSION_MARKER,
+  TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES,
+  TELEGRAM_SAFE_ALLOW_RULES,
   AntigravityWorkerError,
   BoundedByteMatcher,
   TelegramPollBackoff,
@@ -18,6 +20,7 @@ import {
   enqueueRequester,
   holdTelegramFailClosed,
   isAuthorized,
+  assertTelegramPermissionBoundary,
   loadRuntimeConfig,
   metricsSnapshot,
   normalizeUpdate,
@@ -34,9 +37,11 @@ import {
   renderWorkerStatus,
   requestFailureReason,
   runAntigravityPrompt,
+  runToolActionExecutor,
   safeError,
   terminalExecutionResult,
   telegramTransportErrorCode,
+  toolActionWatchdogMs,
   waitForExecution,
   waitForTelegramAuthorization,
   workerStatusSnapshot,
@@ -68,6 +73,83 @@ const config = loadRuntimeConfig({
   telegram_allowed_chat_ids: ["-200"],
   antigravity_tool_permission: "request-review",
 });
+assert.equal(config.toolPermission, "request-review");
+assert.equal(loadRuntimeConfig({
+  telegram_enabled: false,
+  antigravity_tool_permission: "always-proceed",
+}).toolPermission, "request-review");
+assert.equal(loadRuntimeConfig({
+  telegram_enabled: false,
+  antigravity_tool_permission: "strict",
+}).toolPermission, "request-review");
+const safePermissionFixture = {
+  toolPermission: "request-review",
+  permissions: {
+    allow: [...TELEGRAM_SAFE_ALLOW_RULES],
+    ask: [],
+    deny: [...TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES],
+  },
+};
+assert.equal(
+  TELEGRAM_SAFE_ALLOW_RULES.has("mcp(ha_read/ha_read_storage_usage)"),
+  true,
+);
+assert.deepEqual(assertTelegramPermissionBoundary(safePermissionFixture), {
+  toolPermission: "request-review",
+  allowCount: TELEGRAM_SAFE_ALLOW_RULES.size,
+  denyCount: TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size,
+});
+for (const unsafeRule of ["command(*)", "mcp(*)", "write_file(/config)"]) {
+  assert.throws(() => assertTelegramPermissionBoundary({
+    ...safePermissionFixture,
+    permissions: {
+      ...safePermissionFixture.permissions,
+      allow: [...safePermissionFixture.permissions.allow, unsafeRule],
+    },
+  }), /bypass or block Telegram approval/u);
+}
+for (const nonReadOnlyBrowserTool of [
+  "browser_close",
+  "browser_hover",
+  "browser_navigate",
+  "browser_navigate_back",
+  "browser_resize",
+  "browser_tabs",
+  "browser_wait_for",
+]) {
+  assert.throws(() => assertTelegramPermissionBoundary({
+    ...safePermissionFixture,
+    permissions: {
+      ...safePermissionFixture.permissions,
+      allow: [
+        ...safePermissionFixture.permissions.allow,
+        `mcp(playwright/${nonReadOnlyBrowserTool})`,
+      ],
+    },
+  }), /bypass or block Telegram approval/u);
+}
+assert.throws(() => assertTelegramPermissionBoundary({
+  ...safePermissionFixture,
+  toolPermission: "always-proceed",
+}), /not safe for Telegram approval/u);
+assert.throws(() => assertTelegramPermissionBoundary({
+  ...safePermissionFixture,
+  toolPermission: "strict",
+}), /not safe for Telegram approval/u);
+assert.throws(() => assertTelegramPermissionBoundary({
+  ...safePermissionFixture,
+  permissions: { ...safePermissionFixture.permissions, ask: ["command(*)"] },
+}), /bypass or block Telegram approval/u);
+assert.equal(toolActionWatchdogMs(120_000, null, 5_000), 127_000);
+assert.equal(toolActionWatchdogMs(4_000, 250, 50), 250);
+assert.throws(() => toolActionWatchdogMs(120_001, null, 5_000), /watchdog/u);
+assert.throws(() => assertTelegramPermissionBoundary({
+  ...safePermissionFixture,
+  permissions: {
+    ...safePermissionFixture.permissions,
+    deny: safePermissionFixture.permissions.deny.slice(1),
+  },
+}), /bypass or block Telegram approval/u);
 assert.equal(
   ANTIGRAVITY_AUTH_REQUIRED_MARKER.toString("utf8"),
   "Error: authentication required. Run 'antigravity-real' to log in, then retry.",
@@ -340,7 +422,7 @@ assert.equal(planArgs.includes("--json-schema"), false);
 assert.equal(planArgs.includes("ha-telegram"), false);
 assert.equal(planArgs.includes("--agent"), false);
 assert.equal(planArgs.includes("--mode"), false);
-assert.equal(planArgs.includes("--disable-slash-commands"), false);
+assert.equal(planArgs.filter((value) => value === "--disable-slash-commands").length, 1);
 assert.equal(planArgs.includes("--print-timeout"), true);
 assert.equal(planArgs.includes("--sandbox"), false);
 assert.equal(planArgs.includes("-c"), false);
@@ -363,6 +445,8 @@ const stream = [
 assert.deepEqual(parseStreamResult(stream), {
   response: "최종 응답\n",
   proposalIds: [],
+  proposalKind: null,
+  proposalReceipts: [],
   conversationId: "conversation.fixture-1",
 });
 assert.throws(
@@ -451,9 +535,64 @@ const parsedProposalStream = parseStreamResult([
 assert.deepEqual(parsedProposalStream, {
   response: "변경 제안을 준비했습니다.",
   proposalIds: [proposalId],
+  proposalKind: "ha_change",
+  proposalReceipts: [{
+    proposalId,
+    proposalKind: "ha_change",
+    requestDigest: null,
+    stepIndex: 3,
+  }],
   conversationId: "conversation.proposal",
 });
 assert.equal(JSON.stringify(parsedProposalStream).includes(proposalOutputCanary), false);
+
+const telegramActionProposalId = "ta_actionProposalFixture123456";
+const telegramActionDigest = `sha256:${"a".repeat(64)}`;
+assert.deepEqual(parseStreamResult([
+  JSON.stringify({ event: "init", conversation_id: "conversation.telegram-action" }),
+  JSON.stringify({
+    event: "step_update",
+    step_update: {
+      step_index: 4,
+      step_type: "tool",
+      state: "DONE",
+      tool_name: "call_mcp_tool",
+      tool_info: {
+        name: "call_mcp_tool",
+        parameters: {
+          Arguments: { operation: "terminal_command" },
+          ServerName: "telegram_action",
+          ToolName: "telegram_action_propose",
+          toolAction: "Register approval card",
+          toolSummary: "Prepared terminal proposal",
+        },
+        output: JSON.stringify({
+          proposal_id: telegramActionProposalId,
+          request_digest: telegramActionDigest,
+        }),
+      },
+    },
+  }),
+  JSON.stringify({
+    event: "result",
+    result: {
+      conversation_id: "conversation.telegram-action",
+      status: "SUCCESS",
+      response: "",
+    },
+  }),
+].join("\n")), {
+  response: "Telegram에서 확인할 작업 제안을 준비했습니다.",
+  proposalIds: [telegramActionProposalId],
+  proposalKind: "telegram_action",
+  proposalReceipts: [{
+    proposalId: telegramActionProposalId,
+    proposalKind: "telegram_action",
+    requestDigest: telegramActionDigest,
+    stepIndex: 4,
+  }],
+  conversationId: "conversation.telegram-action",
+});
 
 const managedProposalStep = ({ state, stepIndex = 7, output = null, metadata = {} }) => ({
   event: "step_update",
@@ -496,6 +635,13 @@ for (const [suffix, metadata] of [
   ].join("\n")), {
     response: "metadata compatible",
     proposalIds: [proposalId],
+    proposalKind: "ha_change",
+    proposalReceipts: [{
+      proposalId,
+      proposalKind: "ha_change",
+      requestDigest: null,
+      stepIndex: 7,
+    }],
     conversationId,
   });
 }
@@ -530,6 +676,13 @@ assert.deepEqual(parseStreamResult([
 ].join("\n")), {
   response: "Home Assistant 변경 제안을 준비했습니다.",
   proposalIds: [proposalId],
+  proposalKind: "ha_change",
+  proposalReceipts: [{
+    proposalId,
+    proposalKind: "ha_change",
+    requestDigest: null,
+    stepIndex: 7,
+  }],
   conversationId: "conversation.empty-proposal-response",
 });
 assert.throws(
@@ -539,6 +692,33 @@ assert.throws(
   ].join("\n")),
   (error) => error instanceof AntigravityWorkerError &&
     error.reasonClass === "terminal_response_invalid",
+);
+assert.throws(
+  () => parseStreamResult([
+    JSON.stringify({
+      event: "init",
+      conversation_id: "conversation.permission-denied-with-response",
+    }),
+    JSON.stringify({
+      event: "step_update",
+      step_update: {
+        step_index: 9,
+        step_type: "tool",
+        state: "ERROR",
+        tool_name: "run_command",
+        tool_info: {
+          name: "run_command",
+          output: "User denied permission to run command",
+        },
+      },
+    }),
+    JSON.stringify(successTerminal(
+      "conversation.permission-denied-with-response",
+      "명령을 실행하지 못했습니다.",
+    )),
+  ].join("\n")),
+  (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "headless_permission_denied",
 );
 for (const [suffix, response] of [
   ["non-string-with-proposal", { invalid: true }],
@@ -623,6 +803,8 @@ assert.deepEqual(parseStreamResult([
 ].join("\n")), {
   response: "other MCP ignored",
   proposalIds: [],
+  proposalKind: null,
+  proposalReceipts: [],
   conversationId: "conversation.other-mcp",
 });
 assert.throws(
@@ -685,6 +867,8 @@ assert.deepEqual(parseStreamResult([
 ].join("\n")), {
   response: "future compatible",
   proposalIds: [],
+  proposalKind: null,
+  proposalReceipts: [],
   conversationId: "conversation.future",
 });
 const ignoredMetric = metricsSnapshot().stream_events_ignored_total;
@@ -1199,6 +1383,43 @@ assert.match(renderCancellationResult({
 
 const fixtureDir = await mkdtemp(join(tmpdir(), "agy-telegram-test-"));
 try {
+  const hangingExecutor = join(fixtureDir, "hanging-executor.mjs");
+  await writeFile(hangingExecutor, `#!/bin/sh
+cat >/dev/null
+sleep 10
+`, "utf8");
+  await chmod(hangingExecutor, 0o755);
+  const uncertainExecution = await runToolActionExecutor({
+    status: "committed",
+    action_json: JSON.stringify({
+      action: {
+        kind: "terminal",
+        source_kind: "command",
+        shell_source: "true",
+        source_sha256: `sha256:${"a".repeat(64)}`,
+        cwd: "/config",
+        timeout_ms: 1_000,
+      },
+      execution_digest: `sha256:${"b".repeat(64)}`,
+    }),
+    operation: "terminal_command",
+    selected_choice_id: null,
+    user_id: "100",
+    chat_id: "-200",
+    generation: 1,
+    update_id: 50,
+    run_id: "c".repeat(32),
+    conversation_id: "conversation-watchdog",
+    proposal_id: `ta_${"d".repeat(24)}`,
+  }, {
+    binary: hangingExecutor,
+    workspace: fixtureDir,
+    timeoutMs: 25,
+    hardKillGraceMs: 10,
+  });
+  assert.equal(uncertainExecution.status, "in_doubt");
+  assert.equal(uncertainExecution.timed_out, true);
+
   const waitForFile = async (path, timeoutMs = 2_000) => {
     const deadline = Date.now() + timeoutMs;
     while (true) {
@@ -1341,12 +1562,12 @@ process.stderr.write(marker.slice(21) + "\\n${stderrCanary}\\n");
     permissionFailure = error;
   }
   assert.ok(permissionFailure instanceof AntigravityWorkerError);
-  assert.equal(permissionFailure.reasonClass, "headless_read_denied");
-  assert.equal(requestFailureReason(permissionFailure), "headless_read_denied");
-  assert.equal(workerStatusSnapshot(), "headless_read_denied");
-  assert.equal(renderWorkerStatus(), "전역 권한 정책의 대화형 승인 필요");
+  assert.equal(permissionFailure.reasonClass, "headless_permission_denied");
+  assert.equal(requestFailureReason(permissionFailure), "headless_permission_denied");
+  assert.equal(workerStatusSnapshot(), "headless_permission_denied");
+  assert.equal(renderWorkerStatus(), "직접 도구 실행 차단 (Telegram 승인 제안 필요)");
   const permissionFailureMessage = renderRequestFailure(permissionFailure);
-  assert.match(permissionFailureMessage, /전역 Antigravity 권한/u);
+  assert.match(permissionFailureMessage, /Telegram 승인 경계/u);
   for (const forbidden of [
     stderrCanary,
     "private permission prompt canary",

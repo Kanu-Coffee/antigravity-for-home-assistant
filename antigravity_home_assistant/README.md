@@ -37,9 +37,25 @@ Home Assistant 안에서 antigravity와 대화하며 설정을 살펴보고 대�
 
 Telegram을 켜면 같은 OAuth, 전역 plugin/agent/rule/MCP와 권한 정책을 사용합니다.
 첫 요청에서 만든 대화는 `/new` 전까지 유지되고 승인과 응답도 그 session에서
-이어집니다. 별도 Telegram 로그인이나 HOME은 없습니다. 2.0.10은 사전 검증된
-service call을 최대 31개까지 한 승인 카드에 표시하고 사용자가 고른 하나만 실행하는
-`multi_choice_service_call`을 지원합니다. 기존 실행/취소 카드도 그대로 동작합니다.
+이어집니다. 별도 Telegram 로그인이나 HOME은 없습니다. 2.0.11은 HA 변경뿐 아니라
+관리형 terminal command, inline script, 명령 선택지와 유한 질문도 proposal-first
+Telegram 카드로 처리합니다. 최대 31개 선택지와 취소를 지원하며 승인된 exact action
+하나만 실행합니다. 고정 CLI가 native permission prompt를 외부에서 재개할 수 없으므로
+임의의 미래/plugin MCP를 투명하게 가로채지는 않으며 지원하지 않는 side effect는
+fail closed합니다. 최초 OAuth가 없으면 Web/SSH에서 한 번 로그인해야 합니다.
+
+Telegram의 effective native 권한은 고정 CLI 제약 때문에 `request-review` 하나입니다.
+schema의 `strict`, `always-proceed`, `proceed-in-sandbox`는 upgrade 입력 호환용이며
+user-files updater가 모두 `request-review`로 정규화합니다. Playwright 자동 허용은
+upstream `readOnly: true`인 console/network/snapshot/screenshot 네 도구뿐이고
+navigate/tabs/hover/wait/resize/close 등은 typed adapter 전까지 fail closed합니다.
+proposal 등록 뒤 encrypted approval/card가 봉인되기 전 bridge가 종료되면 등록 자체를
+복구할 수 없으므로 원래 요청을 다시 보내야 합니다.
+
+권한 drift 복구를 위해 `reset_v2`를 명시 선택하면 안전한 settings를 backup하고 기존
+ownership state와 무관하게 managed key와 permission 세 bucket을 exact default로
+되돌립니다. permissions 밖의 사용자 top-level 설정, global MCP, plugin, OAuth와
+`/config`는 보존하며, `preserve`로 되돌릴 때까지 매 시작 drift를 다시 복구합니다.
 
 SSH를 사용하지 않는다면 `authorized_keys`를 비워 둬도 됩니다. Web UI는 그대로 동작합니다.
 

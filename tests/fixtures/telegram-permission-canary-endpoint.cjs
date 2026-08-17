@@ -104,9 +104,9 @@ const server = http.createServer((request, response) => {
     const commandEvidence = responseEvidence(parsed, "run_command");
     const mcpEvidence = responseEvidence(parsed, "call_mcp_tool");
     let state = "await_write_deny";
-    if (/denied|permission/iu.test(writeEvidence)) state = "await_command";
-    if (commandEvidence.includes("COMMAND_PERMISSION_CANARY_OK")) {
-      state = requireAppArmor ? "await_alias_write_deny" : "await_mcp";
+    if (/denied|permission/iu.test(writeEvidence)) state = "await_mcp";
+    if (/denied|permission/iu.test(commandEvidence)) {
+      state = requireAppArmor ? "await_alias_write_deny" : "complete";
     }
     if (requireAppArmor && issued.has("settings-alias") &&
         writeResponses.length >= 2) {
@@ -127,7 +127,7 @@ const server = http.createServer((request, response) => {
       : "MCP_BOUNDARY_NOT_REQUESTED";
     if (mcpEvidence.includes("MCP_PERMISSION_CANARY_OK") &&
         mcpEvidence.includes(expectedMcpBoundary)) {
-      state = "complete";
+      state = "await_command";
     }
     process.stdout.write(`${JSON.stringify({
       kind: "request",
@@ -216,10 +216,6 @@ const server = http.createServer((request, response) => {
       },
       "mcp",
     )) return;
-    if (state === "complete") {
-      sendEvent(response, { text: "PERMISSION_CANARY_DONE" });
-      return;
-    }
     // Native 1.1.13 emits tool-less checkpoint requests between tool calls.
     // Do not advance until the matching functionResponse is present.
     sendEvent(response, { text: "PERMISSION_CANARY_WAITING_FOR_TOOL_RESPONSE" });

@@ -15,27 +15,26 @@ IMAGE=${1:-antigravity-for-home-assistant:test}
 TEST_ID="antigravity-ha-browser-approval-${RANDOM}-$$"
 CONTAINERS=()
 
-SAFE_TOOLS=(
-  browser_close
+READ_ONLY_TOOLS=(
   browser_console_messages
+  browser_network_requests
+  browser_snapshot
+  browser_take_screenshot
+)
+NON_READ_ONLY_TOOLS=(
+  browser_close
   browser_hover
   browser_navigate
   browser_navigate_back
-  browser_network_requests
   browser_resize
-  browser_snapshot
   browser_tabs
-  browser_take_screenshot
   browser_wait_for
-)
-INTERACTIVE_TOOLS=(
   browser_click
   browser_fill_form
   browser_press_key
   browser_select_option
   browser_type
 )
-ALL_TOOLS=("${SAFE_TOOLS[@]}" "${INTERACTIVE_TOOLS[@]}")
 
 # Git Bash rewrites Linux container paths before invoking native Windows programs.
 if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then
@@ -150,8 +149,14 @@ probe_policy() {
     "${settings_path}" >/dev/null \
     || fail 'native settings did not protect Home Assistant secrets'
 
-  for tool in "${ALL_TOOLS[@]}"; do
+  for tool in "${READ_ONLY_TOOLS[@]}"; do
     assert_permission_bucket "${name}" allow "${tool}"
+  done
+  for tool in "${NON_READ_ONLY_TOOLS[@]}"; do
+    if permission_is_present "${name}" allow "${tool}" \
+      || permission_is_present "${name}" ask "${tool}"; then
+      fail "${tool} was not kept fail-closed"
+    fi
   done
 }
 

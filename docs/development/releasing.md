@@ -21,12 +21,15 @@ Supervisor는 `config.yaml`의 `image`와 `version`으로 미리 빌드된 publi
 
 - `antigravity_home_assistant/config.yaml`의 `version`
 - `antigravity_home_assistant/Dockerfile`의 `BUILD_VERSION`
-- `antigravity_home_assistant/playwright/package.json`의 `version`
-- `antigravity_home_assistant/playwright/package-lock.json`의 root/package version
 - `antigravity_home_assistant/CHANGELOG.md`의 첫 release heading
 - Git tag `X.Y.Z`
 
-계약 테스트가 이 일치를 검사합니다. 사용자 README/DOCS의 current-version 문구와 upgrade note도 함께 검토합니다.
+`playwright/package.json`과 lockfile의 root package version은 App 릴리스 번호가
+아니라 private dependency bundle 식별자 `0.0.0`으로 고정합니다. 이 파일들은 큰
+의존성 image layer보다 먼저 복사되므로 App 버전만 바뀌는 릴리스에서 수정하면
+동일한 의존성 layer를 재사용할 수 없습니다. 계약 테스트가 App 릴리스 값의 일치와
+dependency bundle의 독립성을 함께 검사합니다. 사용자 README/DOCS의
+current-version 문구와 upgrade note도 함께 검토합니다.
 
 ## Pull request 단계
 

@@ -45,16 +45,21 @@ exact rollback/recheck한다. 일반 `/config` YAML을 지원하되 sensitive de
 이후 대화·응답·승인을 같은 session에서 직렬 처리한다. 명시적인 `/new`만 새
 conversation을 만든다. 고위험 작업은 같은 conversation·사용자·채팅의 확인이
 필요하다.
-관리형 runtime rule은 일반 HA service/config 변경을 `ha_change_propose`로 라우팅한다.
-이 경로로 제출된 모든 App-managed broker `service_call`/
+관리형 runtime rule은 HA service/config 변경을 `ha_change_propose`, terminal command·
+bounded inline script·명령 선택지·유한 질문을 `telegram_action_propose`로 먼저
+등록한다. 이 경로로 제출된 모든 App-managed broker `service_call`/
 `multi_choice_service_call`/`config_patch`는 고위험 proposal로 durable Telegram
 확인을 받은 뒤 실행한다. broker는 모든 live-validated HA service domain/service와
 bounded `service_data`, 최대 31개의 상호 배타적인 사전 검증 service-call 선택지,
-민감 경로 밖의 일반 YAML patch를 지원한다. 신뢰된 사용자 설치·전역 native tool,
-`command(*)`/`mcp(*)`, 직접
-`ha-api`/`supervisor-api`와 `/config` shell write는 CLI와 같은 관리자 권한을 상속하고
-broker가 투명하게 가로채지 않는다. 이 경로의 mutation은 exact deny와 AppArmor 안에서
-사용자 rule과 현재 명시적 요청을 따른다.
+민감 경로 밖의 일반 YAML patch를 지원한다. action proposal은 exact source digest,
+canonical cwd, timeout 또는 1~31개의 완성된 선택지를 등록하고 bridge가 durable commit한
+뒤 credential-free executor로 한 번만 보낸다. completion을 확정할 수 없으면
+`in_doubt`이며 재실행하지 않는다. pinned CLI가 native permission prompt를 external
+approval 뒤 resume할 수 없으므로 임의 future/user plugin MCP는 transparent intercept
+대상이 아니고 지원하지 않는 Telegram side effect는 fail closed한다.
+proposal coordinator 등록 자체는 crash-durable하지 않다. 등록 성공 뒤 bridge가
+encrypted approval/card state를 봉인하기 전에 종료되면 사용자가 원 요청을 다시 보내야
+하며, durability는 봉인된 decision/result와 이미 접수된 execution부터 적용한다.
 
 ### US-005 dashboard 검증
 
@@ -117,8 +122,11 @@ plugin은 다음 capability를 분리해 제공한다.
 - `ha_read`: Core/Supervisor 정보, state, registry, history, trace, logs
 - `ha_validate`: configuration check와 변경 후 fresh verification
 - `ha_memory`: bounded search, explicit memory, candidate와 change verification
-- `playwright`: loopback dashboard 탐색, snapshot, screenshot, console, network
+- `playwright`: loopback dashboard. Telegram auto-allow는 upstream `readOnly: true`인
+  console, network, snapshot, screenshot 네 도구만 제공하며 navigate/back, tabs, hover,
+  wait, resize, close 등 mutation-capable 도구는 typed adapter 전까지 fail closed
 - `ha_change_propose`: typed 변경 preview 생성
+- `telegram_action_propose`: terminal/script/choice/question의 non-executing typed proposal
 
 Telegram Antigravity는 CLI와 같은 `/config` 및 native 사용자 설정 권한을 가지지만
 raw Supervisor token을 직접 받지는 않는다. broker 기반 작업은 검증된 proposal과
@@ -159,7 +167,7 @@ preset으로 복사하지 않는다. 사용자 `/config/AGENTS.md`와 다른 프
   sandbox는 세 채널 모두 사용하지 않고 command/stdio tool executable을 별도 AppArmor
   profile로 전환한다. native sandbox argv override는 거부한다.
 - `ha-antigravity-login`의 `/data/home` OAuth, 전역 plugin/agent/rule/MCP와 `/config`
-  workspace customization을 공유하고 수정할 수 있다.
+  workspace customization을 공유한다. 최초 OAuth는 Web/SSH controlling TTY가 필요하다.
 - 첫 요청 전에 session binding을 영속화하고 `/new` 전까지 유지한다.
 - approval callback ACK와 기본 인증은 즉시 처리하되 broker 실행은 requester FIFO에서
   session-serialized한다. 실행 직전 requester/chat/current generation/conversation을
@@ -168,6 +176,15 @@ preset으로 복사하지 않는다. 사용자 `/config/AGENTS.md`와 다른 프
   inline keyboard로 표시한다. callback에는 opaque token만 넣고 encrypted
   token→choice mapping, proposal digest, requester/session/choice/capability/idempotency를
   재검증해 정확히 하나만 실행한다. 기존 binary callback도 호환한다.
+- `terminal_command`, `multi_choice_terminal`, `question`은 exact source/action digest와
+  preview를 등록하고 `v4a`/`v4d`/`v4c` opaque callback 뒤 credential-free executor 또는
+  same-conversation selection으로 완료한다. commit 이후 불확실성은 `in_doubt`이며
+  재실행하지 않는다.
+- arbitrary native/plugin MCP permission prompt의 transparent interception/resume은
+  지원하지 않는다. proposal로 표현할 수 없는 side effect는 fail closed한다.
+- proposal register와 encrypted approval/card sealing 사이의 bridge crash는 registration을
+  복구하지 않는다. 사용자가 원래 요청을 다시 보내 새 proposal을 만들며, registration
+  자체를 crash-durable로 표현하지 않는다.
 - 답변은 전송 전에 암호화된 영속 outbox에 기록하고 Telegram 확인 뒤 제거한다.
 - 상세 계약은 [telegram-spec.md](telegram-spec.md)를 따른다.
 
@@ -199,7 +216,7 @@ telegram_enabled: false
 telegram_bot_token: ""
 telegram_allowed_user_ids: []
 telegram_allowed_chat_ids: []
-antigravity_tool_permission: always-proceed
+antigravity_tool_permission: request-review
 antigravity_terminal_sandbox: false
 antigravity_sensitive_data_access: false
 antigravity_user_files_update_mode: preserve
@@ -216,7 +233,7 @@ log_level: info
 | `telegram_bot_token` | secret App option. 로그나 진단 payload에서 제외 |
 | `telegram_allowed_user_ids` | Telegram numeric user ID allowlist |
 | `telegram_allowed_chat_ids` | Telegram numeric chat ID allowlist |
-| `antigravity_tool_permission` | Antigravity native `toolPermission`. 새 설치 기본 `always-proceed`; `request-review`, `proceed-in-sandbox`, `always-proceed`, `strict` |
+| `antigravity_tool_permission` | effective native 값은 `request-review` 하나. schema의 `strict`/`proceed-in-sandbox`/`always-proceed`는 upgrade 입력 호환용이며 user-files updater가 모두 정규화 |
 | `antigravity_terminal_sandbox` | deprecated/no-op compatibility 입력. 어느 값도 native sandbox를 켜지 않으며 모두 `false`로 정규화 |
 | `antigravity_sensitive_data_access` | 기본 `false`. AppArmor는 유지한 채 Web/SSH/Telegram child의 Recorder DB 진단용 read-only 여부 선택 |
 | `antigravity_user_files_update_mode` | `preserve`, `refresh_managed`, `reset_v2` |
@@ -240,6 +257,12 @@ Supervisor pre-container update 검증과의 호환을 위해 schema만 v1의
 v2 user-facing mode가 아니며 첫 안전한 bootstrap 뒤 Supervisor self-options API를
 통해 `refresh_managed`로 정규화한다.
 
+`reset_v2`는 사용자가 명시적으로 선택하는 drift 복구 mode다. 안전하게 parse 가능한
+settings를 backup하고 기존 ownership state와 무관하게 managed key와
+`permissions.allow`/`ask`/`deny` 전체를 exact image default로 교체한다.
+`permissions` 밖의 사용자 top-level settings, global MCP/plugin/OAuth와 `/config`는
+보존한다. option을 `preserve`로 되돌릴 때까지 매 시작 drift를 다시 복구한다.
+
 2.0.6 이하의 `telegram_access_mode`는 Supervisor update migration이 발견할 수 있는
 legacy 입력이지만 2.0.7 runtime 권한 결정에는 사용하지 않는다. 안전한 bootstrap은
 이를 제거하고 Telegram도 global Antigravity 권한 option만 사용한다. Supervisor가
@@ -257,19 +280,20 @@ write deny는 option 값과 무관한 불변조건이다.
 - 권한은 global `antigravity_tool_permission`과 민감정보 option에서 온다. native
   sandbox는 Web/SSH/Telegram 모두 사용하지 않으며 AppArmor command 경계는 option으로
   완화할 수 없다.
-- 새 설치 managed policy는 operational `/config`/global customization/URL/command/MCP를
-  `mcp(*)`로 기본 허용하고 managed `ask`를 비우며 secrets/storage/token/key exact
-  deny를 우선한다. 따라서 MCP server별 allow rule을 중복 생성하지 않는다. native headless
-  permission prompt는 Telegram에서 resume하지 않는다. 관리형 runtime rule이 일반 HA
-  service/config 변경을 라우팅한 `ha_change_propose` broker proposal이 App-managed 승인
-  경계다. 신뢰된 사용자 전역 native tool과 direct command/API helper는 이 broker에
-  투명하게 intercept되지 않고 사용자 rule과 현재 명시적 요청을 따른다.
-- raw file tool을 통한 App 관리 `settings.json` 직접 mutation은 self-bypass를 막는
-  예외다. 사용자가 명시적으로 요청한 일반 전역 설정은 digest-bound
-  `agy-settings patch`로 매개 수정할 수 있지만 `permissions`,
-  `enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`,
-  `artifactReviewPolicy`는 거부하고 App option과 restart로만 변경한다. 사용자
-  plugin·agent·rule·skill은 세 채널에서 계속 공유·직접 수정할 수 있다.
+- 2.0.11 새 설치 및 Telegram effective managed policy는 유일하게 `request-review`, bounded native/HA reads와 exact
+  `ha_change_propose`/`telegram_action_propose` allow를 사용한다. 2.0.9/2.0.10 App-owned
+  `mcp(*)`/`command(*)` broad allow는 안전하게 식별된 경우 retire하며 user-owned rule과
+  stronger deny는 보존한다. native headless permission prompt는 Telegram에서 resume하지
+  않는다. 관리형 HA·terminal·script·question proposal이 App-managed approval 경계이고,
+  표현할 수 없는 side effect는 direct fallback 없이 fail closed한다.
+- Telegram auto-allow의 Playwright는 upstream `readOnly: true`인
+  `browser_console_messages`, `browser_network_requests`, `browser_snapshot`,
+  `browser_take_screenshot`만 포함한다. navigate/back, tabs, hover, wait, resize, close는
+  typed approval adapter 전까지 fail closed한다.
+- App 관리 `settings.json`과 native MCP config의 직접 mutation은 self-bypass를 막는
+  exact deny다. Telegram customization 변경은 지원되는 root에서 exact
+  terminal/script proposal로 승인한 경우에만 실행하며 protected security key/path는
+  계속 거부한다.
 - session key는 인증된 `(user_id, chat_id)`이며 최초 실행 전에 conversation ID를
   영속 결합한다. approval callback ACK와 control 처리는 즉시 수행하고 broker 실행은
   동일 requester FIFO에서 직렬화하며, 실행 직전 durable session binding을 다시 검증한다.

@@ -19,6 +19,7 @@ readonly GITHUB_CLI_DATA=/data/github-cli
 readonly SSH_DATA=/data/ssh
 readonly TMUX_DATA=/data/tmux
 readonly LEGACY_PLAYWRIGHT_SECRETS=${RUNTIME_DIR}/playwright-secrets.env
+readonly PLAYWRIGHT_HOME=${RUNTIME_DIR}/playwright-home
 readonly PLAYWRIGHT_OUTPUT=${RUNTIME_DIR}/playwright-output
 readonly HA_RENDER_UPSTREAM=${RUNTIME_DIR}/home-assistant-render-upstream.conf
 readonly HA_BROWSER_AUTH_STATUS=${RUNTIME_DIR}/browser-auth-status.json
@@ -28,13 +29,14 @@ readonly SENSITIVE_DATA_ACCESS_MARKER=${RUNTIME_DIR}/sensitive-data-access.enabl
 readonly MANAGED_PLUGIN_UPDATE=/usr/local/share/antigravity-ha/managed-plugin-update.mjs
 readonly SUPERVISOR_OPTIONS_MIGRATION=/usr/local/share/antigravity-ha/supervisor-options-migrate.mjs
 
-rm -rf -- /run/antigravity-ha/playwright-output
+rm -rf -- "${PLAYWRIGHT_HOME}" "${PLAYWRIGHT_OUTPUT}"
 install -d -m 0700 \
   "${RUNTIME_DIR}" \
   "${DATA_HOME}" \
   "${ANTIGRAVITY_DATA}" \
   "${SSH_DATA}" \
   "${TMUX_DATA}" \
+  "${PLAYWRIGHT_HOME}" \
   "${PLAYWRIGHT_OUTPUT}" \
   /root/.ssh
 install -d -m 0755 /run/sshd
@@ -62,9 +64,11 @@ if jq --exit-status '.antigravity_terminal_sandbox == true' \
   /data/options.json >/dev/null; then
   bashio::log.warning 'antigravity_terminal_sandbox=true is deprecated and ignored; run_command uses the non-privileged AppArmor command boundary'
 fi
-if jq --exit-status '.antigravity_tool_permission == "proceed-in-sandbox"' \
+if jq --exit-status \
+  '.antigravity_tool_permission != null
+    and .antigravity_tool_permission != "request-review"' \
   /data/options.json >/dev/null; then
-  bashio::log.warning 'antigravity_tool_permission=proceed-in-sandbox is deprecated and normalized to always-proceed because the privileged native sandbox is unavailable'
+  bashio::log.warning 'The selected autonomous tool policy is deprecated and normalized to request-review so Telegram side effects require an inline confirmation card'
 fi
 
 feedback_options_tmp=$(mktemp "${RUNTIME_DIR}/.ha-feedback-options.XXXXXX")
@@ -83,8 +87,8 @@ if ! jq --exit-status '
       authorized_keys: option_string_array("authorized_keys"),
       web_terminal_auto_start_antigravity: option_bool("web_terminal_auto_start_antigravity"; false),
       antigravity_tool_permission:
-        (option_string("antigravity_tool_permission"; "always-proceed")
-          | if . == "proceed-in-sandbox" then "always-proceed" else . end),
+        (option_string("antigravity_tool_permission"; "request-review")
+          | if . == "request-review" then . else "request-review" end),
       antigravity_terminal_sandbox:
         (option_bool("antigravity_terminal_sandbox"; false) | false),
       antigravity_sensitive_data_access: option_bool("antigravity_sensitive_data_access"; false),

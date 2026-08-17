@@ -181,7 +181,10 @@ def test_read_broker_source_is_fixed_get_only_and_bounded(rootfs: Path) -> None:
     assert "ha_read_registry" in mcp
     assert "ha_read_history" in mcp
     assert "ha_read_traces" in mcp
+    assert "ha_read_storage_usage" in mcp
     assert "ha_read_app_logs" in mcp
+    assert '"/host/disks/default/usage"' in source
+    assert "STORAGE_USAGE_CATEGORY_IDS" in source
 
 
 def test_production_transport_ownership_is_explicit_and_privileged_flows_stay_separate(

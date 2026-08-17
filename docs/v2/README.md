@@ -101,6 +101,14 @@ Antigravity 명령이나 설정을 추정하지 않는다. 문서와 고정 bina
   호환한다. 관리형 runtime rule은 일반 HA service/config 변경을 이 broker로
   라우팅한다. 신뢰된 사용자 전역 native tool과 direct command/API helper는 관리자
   권한을 상속하며 broker가 투명하게 가로채지 않는다.
+- Telegram effective native permission은 `request-review` 하나이고 schema의 다른
+  값은 upgrade 입력 호환용으로 정규화된다. Playwright auto-allow는 upstream
+  read-only console/network/snapshot/screenshot 네 도구뿐이다.
+- proposal registration만으로 crash durability를 주장하지 않는다. encrypted
+  approval/card sealing 전 bridge crash는 사용자가 원 요청을 반복해야 한다.
+- 명시적 `reset_v2`는 safe parseable settings를 backup하고 ownership state와
+  무관하게 managed key/permission bucket을 exact default로 복구하며, `preserve`로
+  되돌릴 때까지 매 시작 drift를 다시 복구한다.
 - custom AppArmor가 항상 활성화되고 민감 경로 차단을 실제 HAOS에서 확인한다.
 - HA API, 로그, 메모리와 dashboard browser 기능이 최소권한 경계 안에서
   동작한다.

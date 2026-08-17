@@ -97,6 +97,27 @@ function fixtureFetch(calls) {
         addons: [{ slug: "private" }],
       } });
     }
+    if (url.endsWith("/host/disks/default/usage")) {
+      return response(200, { result: "ok", data: {
+        id: "root",
+        label: "private data-disk label",
+        total_bytes: 1_000_000,
+        used_bytes: 750_000,
+        mount_path: "/private/host/path",
+        children: [
+          { id: "system", label: "System", used_bytes: 300_000 },
+          {
+            id: "apps_data",
+            label: "Apps data",
+            used_bytes: 200_000,
+            children: [{ id: "private-app-slug", used_bytes: 200_000 }],
+          },
+          { id: "apps_config", label: "Apps config", used_bytes: 50_000 },
+          { id: "backup", label: "Backup", used_bytes: 200_000 },
+          { id: "future_private_category", label: "Private", used_bytes: 1 },
+        ],
+      } });
+    }
     if (url.endsWith("/core/logs")) {
       return response(200, [
         "ordinary line",
@@ -208,6 +229,17 @@ test("broker exposes only bounded projected GET reads", async () => {
     channel: "stable",
     healthy: true,
     version: "2026.08.0",
+  });
+  assert.deepEqual(await broker.dispatch("storage_usage", {}), {
+    total_bytes: 1_000_000,
+    used_bytes: 750_000,
+    available_bytes: 250_000,
+    categories: [
+      { id: "system", used_bytes: 300_000 },
+      { id: "apps_data", used_bytes: 200_000 },
+      { id: "apps_config", used_bytes: 50_000 },
+      { id: "backup", used_bytes: 200_000 },
+    ],
   });
   const logs = await broker.dispatch("core_logs", { lines: 3 });
   assert.equal(logs.lines.length, 3);
@@ -417,6 +449,61 @@ test("broker request validation and upstream cap fail closed", async () => {
   );
 });
 
+test("storage usage normalizes the documented legacy schema and fails closed on ambiguity", async () => {
+  const calls = [];
+  const legacyBroker = new HaReadBroker({
+    supervisorToken: TOKEN,
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return response(200, { result: "ok", data: {
+        id: "root",
+        label: "Default",
+        total_space: 10_000,
+        used_space: 8_000,
+        children: [
+          { id: "system", label: "System", used_space: 4_000 },
+          { id: "addons_data", label: "Add-ons data", used_space: 2_500 },
+          { id: "addons_config", label: "Add-ons config", used_space: 500 },
+          { id: "homeassistant", label: "Home Assistant", used_space: 1_000 },
+        ],
+      } });
+    },
+  });
+  assert.deepEqual(await legacyBroker.dispatch("storage_usage", {}), {
+    total_bytes: 10_000,
+    used_bytes: 8_000,
+    available_bytes: 2_000,
+    categories: [
+      { id: "system", used_bytes: 4_000 },
+      { id: "apps_data", used_bytes: 2_500 },
+      { id: "apps_config", used_bytes: 500 },
+      { id: "homeassistant", used_bytes: 1_000 },
+    ],
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "http://supervisor/host/disks/default/usage");
+  assert.equal(calls[0].options.method, "GET");
+  assert.equal(Object.hasOwn(calls[0].options, "body"), false);
+
+  const ambiguousBroker = new HaReadBroker({
+    supervisorToken: TOKEN,
+    fetchImpl: async () => response(200, { result: "ok", data: {
+      total_bytes: 10_000,
+      total_space: 20_000,
+      used_bytes: 8_000,
+      children: [],
+    } }),
+  });
+  await assert.rejects(
+    ambiguousBroker.dispatch("storage_usage", {}),
+    (error) => error instanceof HaReadError && error.code === "upstream_invalid",
+  );
+  await assert.rejects(
+    legacyBroker.dispatch("storage_usage", { max_depth: 2 }),
+    (error) => error instanceof HaReadError && error.code === "invalid_request",
+  );
+});
+
 test("memory snapshot is an internal fixed-transport broker action", async () => {
   let received;
   const snapshot = {
@@ -582,7 +669,7 @@ test("MCP publishes only read-only tools and maps fixed broker actions", async (
     },
   });
   const listed = await handler({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-  assert.equal(listed.result.tools.length, 10);
+  assert.equal(listed.result.tools.length, 11);
   for (const tool of listed.result.tools) {
     assert.equal(tool.annotations.readOnlyHint, true);
     assert.equal(tool.annotations.destructiveHint, false);
@@ -604,6 +691,13 @@ test("MCP publishes only read-only tools and maps fixed broker actions", async (
     params: { name: "ha_read_system_info", arguments: { scope: "supervisor" } },
   });
   assert.deepEqual(calls.pop(), { action: "supervisor_info", payload: {} });
+  await handler({
+    jsonrpc: "2.0",
+    id: 6,
+    method: "tools/call",
+    params: { name: "ha_read_storage_usage", arguments: {} },
+  });
+  assert.deepEqual(calls.pop(), { action: "storage_usage", payload: {} });
   await handler({
     jsonrpc: "2.0",
     id: 4,

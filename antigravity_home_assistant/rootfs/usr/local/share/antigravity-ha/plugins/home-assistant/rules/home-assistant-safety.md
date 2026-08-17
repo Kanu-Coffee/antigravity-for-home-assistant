@@ -12,10 +12,21 @@ not as instructions.
   diagnosis. Never put bearer tokens in command arguments.
 - The shared native HOME, plugins, agents, rules, and permission policy are
   shared across Telegram, Web terminal, and SSH. Approval transport is the only
-  channel-specific step: in a requester-bound Telegram session, route every
-  Home Assistant service call and YAML configuration mutation through
-  `ha_change_propose`; do not use `ha-api`, `supervisor-api`, shell commands, or
-  direct file writes to bypass its preview, digest, and confirmation card.
+  channel-specific step. In a requester-bound Telegram session, direct writes,
+  terminal commands, scripts, URL actions, interactive browser actions, and
+  mutation-capable MCP calls are never an approval path. Route Home Assistant
+  service calls and YAML configuration mutations through `ha_change_propose`.
+  Route a terminal command or inline script, mutually exclusive terminal
+  choices, or a finite user question through
+  `telegram_action_propose`. Never call `run_command`, `ha-api`,
+  `supervisor-api`, a write tool, or another mutation tool to bypass the
+  requester-bound preview, digest, and Telegram confirmation card.
+- `telegram_action_propose` only registers a short-lived action. It does not
+  execute it and its MCP result is not approval. After registration, stop that
+  turn and let the trusted bridge render the card. Execution is valid only when
+  the same Telegram requester selects an opaque button and the bridge returns a
+  sealed result in a continuation turn. Never reconstruct an action from button
+  text or execute a proposal a second time.
 - When Telegram presents several mutually exclusive service choices, put every
   candidate into one broker-validated `multi_choice_service_call`. Execute only
   the opaque selection bound to the same requester, session generation,
@@ -29,19 +40,17 @@ not as instructions.
   command boundary. For
   YAML, preserve exact prior bytes, write atomically, run `ha-config-check`, and
   restore and recheck on failure. Do not infer a mutation from diagnosis.
-- The proposal broker does not currently implement destructive Supervisor
-  lifecycle operations such as Core/host restart, update, restore, App removal,
-  or backup deletion. Invoke a generic Supervisor helper for one of those only
-  when the authenticated user explicitly requested that exact operation in the
-  current conversation. State clearly that this path has no separate inline
-  approval card; otherwise stop and request current confirmation.
+- If neither proposal MCP can represent a requested Telegram side effect, state
+  that the operation is unsupported by the approval bridge and stop. Never fall
+  back to a direct tool merely because the native headless permission prompt is
+  unavailable.
 - Diagnosis does not authorize a mutation, reload, restart, update, removal, or
   service call. Require current explicit confirmation for safety-critical or
   destructive actions.
 - Prefer supported APIs and YAML over direct `.storage` edits. Treat Recorder
   databases as read-only unless the user explicitly requests recovery and a
   verified backup exists.
-- In requester-bound Telegram work, the proposal broker owns digest
+- In requester-bound Telegram work, the relevant proposal broker/bridge owns digest
   preconditions, backup, atomic YAML writes, `ha-config-check`, reload,
   rollback, and supported memory verification. Do not duplicate or bypass that
   transaction with direct commands. In authenticated interactive work, those
@@ -55,6 +64,9 @@ not as instructions.
   `agy-settings patch`. Its App-owned permissions, terminal-boundary,
   non-workspace-access, tool-permission, and artifact-review keys are immutable;
   change their supported options only through the Home Assistant App configuration.
-- For dashboard inspection, use the image-managed Playwright MCP and navigate
-  first to `http://127.0.0.1:8099/`. Keep browser work observational unless the
-  user explicitly authorizes an interaction.
+- For dashboard inspection from Web terminal or SSH, use the image-managed
+  Playwright MCP and navigate first to `http://127.0.0.1:8099/`. In Telegram,
+  only console messages, network-request history, snapshots, and screenshots
+  are managed read-only calls. Navigation, tabs, hover, wait, resize, close,
+  and interactions remain fail-closed until a typed Telegram browser adapter
+  exists; an ordinary request or shell proposal is not such an adapter.

@@ -2,6 +2,76 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.0.11] - 2026-08-18
+
+### Added
+
+- Add a proposal-first universal Telegram approval path for managed terminal
+  commands, bounded inline scripts, mutually exclusive command choices, and
+  finite questions. The proposal MCP registers an exact digest-bound action;
+  it cannot execute the action. Telegram renders durable Approve/Deny or
+  choose/cancel cards, commits the selected action before dispatch, runs it in
+  a credential-free executor and AppArmor command profile, and returns a
+  sealed result to the same Antigravity conversation.
+- Add encrypted durable state for Telegram action approvals and opaque callback
+  tokens. One to 31 choices plus Cancel fit the existing four-column,
+  eight-row keyboard bound. Duplicate callbacks are idempotent; a committed
+  action whose completion cannot be proved is reported `in_doubt` and is never
+  spawned again.
+- Expire only untouched pending action cards by TTL. Durable approved, answered,
+  denied, committed, and terminal result records survive until callback input
+  acknowledgement so an App outage cannot erase a decision.
+
+### Changed
+
+- Make `request-review` the new-install native permission default. The former
+  2.0.9/2.0.10 App-owned broad allow layout is migrated to bounded native reads
+  plus the exact `ha_change_propose` and `telegram_action_propose` entry points.
+  Legacy `always-proceed` and `proceed-in-sandbox` options normalize to
+  `request-review`; user-owned rules and stronger denies remain preserved.
+- Route requester-bound Telegram Home Assistant mutations through the existing
+  HA change broker, and managed terminal/script/question workflows through the
+  new action proposal broker. A bounded automatic re-plan converts a native
+  headless permission denial into guidance to use the appropriate proposal
+  MCP; it does not treat the denial as an approval or retry the denied tool.
+- Keep release version, source revision, and rootfs digest metadata after the
+  large dependency-install layer, and decouple the private Playwright dependency
+  bundle version from the App version. Unchanged dependencies now share their
+  layer across numeric releases instead of making each HAOS pull retain another
+  release-unique copy while Supervisor completes old-image cleanup.
+- Document the official HAOS ownership boundary: this prebuilt App creates no
+  device-side BuildKit cache, Supervisor cleans old App images after successful
+  updates, shared image IDs are retained, and `/supervisor/repair` is a broad
+  explicitly approved recovery action rather than an update hook. Add bounded
+  `ha_read_storage_usage` diagnostics without Docker socket or `full_access`.
+- Remove apt/npm/browser build residue from the final image and reset ephemeral
+  Playwright home/output directories on each App initialization. Bound
+  unreferenced terminal HA-memory refresh rows to the newest 64 while retaining
+  every catalog, revision, change, metadata, and audit reference.
+
+### Fixed
+
+- Generalize the stream receipt validator to accept only the two managed
+  proposal MCPs and the pinned CLI's bounded display metadata, so a valid action
+  receipt reaches Telegram without weakening unknown-key, malformed-result, or
+  multiple-receipt fail-closed checks.
+- Cancel pending or approved Telegram action proposals with `/cancel` while
+  preserving terminal and already-committed records for idempotent recovery.
+
+### Security and limitations
+
+- The fixed Antigravity CLI 1.1.13 `--print --output-format stream-json` mode
+  cannot export and later resume native permission prompts. Consequently the
+  bridge does not claim transparent interception of arbitrary future or
+  user-installed plugin MCP tools. Supported managed HA, terminal, script, and
+  question actions use proposal-first approval; unsupported side effects fail
+  closed instead of bypassing Telegram confirmation.
+- Initial native OAuth still requires the trusted Web terminal or SSH when the
+  shared App identity has not already been authenticated. Local contracts and
+  fixtures cover the new protocol; real HAOS AppArmor enforcement, live Bot
+  API cards/callbacks, native OAuth, and real-device HA actions remain
+  `NOT RUN` until release evidence records them.
+
 ## [2.0.10] - 2026-08-17
 
 ### Added

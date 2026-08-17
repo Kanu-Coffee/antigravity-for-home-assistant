@@ -44,6 +44,7 @@ const {
   rollbackMemoryEvent,
   searchMemory,
   showMemorySubject,
+  TERMINAL_SYNC_RUN_RETENTION,
   verifyMemoryCandidate,
   verifyMemoryChange,
 } = await import(`${MODULE_ROOT}/ha-memory-core.mjs`);
@@ -172,6 +173,75 @@ test("automation config fallback keeps direct references with exact provenance",
   assert.deepEqual(normalized.warnings, [
     "automation_related_unavailable:automation.partial",
   ]);
+});
+
+test("periodic refresh bounds only unreferenced terminal sync runs", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "ha-memory-sync-retention-"));
+  const dbPath = join(directory, "memory.sqlite3");
+  const fixture = JSON.parse(await readFile(SOURCE_FIXTURE, "utf8"));
+  const snapshot = asCoreSnapshot(fixture);
+  const previousTestMode = process.env.HA_MEMORY_TEST_MODE;
+  process.env.HA_MEMORY_TEST_MODE = "1";
+  const db = openMemoryDatabase(dbPath);
+  t.after(async () => {
+    closeMemoryDatabase(db, dbPath);
+    if (previousTestMode === undefined) delete process.env.HA_MEMORY_TEST_MODE;
+    else process.env.HA_MEMORY_TEST_MODE = previousTestMode;
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const initial = await refreshMemory(db, { force: true, rawSnapshot: snapshot });
+  for (let iteration = 0; iteration < TERMINAL_SYNC_RUN_RETENTION + 8; iteration += 1) {
+    await refreshMemory(db, { force: true, rawSnapshot: snapshot });
+  }
+
+  const afterSuccesses = db
+    .prepare("SELECT id, status FROM sync_runs ORDER BY id")
+    .all();
+  assert.ok(afterSuccesses.length <= TERMINAL_SYNC_RUN_RETENTION + 1);
+  assert.ok(afterSuccesses.some((row) => row.id === initial.sync_id));
+  assert.ok(
+    db
+      .prepare("SELECT 1 AS found FROM catalog_revisions WHERE sync_id = ? LIMIT 1")
+      .get(initial.sync_id),
+  );
+  assert.ok(
+    memoryHistory(db, { limit: 100 }).events.some(
+      (event) => event.correlation_id === `sync:${initial.sync_id}`,
+    ),
+  );
+
+  const changeReferencedSyncId = memoryStatus(db, dbPath).last_successful_sync.id;
+  const pendingChange = beginMemoryChange(
+    db,
+    "Retain the catalog snapshot referenced by a pending change",
+    ["entity:light.kitchen_main"],
+    {
+      objects: [{ subject: "entity:light.kitchen_main", exists: true }],
+    },
+  );
+  assert.equal(pendingChange.before_sync_id, changeReferencedSyncId);
+  await refreshMemory(db, { force: true, rawSnapshot: snapshot });
+  const latestSuccessId = memoryStatus(db, dbPath).last_successful_sync.id;
+  assert.notEqual(latestSuccessId, changeReferencedSyncId);
+  for (let iteration = 0; iteration < TERMINAL_SYNC_RUN_RETENTION + 8; iteration += 1) {
+    await assert.rejects(
+      refreshMemory(db, { force: true, rawSnapshot: {} }),
+      (error) => error?.code === "invalid_snapshot",
+    );
+  }
+
+  const retained = db.prepare("SELECT id, status FROM sync_runs ORDER BY id").all();
+  assert.ok(
+    retained.filter((row) => row.status === "failed").length <=
+      TERMINAL_SYNC_RUN_RETENTION,
+  );
+  assert.ok(retained.some((row) => row.id === initial.sync_id));
+  assert.ok(retained.some((row) => row.id === changeReferencedSyncId));
+  assert.ok(retained.some((row) => row.id === latestSuccessId));
+  assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
+  assert.equal(memoryStatus(db, dbPath).last_sync.status, "failed");
+  assert.equal(memoryStatus(db, dbPath).last_successful_sync.id, latestSuccessId);
 });
 
 test("explicit user memory closes in one audited call and candidate follow-up stays bounded", async (t) => {

@@ -19,6 +19,7 @@ export const MEMORY_SCHEMA_VERSION = 1;
 export const DEFAULT_SEARCH_LIMIT = 8;
 export const MAX_SEARCH_LIMIT = 20;
 export const MAX_SEARCH_BYTES = 32 * 1024;
+export const TERMINAL_SYNC_RUN_RETENTION = 64;
 
 const OBJECT_KINDS = new Set(["area", "device", "entity", "automation", "home"]);
 const CATALOG_KINDS = new Set(["area", "device", "entity", "automation"]);
@@ -1473,6 +1474,77 @@ function latestSuccessfulSyncId(db) {
   );
 }
 
+function addProtectedSyncId(ids, value) {
+  const id = Number(value);
+  if (Number.isSafeInteger(id) && id > 0) ids.add(id);
+}
+
+function pruneTerminalSyncRuns(db) {
+  const terminalRows = db
+    .prepare(
+      `SELECT id FROM sync_runs
+       WHERE status IN ('success', 'failed') ORDER BY id DESC`,
+    )
+    .all();
+  if (terminalRows.length <= TERMINAL_SYNC_RUN_RETENTION) return 0;
+
+  const protectedIds = new Set(
+    terminalRows
+      .slice(0, TERMINAL_SYNC_RUN_RETENTION)
+      .map((row) => Number(row.id)),
+  );
+  // change_records are persistent, non-reversible audit subjects: verification
+  // may fill after_sync_id but never removes either sync reference. Their
+  // before/after audit JSON therefore cannot be the sole owner of a sync ID.
+  // Keep the direct FK rows here and avoid reparsing the unbounded audit log on
+  // every scheduled refresh.
+  for (const row of db
+    .prepare(
+      `SELECT sync_id FROM catalog_objects
+       UNION SELECT sync_id FROM catalog_relations
+       UNION SELECT sync_id FROM catalog_revisions
+       UNION SELECT before_sync_id AS sync_id FROM change_records
+       UNION SELECT after_sync_id AS sync_id FROM change_records`,
+    )
+    .all()) {
+    addProtectedSyncId(protectedIds, row.sync_id);
+  }
+  addProtectedSyncId(
+    protectedIds,
+    db
+      .prepare("SELECT value FROM metadata WHERE key = 'last_successful_sync_id'")
+      .get()?.value,
+  );
+  for (const row of db
+    .prepare(
+      `SELECT correlation_id FROM audit_events
+       WHERE correlation_id GLOB 'sync:*'`,
+    )
+    .all()) {
+    const match = /^sync:([1-9][0-9]*)$/u.exec(row.correlation_id);
+    if (match) addProtectedSyncId(protectedIds, match[1]);
+  }
+
+  const deletableIds = terminalRows
+    .slice(TERMINAL_SYNC_RUN_RETENTION)
+    .map((row) => Number(row.id))
+    .filter((id) => !protectedIds.has(id));
+  let deleted = 0;
+  for (let offset = 0; offset < deletableIds.length; offset += 256) {
+    const chunk = deletableIds.slice(offset, offset + 256);
+    const placeholders = chunk.map(() => "?").join(", ");
+    deleted += Number(
+      db
+        .prepare(
+          `DELETE FROM sync_runs
+           WHERE status IN ('success', 'failed') AND id IN (${placeholders})`,
+        )
+        .run(...chunk).changes,
+    );
+  }
+  return deleted;
+}
+
 function runTransaction(db, callback) {
   try {
     db.exec("BEGIN IMMEDIATE");
@@ -1874,6 +1946,7 @@ function applyNormalizedSnapshot(db, syncId, snapshot) {
         `UPDATE sync_runs SET status = 'failed', completed_at = ?,
           error_code = 'superseded_refresh' WHERE id = ?`,
       ).run(nowIso(), syncId);
+      pruneTerminalSyncRuns(db);
       return {
         sync_id: syncId,
         status: "skipped",
@@ -2055,6 +2128,7 @@ function applyNormalizedSnapshot(db, syncId, snapshot) {
         reversible: false,
       });
     }
+    pruneTerminalSyncRuns(db);
     return {
       sync_id: syncId,
       status: "success",
@@ -2091,9 +2165,11 @@ function failSync(db, syncId, error) {
     const latestSuccess = latestSuccessfulSyncId(db);
     if (latestSuccess && latestSuccess > syncId) {
       metadataSet(db, "catalog_status", "ready");
+      pruneTerminalSyncRuns(db);
       return;
     }
     metadataSet(db, "catalog_status", latestSuccess ? "stale" : "degraded");
+    pruneTerminalSyncRuns(db);
   });
 }
 

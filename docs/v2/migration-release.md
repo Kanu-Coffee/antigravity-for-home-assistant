@@ -9,7 +9,7 @@ public App은 사용자의 HAOS에서 source build하지 않고 GHCR prebuilt im
 받는다.
 
 ```yaml
-version: "2.0.10"
+version: "2.0.11"
 arch:
   - amd64
   - aarch64
@@ -18,6 +18,7 @@ breaking_versions:
   - "2.0.0"
   - "2.0.7"
   - "2.0.9"
+  - "2.0.11"
 ```
 
 `apparmor`의 Supervisor 기본값은 `true`다. pinned App linter가 중복 기본값을
@@ -27,8 +28,9 @@ breaking_versions:
 Supervisor는 `version`을 image tag로 사용한다. 같은 numeric tag에 amd64와
 aarch64 manifest가 모두 있을 때만 `config.yaml`에 두 아키텍처를 선언한다.
 첫 v2, 2.0.7의 Telegram 관리자 trust-model 전환, 2.0.9의 default-allow managed
-permission 및 persistent mutation 범위 전환은 breaking version으로 표시하고 사용자가
-release note를 읽고 선택하게 한다.
+permission 및 persistent mutation 범위 전환, 2.0.11의 proposal-first
+`request-review`/universal managed approval 전환은 breaking version으로 표시하고
+사용자가 release note를 읽고 선택하게 한다.
 
 image에 고정한 Antigravity binary는 App runtime에서 자체 갱신하지 않는다. 모든
 native launch와 `env -i` child allowlist는 공식 opt-out
@@ -89,9 +91,15 @@ version을 marker에 기록한다. 같은 이름의 기존 plugin에 marker가 �
   사용자 key와 server는 그대로 보존한다.
 - 위 공통 규칙에 따라 ownership이 확인된 App 관리 plugin은 canonical refresh하고,
   같은 이름의 사용자 소유 plugin은 conflict로 중단한다.
-- App ownership이 확인된 2.0.6/2.0.8 permission rule은 2.0.9에서 operational default
-  allow와 sensitive exact deny로 version migration한다. 사용자 소유 rule과 OAuth,
-  global plugin/agent/skill/rule은 보존한다.
+- App ownership이 확인된 2.0.6/2.0.8 permission rule과 exact 2.0.9/2.0.10 App-owned
+  broad allow layout은 2.0.11에서 `request-review`, bounded native/HA read와 exact
+  `ha_change_propose`/`telegram_action_propose` allow로 version migration한다. 사용자
+  소유 rule과 stronger deny, OAuth, global plugin/agent/skill/rule은 보존한다.
+- managed Playwright allow는 upstream `readOnly: true`인
+  `browser_console_messages`, `browser_network_requests`, `browser_snapshot`,
+  `browser_take_screenshot` 네 개로 축소한다. legacy ownership set의 navigate/back,
+  tabs, hover, wait, resize, close rule은 ownership 인식에만 사용하고 새 default에서는
+  제거한다. typed adapter 전까지 이 mutation-capable 도구는 Telegram에서 fail closed한다.
 - unsafe legacy Codex식 설정은 실행하지 않으며 경고와 `refresh_managed` 안내를
   제공한다.
 
@@ -108,15 +116,20 @@ version을 marker에 기록한다. 같은 이름의 기존 plugin에 marker가 �
 
 ### `reset_v2`
 
-- `refresh_managed`와 같은 settings key·permission rule 구조 merge를 수행하되,
-  기존 settings의 App ownership state가 없거나 모호하면 보존 경고로 계속하지 않고
-  conflict로 중단한다.
+- 사용자가 명시적으로 선택하는 permission drift 복구 control이다. 안전한 root-owned
+  regular settings 파일과 parse 가능한 JSON을 먼저 transaction backup에 보존한다.
+- 기존 App ownership state의 유무·모호함과 관계없이 App-managed settings key를 image
+  default로 교체하고 `permissions.allow`/`ask`/`deny` 전체를 exact default로 바꾼다.
+  custom permission rule과 permissions의 알 수 없는 bucket은 보존하지 않는다.
+- `permissions` 밖의 사용자 top-level settings와 global MCP/plugin/OAuth는 보존한다.
+  unsafe file metadata 또는 parse 불가능한 JSON은 계속 fail closed한다.
 - plugin 내부 MCP/rules/skills 갱신은 mode가 아니라 위 공통 version별 plugin
   transaction이 담당한다. global MCP 파일은 존재하면 byte-preserve한다.
 - 공식 CLI OAuth 자료, `/config`, SSH host key, authorized keys, browser identity,
   memory DB와 사용자 소유 plugin/MCP server는 보존한다.
-- 이 mode는 같은 App version에서 한 번만 실행하고 성공 뒤 option을 자동으로
-  바꾸지 않는다. 다음 restart에서는 completion state로 재실행을 건너뛴다.
+- option은 자동으로 바꾸지 않는다. `reset_v2`가 선택된 동안은 같은 App version에서도
+  매 시작 managed/permission drift를 exact default로 다시 복구한다. 정상화 확인 뒤
+  사용자가 `preserve`로 돌려놓는다.
 
 ## MIG-004 — v1 옵션 변환
 
@@ -126,9 +139,10 @@ v2.0.x는 update input을 읽기 위해 deprecated v1 key와 enum을 migration-o
 
 | v1 입력 | v2 결과 |
 | --- | --- |
-| `antigravity_approval_policy=untrusted` | `antigravity_tool_permission=strict` |
+| `antigravity_approval_policy=untrusted` | warning 후 effective `request-review` |
 | `antigravity_approval_policy=on-request` | `antigravity_tool_permission=request-review` |
 | `antigravity_approval_policy=never` | `request-review`로 낮추고 명시적 경고. auto-approve를 승계하지 않음 |
+| `antigravity_tool_permission=strict\|always-proceed\|proceed-in-sandbox` | 2.0.11부터 warning 후 `request-review`로 정규화; Telegram side effect는 proposal card 필요 |
 | `antigravity_sandbox_mode=*` | 폐기. `antigravity_terminal_sandbox=false`로 정규화 |
 | `antigravity_terminal_sandbox=true\|false` | 2.0.9부터 deprecated/no-op. warning 후 `false`로 정규화; AppArmor command 경계는 항상 유지 |
 | `browser_approval_policy=*` | 제거. v2 browser MCP allowlist 사용 |
@@ -140,6 +154,11 @@ v2.0.x는 update input을 읽기 위해 deprecated v1 key와 enum을 migration-o
 | `telegram_access_mode` | 2.0.7에서는 권한으로 사용하지 않고 제거. global `antigravity_tool_permission`/민감정보 option과 AppArmor command 경계를 적용 |
 | legacy Telegram pairing/session | `/data/antigravity-ha/quarantine/v1-telegram/`으로 root-only 원자 격리하고 v2에서 재사용하지 않음 |
 | `home_assistant_browser_token` | 새 secret으로 복사하지 않음. 관리 identity 재검증 또는 setup 안내 |
+
+`request-review`가 2.0.11의 유일한 effective native 값이다. config schema가
+`strict`, `always-proceed`, `proceed-in-sandbox`를 계속 수용하는 이유는 기존
+Supervisor option으로 update container를 시작하기 위한 입력 호환성뿐이며,
+user-files updater는 native settings를 쓰기 전에 모두 `request-review`로 정규화한다.
 
 Supervisor의 manual update는 새 App config를 저장한 뒤 기존 실행 상태를
 복원하는 `start()`에서 `write_options()` schema 검증을 먼저 수행하고, 검증이
@@ -539,11 +558,13 @@ byte SHA-256을 가진다. finalize는 원본을 검증한 뒤 각 report를 can
 map은 final artifact와 GitHub Release에 모두 보존한다. finalize artifact archive
 자체의 SHA-256까지 annotated tag에 다음처럼 묶는다.
 
-2.0.7의 Telegram 관련 manual gate는 `shared_runtime_persistence`와
+2.0.11의 Telegram 관련 manual gate는 계속 `shared_runtime_persistence`와
 `telegram_session_delivery`다. 전자는 Web/SSH/Telegram의 동일 OAuth·HOME·전역
-customization 상속과 수정, 후자는 `/new` 전까지의 session 유지·승인·응답 전달
-내구성을 검증한다. 이전 별도 Telegram identity/isolation 또는 channel mode를 PASS
-조건으로 다시 도입하지 않는다.
+customization 상속과 approved exact action mutation, 후자는 `/new` 전까지의 session
+유지, HA/action approval, `v4` 선택, commit/no-respawn `in_doubt`, sealed continuation과
+응답 전달 내구성을 검증한다. initial OAuth, live Bot API와 실제 action을 실행하지 않은
+local fixture를 manual gate PASS로 올리지 않는다. 이전 별도 Telegram identity/isolation
+또는 channel mode를 PASS 조건으로 다시 도입하지 않는다.
 
 ```text
 Candidate-Run-ID: <positive integer>
@@ -595,6 +616,29 @@ cache에 한정하며 HAOS App runtime data나 Supervisor image lifecycle을 건
 reusable release build action에는 stable
 `cache-gha-scope: antigravity-home-assistant`를 전달해 run마다 새 scope가 누적되지 않게 한다.
 
+HAOS release install/update는 별도 계약이다. App manifest의 generic `image:` 때문에
+Supervisor는 이 repository를 장치에서 source-build하지 않고 registry의 최종 prebuilt
+container를 pull한다. 성공한 교체 뒤 old App image 정리는 Supervisor가 수행하며,
+다른 설치 App이 공유하는 image/layer ID는 마지막 consumer가 교체될 때까지 보존한다.
+따라서 App에 Docker socket, `docker_api`, `full_access` 또는 host prune 권한을 주지
+않는다. 공식 `POST /supervisor/repair`는 container, non-dangling image, BuildKit build,
+volume와 network까지 다루는 broad recovery이므로 update hook이나 startup cleanup으로
+호출하지 않고, failed/aborted pull·cleanup error·overlay 장애의 실제 증거와 별도 관리자
+승인이 있을 때만 운영자가 수행한다.
+
+대형 dependency install layer는 App version, source revision과 rootfs digest 같은
+release-variant metadata 및 private Playwright bundle의 App version 표기로 cache key가
+깨지지 않아야 한다. 이 metadata는 dependency layer 뒤에서만 선언하고 internal package
+version은 release와 독립적으로 유지한다. 이렇게 하면 Supervisor cleanup 전 신·구 image가
+일시 공존하거나 공유 image를 정상 보존할 때에도 변경되지 않은 약 560 MB image payload를
+registry/host layer store에서 재사용할 수 있다. 이 최적화는 Supervisor cleanup을 대체하지
+않으며 실제 HAOS 전후 사용량은 별도 `NOT RUN` evidence다.
+
+운영 진단은 Docker API 대신 fixed read-only `ha_read_storage_usage`를 사용해 공식
+`GET /host/disks/default/usage`의 allowlisted category 수치와 Supervisor/App log를 함께
+본다. 이 endpoint는 image별 breakdown을 제공하지 않으므로 system, App data/config,
+backup 증가를 분리하는 1차 진단으로만 사용한다.
+
 App runtime backup 상한은 `/data/antigravity-ha/backups/plugin-*`의 managed-plugin transaction,
 `backups/native-files/refresh-*`의 native user-files refresh와
 `change-broker/backups/*`의 config patch에 독립적으로 적용한다. 각 범주의 ownership
@@ -603,3 +647,11 @@ manifest owner/transaction/target과 root-owned/no-symlink 완료 tree를 재검
 eligible 항목을 atomic quarantine하고 삭제하며 crash 잔존 quarantine은 다음 실행에서
 같은 검증 뒤 재시도한다. active/incomplete, manifestless, unsafe, symlinked 또는 App
 ownership을 증명할 수 없는 backup은 보존한다.
+
+HA memory SQLite의 `sync_runs`는 각 refresh마다 추가되므로 `success`/`failed` terminal
+row 중 최신 64개와 catalog object/relation/revision, change before/after, last-success
+metadata, audit correlation이 참조하는 ID만 보존한다. 이 pruning은 refresh를 종료하는
+같은 `BEGIN IMMEDIATE` transaction 안에서 실행하고 FK check/history 결과를 바꾸지 않는다.
+비정상 종료 `running` row는 lease 정보가 없어 live refresh와 안전하게 구분할 수 없으므로
+자동 삭제하지 않는다. catalog revision과 semantic audit 자체는 cache가 아니라 제품
+history이므로 별도 명시 retention 계약 없이 지우지 않는다.

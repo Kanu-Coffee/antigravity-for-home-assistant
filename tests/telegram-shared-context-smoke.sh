@@ -615,11 +615,11 @@ NODE
     " "${mock_log}" >/dev/null
   ' || fail 'native 1.1.13 shared HOME stdin stream-json resume canary failed'
 
-# Exercise the pinned headless runtime under request-review and the new
-# always-proceed default. The exact settings write deny must win in both modes,
-# while command(*) and mcp(*) remain usable without the unsupported privileged
-# native namespace sandbox. AppArmor path isolation is a separate enforcing
-# profile contract; an ordinary Docker fixture is not real HAOS evidence.
+# Exercise the pinned headless runtime under the managed request-review policy.
+# Exact proposal/read rules may run, while a direct command and settings write
+# must soft-deny instead of bypassing the Telegram approval bridge. AppArmor
+# path isolation is a separate enforcing profile contract; an ordinary Docker
+# fixture is not real HAOS evidence.
 docker run --rm --platform "$TEST_PLATFORM" --network none \
   --tmpfs /data:rw,nosuid,nodev,noexec,mode=0755 \
   --tmpfs /run:rw,nosuid,nodev,noexec,mode=0755 \
@@ -657,10 +657,14 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
     jq --exit-status "
       .toolPermission == \"request-review\"
       and .enableTerminalSandbox == false
-      and (.permissions.allow | index(\"command(*)\") != null)
-      and (.permissions.allow | index(\"mcp(*)\") != null)
+      and (.permissions.allow | index(\"command(*)\") == null)
+      and (.permissions.allow | index(\"mcp(*)\") == null)
       and (.permissions.ask | index(\"command(*)\") == null)
-      and (.permissions.ask | index(\"mcp(*)\") == null)
+      and (.permissions.ask | index(\"write_file(*)\") == null)
+      and (.permissions.allow
+        | index(\"mcp(ha_change/ha_change_propose)\") != null)
+      and (.permissions.allow
+        | index(\"mcp(telegram_action/telegram_action_propose)\") != null)
       and (.permissions.allow
         | index(\"write_file(/data/home/.gemini/antigravity-cli/settings.json)\") == null)
       and (.permissions.deny
@@ -695,12 +699,10 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
     trap cleanup_mock EXIT
 
     run_permission_canary() {
-      local permission_mode=$1
       local mode_settings mock_log native_stdout native_stderr settings_hash
       local warmup_stdout warmup_stderr
       mode_settings=$(mktemp)
-      jq --arg mode "${permission_mode}" \
-        ".toolPermission = \$mode | .deny_canary_marker = \"MUST_REMAIN\"" \
+      jq ".deny_canary_marker = \"MUST_REMAIN\"" \
         /data/home/.gemini/antigravity-cli/settings.json > "${mode_settings}"
       install -m 0600 "${mode_settings}" \
         /data/home/.gemini/antigravity-cli/settings.json
@@ -768,11 +770,9 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       jq --exit-status \
         ".deny_canary_marker == \"MUST_REMAIN\" and .compromised == null" \
         /data/home/.gemini/antigravity-cli/settings.json >/dev/null
-      grep -Fxq COMMAND_PERMISSION_CANARY_OK \
-        /config/command-permission-canary.marker
+      test ! -e /config/command-permission-canary.marker
       grep -Fxq MCP_PERMISSION_CANARY_OK \
         /config/mcp-permission-canary.marker
-      ! grep -Eqi "auto-denied|headless mode cannot prompt" "${native_stderr}"
       NATIVE_STREAM_PATH="${native_stdout}" \
         PERMISSION_CANARY_REQUIRE_APPARMOR=false \
         /usr/bin/node /test-fixtures/telegram-permission-canary-assert.mjs
@@ -782,7 +782,6 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
         any(.[]; .kind == \"request\" and .state == \"await_command\") and
         any(.[]; .kind == \"request\" and
           .state == \"await_mcp\" and .call_mcp_tool_advertised == true) and
-        any(.[]; .kind == \"request\" and .state == \"complete\") and
         any(.[]; .kind == \"request\" and .has_sentinel == true) and
         all(.[]; .kind != \"request\" or
           (.state != \"settings_alias_write_succeeded\" and
@@ -790,9 +789,8 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       " "${mock_log}" >/dev/null
     }
 
-    run_permission_canary request-review
-    run_permission_canary always-proceed
-  ' || fail 'native 1.1.13 request-review command/MCP permission canary failed'
+    run_permission_canary
+  ' || fail 'native 1.1.13 Telegram proposal-first permission canary failed'
 
 printf 'telegram shared-context smoke passed for Antigravity %s\n' \
   "${EXPECTED_VERSION}"

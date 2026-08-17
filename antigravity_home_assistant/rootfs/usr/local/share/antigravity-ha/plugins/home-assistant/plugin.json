@@ -1,5 +1,5 @@
 {
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "home-assistant",
-  "description": "Safe Home Assistant API, memory, browser, and change workflows"
+  "description": "Requester-bound Telegram approvals for Home Assistant, terminal, and question workflows"
 }

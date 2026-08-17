@@ -3,17 +3,21 @@ import re
 from pathlib import Path
 
 
-SAFE_AUTO_APPROVE_BROWSER_TOOLS = {
-    "browser_close",
+TELEGRAM_READ_ONLY_AUTO_APPROVE_BROWSER_TOOLS = {
     "browser_console_messages",
+    "browser_network_requests",
+    "browser_snapshot",
+    "browser_take_screenshot",
+}
+
+PROXY_ALLOWED_NON_INTERACTIVE_TOOLS = {
+    "browser_close",
+    *TELEGRAM_READ_ONLY_AUTO_APPROVE_BROWSER_TOOLS,
     "browser_hover",
     "browser_navigate",
     "browser_navigate_back",
-    "browser_network_requests",
     "browser_resize",
-    "browser_snapshot",
     "browser_tabs",
-    "browser_take_screenshot",
     "browser_wait_for",
 }
 
@@ -26,7 +30,7 @@ INTERACTIVE_BROWSER_TOOLS = {
 }
 
 ALLOWED_BROWSER_TOOLS = (
-    SAFE_AUTO_APPROVE_BROWSER_TOOLS | INTERACTIVE_BROWSER_TOOLS
+    PROXY_ALLOWED_NON_INTERACTIVE_TOOLS | INTERACTIVE_BROWSER_TOOLS
 )
 
 DANGEROUS_BROWSER_TOOLS = {
@@ -138,7 +142,9 @@ def test_antigravity_plugin_registers_restricted_playwright_mcp(
     proxy_tools = set(re.findall(r'"(browser_[a-z_]+)"', allowlist_match.group(1)))
     assert ALLOWED_BROWSER_TOOLS == proxy_tools
     assert "TELEGRAM_SAFE_TOOLS" not in proxy
-    assert SAFE_AUTO_APPROVE_BROWSER_TOOLS.isdisjoint(INTERACTIVE_BROWSER_TOOLS)
+    assert TELEGRAM_READ_ONLY_AUTO_APPROVE_BROWSER_TOOLS.isdisjoint(
+        INTERACTIVE_BROWSER_TOOLS
+    )
 
 
 def test_playwright_approval_policy_uses_native_settings_permissions(
@@ -364,8 +370,9 @@ def test_browser_auth_refresh_is_private_fail_closed_and_called_at_init(
     )
     assert "HA_BROWSER_AUTH_STATUS=${RUNTIME_DIR}/browser-auth-status.json" in init_script
     assert 'install -d -m 0700' in init_script
+    assert "PLAYWRIGHT_HOME=${RUNTIME_DIR}/playwright-home" in init_script
     assert "PLAYWRIGHT_OUTPUT=${RUNTIME_DIR}/playwright-output" in init_script
-    assert "rm -rf -- /run/antigravity-ha/playwright-output" in init_script
+    assert 'rm -rf -- "${PLAYWRIGHT_HOME}" "${PLAYWRIGHT_OUTPUT}"' in init_script
     assert 'rm -f "${LEGACY_PLAYWRIGHT_SECRETS}"' in init_script
     assert "playwright_secrets_tmp" not in init_script
     assert 'printf \'HA_BROWSER_TOKEN=%s\\n\'' not in init_script
@@ -564,6 +571,7 @@ def test_real_playwright_mcp_smoke_is_part_of_container_validation(
     assert '--env HA_BROWSER_TOKEN="${BROWSER_TOKEN}"' in docker_smoke
     assert "--probe-websocket ws://127.0.0.1:8099/api/websocket" in docker_smoke
     assert "Home Assistant browser gateway was reachable outside app loopback" in docker_smoke
+    assert "/run/antigravity-ha/playwright-home/init-sentinel" in docker_smoke
     assert "/run/antigravity-ha/playwright-output/init-sentinel" in docker_smoke
     assert '"home_assistant_browser_token"' not in docker_smoke
     assert '.source == "managed"' in docker_smoke

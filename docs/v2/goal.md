@@ -32,9 +32,17 @@ Antigravity native plugin으로 제공한다.
    `service_call`/`multi_choice_service_call`/`config_patch`에 고위험 확인과
    exactly-once broker 접수를 강제한다. multi-choice는 최대 31개 사전 검증 선택지 중
    하나만 requester/session/digest/choice/idempotency binding으로 실행한다.
-   관리형 runtime rule은 일반 HA service/config 변경을 broker로 라우팅하지만, 신뢰된
-   사용자 전역 native tool과 direct command/API helper는 관리자 권한을 상속하며
-   broker가 투명하게 가로채지 않는다.
+   관리형 runtime rule은 HA service/config 변경을 `ha_change_propose`, terminal
+   command·bounded script·명령 선택지·유한 질문을 `telegram_action_propose`로 먼저
+   등록한다. action은 requester/session/update/conversation/digest에 결합된 Telegram
+   승인 뒤에만 credential-free executor 또는 HA broker가 실행한다. pinned CLI의 native
+   permission prompt는 외부 승인 뒤 재개할 수 없으므로 임의 future/plugin MCP를
+   투명하게 intercept한다고 주장하지 않고 지원하지 않는 side effect는 fail closed한다.
+   Telegram effective native permission은 `request-review` 하나이며 schema의
+   `strict`/autonomous 값은 upgrade 입력으로만 수용하고 updater에서 정규화한다.
+   Playwright는 upstream read-only 네 도구만 auto-allow하고 mutation-capable 도구는
+   typed adapter 전까지 fail closed한다. proposal registration 뒤 approval/card sealing
+   전 crash는 durable로 가장하지 않고 사용자 재시도를 요구한다.
 5. AppArmor는 항상 활성화된다. 민감정보 option이 꺼지면 보호 경로를 읽지
    못하고, 켜져도 Recorder 자료만 진단 read-only로 허용한다. secrets, `.storage`,
    raw App·SSH credential은 계속 직접 차단하고, 공유 native OAuth는
@@ -49,7 +57,8 @@ Antigravity native plugin으로 제공한다.
 
 - Home Assistant Core, OS 또는 Supervisor 자체를 fork하지 않는다.
 - AppArmor 비활성 옵션이나 보호 모드 해제를 제공하지 않는다.
-- Telegram을 일반 목적 root shell 또는 TUI 전달 통로로 제공하지 않는다.
+- Telegram에 raw root shell 또는 TUI를 노출하지 않는다. 대신 exact command/script를
+  preview·digest·승인에 결합하는 관리형 action executor를 제공한다.
 - 사용자별 Home Assistant 의미 정보를 image나 `AGENTS.md`에 미리 넣지 않는다.
 - `.storage`, Recorder DB 또는 credential 파일을 직접 수정하는 기능을 만들지
   않는다.

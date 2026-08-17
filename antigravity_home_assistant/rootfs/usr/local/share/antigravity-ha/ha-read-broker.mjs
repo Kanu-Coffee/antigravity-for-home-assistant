@@ -32,6 +32,23 @@ const DEFAULT_HISTORY_LIMIT = 100;
 const MAX_HISTORY_LIMIT = 500;
 const DEFAULT_TRACE_LIMIT = 20;
 const MAX_TRACE_LIMIT = 50;
+const STORAGE_USAGE_CATEGORY_IDS = Object.freeze([
+  "system",
+  "apps_data",
+  "apps_config",
+  "media",
+  "share",
+  "backup",
+  "ssl",
+  "homeassistant",
+]);
+const STORAGE_USAGE_CATEGORY_ALIASES = new Map([
+  ...STORAGE_USAGE_CATEGORY_IDS.map((id) => [id, id]),
+  // Supervisor API v1 retains the pre-App terminology. Normalize it without
+  // exposing any upstream label or recursive directory name.
+  ["addons_data", "apps_data"],
+  ["addons_config", "apps_config"],
+]);
 const ACTIONS = new Set([
   "app_logs",
   "config",
@@ -43,6 +60,7 @@ const ACTIONS = new Set([
   "services",
   "state",
   "states",
+  "storage_usage",
   "supervisor_info",
   "traces",
 ]);
@@ -129,6 +147,75 @@ function projectState(value, supervisorToken) {
 function pick(value, keys) {
   if (!isPlainObject(value)) throw new HaReadError("upstream_invalid", "upstream result is invalid");
   return Object.fromEntries(keys.filter((key) => Object.hasOwn(value, key)).map((key) => [key, value[key]]));
+}
+
+function byteCount(value, label) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new HaReadError("upstream_invalid", `${label} is invalid`);
+  }
+  return value;
+}
+
+function compatibleByteCount(value, currentKey, legacyKey, label) {
+  if (!isPlainObject(value)) {
+    throw new HaReadError("upstream_invalid", "storage usage result is invalid");
+  }
+  const current = value[currentKey];
+  const legacy = value[legacyKey];
+  if (current !== undefined && legacy !== undefined && current !== legacy) {
+    throw new HaReadError("upstream_invalid", `${label} is ambiguous`);
+  }
+  return byteCount(current ?? legacy, label);
+}
+
+function projectStorageUsage(value) {
+  if (!isPlainObject(value) || !Array.isArray(value.children)) {
+    throw new HaReadError("upstream_invalid", "storage usage result is invalid");
+  }
+  const totalBytes = compatibleByteCount(
+    value,
+    "total_bytes",
+    "total_space",
+    "total storage bytes",
+  );
+  const usedBytes = compatibleByteCount(
+    value,
+    "used_bytes",
+    "used_space",
+    "used storage bytes",
+  );
+  if (usedBytes > totalBytes) {
+    throw new HaReadError("upstream_invalid", "used storage bytes exceed total storage bytes");
+  }
+
+  const projected = new Map();
+  for (const child of value.children) {
+    if (!isPlainObject(child) || typeof child.id !== "string") continue;
+    const id = STORAGE_USAGE_CATEGORY_ALIASES.get(child.id);
+    if (id === undefined) continue;
+    if (projected.has(id)) {
+      throw new HaReadError("upstream_invalid", "storage usage category is duplicated");
+    }
+    const categoryBytes = compatibleByteCount(
+      child,
+      "used_bytes",
+      "used_space",
+      `${id} storage bytes`,
+    );
+    if (categoryBytes > totalBytes) {
+      throw new HaReadError("upstream_invalid", `${id} storage bytes exceed total storage bytes`);
+    }
+    projected.set(id, categoryBytes);
+  }
+
+  return {
+    total_bytes: totalBytes,
+    used_bytes: usedBytes,
+    available_bytes: totalBytes - usedBytes,
+    categories: STORAGE_USAGE_CATEGORY_IDS
+      .filter((id) => projected.has(id))
+      .map((id) => ({ id, used_bytes: projected.get(id) })),
+  };
 }
 
 const SENSITIVE_LOG_LINE = "[REDACTED_SENSITIVE_LOG_LINE]";
@@ -568,6 +655,12 @@ export class HaReadBroker {
           "version",
           "version_latest",
         ]);
+      }
+      case "storage_usage": {
+        assertOnlyKeys(payload, new Set(), "storage usage payload");
+        return projectStorageUsage(
+          await this.#supervisorData("/host/disks/default/usage"),
+        );
       }
       case "core_logs": {
         assertOnlyKeys(payload, new Set(["lines"]), "log payload");

@@ -4,9 +4,6 @@ FROM ${BUILD_FROM}
 
 ARG DEBIAN_SNAPSHOT=20260812T000000Z
 ARG BUILD_ARCH=amd64
-ARG BUILD_VERSION=2.0.10
-ARG SOURCE_REVISION=""
-ARG SOURCE_ROOTFS_SHA256=""
 ARG TARGETARCH
 ARG ANTIGRAVITY_VERSION=1.1.13
 ARG ANTIGRAVITY_BUILD=6057583128215552
@@ -61,7 +58,6 @@ RUN sed -i \
       tmux \
       xz-utils \
       yamllint \
-    && rm -rf /var/lib/apt/lists/* \
     && resolved_arch="${TARGETARCH:-${BUILD_ARCH}}" \
     && case "${resolved_arch}" in \
       amd64) \
@@ -145,9 +141,20 @@ RUN sed -i \
       "/tmp/gh_${GH_VERSION}_linux_${gh_arch}" \
       "/tmp/${node_archive}" \
       /tmp/npm-cache \
-      /tmp/ttyd
+      /tmp/ttyd \
+    && apt-get clean \
+    && rm -rf \
+      /var/lib/apt/lists/* \
+      /var/cache/apt/archives/* \
+      /var/cache/apt/*.bin
 
 ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
+
+# Release-only metadata must stay after the dependency layer so routine App
+# updates can reuse its content-addressed layers on Home Assistant hosts.
+ARG BUILD_VERSION=2.0.11
+ARG SOURCE_REVISION=""
+ARG SOURCE_ROOTFS_SHA256=""
 
 RUN --mount=type=bind,source=rootfs,target=/tmp/antigravity-source-rootfs,readonly \
     source_root=/tmp/antigravity-source-rootfs \
@@ -257,6 +264,9 @@ RUN manifest=/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
       /usr/local/share/antigravity-ha/source-rootfs-manifest.json \
       /usr/local/share/antigravity-ha/supervisor-credential-fd.mjs \
       /usr/local/share/antigravity-ha/supervisor-options-migrate.mjs \
+      /usr/local/share/antigravity-ha/telegram-action-coordinator.mjs \
+      /usr/local/share/antigravity-ha/telegram-action-executor.mjs \
+      /usr/local/share/antigravity-ha/telegram-action-proposal-mcp.mjs \
       /usr/local/share/antigravity-ha/telegram-bridge.mjs \
       /usr/local/share/antigravity-ha/telegram-pairing.mjs \
       /usr/local/share/antigravity-ha/telegram-state.mjs \
@@ -271,6 +281,9 @@ RUN install -d -m 0700 /data/home /data/antigravity /data/github-cli \
     && node --check /usr/local/share/antigravity-ha/ha-feedback.mjs \
     && node --check /usr/local/share/antigravity-ha/managed-plugin-update.mjs \
     && node --check /usr/local/share/antigravity-ha/supervisor-options-migrate.mjs \
+    && node --check /usr/local/share/antigravity-ha/telegram-action-coordinator.mjs \
+    && node --check /usr/local/share/antigravity-ha/telegram-action-executor.mjs \
+    && node --check /usr/local/share/antigravity-ha/telegram-action-proposal-mcp.mjs \
     && node /usr/local/share/antigravity-ha/ha-feedback.mjs --help \
       | grep -Fq 'ha-feedback github submit'
 

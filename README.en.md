@@ -81,9 +81,10 @@ attach OAuth material to an issue.
 
 > [!CAUTION]
 > Telegram is a **primary administrator channel** equivalent to the CLI. An
-> authorized Telegram user intentionally uses and can modify `/data/home`,
-> `/config`, native OAuth, global/workspace plugins, agents, rules, MCP, and the
-> Antigravity permission policy. Protect the bot token, authorized chats, and
+> authorized user uses the shared OAuth identity and `/config` plus global
+> customizations, and can approve device, configuration, terminal, and script
+> actions. OAuth material, App-owned permission settings, and sensitive paths
+> cannot be modified directly. Protect the bot token, authorized chats, and
 > Telegram accounts as Home Assistant administrator credentials. Integrated
 > OAuth, AppArmor, and Bot API E2E on real HAOS remain `NOT RUN` until release
 > evidence records them.
@@ -151,50 +152,67 @@ descendants while retaining ordinary `/config`, network, and scoped-helper work.
 It requires no `full_access`, `SYS_ADMIN`, protected-mode change, or other HAOS
 privilege. `antigravity_terminal_sandbox` is deprecated, no-op compatibility
 input; both `true` and `false` normalize to `false`, and the wrapper rejects
-native sandbox flag overrides. A
-`telegram_access_mode` value from 2.0.6 or earlier is migration-only input and is
-not an authorization source. New installs default to `always-proceed` and allow
-the same operational tools in all three channels: `/config`, user global plugins,
-agents, skills and rules, URL access, commands, and MCP. Exact denies
-still block direct reads and writes of `secrets.yaml`, `.storage`, App-owned
-runtime/browser/bot tokens, SSH/private keys, and standard cloud-auth paths.
-Spawned command/stdio tools are also unable to read the native OAuth backend
-under AppArmor. Inline secrets that users place inside global
-plugin/MCP configuration are part of a trusted extension context and are
-outside this guarantee.
-Writing `settings.json` directly through a raw file tool is an exception to
-default-allow. For an explicit current user request to change an ordinary global
-setting, obtain the current digest with `agy-settings sha256`, then send
-`expected_sha256` and a JSON merge `patch` on stdin to `agy-settings patch`.
-That helper updates atomically but rejects the App-owned security keys
-`permissions`, `enableTerminalSandbox`, `allowNonWorkspaceAccess`,
-`toolPermission`, and `artifactReviewPolicy`; change those policies only through
-App options and a restart. User plugins, agents,
-skills, and rules remain shared and directly writable, and updates preserve
-existing user-owned rules. Version 2.0.9 and later image-managed defaults already
-allow `mcp(*)` and leave managed `ask` empty. Do not add redundant
-server-specific rules such as `mcp(ha_change/*)`, `mcp(ha_read/*)`, or
-`mcp(ha_memory/*)`. User-added `ask` and `deny` rules still take precedence.
-The bridge receives
-the prompt through piped stdin and runs the shared
-`antigravity --output-format stream-json`
-launcher with the same `/data/home` and `/config`. It does not inject input into a shell or shared tmux session, but it
+native sandbox flag overrides. A `telegram_access_mode` value from 2.0.6 or
+earlier is migration-only input and is not an authorization source.
+
+Version 2.0.11 new installs and Telegram have one effective native value:
+`request-review`. Because of the pinned CLI's headless availability boundary,
+the user-files updater normalizes `strict`, `always-proceed`, and
+`proceed-in-sandbox` options to `request-review`. The schema continues to accept
+those three legacy values only so an upgrade can start with previously stored
+Supervisor options. When safely identified,
+the App-owned 2.0.9/2.0.10 `always-proceed`, `mcp(*)`, and `command(*)`
+broad-allow layout is migrated to bounded native reads and the exact managed
+proposal MCPs. User-owned rules and stronger denies remain preserved, but the
+Telegram startup gate does not connect to the Bot API when unsupported drift is
+present; select `reset_v2` to recover it. Ordinary commands, native writes, URL
+execution, interactive browser tools, and arbitrary mutation-capable MCPs are
+not on the unattended allow list.
+Exact denies continue to protect `secrets.yaml`, `.storage`, App-owned
+runtime/browser/bot tokens, SSH/private keys, native MCP configuration, and
+standard cloud-auth paths.
+
+Telegram automatically allows only the four Playwright tools that upstream
+declares `readOnly: true`: `browser_console_messages`,
+`browser_network_requests`, `browser_snapshot`, and `browser_take_screenshot`.
+Mutation-capable browser tools including `browser_navigate`,
+`browser_navigate_back`, `browser_tabs`, `browser_hover`, `browser_wait_for`,
+`browser_resize`, and `browser_close` fail closed until a typed approval adapter
+exists.
+
+The bridge receives the prompt through piped stdin and runs the shared
+`antigravity --output-format stream-json` launcher with the same `/data/home` and
+`/config`. It does not inject input into a shell or shared tmux session, but it
 inherits the same global settings, plugins, agents, rules, and permission policy
-as the CLI. Replies enter an encrypted persistent outbox before send, are removed
-only after Telegram acknowledges delivery, and use bounded backoff only for
-clearly unsent 429 responses. Ambiguous delivery failures remain isolated until
-`/retry`.
-Because 1.1.13 `stream-json` cannot resume a native permission prompt, a Telegram
-button cannot continue that prompt. Managed runtime rules route ordinary Home
-Assistant service/config changes through `ha_change_propose`. The broker supports
-every live Home Assistant domain/service with bounded `service_data` and ordinary
-YAML patches. Every App-managed broker `service_call`,
-`multi_choice_service_call`, or `config_patch` submitted that way is high-risk
-and requires durable requester/chat/session-bound Approve/Choose/Deny buttons;
-global tool policy
-cannot downgrade that broker classification. Approved service calls are checked
+as the CLI. Replies enter an encrypted persistent outbox before send, are
+removed only after Telegram acknowledges delivery, and use bounded backoff only
+for clearly unsent 429 responses. Ambiguous delivery failures remain isolated
+until `/retry`.
+
+Version 2.0.11 uses a **proposal-first** Telegram path. Bounded read MCPs may
+inspect safe state, logs, and configuration directly. Home Assistant service or
+configuration changes first use `ha_change_propose`; terminal commands, bounded
+inline scripts, mutually exclusive command choices, and finite questions first
+use `telegram_action_propose`. A proposal MCP cannot execute the operation or
+access execution credentials. It registers an exact action digest and public
+preview. The bridge binds the card to the requester, chat, session generation,
+update, conversation, and TTL. Only an opaque button selection dispatches one
+prevalidated action through the HA broker or a credential-free executor. Once
+committed, an unprovable completion is reported `in_doubt` and is never spawned
+again. The sealed result continues the same Antigravity conversation in a new
+turn.
+
+The HA broker supports every live Home Assistant domain/service with bounded
+`service_data` and ordinary YAML patches. Approved service calls are checked
 against live `/api/services`; YAML uses an expected digest, atomic backup/write,
-and `ha-config-check`, with exact rollback on failure.
+`ha-config-check`, and exact rollback on failure. The terminal/script executor
+receives only the approved source, canonical working directory, and timeout,
+runs under the separate AppArmor command profile, and receives neither App
+tokens nor native OAuth. Shell-visible background and daemon patterns are
+rejected immediately before spawn, but this is not cgroup containment for an
+opaque interpreter's double-fork. Daemon jobs are unsupported, and uncertain
+completion ends `in_doubt`. A `question` selection has no side effect and
+returns only the selected label to the conversation.
 
 Starting in 2.0.10, the broker also supports `multi_choice_service_call` with
 one to 31 mutually exclusive service calls. Telegram renders at most 32 buttons
@@ -206,6 +224,13 @@ idempotency bindings before executing exactly one prevalidated choice. New
 `v3c`/`v3d` choose/cancel callbacks coexist with legacy `v2a`/`v2d`
 Approve/Deny cards.
 
+Version 2.0.11 `multi_choice_terminal` and `question` operations also support
+one to 31 choices plus Cancel in the same 4-by-8 grid. Action callbacks use
+`v4a`/`v4d`/`v4c` and carry only short encrypted-state tokens, never command,
+script, or choice payloads. `/cancel` cancels pending or approved actions; it is
+not rollback for an already committed operation. TTL cleanup expires only an
+untouched pending card; a durable decision or result remains until callback ACK.
+
 Choice mappings and selections persist across a bridge restart, but an
 unstarted proposal itself remains in change-broker memory. A bridge-only restart
 can therefore revalidate a card while the broker remains alive; a full App or
@@ -213,7 +238,14 @@ broker restart that loses the proposal rejects the old card and requires a new
 request. An execution already accepted by the broker can recover its durable
 idempotency status or completed result without dispatching the mutation again.
 
-The 2.0.10 stream parser accepts bounded string `toolAction` and `toolSummary`
+Registration by a proposal MCP is not itself crash-durable. If the bridge exits
+after coordinator registration succeeds but before it seals the encrypted
+approval state and card/outbox, there is no approval card to recover and the
+user must repeat the original request to create a new proposal. Durability
+claims begin after that seal and cover approval decisions/results or executions
+already accepted by the broker.
+
+The 2.0.11 stream parser accepts bounded string `toolAction` and `toolSummary`
 metadata in addition to the required `Arguments`, `ServerName`, and `ToolName`
 fields. If exactly one completed valid proposal receipt exists but only its
 terminal text is empty, the bridge substitutes a fixed safe acknowledgement so
@@ -221,15 +253,24 @@ the approval card can still be delivered. A proposal-free empty response,
 unknown parameter key, non-string result, or oversized result remains
 fail-closed.
 
-Trusted user-installed/global native tools, `command(*)`/`mcp(*)`, direct
-`ha-api`/`supervisor-api`, and ordinary `/config` shell writes inherit the same
-administrator authority as the CLI and are not transparently intercepted by the
-broker. Mutations through those paths follow user-owned rules and the current
-explicit request, subject to exact denies and AppArmor. Authenticated Web/SSH
-operations may use those trusted direct paths and are not automatically routed
-through a Telegram approval button. The broker guarantee therefore does not
-cover every possible native mutation. Native prompts cannot be resumed through
-Telegram, and Telegram has no private auto-approval override.
+There is an important boundary: pinned CLI 1.1.13
+`--print --output-format stream-json` cannot export a native permission request
+and resume it from that point after external approval. The App therefore does
+not claim transparent interception of arbitrary future or user-installed plugin
+MCP tools. Managed HA, terminal, script, and question workflows are supported
+by the two proposal MCPs; an unrepresentable Telegram side effect fails closed
+instead of falling back to a direct tool. On a native permission denial, the
+bridge may ask the same conversation once to re-plan with a proposal, but does
+not resume or approve the denied invocation. Authenticated interactive Web/SSH
+work may use direct tools under native review and is not automatically converted
+to a Telegram card.
+
+Once the shared native OAuth identity is authenticated, routine supported work
+can be completed from Telegram without a terminal. Initial native OAuth still
+requires a controlling TTY, so an unauthenticated installation must run
+`ha-antigravity-login` once from the Web terminal or SSH. Real HAOS AppArmor,
+native OAuth, live Bot API cards/callbacks, and real-device HA changes remain
+`NOT RUN` until release evidence records them.
 
 ## Secure defaults
 
@@ -249,9 +290,11 @@ Telegram, and Telegram has no private auto-approval override.
   cloud-auth paths stay denied in both modes. Do not put inline secrets in
   global plugin/MCP configuration; use a credential-aware wrapper or protected
   environment reference.
-- `always-proceed` cannot bypass AppArmor or Telegram broker policy, and the
-  command-profile transition cannot be disabled by an App option. The native
-  terminal sandbox is not used.
+- The native default and Telegram's only effective value is `request-review`.
+  The user-files updater also normalizes `strict` and legacy autonomous options
+  to this value; other schema values are upgrade-input compatibility only.
+  AppArmor command-profile transitions and proposal approvals cannot be
+  disabled by an App option. The native terminal sandbox is not used.
 - Web, SSH, and Telegram Antigravity intentionally share `/data/home` OAuth and
   user settings plus the `/config` project. AppArmor cannot distinguish a
   legitimate credential or settings read from one induced by a Telegram prompt;
@@ -270,11 +313,15 @@ The default `antigravity_user_files_update_mode` is `preserve`.
 | --- | --- |
 | `preserve` | Preserve OAuth and user-owned settings, MCP, and plugins; refresh the App-owned HA plugin once per version |
 | `refresh_managed` | Keep those guarantees and plugin refresh, then back up and merge ownership-recorded settings keys and permission rules |
-| `reset_v2` | Perform the same managed-settings merge strictly and stop if ownership is missing or ambiguous |
+| `reset_v2` | Explicit recovery mode: back up safely parseable settings and replace managed keys plus all three permission buckets with the exact image defaults, regardless of ownership state |
 
-Even `reset_v2` does not reset `/config`, OAuth, SSH keys, browser identity,
-memory, or user plugins. It stops instead of overwriting assets whose ownership
-cannot be proven. Regardless of mode, the App-owned `home-assistant` plugin is
+`reset_v2` preserves user top-level settings outside `permissions`, the existing
+global MCP configuration, user plugins, `/config`, OAuth, SSH keys, browser
+identity, and memory. It exactly resets managed keys and the entire
+`permissions.allow`/`ask`/`deny` object even when prior App ownership state is
+missing or ambiguous. Unsafe regular-file state or invalid JSON still fails
+closed. Until the option is returned to `preserve`, every startup repairs drift;
+switch it back after recovery. Regardless of mode, the App-owned `home-assistant` plugin is
 refreshed from the canonical image copy once per App version when its ownership
 marker is safe. A marker-less plugin with that name is treated as a user-owned
 conflict and stops startup. Before an update, make a full Home Assistant backup
@@ -290,7 +337,23 @@ local images carrying this checkout's labels. Release builds use the stable
 recovery, update, and config transactions bound manifest-verified completed
 managed-plugin, native user-files refresh, and change-broker config backups to
 the newest two in each category. Active journal/result, unowned, malformed, or
-unsafe backups are never auto-deleted.
+unsafe backups are never auto-deleted. HA memory bounds unreferenced terminal
+refresh records to the newest 64 while retaining syncs referenced by the current
+catalog, revisions, changes, and audit history. A `running` row left by an
+abnormal mid-refresh exit is not auto-deleted because there is no safe lease
+signal to distinguish it from live work.
+
+HAOS App updates do not use that development build cache. This repository ships
+the generic prebuilt GHCR image recommended by Home Assistant, so the device
+pulls the final image and Supervisor owns old-image cleanup after a successful
+replacement. Shared layers or image IDs still used by another App are expected
+to remain. This App does not add a Docker socket, `docker_api`, or `full_access`,
+and it never runs a global prune or `/supervisor/repair` automatically during an
+update. If storage appears to grow, use Telegram's `ha_read_storage_usage` plus
+Supervisor logs to distinguish system, App data/config, and backup usage first.
+`repair` is a broad administrator-approved recovery operation for an evidenced
+stale overlay/image failure. Real before/after HAOS update storage observation
+remains `NOT RUN`.
 
 ## Documentation and verification status
 

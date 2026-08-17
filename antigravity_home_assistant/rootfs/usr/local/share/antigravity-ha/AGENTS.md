@@ -129,6 +129,12 @@ sandbox is not used because HAOS does not grant its privileged capabilities.
   do not probe `localhost:8123` or an external Home Assistant URL as an
   alternate login path. Check a 1440x900 desktop viewport and resize the same
   page to 390x844 for a mobile layout check when practical.
+- In requester-bound Telegram work, automatic browser access is narrower:
+  only console messages, network-request history, snapshots, and screenshots
+  are upstream read-only and allowed. Navigation, tab creation, hover, wait,
+  resize, close, and interaction tools are fail-closed until a typed Telegram
+  browser adapter exists. If the required page is not already open, report the
+  limitation instead of invoking a direct browser tool or terminal workaround.
 - For each relevant page, confirm the URL and visible snapshot, take a
   screenshot, review warning/error console messages, and inspect network
   requests for failed, blocked, or 4xx/5xx resources. A successful build alone

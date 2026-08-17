@@ -97,17 +97,24 @@ const TOOL_PERMISSIONS = new Set([
   "strict",
 ]);
 const BROWSER_POLICIES = new Set(["safe", "never", "always"]);
-const PLAYWRIGHT_SAFE_TOOLS = [
-  "browser_close",
+const PLAYWRIGHT_READ_ONLY_TOOLS = [
   "browser_console_messages",
+  "browser_network_requests",
+  "browser_snapshot",
+  "browser_take_screenshot",
+];
+// Public 2.0.6 through 2.0.10 classified these navigation and UI-state tools
+// as "safe" even though the pinned Playwright MCP declares them readOnly:false.
+// Keep the exact legacy set only for ownership recognition so upgrades can
+// retire it without mistaking App-owned rules for user policy.
+const PLAYWRIGHT_LEGACY_SAFE_TOOLS = [
+  "browser_close",
+  ...PLAYWRIGHT_READ_ONLY_TOOLS,
   "browser_hover",
   "browser_navigate",
   "browser_navigate_back",
-  "browser_network_requests",
   "browser_resize",
-  "browser_snapshot",
   "browser_tabs",
-  "browser_take_screenshot",
   "browser_wait_for",
 ];
 const PLAYWRIGHT_INTERACTIVE_TOOLS = [
@@ -136,6 +143,22 @@ const HA_READ_TOOLS = [
   "ha_read_services",
   "ha_read_state",
   "ha_read_states",
+  "ha_read_storage_usage",
+  "ha_read_system_info",
+  "ha_read_traces",
+];
+// Keep published ownership fingerprints immutable. New read tools belong in
+// HA_READ_TOOLS, but must not be retroactively added to the exact 2.0.6/2.0.8
+// layouts used to prove that a preserve-mode migration owns the old rules.
+const LEGACY_2_0_6_2_0_8_HA_READ_TOOLS = [
+  "ha_read_app_logs",
+  "ha_read_config",
+  "ha_read_core_logs",
+  "ha_read_history",
+  "ha_read_registry",
+  "ha_read_services",
+  "ha_read_state",
+  "ha_read_states",
   "ha_read_system_info",
   "ha_read_traces",
 ];
@@ -144,15 +167,24 @@ const HA_VALIDATE_TOOLS = [
   "ha_verify_state",
 ];
 // Telegram and the interactive CLI intentionally share this native HOME and
-// one native permission policy.  Antigravity evaluates deny before ask before
-// allow, so the v3 default can make every supported action usable from the
-// headless Telegram transport while the explicit sensitive-path rules remain
-// authoritative. File access stays on the operational /config and global
-// customization roots instead of read_file(*)/write_file(*), because the
-// shared native HOME also contains OAuth material that is not model data.
-// User-owned rules are preserved by the managed merge; an explicit user
-// ask/deny therefore continues to override these broad defaults.
-const SHARED_NATIVE_FILE_RULES = [
+// one native permission policy. Only bounded reads and the two proposal-only
+// MCPs may run unattended. Direct writes, commands, URL tools, and mutation
+// MCPs are absent from both allow and ask so the model cannot mistake a native
+// headless prompt failure for the Telegram approval path. The request-review
+// default remains defense in depth if guidance is violated, but the model must
+// register each side effect through the trusted Telegram proposal path.
+// User-owned rules are preserved by the managed merge, and deny remains
+// stronger than ask and allow.
+const SAFE_NATIVE_READ_PERMISSION_RULES = [
+  "read_file(/config)",
+  "read_file(/data/home/.gemini/config)",
+  "read_file(/data/home/.gemini/antigravity-cli/agents)",
+  "read_file(/data/home/.gemini/antigravity-cli/plugins)",
+  "read_file(/data/home/.gemini/antigravity-cli/skills)",
+  "read_file(/data/home/.gemini/GEMINI.md)",
+  "read_file(/data/home/.gemini/antigravity-cli/settings.json)",
+];
+const LEGACY_V3_SHARED_NATIVE_FILE_RULES = [
   "read_file(/config)",
   "write_file(/config)",
   "read_file(/data/home/.gemini/config)",
@@ -168,7 +200,7 @@ const SHARED_NATIVE_FILE_RULES = [
   "read_file(/data/home/.gemini/antigravity-cli/settings.json)",
 ];
 const LEGACY_SHARED_NATIVE_FILE_RULES = [
-  ...SHARED_NATIVE_FILE_RULES,
+  ...LEGACY_V3_SHARED_NATIVE_FILE_RULES,
   // Public 2.0.8 managed this write grant. It is migration source state only:
   // allowing the model to rewrite its own deny policy would make the OAuth and
   // sensitive-path boundary self-removable.
@@ -181,7 +213,9 @@ const PRE_V3_HA_PERMISSION_RULES = {
     "mcp(ha_memory/memory_search)",
     "mcp(ha_memory/memory_show)",
     "mcp(ha_memory/memory_status)",
-    ...HA_READ_TOOLS.map((tool) => `mcp(ha_read/${tool})`),
+    ...LEGACY_2_0_6_2_0_8_HA_READ_TOOLS.map(
+      (tool) => `mcp(ha_read/${tool})`,
+    ),
     ...HA_VALIDATE_TOOLS.map((tool) => `mcp(ha_validate/${tool})`),
   ],
   ask: [
@@ -207,14 +241,16 @@ const PRE_V3_HA_PERMISSION_RULES = {
     "write_file(/config/.storage)",
   ],
 };
-const DEFAULT_ALLOW_PERMISSION_RULES = [
-  ...SHARED_NATIVE_FILE_RULES,
-  "read_url(*)",
-  "execute_url(*)",
-  "command(*)",
-  "mcp(*)",
+const SAFE_MCP_PERMISSION_RULES = [
+  "mcp(ha_change/ha_change_propose)",
+  "mcp(telegram_action/telegram_action_propose)",
+  "mcp(ha_memory/memory_search)",
+  "mcp(ha_memory/memory_show)",
+  "mcp(ha_memory/memory_status)",
+  ...HA_READ_TOOLS.map((tool) => `mcp(ha_read/${tool})`),
+  ...HA_VALIDATE_TOOLS.map((tool) => `mcp(ha_validate/${tool})`),
 ];
-const SENSITIVE_DENY_PERMISSION_RULES = [
+const LEGACY_V3_SENSITIVE_DENY_PERMISSION_RULES = [
   // The shared runtime must read its own settings/OAuth state, but a model
   // must not rewrite the permission policy that confines its built-in tools.
   "write_file(/data/home/.gemini/antigravity-cli/settings.json)",
@@ -249,10 +285,33 @@ const SENSITIVE_DENY_PERMISSION_RULES = [
   "read_file(/root/.ssh)",
   "write_file(/root/.ssh)",
 ];
+const SENSITIVE_DENY_PERMISSION_RULES = [
+  ...LEGACY_V3_SENSITIVE_DENY_PERMISSION_RULES,
+  "read_file(/data/home/.gemini/config/mcp_config.json)",
+  "write_file(/data/home/.gemini/config/mcp_config.json)",
+];
 const HA_PERMISSION_RULES = {
-  allow: [...DEFAULT_ALLOW_PERMISSION_RULES],
+  allow: [
+    ...SAFE_NATIVE_READ_PERMISSION_RULES,
+    ...SAFE_MCP_PERMISSION_RULES,
+  ],
   ask: [],
   deny: [...SENSITIVE_DENY_PERMISSION_RULES],
+};
+const LEGACY_V3_PERMISSION_RULES = {
+  allow: [
+    ...LEGACY_V3_SHARED_NATIVE_FILE_RULES,
+    "read_url(*)",
+    "execute_url(*)",
+    "command(*)",
+    "mcp(*)",
+    ...PLAYWRIGHT_LEGACY_SAFE_TOOLS.map((tool) => `mcp(playwright/${tool})`),
+    ...PLAYWRIGHT_INTERACTIVE_TOOLS.map(
+      (tool) => `mcp(playwright/${tool})`,
+    ),
+  ],
+  ask: [],
+  deny: [...LEGACY_V3_SENSITIVE_DENY_PERMISSION_RULES],
 };
 const LEGACY_SHARED_NATIVE_FILE_RULE_SET = new Set(
   LEGACY_SHARED_NATIVE_FILE_RULES,
@@ -262,7 +321,7 @@ const LEGACY_2_0_6_PERMISSION_RULES = {
     ...PRE_V3_HA_PERMISSION_RULES.allow.filter(
       (rule) => !LEGACY_SHARED_NATIVE_FILE_RULE_SET.has(rule),
     ),
-    ...PLAYWRIGHT_SAFE_TOOLS.map((tool) => `mcp(playwright/${tool})`),
+    ...PLAYWRIGHT_LEGACY_SAFE_TOOLS.map((tool) => `mcp(playwright/${tool})`),
   ],
   ask: [
     ...PRE_V3_HA_PERMISSION_RULES.ask,
@@ -277,7 +336,7 @@ const LEGACY_2_0_6_PERMISSION_RULES = {
 const LEGACY_2_0_8_PERMISSION_RULES = {
   allow: [
     ...PRE_V3_HA_PERMISSION_RULES.allow,
-    ...PLAYWRIGHT_SAFE_TOOLS.map((tool) => `mcp(playwright/${tool})`),
+    ...PLAYWRIGHT_LEGACY_SAFE_TOOLS.map((tool) => `mcp(playwright/${tool})`),
   ],
   ask: [
     ...PRE_V3_HA_PERMISSION_RULES.ask,
@@ -304,8 +363,7 @@ const MANAGED_PERMISSION_RULES = new Set([
   ...HA_PERMISSION_RULES.allow,
   ...HA_PERMISSION_RULES.ask,
   ...HA_PERMISSION_RULES.deny,
-  ...PLAYWRIGHT_SAFE_TOOLS.map((tool) => `mcp(playwright/${tool})`),
-  ...PLAYWRIGHT_INTERACTIVE_TOOLS.map((tool) => `mcp(playwright/${tool})`),
+  ...PLAYWRIGHT_READ_ONLY_TOOLS.map((tool) => `mcp(playwright/${tool})`),
 ]);
 const RETIRED_MANAGED_PERMISSION_RULES = new Set([
   // 2.0.6 used these recursive parent denies.  Keep recognizing them only in
@@ -319,6 +377,12 @@ const RETIRED_MANAGED_PERMISSION_RULES = new Set([
   ...LEGACY_2_0_8_PERMISSION_RULES.allow,
   ...LEGACY_2_0_8_PERMISSION_RULES.ask,
   ...LEGACY_2_0_8_PERMISSION_RULES.deny,
+  // 2.0.9/2.0.10 broadly allowed every command, URL, MCP, native write, and
+  // interactive browser action. Recognize that exact App-owned layout so a
+  // preserve-mode upgrade can atomically retire it without claiming user rules.
+  ...LEGACY_V3_PERMISSION_RULES.allow,
+  ...LEGACY_V3_PERMISSION_RULES.ask,
+  ...LEGACY_V3_PERMISSION_RULES.deny,
   // Pre-release 2.0.7 candidates briefly managed individual App skill reads.
   // Recognizing them makes interrupted candidate upgrades converge safely.
   ...[
@@ -1819,10 +1883,10 @@ function parseOptions(value) {
   let toolPermission = value.antigravity_tool_permission;
   if (toolPermission === undefined) {
     if (value.antigravity_approval_policy === undefined) {
-      toolPermission = "always-proceed";
+      toolPermission = "request-review";
     } else {
       const legacyMapping = {
-        untrusted: "strict",
+        untrusted: "request-review",
         "on-request": "request-review",
         never: "request-review",
       };
@@ -1835,10 +1899,13 @@ function parseOptions(value) {
   if (typeof toolPermission !== "string" || !TOOL_PERMISSIONS.has(toolPermission)) {
     throw new Error("antigravity_tool_permission is invalid");
   }
-  if (toolPermission === "proceed-in-sandbox") {
-    toolPermission = "always-proceed";
+  if (
+    toolPermission !== "request-review"
+  ) {
+    const previousToolPermission = toolPermission;
+    toolPermission = "request-review";
     migrationWarnings.push(
-      "antigravity_tool_permission=proceed-in-sandbox was normalized to always-proceed because the privileged native sandbox is unsupported; tools remain confined by AppArmor",
+      `antigravity_tool_permission=${previousToolPermission} was normalized to request-review so Telegram side effects require a requester-bound proposal and confirmation card`,
     );
   }
 
@@ -1918,11 +1985,8 @@ function parseTemplate(content, name) {
 }
 
 function browserPermissionRules() {
-  const safe = PLAYWRIGHT_SAFE_TOOLS.map((tool) => `mcp(playwright/${tool})`);
-  const interactive = PLAYWRIGHT_INTERACTIVE_TOOLS.map(
-    (tool) => `mcp(playwright/${tool})`,
-  );
-  return { allow: [...safe, ...interactive], ask: [] };
+  const safe = PLAYWRIGHT_READ_ONLY_TOOLS.map((tool) => `mcp(playwright/${tool})`);
+  return { allow: [...safe], ask: [] };
 }
 
 function defaultSettings(template, options) {
@@ -2020,6 +2084,18 @@ function permissionMigrationSource(ownership, desiredOwnership) {
     )
   ) {
     return { label: "2.0.8", rules: LEGACY_2_0_8_PERMISSION_RULES };
+  }
+  if (
+    sameStringSet(ownership.keys, desiredOwnership.keys) &&
+    sameStringSet(
+      ownership.permission_rules,
+      permissionRuleSet(LEGACY_V3_PERMISSION_RULES),
+    )
+  ) {
+    return {
+      label: "2.0.9/2.0.10",
+      rules: LEGACY_V3_PERMISSION_RULES,
+    };
   }
   return null;
 }
@@ -2152,11 +2228,15 @@ function preparePreservePermissionMigration(
       } else if (current.enableTerminalSandbox !== false) {
         throw new Error("The managed native sandbox setting is invalid");
       }
-      if (current.toolPermission === "proceed-in-sandbox") {
+      if (typeof current.toolPermission !== "string" ||
+          !TOOL_PERMISSIONS.has(current.toolPermission)) {
+        throw new Error("The managed native tool permission is invalid");
+      }
+      if (current.toolPermission !== "request-review") {
         candidate = replaceTopLevelJsonPropertyValue(
           candidate,
           "toolPermission",
-          "always-proceed",
+          "request-review",
         );
         changed = true;
       }
@@ -2167,14 +2247,14 @@ function preparePreservePermissionMigration(
         candidate,
         status: "applied",
         warning:
-          "Preserve mode retired unsupported native-sandbox settings; tools use the AppArmor command boundary",
+          "Preserve mode enforced request-review for Telegram side effects and retired unsupported native-sandbox settings",
       };
     } catch {
       return {
         candidate: null,
         status: "skipped_ambiguous",
         warning:
-          "Preserve mode left settings.json unchanged because its managed native sandbox setting was ambiguous",
+          "Preserve mode left settings.json unchanged because its managed approval or native-sandbox setting was ambiguous",
       };
     }
   }
@@ -2200,20 +2280,33 @@ function preparePreservePermissionMigration(
     permissionRules(current, "Existing settings.json");
     permissionRules(desired, "The image default settings.json");
 
+    const bucketRank = { allow: 0, ask: 1, deny: 2 };
+    const preservedOverrides = new Map();
     for (const bucket of ["allow", "ask", "deny"]) {
       for (const rule of migrationSource.rules[bucket]) {
-        const occurrences = ["allow", "ask", "deny"].reduce(
-          (count, candidateBucket) =>
-            count +
-            current.permissions[candidateBucket].filter(
-              (candidateRule) => candidateRule === rule,
-            ).length,
-          0,
+        const locations = [];
+        for (const candidateBucket of ["allow", "ask", "deny"]) {
+          for (const candidateRule of current.permissions[candidateBucket]) {
+            if (candidateRule === rule) locations.push(candidateBucket);
+          }
+        }
+        const expectedCount = locations.filter(
+          (candidateBucket) => candidateBucket === bucket,
+        ).length;
+        const stronger = locations.filter(
+          (candidateBucket) => bucketRank[candidateBucket] > bucketRank[bucket],
         );
-        if (
-          occurrences !== 1 ||
-          !current.permissions[bucket].includes(rule)
-        ) {
+        const weaker = locations.filter(
+          (candidateBucket) => bucketRank[candidateBucket] < bucketRank[bucket],
+        );
+        if (weaker.length > 0 || expectedCount > 1 || stronger.length > 1) {
+          throw new Error("The App-owned permission layout changed");
+        }
+        if (stronger.length === 1 && locations.length === expectedCount + 1) {
+          preservedOverrides.set(rule, stronger[0]);
+          continue;
+        }
+        if (expectedCount !== 1 || locations.length !== 1) {
           throw new Error("The App-owned permission layout changed");
         }
       }
@@ -2223,7 +2316,8 @@ function preparePreservePermissionMigration(
     const sourceRuleSet = new Set(permissionRuleSet(migrationSource.rules));
     for (const bucket of ["allow", "ask", "deny"]) {
       const userRules = current.permissions[bucket].filter(
-        (rule) => !sourceRuleSet.has(rule),
+        (rule) =>
+          !sourceRuleSet.has(rule) || preservedOverrides.get(rule) === bucket,
       );
       permissions[bucket] = [...userRules];
       for (const rule of desired.permissions[bucket]) {
@@ -2245,11 +2339,15 @@ function preparePreservePermissionMigration(
     } else if (current.enableTerminalSandbox !== false) {
       throw new Error("The App-owned native sandbox setting changed");
     }
-    if (current.toolPermission === "proceed-in-sandbox") {
+    if (typeof current.toolPermission !== "string" ||
+        !TOOL_PERMISSIONS.has(current.toolPermission)) {
+      throw new Error("The App-owned native tool permission changed");
+    }
+    if (current.toolPermission !== "request-review") {
       candidate = replaceTopLevelJsonPropertyValue(
         candidate,
         "toolPermission",
-        "always-proceed",
+        "request-review",
       );
     }
     const installed = parseSettings(candidate, "Migrated settings.json");
@@ -2261,9 +2359,7 @@ function preparePreservePermissionMigration(
     delete installedNonPermissions.enableTerminalSandbox;
     delete currentNonPermissions.toolPermission;
     delete installedNonPermissions.toolPermission;
-    const expectedToolPermission = current.toolPermission === "proceed-in-sandbox"
-      ? "always-proceed"
-      : current.toolPermission;
+    const expectedToolPermission = "request-review";
     if (
       JSON.stringify(currentNonPermissions) !==
         JSON.stringify(installedNonPermissions) ||
@@ -2333,6 +2429,29 @@ function mergeManagedSettings(currentContent, defaultContent, ownership) {
   }
 
   return Buffer.from(`${JSON.stringify(merged, null, 2)}\n`, "utf8");
+}
+
+function resetManagedSettings(currentContent, defaultContent, desiredOwnership) {
+  const current = parseSettings(currentContent, "Existing settings.json");
+  const desired = parseSettings(defaultContent, "The image default settings.json");
+  permissionRules(desired, "The image default settings.json");
+  const reset = { ...current };
+  for (const key of desiredOwnership.keys) {
+    if (!Object.hasOwn(desired, key)) {
+      throw new Error(`The managed settings key ${key} has no image default`);
+    }
+    reset[key] = desired[key];
+  }
+  // reset_v2 is the explicit recovery control for an effective Telegram
+  // permission layout that the startup gate cannot safely accept. Preserve
+  // non-managed top-level settings, but never retain user buckets or unknown
+  // allow/ask rules inside the managed permission object.
+  reset.permissions = {
+    allow: [...desired.permissions.allow],
+    ask: [...desired.permissions.ask],
+    deny: [...desired.permissions.deny],
+  };
+  return Buffer.from(`${JSON.stringify(reset, null, 2)}\n`, "utf8");
 }
 
 function defaultMcpConfig(template) {
@@ -2448,13 +2567,12 @@ async function main() {
 
   if (
     preflight.targets.settings.existed &&
-    managedRefreshRequested &&
+    options.mode === "refresh_managed" &&
     !versionApplied(state, "settings", appVersion) &&
     state.managed.settings.keys.length === 0
   ) {
     const conflict =
       "Existing settings.json has no App ownership state and was preserved";
-    if (options.mode === "reset_v2") throw new Error(conflict);
     warnings.push(conflict);
   }
 
@@ -2462,6 +2580,22 @@ async function main() {
     created.push("settings");
     candidates.settings = defaults.settings;
     state.managed.settings = desiredOwnership;
+  } else if (options.mode === "reset_v2") {
+    const currentSettings = await readSafeFile(SETTINGS_PATH);
+    if (currentSettings === undefined) {
+      throw new Error("Existing settings.json disappeared before managed reset");
+    }
+    const reset = resetManagedSettings(
+      currentSettings,
+      defaults.settings,
+      desiredOwnership,
+    );
+    state.managed.settings = desiredOwnership;
+    if (!reset.equals(currentSettings) ||
+        !versionApplied(state, "settings", appVersion)) {
+      candidates.settings = reset;
+      refreshed.push("settings");
+    }
   } else if (options.mode === "preserve") {
     const currentSettings = await readSafeFile(SETTINGS_PATH);
     if (currentSettings === undefined) {

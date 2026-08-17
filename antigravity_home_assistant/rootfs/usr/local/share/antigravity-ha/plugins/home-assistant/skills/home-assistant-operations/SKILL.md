@@ -11,6 +11,14 @@ authorization headers.
 When MCP tools are available, prefer the bounded `ha_read_*` projections for
 config, state, registry, history, trace, and logs. Use `ha_validate_config`
 without activation and `ha_verify_state` for a fresh exact-state comparison.
+For reports of HAOS storage growth, start with `ha_read_storage_usage`. Treat
+its fixed `system`, `apps_data`, `apps_config`, `media`, `share`, `backup`,
+`ssl`, and `homeassistant` byte categories as classification evidence, not as a
+Docker image or build-cache inventory. Normal App updates use a prebuilt image,
+and Supervisor owns old-image cleanup. Correlate unexplained `system` growth
+with Supervisor update/cleanup logs. Never mount or query the Docker socket,
+run a host-wide Docker prune, or invoke Supervisor repair automatically;
+repair is a broad administrator recovery action, not per-update maintenance.
 
 Keep diagnosis observational. Telegram, Web terminal, and SSH use the same
 native HOME, global customization, permission policy, and mandatory AppArmor
@@ -21,6 +29,15 @@ Home Assistant service call and YAML configuration mutation through
 confirmation card. Do not bypass that path with `ha-api`, `supervisor-api`, a
 shell command, or a direct file write; the broker owns config checks, backup,
 rollback, reload, and supported memory verification.
+
+For any other requester-bound Telegram side effect, including a terminal
+command, inline shell script, or a choice among prevalidated commands, use
+`telegram_action_propose`. Use its `question` operation for a finite choice that
+does not itself execute a Home Assistant change. A successful MCP response only
+registers the action; it never authorizes execution. Wait for the bridge's
+sealed continuation after the requester clicks the inline card. Direct
+`run_command`, write, URL, interactive-browser, and mutation MCP calls are not
+Telegram approval mechanisms and must not be used as fallbacks.
 
 When the requested Telegram mutation has several mutually exclusive valid
 answers, use one `multi_choice_service_call` proposal instead of asking the
@@ -50,12 +67,9 @@ request to change global Antigravity settings, obtain the current digest with
 `enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`, and
 `artifactReviewPolicy` keys and commits other settings atomically.
 
-The broker does not currently implement destructive Supervisor lifecycle
-operations such as Core/host restart, update, restore, App removal, or backup
-deletion. Use a generic Supervisor helper for one of those only when the
-authenticated user explicitly requested that exact operation in the current
-conversation, and disclose that this path has no separate inline approval card.
-Otherwise stop and ask for current confirmation.
+If a Telegram side effect cannot be represented by `ha_change_propose` or
+`telegram_action_propose`, report that limitation and stop. Never bypass the
+inline approval path with a generic Supervisor helper or another direct tool.
 
 Never expose secrets or directly edit `.storage`. Ask for explicit current
 confirmation before safety-critical, destructive, restart, restore, update, or
