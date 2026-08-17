@@ -25,9 +25,7 @@ import { fileURLToPath } from "node:url";
 import {
   TelegramPollBackoff,
   cancelRequesterWork,
-  dispatchNormalizedUpdate,
   enqueueRequester,
-  loadRuntimeConfig,
   metricsSnapshot,
   resetMetricsForTest,
   runAntigravityPrompt,
@@ -454,21 +452,18 @@ async function runFailureInjection(config, fixtureDirectory, moduleOrigin) {
       ? readableResponse(503, { status: "unavailable" })
       : readableResponse(200, { version: "fixture", state: "running" }),
   });
-  const telegramConfig = loadRuntimeConfig({
-    telegram_enabled: true,
-    telegram_bot_token: `123456:${"A".repeat(35)}`,
-    telegram_allowed_user_ids: ["83001"],
-    telegram_allowed_chat_ids: ["83001"],
-    antigravity_tool_permission: "request-review",
-  });
-  const normalizedCallback = {
-    kind: "callback_query",
-    value: {
-      id: "gap007-callback",
-      from: { id: "83001" },
-      message: { chat: { id: "83001", type: "private" } },
-      data: "v2d:fixture-not-present",
-    },
+  // A callback-query acknowledgement is deliberately best-effort after a
+  // durable local decision, so it is not a valid transport-outage probe. Keep
+  // this fixture on the polling transport boundary that TelegramPollBackoff
+  // governs: a failed getUpdates request must reject, while recovery returns a
+  // bounded empty batch without making an external call.
+  const botApiTransport = async () => {
+    if (state.outage) {
+      const error = new Error("injected Bot API outage");
+      error.telegramMethod = "getUpdates";
+      throw error;
+    }
+    return [];
   };
 
   const attempts = { core: 0, bot_api: 0, browser: 0, memory: 0 };
@@ -481,13 +476,7 @@ async function runFailureInjection(config, fixtureDirectory, moduleOrigin) {
     },
     async bot_api() {
       attempts.bot_api += 1;
-      await dispatchNormalizedUpdate(telegramConfig, normalizedCallback, {
-        authorization: () => false,
-        api: async () => {
-          if (state.outage) throw new Error("injected Bot API outage");
-          return {};
-        },
-      });
+      await botApiTransport();
     },
     async browser() {
       attempts.browser += 1;

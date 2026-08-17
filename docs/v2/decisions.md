@@ -32,6 +32,13 @@
 - 같은 numeric tag의 linux/amd64와 linux/arm64 image가 모두 성공한 뒤에만 generic
   manifest를 게시한다.
 - `latest`는 만들지 않으며 기존 numeric tag나 package version을 덮어쓰지 않는다.
+- release version/source/rootfs metadata는 대형 dependency install layer 뒤에서만
+  선언하고 private Playwright dependency manifest는 App version과 결합하지 않는다.
+  dependency가 같으면 numeric release가 달라도 registry와 HAOS layer store가 해당
+  payload를 재사용할 수 있어야 한다.
+- HAOS update의 old-image cleanup은 Supervisor 소유다. App은 Docker socket,
+  `docker_api`, `full_access`, global prune 또는 자동 `/supervisor/repair`를 추가하지
+  않는다. repair는 실제 stale overlay/image 증거 뒤 별도 관리자 복구 작업이다.
 - local QEMU arm64 PASS는 packaging evidence일 뿐 native HAOS arm64 지원 선언이
   아니다.
 
@@ -63,10 +70,11 @@
   per-session model 직렬화, 즉시 control/approval ACK·기본 인증, requester FIFO의
   broker 실행, 실행 직전 session 재검증, durable same-session approval/idempotency와 암호화 reply outbox를
   사용한다. native headless tool prompt는 Telegram으로 resume하지 않는다. 관리형
-  runtime rule은 일반 HA service/config 변경을 `ha_change_propose`로 라우팅하며 이
-  App-managed broker proposal을 durable Telegram 승인 경계로 둔다. 신뢰된 사용자
-  설치·전역 native tool과 direct command/API helper는 같은 관리자 권한을 상속하고
-  broker가 투명하게 intercept하지 않으며 사용자 rule과 현재 명시적 요청을 따른다.
+  runtime rule은 HA service/config 변경을 `ha_change_propose`, terminal/script/choice/
+  question을 `telegram_action_propose`로 먼저 등록하며 이 App-managed proposal을
+  durable Telegram 승인 경계로 둔다. arbitrary native/plugin MCP permission prompt는
+  external resume할 수 없으므로 transparent intercept 대상으로 주장하지 않고
+  unsupported Telegram side effect는 fail closed한다.
 - 설계 비교 기준은 Hermes의
   [결정적 session key와 single-flight](https://github.com/NousResearch/hermes-agent/blob/7095e23eb2066fe9a2f93b99cdbfe0e2b5ece397/gateway/session.py#L1090-L1211),
   [session-bound Telegram approval](https://github.com/NousResearch/hermes-agent/blob/7095e23eb2066fe9a2f93b99cdbfe0e2b5ece397/plugins/platforms/telegram/adapter.py#L6140-L6214),
@@ -83,3 +91,35 @@
 - Codex식 `-c` override, TOML config, token option과 추정 subcommand를 사용하지 않는다.
 - 모든 native launch는 `AGY_CLI_DISABLE_AUTO_UPDATE=true`를 전달한다.
 - native upgrade는 새 numeric App release와 migration/rollback evidence로만 수행한다.
+
+## ADR-006 — proposal-first universal managed Telegram approval
+
+- 상태: `Accepted`
+- 2.0.11 새 설치와 Telegram의 유일한 effective native permission은
+  `request-review`다. `strict`, `always-proceed`, `proceed-in-sandbox` schema 값은 기존
+  Supervisor option의 upgrade input 호환용이며 updater가 모두 `request-review`로
+  정규화한다. safely identified
+  2.0.9/2.0.10 App-owned `command(*)`/`mcp(*)` broad allow와 legacy autonomous option은
+  bounded read와 exact proposal MCP 정책으로 migration한다. user-owned rule과 stronger
+  deny는 보존한다.
+- HA mutation은 기존 broker, terminal command·bounded script·command choices·finite
+  question은 private action coordinator와 credential-free executor가 담당한다. proposal
+  MCP는 실행하지 않고 exact digest/public preview만 등록한다.
+- callback action은 encrypted durable record에 먼저 결정·commit하고 executor 결과를
+  같은 conversation의 새 turn으로 전달한다. committed completion uncertainty는
+  `in_doubt`이고 executor를 다시 시작하지 않는다.
+- Playwright auto-allow는 upstream `readOnly: true`인 console messages, network
+  requests, snapshot, screenshot 네 도구뿐이다. navigate/back, tabs, hover, wait,
+  resize, close 등은 typed adapter 전까지 fail closed한다.
+- proposal coordinator registration은 approval state/card sealing 전에는
+  crash-durable하지 않다. 이 사이 bridge crash는 사용자에게 원 요청 재시도를 요구한다.
+- 명시적 `reset_v2`는 safe parseable settings를 backup하고 ownership state와 무관하게
+  managed key와 permission 세 bucket을 exact default로 복구한다. permissions 밖의
+  사용자 top-level/MCP/plugin/OAuth는 보존하고 `preserve`로 되돌릴 때까지 매 시작
+  drift를 복구한다.
+- fixed CLI 1.1.13 print mode의 native permission request는 external callback으로
+  resume할 수 없다. 따라서 이 설계는 arbitrary future/user plugin MCP의 universal
+  interceptor가 아니다. 표현하지 못하는 Telegram side effect는 fail closed한다.
+- 공유 OAuth가 이미 있으면 지원되는 일반 작업은 Telegram만으로 처리한다. initial OAuth
+  controlling TTY, live HAOS AppArmor, Bot API card/callback과 real action E2E는 별도 증거
+  전까지 `NOT RUN`이다.

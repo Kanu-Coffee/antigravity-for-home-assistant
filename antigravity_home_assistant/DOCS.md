@@ -123,7 +123,7 @@ telegram_allowed_chat_ids: []
 authorized_keys: []
 web_terminal_auto_start_antigravity: false
 tmux_session_name: antigravity-ha
-antigravity_tool_permission: always-proceed
+antigravity_tool_permission: request-review
 antigravity_terminal_sandbox: false
 antigravity_sensitive_data_access: false
 antigravity_user_files_update_mode: preserve
@@ -142,7 +142,7 @@ log_level: info
 | `authorized_keys` | `[]` | SSH root 로그인을 허용할 OpenSSH 공개키 한 줄 목록 |
 | `web_terminal_auto_start_antigravity` | `false` | 새 tmux session에서 `agy`를 한 번 자동 시작 |
 | `tmux_session_name` | `antigravity-ha` | `[A-Za-z0-9._-]`로 된 1~64자 session 이름 |
-| `antigravity_tool_permission` | `always-proceed` | `request-review`, `proceed-in-sandbox`, `always-proceed`, `strict` |
+| `antigravity_tool_permission` | `request-review` | effective 값은 `request-review` 하나; schema의 `strict`/`proceed-in-sandbox`/`always-proceed`는 upgrade 입력 호환용이며 모두 정규화 |
 | `antigravity_terminal_sandbox` | `false` | deprecated/no-op compatibility 입력. 어느 값도 native sandbox를 켜지 않으며 `false`로 정규화 |
 | `antigravity_sensitive_data_access` | `false` | AppArmor를 유지한 채 Web/SSH/Telegram runtime의 Recorder DB 진단 read-only 허용 여부 |
 | `antigravity_user_files_update_mode` | `preserve` | `preserve`, `refresh_managed`, `reset_v2`; 폐기 예정 migration-only `refresh_agents`, `refresh_all` |
@@ -159,28 +159,33 @@ Telegram은 별도 mode를 사용하지 않고 `antigravity_tool_permission`과
 transition으로 `antigravity_home_assistant-command` AppArmor 프로필에 들어가며, host
 권한을 추가하지 않습니다. `antigravity_terminal_sandbox`는 deprecated/no-op 입력으로
 어느 값이든 `false`로 정규화되고 native sandbox argv override도 거부됩니다.
-`always-proceed`도 AppArmor나 App-managed broker의 고위험 사람 확인을 끄지 않습니다.
+2.0.11 새 설치와 Telegram의 effective native policy는 `request-review` 하나입니다.
+고정 CLI의 headless 가용성 때문에 `strict`, `always-proceed`,
+`proceed-in-sandbox` option은 user-files updater가 모두 이 값으로 정규화합니다.
+schema가 다른 세 값을 계속 받는 것은 저장된 Supervisor option으로 upgrade를 시작하기
+위한 입력 호환성입니다. safely identified 2.0.9/2.0.10 App-owned broad allow도 bounded
+read/proposal-only managed rule로 migration됩니다. user-owned rule과 더 강한 deny는
+보존되지만 허용되지 않는 drift가 있으면 Telegram startup gate가 Bot API 연결 전에
+fail closed하며, 관리자는 `reset_v2`로 복구할 수 있습니다. unattended allow에는 안전한 `/config`·customization
+read, HA read/validate/memory read, `ha_change_propose`,
+`telegram_action_propose`만 들어갑니다. 일반 command, native write, URL execute,
+interactive browser와 임의 mutation MCP는 포함하지 않습니다. `secrets.yaml`,
+`.storage`, App runtime option/token, native MCP 설정, SSH/private key와 표준 cloud-auth
+경로는 exact read/write deny입니다.
 
-새 설치는 `always-proceed`로 시작합니다. 관리형 permission은 일반 `/config`와
-사용자 전역 plugin·agent·skill·rule, URL, command, MCP를 세 채널에
-동일하게 허용하고 `ask`를 비워 비대화형 Telegram에서 native prompt가 발생하지 않게
-합니다. `secrets.yaml`, `.storage`, App 소유 runtime option/token, SSH/private key와
-표준 cloud-auth 경로는 exact read/write deny이며 spawned command/stdio tool은 native
-OAuth backend도 AppArmor로 읽을 수 없습니다. 사용자가 만든 다른 rule은 보존됩니다.
-전역 plugin/MCP 설정에 사용자가 직접 넣은 inline
-secret은 신뢰된 확장 컨텍스트이므로 이 보장 밖입니다.
-2.0.9 이상의 image-managed 설정은 이 운영 범위를 `mcp(*)` 하나로 이미 허용하고
-managed `ask`를 비웁니다. `ha_change`, `ha_read`, `ha_memory`, `ha_validate`,
-`playwright`마다 별도 MCP allow rule을 수동으로 추가하지 마세요. 사용자가 추가한
-`ask`와 `deny`는 보존되며 managed allow보다 우선합니다.
-raw file tool을 통한 `settings.json` 직접 write는 예외입니다. 사용자의 현재 명시적
-요청으로 일반 전역 설정을 바꿀 때는 `agy-settings sha256`으로 현재 digest를 얻고
-`expected_sha256`과 JSON merge `patch`를 stdin으로 `agy-settings patch`에 전달합니다.
-이 helper는 원자적으로 갱신하지만 App 소유 key인 `permissions`,
-`enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`,
-`artifactReviewPolicy`는 거부합니다. 이 다섯 보안 정책은 App 옵션을 저장하고
-재시작해 변경하세요. 사용자 plugin·agent·skill·rule은 계속 공유되고 직접 수정할 수
-있습니다.
+Playwright 자동 허용은 upstream `readOnly: true`인
+`browser_console_messages`, `browser_network_requests`, `browser_snapshot`,
+`browser_take_screenshot` 네 도구로 제한됩니다. `browser_navigate`,
+`browser_navigate_back`, `browser_tabs`, `browser_hover`, `browser_wait_for`,
+`browser_resize`, `browser_close` 등 mutation-capable 도구는 typed approval adapter가
+구현되기 전까지 Telegram에서 fail closed합니다.
+
+Telegram의 HA 변경은 `ha_change_propose`, terminal/script/command choice/finite question은
+`telegram_action_propose`로 먼저 등록해야 합니다. 두 MCP는 실행하지 않고 exact
+digest와 public preview만 bridge에 넘깁니다. direct tool부터 호출해 발생한 native
+permission denial은 승인이 아니며 같은 tool을 resume할 수 없습니다. bridge는 한 번
+같은 conversation에 proposal-first 재계획을 요청할 수 있지만 unsupported side effect는
+우회하지 않고 fail closed합니다.
 
 ### 설정 변경 후
 
@@ -283,30 +288,28 @@ Telegram 전용 `read_only`/`confirm_changes`/`autonomous` mode는 2.0.7에서 �
 Web/SSH와 같은 native `antigravity_tool_permission`, 민감정보 설정과 AppArmor command
 경계를 사용합니다. native nested sandbox는 사용하지 않습니다. 2.0.6 이하에서 저장된
 `telegram_access_mode`는 권한으로 사용하지 않는 ignored migration input입니다.
-관리형 runtime rule은 일반 HA service/config 변경을
-`ha_change_propose`로 라우팅합니다. 이 경로로 생성된 App-managed broker
-`service_call`/`multi_choice_service_call`/`config_patch`는 모두 durable Telegram
-확인이 필요합니다. door lock,
-alarm, 안전 관련 heating/water, host/Core restart, backup restore, update, removal,
-credential·permission 변경을 포함한 이 broker의 고위험 분류는 전역 tool policy로
-낮출 수 없습니다.
+2.0.11 관리형 runtime은 Telegram side effect를 두 typed proposal 경로로 나눕니다.
+모든 HA service/config 변경은 `ha_change_propose`, terminal command·bounded inline
+script·명령 선택지·유한 질문은 `telegram_action_propose`로 먼저 등록합니다. proposal
+MCP 자체에는 실행 credential이나 최종 실행 socket이 없으며 exact payload digest와
+public preview만 등록합니다. bridge가 requester·chat·session generation·update·
+conversation·TTL을 검증해 durable 실행/선택/취소 카드를 보냅니다. 승인 뒤 HA broker
+또는 credential-free executor가 card 생성 전에 검증된 action 하나만 실행합니다.
 
-Antigravity 1.1.13의 `stream-json`에는 native 대화형 permission prompt를 Telegram에
-전달하고 같은 turn을 재개하는 protocol이 없습니다. Telegram 버튼은 중단된 native
-tool turn을 resume하지 않습니다. 관리형 운영 도구는 기본 allow로 prompt 전에
-통과시키고, 일반 HA service/config 변경은 별도 broker proposal을 같은 session에 묶인
-Telegram 버튼으로 승인합니다. 사용자가 global ask/deny를 추가한 임의 native tool은
-비대화형으로 거부될 수 있으며, 이 경우 Web/SSH에서 검토하거나 전역 permission을
-명시적으로 조정합니다.
+Antigravity 1.1.13 `--print --output-format stream-json`에는 native permission prompt를
+외부 channel로 내보내고 승인 뒤 중단 지점에서 재개하는 protocol이 없습니다. 따라서
+Telegram 버튼은 거부된 native tool turn을 resume하지 않으며 App은 임의의 미래/user
+plugin MCP를 투명하게 intercept한다고 주장하지 않습니다. native permission denial을
+감지하면 bridge는 같은 conversation에 proposal MCP를 쓰도록 최대 한 번 재계획을
+요청하지만, 거부된 tool 자체를 승인하거나 반복 실행하지 않습니다. 두 proposal이
+표현하지 못하는 Telegram side effect는 direct tool로 fallback하지 않고 fail
+closed합니다.
 
-신뢰된 사용자 설치·전역 native tool, `command(*)`/`mcp(*)`, 직접 `ha-api`/
-`supervisor-api`와 일반 `/config` shell write는 CLI와 같은 관리자 권한을 상속하며
-broker가 투명하게 가로채지 않습니다. 이 직접 경로의 변경은 exact deny와 AppArmor
-안에서 사용자가 소유한 rule과 현재 명시적 요청을 따릅니다. 따라서 아래 broker
-보장은 가능한 모든 native 변경을 포괄한다는 뜻이 아닙니다. 인증된 Web/SSH의
-명시적 direct 작업은 native interactive flow를 사용할 수 있으며 Telegram 승인
-button으로 자동 broker되지 않습니다. 이것은 승인 transport의 차이일 뿐 공유
-HOME·OAuth·global permission을 분리하지 않습니다.
+인증된 Web/SSH의 interactive 작업은 native review와 AppArmor 아래 direct tool을 쓸
+수 있고 Telegram 카드로 자동 변환되지 않습니다. 이는 같은 HOME·OAuth identity를
+사용하지만 승인 transport가 다르다는 뜻입니다. shared OAuth가 이미 인증되어 있으면
+지원되는 일상 작업은 Telegram만으로 끝낼 수 있지만 최초 OAuth는 controlling TTY가
+필요하므로 미인증 설치는 Web/SSH에서 `ha-antigravity-login`을 한 번 실행해야 합니다.
 
 ### 명령과 세션
 
@@ -327,21 +330,27 @@ Antigravity 결과는 Telegram 전송 전에 암호화된 영속 outbox에 기�
 전달 여부가 모호하면 `/retry` 전까지 격리합니다. `/cancel`은 이미 외부에서 완료된 작업을 되돌리는 rollback 명령이
 아닙니다.
 
-승인/선택/거절 callback의 Telegram ACK와 기본 인증 검사는 즉시 처리하지만 승인된 broker
-실행은 같은 requester queue에서 session-serialized됩니다. 실행 직전에 requester·chat·
+승인/선택/거절 callback의 Telegram ACK와 기본 인증 검사는 즉시 처리하지만 승인된
+broker/executor 실행은 같은 requester queue에서 session-serialized됩니다. 실행 직전에 requester·chat·
 현재 session generation·conversation·proposal digest를 다시 검증합니다.
 `/new`, `/cancel`, 재시작, 만료 또는 중복 callback은 기존 승인을 실행시키지 않으며,
 broker의 durable idempotency record 때문에 동일 변경은 정확히 한 번만 접수됩니다.
 
 ### 승인 보안
 
-Telegram model process는 raw Supervisor token이나 최종 실행 socket을 받지 않고
-typed proposal만 만듭니다. bridge는 broker에서 proposal을 다시 조회한 뒤 preview를
-보여 줍니다. 확인은 proposal ID, 같은 conversation·user·chat, preview digest와
-짧은 TTL에 묶입니다. 승인 callback과 그 결과도 원 요청의 session에서 이어집니다.
-256-bit 일회용 capability와 idempotency key가 재사용·중복 실행을
-막습니다. preview나 precondition이 바뀌거나 확인이 만료되면 새 proposal이
+Telegram model process는 raw Supervisor token이나 최종 실행 socket을 받지 않고 typed
+proposal만 만듭니다. bridge는 coordinator/broker에서 proposal을 다시 조회한 뒤
+preview를 보여 줍니다. 확인은 proposal ID, 같은 conversation·user·chat, update/run
+nonce, preview/source digest와 짧은 TTL에 묶입니다. 승인 callback과 sealed result는 원
+conversation의 새 turn으로 이어집니다. action은 durable state에 commit된 뒤에만
+executor로 전달합니다. commit 뒤 완료를 확정할 수 없으면 `in_doubt`로 저장하고 다시
+spawn하지 않습니다. preview나 precondition이 바뀌거나 확인이 만료되면 새 proposal이
 필요합니다.
+
+proposal MCP의 coordinator 등록 자체는 crash-durable하지 않습니다. 등록 성공 뒤
+bridge가 encrypted approval state와 card/outbox를 봉인하기 전에 종료되면 사용자가
+원래 요청을 다시 보내 새 proposal을 만들어야 합니다. durable approval이라는 표현은
+봉인 이후 decision/result와 broker가 이미 접수한 실행에만 적용됩니다.
 
 #### 멀티 선택 승인 카드
 
@@ -367,6 +376,24 @@ process memory에만 있으므로 broker가 계속 살아 있는 bridge-only 재
 사라지면 이전 카드는 fail closed하고 새 요청이 필요합니다. broker가 이미 접수한
 실행은 durable idempotency/status에서 완료 결과 또는 `in_doubt`를 회수하며 같은
 service call을 다시 보내지 않습니다.
+
+2.0.11 `multi_choice_terminal`은 같은 1~31개+취소 grid에서 각각 완성된 command 또는
+inline script 중 하나를 선택합니다. `question`은 부작용 없는 label 선택을 같은
+conversation에 돌려줍니다. action 카드 callback은 binary `v4a`/`v4d`, choice
+`v4c`이며 command, script, cwd나 parameter 대신 encrypted state의 짧은 opaque
+token만 담습니다. 실행기는 승인된 exact source digest, canonical cwd와 bounded
+timeout만 받고 별도 AppArmor command profile에서 실행하며 Supervisor token, bot
+token, native OAuth를 받지 않습니다. `/cancel`은 pending/approved action을 취소하지만
+committed action을 rollback하지 않습니다. TTL cleanup은 untouched pending card만
+만료하고 approved/answered/committed/terminal decision은 callback ACK 전까지 보존합니다.
+shell-visible background/daemon pattern은 spawn 직전에 best-effort로 거부하지만 opaque
+interpreter의 double-fork를 cgroup 수준으로 봉쇄하지 않으므로 daemon 작업은 지원하지
+않으며, 완료 여부가 불명확하면 `in_doubt`로 기록하고 재실행하지 않습니다.
+
+이 경로는 HA·terminal·script·question용 관리형 protocol입니다. 임의 plugin MCP의
+새 side effect를 자동으로 카드화하는 범용 native hook은 아니며, 지원하지 않는 호출은
+fail closed합니다. 실제 HAOS AppArmor enforce, native OAuth, live Bot API 카드/callback,
+실제 service/config/command E2E는 릴리스 증거가 생기기 전까지 `NOT RUN`입니다.
 
 broker preview는 token/secret/password/auth/key/PIN/code/credential 계열 값을 가린
 bounded 요약을 표시하지만 raw payload digest에 승인을 묶습니다. `service_call`은 live
@@ -410,9 +437,11 @@ API helper는 관리자 표면이므로 진단 결과만으로 service call이�
 ### Dashboard browser
 
 `playwright` MCP는 container-local
-`http://127.0.0.1:8099/`에서 dashboard를 관찰합니다. 관련 화면은 desktop
-1440×900과 mobile 390×844에서 snapshot, screenshot, console warning/error와
-실패한 network request를 함께 확인합니다.
+`http://127.0.0.1:8099/`의 현재 dashboard를 관찰합니다. Telegram 자동 허용은
+upstream `readOnly: true`인 console messages, network requests, snapshot, screenshot
+네 도구뿐입니다. navigate/back, tabs, hover, wait, resize와 close는 mutation-capable로
+분류되어 typed approval adapter가 생기기 전까지 fail closed하므로 Telegram이 직접
+desktop/mobile viewport나 페이지를 전환한다고 가정하지 마세요.
 
 `home_assistant_browser_auto_auth: true`이면 App은 local-only, non-admin,
 `system-read-only` 단일 group 사용자를 만들거나 재사용합니다.
@@ -511,10 +540,16 @@ primary OAuth backend의 실제 경로와 same-process built-in read 비유출�
 | --- | --- |
 | `preserve` | OAuth·사용자 settings/MCP/plugin 보존; App 소유 HA plugin은 version당 canonical 보안 갱신 |
 | `refresh_managed` | 위 보존·plugin 갱신에 더해 소유권이 기록된 settings key·permission rule을 root-only backup 후 merge |
-| `reset_v2` | 같은 managed settings merge를 엄격하게 수행; ownership state가 없거나 모호하면 fail closed |
+| `reset_v2` | 명시적 복구 mode. 안전하게 parse 가능한 settings를 backup하고 ownership state와 무관하게 managed key와 permission 세 bucket을 image exact default로 교체 |
 
 세 mode 모두 `/config`, native OAuth, SSH key, browser identity, memory DB와 사용자
-소유 plugin/MCP를 초기화 대상으로 삼지 않습니다. mode와 관계없이 App 소유
+소유 plugin/MCP를 초기화 대상으로 삼지 않습니다. `reset_v2`는 `permissions` 밖의
+사용자 top-level settings와 기존 global MCP도 보존하지만 managed key 및
+`permissions.allow`/`ask`/`deny` 전체는 exact default로 되돌립니다. 기존 ownership
+state가 없거나 모호해도 명시 선택을 복구 권한으로 사용하며, unsafe regular file이나
+parse 불가능한 JSON은 계속 fail closed합니다. `reset_v2`를 선택한 동안은 같은
+version에서도 매 시작 drift를 복구하므로 정상화 뒤 `preserve`로 돌려놓으세요.
+mode와 관계없이 App 소유
 `home-assistant` plugin은 안전한 ownership marker가 있으면 App version당 한 번
 image의 canonical copy로 갱신됩니다. 새 설치는 현재 version marker를 기록하고,
 같은 이름의 marker 없는 기존 plugin은 사용자 소유 충돌로 보고 덮어쓰지 않은 채
@@ -522,14 +557,40 @@ image의 canonical copy로 갱신됩니다. 새 설치는 현재 version marker�
 `/data/antigravity-ha/backups/native-files/` 아래 root-only backup에 보존됩니다.
 global `mcp_config.json`은 없을 때 빈 `mcpServers` 기본본만 생성하며 기존 파일은
 모든 mode에서 byte-preserve합니다. HA MCP·rules·skills는 App plugin 내부에
-있습니다. `refresh_managed`와 `reset_v2`는 App version별 transaction 상태로 재실행을
-제한하지만, 작업을 확인한 뒤 `preserve`로 돌려놓는 것을 권장합니다.
+있습니다. `refresh_managed`는 App version별 transaction 상태로 재실행을 제한합니다.
 
 저장소 개발자가 source image를 만들 때는 `tools/development/build-app`을 사용합니다.
 이 helper는 checkout hash로 분리한 project-owned Buildx builder/cache만 종료 시
 제거하고 global Docker prune을 하지 않으며, checkout-owned 미참조 local image는 최신
 두 개를 보존합니다. reusable release build는 stable `antigravity-home-assistant` GHA
 cache scope를 사용합니다. HAOS의 Supervisor image lifecycle에는 적용되지 않습니다.
+
+### HAOS image와 저장공간
+
+이 App은 `config.yaml`의 generic `image:`로 GHCR prebuilt multi-arch container를
+배포합니다. Home Assistant의 [App publishing
+guide](https://developers.home-assistant.io/docs/apps/publishing/)가 권장하는 방식이며,
+HAOS 장치는 App source나 BuildKit cache를 만들지 않고 최종 container를 받습니다.
+성공한 update 뒤 구버전 App image 정리는 Supervisor가 담당합니다. 다른 App이 같은
+image ID/layer를 참조하면 마지막 사용자가 교체될 때까지 유지되므로 image 목록의 여러
+tag를 곧바로 중복 실사용량으로 계산하지 마세요.
+
+이 App은 Docker socket, `docker_api`, `full_access`를 요청하지 않으며 이를 용량 정리
+목적으로 추가하지 않습니다. update/start 때 `docker image prune`, `docker builder
+prune` 또는 `POST /supervisor/repair`를 자동 실행하지도 않습니다. 공식
+[`/supervisor/repair`](https://developers.home-assistant.io/docs/api/supervisor/endpoints/#supervisorrepair)는
+stale container/image뿐 아니라 build cache, volume, network와 Supervisor 구성요소까지
+복구하는 광범위한 관리자 작업입니다. failed/aborted pull, cleanup 오류 또는 overlay
+장애가 로그와 용량 증거로 확인된 경우에만 별도 명시 승인을 받아 사용하세요.
+
+용량 증가가 의심되면 Telegram에서 `ha_read_storage_usage`를 먼저 사용합니다. 이
+read-only 도구는 공식
+[`GET /host/disks/default/usage`](https://developers.home-assistant.io/docs/api/supervisor/endpoints/#get-hostdisksdiskusage)의
+고정 endpoint에서 allowlisted 수치만 반환하므로 system, App data/config와 backup 증가를
+나눠 볼 수 있습니다. 이어서 `ha_read_app_logs`와 Supervisor 로그에서 update cleanup
+오류를 확인하되 token이나 option body를 복사하지 마세요. Docker image별 상세 breakdown은
+이 endpoint가 제공하지 않습니다. 실제 HAOS update 전후 image/용량 관찰은 아직
+`NOT RUN`이며, 이 문서는 현장 누적을 자동으로 재현·수정했다고 주장하지 않습니다.
 
 App은 복구·갱신·config transaction이 성공 또는 unchanged로 끝난 뒤에만 backup을
 정리합니다. `/data/antigravity-ha/backups/plugin-*`의 managed-plugin transaction,
@@ -538,6 +599,13 @@ App은 복구·갱신·config transaction이 성공 또는 unchanged로 끝난 �
 no-symlink 완료 tree가 검증된 항목 중 최신 총 두 개를 보존합니다. 더 오래된 eligible
 항목은 atomic quarantine 후 삭제합니다. active journal/result backup, manifest 없는
 항목과 unsafe/symlink tree는 자동 삭제하지 않습니다.
+
+`/data/antigravity-ha-memory/memory.sqlite3`는 단순 cache가 아니라 catalog provenance와
+검증 history입니다. 15분 refresh가 만든 미참조 `success`/`failed` 종료 행은 최신 64개로
+제한하지만, current catalog, revision, change record, metadata 또는 audit가 참조하는
+sync는 계속 보존합니다. refresh 중 비정상 종료로 남은 `running` 행은 lease/PID로 live
+작업과 안전하게 구분할 수 없어 자동 삭제하지 않습니다. 이 예외나 실제 semantic history
+증가를 host image cache로 오인하지 마세요.
 
 ### v1 migration 주의
 
@@ -616,6 +684,10 @@ no-symlink 완료 tree가 검증된 항목 중 최신 총 두 개를 보존합�
 - `reason_class=headless_read_denied`이면 headless AI의 비허용 파일 읽기가 차단된
   것입니다. 정상 질문에서 반복되면 사용자 settings를 편집하거나 `read_file(*)`를
   추가하지 말고 App을 최신 버전으로 업데이트한 뒤 재시작합니다.
+- `reason_class=headless_permission_denied`가 proposal-first 재계획 뒤에도 반복되면
+  요청한 side effect가 두 managed proposal MCP로 표현되지 않았다는 뜻입니다. broad
+  `command(*)`/`mcp(*)`를 추가하지 말고 지원되는 HA 또는 terminal/script/question
+  proposal로 요청을 바꾸거나 interactive Web/SSH에서 검토합니다.
 - `/status`는 Telegram transport, 결합된 conversation과 최근 공유 AI runtime/outbox 결과를
   구분해 표시합니다. help와 status가 정상이어도 공유 native OAuth가 완료됐다는
   뜻은 아닙니다.
@@ -627,12 +699,13 @@ no-symlink 완료 tree가 검증된 항목 중 최신 총 두 개를 보존합�
   `terminal_missing`, `terminal_status_failed`, `terminal_response_invalid`,
   `conversation_mismatch`, `stream_contract_failed`, `proposal_result_invalid`는 prompt,
   raw model output 또는 stderr를 남기지 않는 제한된 terminal 진단입니다.
-- 2.0.10은 `ha_change_propose` receipt의 필수 `Arguments`/`ServerName`/`ToolName`과
+- 2.0.11은 exact `ha_change_propose` 또는 `telegram_action_propose` receipt의 필수
+  `Arguments`/`ServerName`/`ToolName`과
   함께 최대 1,024 UTF-8 byte의 NUL·비공백 control-character가 없는
   `toolAction`/`toolSummary` 문자열 metadata를 허용합니다. 다른 parameter key나
   잘못된 metadata는
   `proposal_result_invalid`입니다.
-- 정확히 하나의 완료된 유효 proposal receipt 뒤 terminal text만 비어 있으면 2.0.10은
+- 정확히 하나의 완료된 유효 proposal receipt 뒤 terminal text만 비어 있으면 2.0.11은
   고정된 안전 문구를 사용해 승인 카드를 queue합니다. proposal이 없는 빈 응답,
   non-string 또는 32 KiB 초과 응답은 `terminal_response_invalid`로 계속 거부합니다.
 - native CLI log, OAuth URL, token, prompt 원문을 지원 자료로 올리지 말고 공유 HOME의
@@ -661,16 +734,18 @@ no-symlink 완료 tree가 검증된 항목 중 최신 총 두 개를 보존합�
 
 ## 검증 상태와 알려진 제한
 
-2026-08-11 저장소 기준으로 정적·component test는 native CLI wrapper, read/change
-broker, Telegram binding/replay, memory, browser 계약, migration과 AppArmor policy
-parse를 대상으로 합니다. 다음은 generic 개발 환경의 성공만으로 `VERIFIED`라고
+2026-08-17 저장소 기준으로 정적·component test는 native CLI wrapper, read/change
+broker, universal action proposal/coordinator/executor, Telegram binding/replay, memory,
+browser 계약, migration과 AppArmor policy parse를 대상으로 합니다. 다음은 generic
+개발 환경의 성공만으로 `VERIFIED`라고
 표시할 수 없습니다.
 
 - 실제 HAOS amd64와 aarch64의 clean install·start·update
 - 양쪽 아키텍처의 native Antigravity OAuth와 plugin discovery
 - HAOS에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되는지
 - 공개 GHCR generic manifest와 per-arch digest의 실제 pull
-- 실제 dashboard, Telegram shared-policy/session/outbox, migration 세 mode와 rollback E2E
+- 실제 dashboard, live Telegram card/callback/command/HA action, migration 세 mode와
+  rollback E2E
 
 따라서 App은 experimental 상태를 유지합니다. 각 release의 CI, Builder, GHCR
 manifest와 HAOS acceptance 기록에서 해당 항목이 통과했는지 확인하세요. 문서의

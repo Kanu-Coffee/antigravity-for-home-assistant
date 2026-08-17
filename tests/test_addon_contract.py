@@ -62,7 +62,7 @@ def test_release_is_multi_arch_with_generic_registry_image(
     )
     assert "{arch}" not in addon_config["image"]
     assert addon_config["stage"] == "experimental"
-    assert addon_config["breaking_versions"] == ["2.0.0", "2.0.7", "2.0.9"]
+    assert addon_config["breaking_versions"] == ["2.0.0", "2.0.7", "2.0.9", "2.0.11"]
 
 
 def test_registry_release_workflow_is_tag_gated(repository_root: Path) -> None:
@@ -161,7 +161,7 @@ def test_home_assistant_brand_assets(addon_root: Path) -> None:
     assert _png_header(addon_root / "logo.png") == (250, 250, 6)
 
 
-def test_app_and_dockerfile_versions_match(
+def test_app_release_versions_and_playwright_bundle_contract(
     addon_config: dict, addon_root: Path
 ) -> None:
     dockerfile = (addon_root / "Dockerfile").read_text(encoding="utf-8")
@@ -180,11 +180,16 @@ def test_app_and_dockerfile_versions_match(
             encoding="utf-8"
         )
     )
-    assert package["version"] == addon_config["version"]
+    # This private package is only a dependency manifest copied before the
+    # expensive image dependency layer. Coupling it to the App release version
+    # would invalidate that layer for every otherwise dependency-identical App
+    # update.
+    assert package["version"] == "0.0.0"
+    assert package["version"] != addon_config["version"]
     assert lock["name"] == package["name"]
     assert lock["packages"][""]["name"] == package["name"]
-    assert lock["version"] == addon_config["version"]
-    assert lock["packages"][""]["version"] == addon_config["version"]
+    assert lock["version"] == package["version"]
+    assert lock["packages"][""]["version"] == package["version"]
 
 
 def test_ingress_and_network_contract(addon_config: dict) -> None:
@@ -329,16 +334,12 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
     )[1].split(
         "profile antigravity_home_assistant-telegram flags", maxsplit=1
     )[0]
-    telegram_profile = remaining_profiles.split(
-        "profile antigravity_home_assistant-telegram flags", maxsplit=1
-    )[1].split(
-        "profile antigravity_home_assistant-change-proposal-client", maxsplit=1
-    )[0]
-    proposal_client_profile = remaining_profiles.split(
-        "profile antigravity_home_assistant-change-proposal-client", maxsplit=1
-    )[1].split(
-        "profile antigravity_home_assistant-broker-bootstrap", maxsplit=1
-    )[0]
+    telegram_profile = _apparmor_profile(
+        profile, "antigravity_home_assistant-telegram flags="
+    )
+    proposal_client_profile = _apparmor_profile(
+        profile, "antigravity_home_assistant-change-proposal-client"
+    )
     change_broker_profile = remaining_profiles.split(
         "profile antigravity_home_assistant-change-broker", maxsplit=1
     )[1].split(
@@ -720,6 +721,113 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
             assert deny_rule in isolated_profile
 
 
+def test_universal_telegram_approval_has_one_way_apparmor_boundaries(
+    addon_root: Path,
+) -> None:
+    source = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
+    restricted = _apparmor_profile(
+        source, "antigravity_home_assistant-interactive-runtime-restricted"
+    )
+    sensitive = _apparmor_profile(
+        source, "antigravity_home_assistant-interactive-runtime-sensitive-read"
+    )
+    command = _apparmor_profile(source, "antigravity_home_assistant-command")
+    telegram = _apparmor_profile(
+        source, "antigravity_home_assistant-telegram flags="
+    )
+    proposal = _apparmor_profile(
+        source, "antigravity_home_assistant-telegram-action-proposal-client"
+    )
+    executor = _apparmor_profile(
+        source, "antigravity_home_assistant-telegram-action-executor"
+    )
+    init = _apparmor_profile(source, "antigravity_home_assistant-init")
+
+    proposal_transition = (
+        "/usr/local/bin/telegram-action-proposal-mcp Px -> "
+        "antigravity_home_assistant-telegram-action-proposal-client,"
+    )
+    for native_runtime in (restricted, sensitive):
+        assert proposal_transition in native_runtime
+        assert "deny /run/antigravity-ha/telegram-action-proposal.sock rwklm," in (
+            native_runtime
+        )
+    assert source.count(proposal_transition) == 2
+
+    # A model-controlled shell descendant cannot re-enter the universal-action
+    # proposal client. Only the native MCP server process may cross that
+    # boundary.
+    assert proposal_transition not in command
+    assert "telegram-action-proposal-mcp Px" not in command
+    assert "deny /run/antigravity-ha/telegram-action-proposal.sock rwklm," in (
+        command
+    )
+
+    executor_transition = (
+        "/usr/local/bin/telegram-action-executor Px -> "
+        "antigravity_home_assistant-telegram-action-executor,"
+    )
+    assert executor_transition in telegram
+    assert source.count(executor_transition) == 1
+    assert "/run/antigravity-ha/telegram-action-proposal.sock rwk," in telegram
+    for settings_path in (
+        "/data/home/ r,",
+        "/data/home/.gemini/ r,",
+        "/data/home/.gemini/antigravity-cli/ r,",
+        "/data/home/.gemini/antigravity-cli/settings.json r,",
+    ):
+        assert settings_path in telegram
+    assert "deny /data/home/** wklm," in telegram
+    assert "/data/home/** r" not in telegram
+    assert "/run/antigravity-ha/telegram-action-proposal.sock rw," in proposal
+    assert "network unix stream," in proposal
+    assert "network," not in proposal
+    assert "deny /data/** rwklm," in proposal
+    assert "deny /config/** rwklm," in proposal
+
+    for credential_path in (
+        "/run/antigravity-ha/supervisor.token",
+        "/run/antigravity-ha/home-assistant-browser.token",
+        "/etc/shadow",
+        "/etc/gshadow",
+        "/etc/ssh/ssh_host_*",
+        "/etc/ssl/private/**",
+        "/root/.ssh/**",
+    ):
+        assert f"deny {credential_path} rwklm," in proposal
+
+    assert "  network" not in executor
+    assert (
+        "/usr/local/libexec/antigravity-command-bin/bash Px -> "
+        "antigravity_home_assistant-command,"
+    ) in executor
+    assert "deny /run/antigravity-ha/** rwklm," in executor
+    assert "deny /data/home/.gemini/antigravity-cli/settings.json rwklm," in (
+        executor
+    )
+    assert "deny /data/home/.gemini/config/mcp_config.json rwklm," in executor
+    assert "deny /config/.storage/ rwklm," in executor
+    assert "deny /config/.storage/** rwklm," in executor
+    assert "deny /config/{.ssh,ssl,backups,.cloud}/ rwklm," in executor
+    assert "deny /config/{.ssh,ssl,backups,.cloud}/** rwklm," in executor
+    for credential_path in (
+        "/data/home/.docker/config.json{,.*}",
+        "/data/home/.netrc",
+        "/data/home/.npmrc",
+        "/etc/shadow",
+        "/etc/gshadow",
+        "/etc/ssh/ssh_host_*",
+        "/etc/ssl/private/**",
+        "/root/.ssh/**",
+    ):
+        assert f"deny {credential_path} rwklm," in executor
+
+    # Init has a deliberately broad transient /run grant, so the private
+    # approval socket needs an explicit exception there as well.
+    assert "/run/antigravity-ha/** rwk," in init
+    assert "deny /run/antigravity-ha/telegram-action-proposal.sock rwklm," in init
+
+
 def test_apparmor_bash_transition_targets_reject_startup_injection(
     addon_root: Path,
     rootfs: Path,
@@ -800,7 +908,7 @@ def test_security_sensitive_defaults(addon_config: dict) -> None:
     assert "telegram_access_mode" not in addon_config["options"]
     assert "telegram_access_mode" not in addon_config["schema"]
     assert addon_config["options"]["antigravity_tool_permission"] == (
-        "always-proceed"
+        "request-review"
     )
     assert addon_config["schema"]["antigravity_tool_permission"] == (
         "list(request-review|proceed-in-sandbox|always-proceed|strict)"

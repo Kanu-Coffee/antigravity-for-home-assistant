@@ -5,6 +5,11 @@
       "args": [],
       "cwd": "/config"
     },
+    "telegram_action": {
+      "command": "/usr/local/bin/telegram-action-proposal-mcp",
+      "args": [],
+      "cwd": "/config"
+    },
     "ha_memory": {
       "command": "/usr/local/bin/ha-memory-mcp",
       "args": [],

@@ -239,7 +239,7 @@ def test_native_oauth_residual_risk_is_not_claimed_as_isolated() -> None:
     for fragment in (
         "Native OAuth 잔여 위험",
         "`HOME=/data/home`과 `/config`를 의도적으로 공유",
-        "global 및 workspace plugin·agent·rule·MCP 상속과 수정을 제품 계약",
+        "global 및 workspace plugin·agent·rule·MCP 상속을 제품 계약",
         "credential isolation 보장이 아니다",
         "release blocker",
     ):
@@ -403,7 +403,7 @@ def test_architecture_matches_current_s6_and_runtime_socket_graph() -> None:
         )
 
 
-def test_v209_docs_define_shared_default_allow_and_scoped_durable_broker_boundary() -> None:
+def test_v211_docs_define_proposal_first_managed_approval_boundary() -> None:
     documents = {
         name: re.sub(r"\s+", " ", read(path))
         for name, path in {
@@ -418,34 +418,38 @@ def test_v209_docs_define_shared_default_allow_and_scoped_durable_broker_boundar
         }.items()
     }
     for name in ("readme-ko", "readme-en", "docs-ko", "docs-en"):
-        assert "always-proceed" in documents[name], f"{name} omits new-install default"
+        assert "request-review" in documents[name], f"{name} omits new-install default"
         assert "service_data" in documents[name], f"{name} omits all-service payload"
         assert "secrets.yaml" in documents[name] and ".storage" in documents[name]
         assert "ha_change_propose" in documents[name], (
             f"{name} omits the managed broker routing boundary"
         )
-        assert "command(*)" in documents[name] and "mcp(*)" in documents[name], (
-            f"{name} omits direct administrator paths"
+        assert "telegram_action_propose" in documents[name], (
+            f"{name} omits the managed action routing boundary"
         )
+        assert "fail closed" in documents[name] or "fail-closed" in documents[name]
+        assert "OAuth" in documents[name] and "NOT RUN" in documents[name]
 
     assert '"ask": []' in documents["contract"]
-    assert '"mcp(*)"' in documents["contract"]
-    assert "broker가 투명하게" in documents["contract"]
-    assert "재개하는 protocol" in documents["telegram"]
+    managed_allow = documents["contract"].split('"allow": [', 1)[1].split('"ask": []', 1)[0]
+    assert '"mcp(*)"' not in managed_allow
+    assert '"command(*)"' not in managed_allow
+    assert "mcp(telegram_action/telegram_action_propose)" in managed_allow
+    assert "resume" in documents["telegram"]
     assert "requester FIFO" in documents["telegram"]
     assert "exactly" in documents["telegram"] or "정확히 한 번" in documents["telegram"]
     assert (
         "모든 App-managed broker `service_call`, `multi_choice_service_call`, "
         "`config_patch`"
     ) in documents["security"]
-    assert "가능한 모든 native mutation을 포괄하지 않는다" in documents["security"]
+    assert "transparent" in documents["security"] and "fail closed" in documents["security"]
     assert "antigravity_terminal_sandbox" in documents["contract"]
     assert "deprecated/no-op" in documents["contract"]
     assert "`true`와 `false`를 모두 `false`로 정규화" in documents["contract"]
     assert "effective native argv contains no native sandbox flag" in documents["contract"]
     assert "antigravity_home_assistant-command" in documents["contract"]
     assert "full_access" in documents["contract"] and "SYS_ADMIN" in documents["contract"]
-    assert "`settings.json` 직접 write는 default-allow의 exact deny" in documents["contract"]
+    assert "`settings.json` 직접 write는 exact deny" in documents["contract"]
     assert "`agy-settings sha256`" in documents["contract"]
     assert "`agy-settings patch`" in documents["contract"]
     for protected_key in (
@@ -457,6 +461,9 @@ def test_v209_docs_define_shared_default_allow_and_scoped_durable_broker_boundar
     ):
         assert protected_key in documents["contract"]
     assert "Telegram button으로 자동 broker되지 않는다" in documents["telegram"]
+    assert "v4a" in documents["telegram"] and "v4c" in documents["telegram"]
+    assert "commit" in documents["telegram"] and "in_doubt" in documents["telegram"]
+    assert "credential-free executor" in documents["telegram"]
     assert "antigravity-ha-local-<checkout-hash>" in documents["migration"]
     assert "io.antigravity-ha.local-build.owner" in documents["migration"]
     assert "cache-gha-scope: antigravity-home-assistant" in documents["migration"]
@@ -468,12 +475,86 @@ def test_v209_docs_define_shared_default_allow_and_scoped_durable_broker_boundar
     assert "user-files" in documents["migration"]
     assert "change-broker" in documents["migration"]
 
+    for name in ("readme-ko", "readme-en", "docs-ko", "docs-en", "contract"):
+        text = documents[name]
+        assert "strict" in text and "request-review" in text
+        assert "upgrade" in text and ("입력 호환" in text or "input compatibility" in text)
+
+    for rule in (
+        "mcp(playwright/browser_console_messages)",
+        "mcp(playwright/browser_network_requests)",
+        "mcp(playwright/browser_snapshot)",
+        "mcp(playwright/browser_take_screenshot)",
+    ):
+        assert rule in managed_allow
+    for rule in (
+        "mcp(playwright/browser_close)",
+        "mcp(playwright/browser_hover)",
+        "mcp(playwright/browser_navigate)",
+        "mcp(playwright/browser_navigate_back)",
+        "mcp(playwright/browser_resize)",
+        "mcp(playwright/browser_tabs)",
+        "mcp(playwright/browser_wait_for)",
+    ):
+        assert rule not in managed_allow
+    assert "typed adapter" in documents["telegram"]
+
+    for name in ("readme-ko", "readme-en", "docs-ko", "docs-en", "telegram"):
+        text = documents[name]
+        assert "crash-durable" in text
+        assert "seal" in text or "봉인" in text
+        assert "repeat" in text or "다시 보내" in text
+        assert "double-fork" in text and "in_doubt" in text
+
+    for name in ("readme-ko", "readme-en", "docs-ko", "docs-en", "migration"):
+        text = documents[name]
+        assert "reset_v2" in text
+        assert "ownership state" in text
+        assert "exact" in text
+        assert "preserve" in text
+
     translation_ko = read(ROOT / "antigravity_home_assistant" / "translations" / "ko.yaml")
     translation_en = read(ROOT / "antigravity_home_assistant" / "translations" / "en.yaml")
+    assert "effective 값은 request-review 하나" in translation_ko
+    assert "request-review is the only effective value" in translation_en
+    assert "strict, always-proceed, proceed-in-sandbox" in translation_ko
+    assert "strict, always-proceed, and proceed-in-sandbox" in translation_en
+    assert "ownership state와" in translation_ko
+    assert "regardless of ownership" in translation_en
     assert "터미널 샌드박스(폐기 예정)" in translation_ko
     assert "어느 값이든 false로 정규화" in translation_ko
     assert "terminal sandbox (deprecated)" in translation_en
     assert "normalizes either value to false" in translation_en
+
+
+def test_haos_image_lifecycle_guidance_keeps_supervisor_ownership_boundary() -> None:
+    documents = {
+        "readme_ko": read(ROOT / "README.md"),
+        "readme_en": read(ROOT / "README.en.md"),
+        "docs_ko": read(ROOT / "antigravity_home_assistant" / "DOCS.md"),
+        "docs_en": read(ROOT / "antigravity_home_assistant" / "DOCS.en.md"),
+        "migration": read(V2 / "migration-release.md"),
+        "decisions": read(V2 / "decisions.md"),
+    }
+    for key in ("docs_ko", "docs_en"):
+        text = documents[key]
+        assert "https://developers.home-assistant.io/docs/apps/publishing/" in text
+        assert (
+            "https://developers.home-assistant.io/docs/api/supervisor/endpoints/"
+            "#supervisorrepair"
+        ) in text
+        assert (
+            "https://developers.home-assistant.io/docs/api/supervisor/endpoints/"
+            "#get-hostdisksdiskusage"
+        ) in text
+        assert "ha_read_storage_usage" in text
+        assert "NOT RUN" in text
+    assert "Docker socket" in documents["readme_ko"]
+    assert "Docker socket" in documents["readme_en"]
+    assert "host prune" in documents["migration"]
+    assert "최신 64개" in documents["migration"]
+    assert "`running` row" in documents["migration"]
+    assert "자동 `/supervisor/repair`" in documents["decisions"]
 
 
 def test_v210_docs_define_receipt_fallback_multi_choice_and_restart_boundary() -> None:
@@ -539,7 +620,7 @@ def test_v210_docs_define_receipt_fallback_multi_choice_and_restart_boundary() -
     assert "## [2.0.10]" in changelog
     assert "full App or broker restart rejects an unstarted in-memory proposal" in changelog
     assert "live Telegram/OAuth E2E" not in changelog
-    assert 'version: "2.0.10"' in documents["migration"]
+    assert 'version: "2.0.11"' in documents["migration"]
 
 
 def test_v209_docs_match_native_sandbox_and_mediated_settings_policy() -> None:
@@ -710,7 +791,7 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
         "telegram_session_delivery",
     }
     template = json.loads(read(V2 / "release-evidence-template.json"))
-    assert template["version"] == "2.0.10"
+    assert template["version"] == "2.0.11"
     assert set(template["gates"]) == expected_gates
     assert "HA-008" not in json.dumps(template, sort_keys=True)
     for gate in template["gates"].values():
@@ -1202,6 +1283,7 @@ def test_antigravity_contract_matches_managed_plugin_inventory() -> None:
         "skills/ha-feedback/SKILL.md",
         "skills/ha-memory/SKILL.md",
         "skills/home-assistant-operations/SKILL.md",
+        "skills/telegram-action-proposal/SKILL.md",
     }
     assert inventory == expected
     for relative in expected:
@@ -1217,7 +1299,14 @@ def test_antigravity_contract_matches_managed_plugin_inventory() -> None:
         "ha-dashboard-review/SKILL.md",
     ):
         assert stale not in contract
-    for server in ("ha_change", "ha_memory", "ha_read", "ha_validate", "playwright"):
+    for server in (
+        "ha_change",
+        "telegram_action",
+        "ha_memory",
+        "ha_read",
+        "ha_validate",
+        "playwright",
+    ):
         assert f'"{server}"' in contract
 
 

@@ -12,10 +12,10 @@ const toolSteps = events
 const requireAppArmor = process.env.PERMISSION_CANARY_REQUIRE_APPARMOR === "true";
 if (
   terminal?.result?.status !== "SUCCESS" ||
-  terminal?.result?.response !== "PERMISSION_CANARY_DONE\n"
+  terminal?.result?.response !== ""
 ) {
   throw new Error(
-    "native command/MCP permission canary did not finish successfully",
+    "native headless denial did not terminate with the pinned empty success result",
   );
 }
 if (!toolSteps.some((step) =>
@@ -30,11 +30,14 @@ if (requireAppArmor && toolSteps.filter((step) =>
   )).length < 2) {
   throw new Error("settings symlink alias did not hit the resolved-target deny");
 }
-for (const expected of ["run_command", "call_mcp_tool"]) {
-  if (!toolSteps.some((step) =>
-    step.tool_name === expected && step.state === "DONE")) {
-    throw new Error(`${expected} did not complete under the managed allow rule`);
-  }
+if (!toolSteps.some((step) =>
+  step.tool_name === "run_command" && step.state === "ERROR" &&
+  /denied|permission/iu.test(JSON.stringify(step.tool_info)))) {
+  throw new Error("native command did not headless-deny under request-review");
+}
+if (!toolSteps.some((step) =>
+  step.tool_name === "call_mcp_tool" && step.state === "DONE")) {
+  throw new Error("proposal MCP did not complete under its exact allow rule");
 }
 const haChangeStep = toolSteps.find((step) =>
   step.tool_name === "call_mcp_tool" && step.state === "DONE" &&

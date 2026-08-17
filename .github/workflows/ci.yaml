@@ -189,6 +189,9 @@ jobs:
           node --test
           tests/telegram_bridge_test.mjs
           tests/telegram_bridge_session_delivery_test.mjs
+          tests/telegram_universal_approval_test.mjs
+          tests/telegram_action_coordinator_test.mjs
+          tests/telegram_action_backend_test.mjs
           tests/telegram_broker_integration_test.mjs
           tests/telegram_pairing_test.mjs
           tests/telegram_state_test.mjs

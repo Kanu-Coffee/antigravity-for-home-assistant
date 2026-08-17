@@ -140,6 +140,14 @@ const tools = [
     action: null,
   },
   {
+    name: "ha_read_storage_usage",
+    title: "Read projected Home Assistant host storage usage",
+    description:
+      "Return total, used, available, and fixed-category byte counts from the Supervisor data disk usage endpoint without paths or Docker access.",
+    inputSchema: emptySchema,
+    action: "storage_usage",
+  },
+  {
     name: "ha_read_core_logs",
     title: "Read a bounded tail of sanitized Home Assistant Core logs",
     description: "Return at most 500 sanitized log lines with per-line and total response limits.",

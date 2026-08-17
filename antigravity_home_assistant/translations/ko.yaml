@@ -23,7 +23,7 @@ configuration:
     description: 브라우저 재접속 후 터미널을 복원하는 공유 세션 이름입니다.
   antigravity_tool_permission:
     name: Antigravity 도구 권한
-    description: Web, SSH와 Telegram이 공유하는 Antigravity 네이티브 toolPermission 정책입니다. 새 설치 기본값 always-proceed는 App 경계 안에서 가장 높은 자율성을 허용합니다.
+    description: Web, SSH와 Telegram이 공유하는 Antigravity 네이티브 toolPermission 입력입니다. 고정 CLI의 headless 가용성 때문에 effective 값은 request-review 하나이며 strict, always-proceed, proceed-in-sandbox도 user-files updater가 request-review로 정규화합니다. 다른 schema 값은 저장된 Supervisor option의 upgrade 입력 호환용입니다.
   antigravity_terminal_sandbox:
     name: Antigravity 터미널 샌드박스(폐기 예정)
     description: 비특권 HAOS App과 호환되지 않는 네이티브 샌드박스의 이전 옵션입니다. 2.0.9에서는 어느 값이든 false로 정규화하며 AppArmor command 경계를 항상 사용합니다.
@@ -40,9 +40,12 @@ configuration:
     name: Antigravity 사용자 파일 업데이트 방식
     description: >-
       preserve는 기존 사용자 파일을 모두 보존합니다. refresh_managed는
-      이미지가 관리하는 규칙·플러그인·MCP 기본값만 갱신합니다. reset_v2는
-      root 전용 백업을 만든 뒤 App 관리 파일을 교체하며 Home Assistant 설정,
-      SSH 키와 검증된 메모리는 보존합니다. 더 이상 사용하지 않는
+      이미지가 관리하는 규칙·플러그인·MCP 기본값만 갱신합니다. 명시적
+      reset_v2는 안전한 settings를 root 전용 backup에 저장하고 ownership state와
+      무관하게 managed key 및 permission 세 bucket을 exact image default로
+      교체합니다. permissions 밖의 사용자 top-level 설정, global MCP, plugin,
+      OAuth, Home Assistant 설정, SSH 키와 검증된 메모리는 보존합니다.
+      preserve로 되돌릴 때까지 매 시작 drift를 복구합니다. 더 이상 사용하지 않는
       refresh_agents와 refresh_all은 v1 업그레이드 시작만을 위해 수용하고
       Supervisor API로 refresh_managed에 정규화하므로 새 설정에서는 선택하지
       마세요.

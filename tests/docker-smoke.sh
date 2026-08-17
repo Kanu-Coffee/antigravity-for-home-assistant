@@ -113,10 +113,20 @@ seed_options() {
 }
 
 docker image inspect "${IMAGE}" >/dev/null 2>&1 || fail "image not found: ${IMAGE}"
+docker run --rm --platform "$TEST_PLATFORM" \
+  --entrypoint /bin/bash "${IMAGE}" -ceu '
+    [[ -z "$(find /var/lib/apt/lists -mindepth 1 -print -quit)" ]]
+    [[ -z "$(find /var/cache/apt/archives -mindepth 1 -print -quit)" ]]
+    [[ -z "$(find /var/cache/apt -maxdepth 1 -type f -name "*.bin" -print -quit)" ]]
+    [[ ! -e /tmp/npm-cache ]]
+    [[ ! -e /root/.cache/ms-playwright ]]
+  ' || fail 'candidate image retained package-manager or browser download caches'
 tests/public-v2-upgrade-smoke.sh "${IMAGE}" \
   || fail 'Public 2.0.6 to candidate upgrade smoke failed'
 tests/telegram-shared-context-smoke.sh "${IMAGE}" \
   || fail 'Telegram shared native context smoke failed'
+tests/telegram-universal-action-smoke.sh "${IMAGE}" \
+  || fail 'Telegram universal action image smoke failed'
 PINNED_ANTIGRAVITY_VERSION=$(sed -n \
   's/^ARG ANTIGRAVITY_VERSION=//p' antigravity_home_assistant/Dockerfile)
 [[ "${PINNED_ANTIGRAVITY_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
@@ -670,12 +680,21 @@ docker exec "${PUBLIC_CONTAINER}" /bin/sh -c '
   printf "%s\n" user-plugin-preserve \
     > /data/home/.gemini/config/plugins/user-smoke/preserve-marker
 '
-docker exec "${PUBLIC_CONTAINER}" /bin/sh -c \
-  'printf "%s\n" sentinel > /run/antigravity-ha/playwright-output/init-sentinel'
+docker exec "${PUBLIC_CONTAINER}" /bin/sh -ceu '
+  printf "%s\n" sentinel > /run/antigravity-ha/playwright-home/init-sentinel
+  printf "%s\n" sentinel > /run/antigravity-ha/playwright-output/init-sentinel
+  chmod 0755 \
+    /run/antigravity-ha/playwright-home \
+    /run/antigravity-ha/playwright-output
+'
 docker exec "${PUBLIC_CONTAINER}" rm -f /data/ssh/ssh_host_rsa_key.pub
 docker exec "${PUBLIC_CONTAINER}" antigravity-ha-init >/dev/null
 docker exec "${PUBLIC_CONTAINER}" test ! -e \
+  /run/antigravity-ha/playwright-home/init-sentinel
+docker exec "${PUBLIC_CONTAINER}" test ! -e \
   /run/antigravity-ha/playwright-output/init-sentinel
+[[ $(docker exec "${PUBLIC_CONTAINER}" stat -c '%a' \
+  /run/antigravity-ha/playwright-home) == 700 ]]
 [[ $(docker exec "${PUBLIC_CONTAINER}" stat -c '%a' \
   /run/antigravity-ha/playwright-output) == 700 ]]
 docker exec "${PUBLIC_CONTAINER}" jq --exit-status '.preserved_smoke_marker == true' \

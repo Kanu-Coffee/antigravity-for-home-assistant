@@ -16,6 +16,58 @@ def argument(dockerfile: str, name: str) -> str:
     return match.group(1)
 
 
+def test_release_metadata_does_not_invalidate_the_dependency_layer() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    dependency_run = dockerfile.index("\nRUN sed -i")
+    dependency_run_last_input = dockerfile.index("\nENV AGY_CLI_DISABLE_AUTO_UPDATE=true")
+    source_validation_run = dockerfile.index(
+        "\nRUN --mount=type=bind,source=rootfs,target=/tmp/antigravity-source-rootfs"
+    )
+
+    assert dependency_run < dockerfile.index("npm ci --prefix", dependency_run)
+    for name in ("BUILD_VERSION", "SOURCE_REVISION", "SOURCE_ROOTFS_SHA256"):
+        declaration = dockerfile.index(f"\nARG {name}=")
+        assert dependency_run_last_input < declaration < source_validation_run
+
+    package = json.loads(
+        (ADDON / "playwright/package.json").read_text(encoding="utf-8")
+    )
+    lock = json.loads(
+        (ADDON / "playwright/package-lock.json").read_text(encoding="utf-8")
+    )
+    assert package["private"] is True
+    assert package["version"] == "0.0.0"
+    assert lock["version"] == package["version"]
+    assert lock["packages"][""]["version"] == package["version"]
+
+
+def test_dependency_build_and_image_smoke_reject_package_manager_caches() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    docker_smoke = (ROOT / "tests/docker-smoke.sh").read_text(encoding="utf-8")
+
+    cleanup = dockerfile[dockerfile.index("npm ci --prefix") :]
+    for command in (
+        "apt-get clean",
+        "/var/lib/apt/lists/*",
+        "/var/cache/apt/archives/*",
+        "/var/cache/apt/*.bin",
+        "/tmp/npm-cache",
+    ):
+        assert command in cleanup
+
+    for cache_path in (
+        "/var/lib/apt/lists",
+        "/var/cache/apt/archives",
+        "/var/cache/apt",
+        "/tmp/npm-cache",
+        "/root/.cache/ms-playwright",
+    ):
+        assert cache_path in docker_smoke
+    assert "candidate image retained package-manager or browser download caches" in (
+        docker_smoke
+    )
+
+
 def test_base_and_debian_packages_use_a_signed_fixed_snapshot() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     build_from = argument(dockerfile, "BUILD_FROM")

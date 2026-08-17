@@ -92,6 +92,8 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/ha-feedback/
 rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/ha-memory/*
 !rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assistant-operations/
 rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assistant-operations/*
+!rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/telegram-action-proposal/
+rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/telegram-action-proposal/*
 !playwright/package-lock.json
 !playwright/package.json
 !rootfs/etc/antigravity/mcp_config.json
@@ -170,6 +172,8 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assista
 !rootfs/usr/local/bin/ha-telegram-pair
 !rootfs/usr/local/bin/ha-validate-mcp
 !rootfs/usr/local/bin/supervisor-api
+!rootfs/usr/local/bin/telegram-action-executor
+!rootfs/usr/local/bin/telegram-action-proposal-mcp
 !rootfs/usr/local/bin/tmux-session-shell
 !rootfs/usr/local/bin/web-terminal-entrypoint
 !rootfs/usr/local/lib/antigravity-ha/api-client.sh
@@ -217,9 +221,13 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assista
 !rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/ha-feedback/SKILL.md
 !rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/ha-memory/SKILL.md
 !rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assistant-operations/SKILL.md
+!rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/telegram-action-proposal/SKILL.md
 !rootfs/usr/local/share/antigravity-ha/source-rootfs-manifest.json
 !rootfs/usr/local/share/antigravity-ha/supervisor-credential-fd.mjs
 !rootfs/usr/local/share/antigravity-ha/supervisor-options-migrate.mjs
+!rootfs/usr/local/share/antigravity-ha/telegram-action-coordinator.mjs
+!rootfs/usr/local/share/antigravity-ha/telegram-action-executor.mjs
+!rootfs/usr/local/share/antigravity-ha/telegram-action-proposal-mcp.mjs
 !rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs
 !rootfs/usr/local/share/antigravity-ha/telegram-pairing.mjs
 !rootfs/usr/local/share/antigravity-ha/telegram-state.mjs

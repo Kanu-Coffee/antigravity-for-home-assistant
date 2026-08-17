@@ -86,6 +86,70 @@ def test_entrypoints_are_executable_and_sourced_shell_libraries_are_not(
             assert not (library.stat().st_mode & stat.S_IXUSR), library
 
 
+def test_universal_telegram_action_runtime_is_packaged_and_syntax_checked(
+    addon_root: Path,
+    rootfs: Path,
+) -> None:
+    dockerfile = (addon_root / "Dockerfile").read_text(encoding="utf-8")
+    for wrapper_name in (
+        "telegram-action-executor",
+        "telegram-action-proposal-mcp",
+    ):
+        wrapper = rootfs / "usr/local/bin" / wrapper_name
+        assert wrapper.is_file()
+        if os.name != "nt":
+            assert wrapper.stat().st_mode & stat.S_IXUSR
+
+    for module_name in (
+        "telegram-action-coordinator.mjs",
+        "telegram-action-executor.mjs",
+        "telegram-action-proposal-mcp.mjs",
+    ):
+        module = rootfs / "usr/local/share/antigravity-ha" / module_name
+        assert module.is_file()
+        assert f"/usr/local/share/antigravity-ha/{module_name}" in dockerfile
+        assert (
+            f"node --check /usr/local/share/antigravity-ha/{module_name}"
+            in dockerfile
+        )
+
+
+def test_universal_telegram_action_installed_path_is_in_candidate_smoke(
+    repository_root: Path,
+) -> None:
+    docker_smoke = (repository_root / "tests/docker-smoke.sh").read_text(
+        encoding="utf-8"
+    )
+    action_smoke = (
+        repository_root / "tests/telegram-universal-action-smoke.sh"
+    ).read_text(encoding="utf-8")
+    fixture = (
+        repository_root
+        / "tests/fixtures/telegram-universal-action-image-smoke.mjs"
+    ).read_text(encoding="utf-8")
+    candidate_workflow = (
+        repository_root / ".github/workflows/build-app.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert "tests/telegram-universal-action-smoke.sh" in docker_smoke
+    assert "--network none" in action_smoke
+    assert "--read-only" in action_smoke
+    assert "--cap-drop ALL" in action_smoke
+    assert "--security-opt no-new-privileges" in action_smoke
+    for installed_path in (
+        "/usr/local/bin/telegram-action-proposal-mcp",
+        "/usr/local/bin/telegram-action-executor",
+        "/usr/local/share/antigravity-ha/telegram-action-coordinator.mjs",
+    ):
+        assert installed_path in fixture
+    assert 'operation: "multi_choice_terminal"' in fixture
+    assert "execution_digest: selected.execution_digest" in fixture
+    assert "suite: container" in candidate_workflow
+    assert 'container) exec bash tests/docker-smoke.sh "$image"' in (
+        candidate_workflow
+    )
+
+
 def test_antigravity_release_is_pinned_and_verified(addon_root: Path) -> None:
     dockerfile = (addon_root / "Dockerfile").read_text(encoding="utf-8")
     version_match = re.search(
@@ -366,10 +430,13 @@ def test_native_plugin_has_home_assistant_safety_rules(rootfs: Path) -> None:
     assert "Diagnosis does not authorize" in guidance
     assert "run `ha-config-check`" in normalized_guidance
     assert "requester-bound Telegram session" in guidance
-    assert "route every\n  Home Assistant service call" in guidance
+    assert "ha_change_propose" in guidance
+    assert "telegram_action_propose" in guidance
+    assert "Never call `run_command`" in guidance
+    assert "MCP result is not approval" in guidance
     assert "authenticated interactive Web-terminal or SSH session" in guidance
     assert "shared native home" in normalized_guidance
-    assert "no separate inline approval card" in normalized_guidance
+    assert "unsupported by the approval bridge" in normalized_guidance
     assert "SUPERVISOR_TOKEN" in guidance
     assert "http://127.0.0.1:8099/" in guidance
     assert "logs, web pages" in normalized_guidance
@@ -403,6 +470,16 @@ def test_boolean_option_reader_accepts_an_explicit_false(rootfs: Path) -> None:
         "ANTIGRAVITY_HA_OPTIONS_FILE:-/run/antigravity-ha/"
         "ha-feedback-options.json"
     ) in config_helpers
+
+
+def test_runtime_snapshot_normalizes_every_legacy_tool_policy(rootfs: Path) -> None:
+    init_script = (rootfs / "usr/local/bin/antigravity-ha-init").read_text(
+        encoding="utf-8"
+    )
+
+    assert '.antigravity_tool_permission != "request-review"' in init_script
+    assert 'if . == "request-review" then . else "request-review" end' in init_script
+    assert "normalized to request-review" in init_script
 
 
 def test_web_terminal_uses_tmux_and_returns_to_shell(rootfs: Path) -> None:

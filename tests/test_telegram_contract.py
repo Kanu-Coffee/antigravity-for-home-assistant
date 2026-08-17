@@ -68,13 +68,33 @@ def test_telegram_bridge_syntax_and_unit_suite(repository_root: Path, addon_root
     )
     assert session_delivery_suite.returncode == 0, session_delivery_suite.stderr
 
+    for suite_name in (
+        "telegram_universal_approval_test.mjs",
+        "telegram_action_coordinator_test.mjs",
+        "telegram_action_backend_test.mjs",
+    ):
+        suite_path = repository_root / "tests" / suite_name
+        assert suite_path.is_file()
+        suite = subprocess.run(
+            ["node", "--test", str(suite_path)],
+            capture_output=True,
+            text=True,
+        )
+        assert suite.returncode == 0, suite.stderr
+
 
 def test_ci_runs_shared_context_session_delivery_gate(repository_root: Path) -> None:
     workflow = (repository_root / ".github/workflows/ci.yaml").read_text(
         encoding="utf-8"
     )
     assert "Telegram shared context, session, delivery, and broker contracts" in workflow
-    assert "tests/telegram_bridge_session_delivery_test.mjs" in workflow
+    for suite_name in (
+        "telegram_bridge_session_delivery_test.mjs",
+        "telegram_universal_approval_test.mjs",
+        "telegram_action_coordinator_test.mjs",
+        "telegram_action_backend_test.mjs",
+    ):
+        assert f"tests/{suite_name}" in workflow
 
 
 def test_telegram_local_pairing_helper_is_packaged(addon_root: Path) -> None:
@@ -197,8 +217,10 @@ def test_telegram_bridge_has_no_legacy_shell_or_pairing_surface(addon_root: Path
     assert 'event.result.status !== "SUCCESS"' in bridge
     assert "event.result.conversation_id !== conversationId" in bridge
     assert 'response = event.result.response.replace' in bridge
-    assert 'parameters.ServerName !== "ha_change"' in bridge
-    assert 'parameters.ToolName !== "ha_change_propose"' in bridge
+    assert 'parameters.ServerName === "ha_change"' in bridge
+    assert 'parameters.ToolName === "ha_change_propose"' in bridge
+    assert 'parameters.ServerName === "telegram_action"' in bridge
+    assert 'parameters.ToolName === "telegram_action_propose"' in bridge
     assert 'stepUpdate.state !== "DONE"' in bridge
     assert "telegram_allowed_user_ids" in bridge
     assert "ACCESS_MODES" not in bridge
@@ -395,6 +417,7 @@ def test_public_v2_upgrade_smoke_covers_shared_runtime_migration(
         "shared global permissions were not migrated from preserve mode",
         'index("read_file(/data)") == null',
         'index("write_file(/data)") == null',
+        'index("mcp(telegram_action/telegram_action_propose)")',
         "/usr/local/bin/ha-telegram-login",
         "/usr/local/libexec/ha-telegram-worker",
         "antigravity_home_assistant-telegram-worker",

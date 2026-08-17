@@ -23,7 +23,7 @@ configuration:
     description: Shared session used to restore the terminal after a browser reconnect.
   antigravity_tool_permission:
     name: Antigravity tool permission
-    description: Native Antigravity toolPermission policy shared by Web, SSH, and Telegram. The new-install default, always-proceed, grants the most autonomy inside the App boundary.
+    description: Native Antigravity toolPermission input shared by Web, SSH, and Telegram. Because of the pinned CLI headless boundary, request-review is the only effective value; the user-files updater also normalizes strict, always-proceed, and proceed-in-sandbox to it. Other schema values are upgrade-input compatibility for stored Supervisor options.
   antigravity_terminal_sandbox:
     name: Antigravity terminal sandbox (deprecated)
     description: Legacy option for the native sandbox, which is incompatible with a non-privileged HAOS App. Version 2.0.9 normalizes either value to false and always uses the AppArmor command boundary.
@@ -40,9 +40,12 @@ configuration:
     name: Antigravity user-file update mode
     description: >-
       preserve keeps all existing user files. refresh_managed updates only
-      image-managed rules, plugins, and MCP defaults. reset_v2 creates a
-      root-only backup before replacing App-managed Antigravity files while
-      preserving Home Assistant configuration, SSH keys, and validated memory.
+      image-managed rules, plugins, and MCP defaults. Explicit reset_v2 backs
+      up safe settings as root and replaces managed keys plus all three
+      permission buckets with exact image defaults regardless of ownership
+      state. It preserves user top-level settings outside permissions, global
+      MCP, plugins, OAuth, Home Assistant configuration, SSH keys, and validated
+      memory, and repairs drift on every startup until returned to preserve.
       Deprecated refresh_agents and refresh_all values are accepted only to
       start a v1 upgrade and are normalized to refresh_managed through
       Supervisor; do not select them for new configuration.

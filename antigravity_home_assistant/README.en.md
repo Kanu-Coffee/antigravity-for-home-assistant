@@ -41,7 +41,28 @@ with approvals and replies continuing in that session. There is no separate
 Telegram sign-in or HOME. Version 2.0.10 supports `multi_choice_service_call`,
 showing up to 31 prevalidated service-call choices on one approval card and
 executing only the selected choice. Existing Approve/Deny cards remain
-compatible.
+compatible. Version 2.0.11 also uses proposal-first Telegram cards for managed
+terminal commands, inline scripts, command choices, and finite questions, and
+executes only the approved exact action. The pinned CLI cannot externally resume
+a native permission prompt, so arbitrary future/plugin MCP tools are not
+transparently intercepted and unsupported side effects fail closed. Initial
+OAuth still requires a one-time Web/SSH login when no shared identity exists.
+
+Telegram's effective native permission is only `request-review` because of the
+pinned CLI boundary. Schema values `strict`, `always-proceed`, and
+`proceed-in-sandbox` are upgrade-input compatibility and the user-files updater
+normalizes all of them to `request-review`. Playwright auto-allows only the four
+upstream `readOnly: true` console/network/snapshot/screenshot tools;
+navigate/tabs/hover/wait/resize/close fail closed until a typed adapter exists.
+If the bridge exits after proposal registration but before sealing encrypted
+approval/card state, registration cannot be recovered and the request must be
+repeated.
+
+Explicit `reset_v2` recovery backs up safe settings and replaces managed keys
+and all three permission buckets with exact defaults regardless of prior
+ownership state. It preserves user top-level settings outside permissions,
+global MCP, plugins, OAuth, and `/config`, and repairs drift on every startup
+until returned to `preserve`.
 
 If you do not need SSH, leave `authorized_keys` empty. The Web UI will continue to work.
 

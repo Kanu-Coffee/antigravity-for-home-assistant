@@ -13,7 +13,11 @@ import {
   applyNewSessionControl,
   bindSessionConversation,
   clearConversation,
+  cleanupToolApprovals,
   commitUpdateOffset,
+  commitToolApproval,
+  completeToolApproval,
+  decideToolApproval,
   deletePendingApproval,
   deletePendingApprovalsForSession,
   cleanupPendingApprovals,
@@ -25,8 +29,10 @@ import {
   getPendingDelivery,
   getSession,
   getTerminalTurn,
+  getToolApproval,
   listPendingApprovals,
   listPendingDeliveries,
+  listToolApprovals,
   loadBridgeState,
   loadSealedUpdates,
   markDeliveryAttempting,
@@ -42,6 +48,7 @@ import {
   savePendingApproval,
   saveControlEffect,
   saveTerminalTurn,
+  saveToolApproval,
   finalizeTerminalTurn,
   setConversation,
 } from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/telegram-state.mjs";
@@ -106,6 +113,61 @@ function pendingApproval(generation = 1, id = "approval-1") {
     idempotency_key: "tg:10001:-20002:12345",
     expires_at: Date.now() + 120_000,
     approved_update_id: null,
+  };
+}
+
+function toolApproval({
+  generation = 1,
+  id = "tool-approval-1",
+  operation = "terminal_command",
+  choices = [],
+} = {}) {
+  const action = operation === "terminal_command"
+    ? { command: "df -h /config", cwd: "/config", timeout_ms: 10_000 }
+    : operation === "multi_choice_terminal"
+      ? {
+        prompt: "진단 대상을 선택하세요.",
+        choices: choices.map((choice) => ({
+          choice_id: choice.choice_id,
+          label: choice.label,
+          command: `df -h ${choice.choice_id === "config" ? "/config" : "/data"}`,
+          cwd: "/config",
+          timeout_ms: 10_000,
+        })),
+      }
+      : {
+        prompt: "계속할 방식을 선택하세요.",
+        choices: choices.map((choice) => ({
+          choice_id: choice.choice_id,
+          label: choice.label,
+          value: choice.choice_id,
+        })),
+      };
+  return {
+    approval_id: id,
+    proposal_id: `ta_${"p".repeat(22)}`,
+    call_id: `sha256:${"a".repeat(64)}`,
+    run_id: "run.tool.1",
+    update_id: 700,
+    user_id: "10001",
+    chat_id: "-20002",
+    generation,
+    conversation_id: "conversation.tool",
+    step_index: 3,
+    tool_name: "telegram_action_propose",
+    request_digest: `sha256:${"b".repeat(64)}`,
+    preview: "승인된 경우에만 정확한 명령을 실행합니다.",
+    risk: "high",
+    status: "pending",
+    decision_update_id: null,
+    commit_token: null,
+    expires_at: Date.now() + 120_000,
+    choice_tokens: choices,
+    choice_prompt: choices.length > 0 ? action.prompt : null,
+    selected_choice_id: null,
+    operation,
+    action_json: JSON.stringify(action),
+    execution_result_json: null,
   };
 }
 
@@ -601,6 +663,171 @@ test("pending approvals are encrypted, restart-readable, and invalidated by sess
   }
 });
 
+test("universal action approvals seal payloads and commit before durable execution results", async () => {
+  const paths = await fixture();
+  try {
+    const session = ensureSession("10001", "-20002", paths);
+    bindSessionConversation(
+      "10001",
+      "-20002",
+      session.generation,
+      "conversation.tool",
+      paths,
+    );
+    const expiredPending = {
+      ...toolApproval({ generation: session.generation, id: "tool-approval-expired1" }),
+      proposal_id: `ta_${"e".repeat(22)}`,
+      call_id: `sha256:${"e".repeat(64)}`,
+      update_id: 699,
+      expires_at: Date.now() - 1,
+    };
+    saveToolApproval(expiredPending, BOT_TOKEN, paths);
+    assert.deepEqual(cleanupToolApprovals(BOT_TOKEN, {
+      ...paths,
+      now: Date.now(),
+    }), { expired: 1, stale: 0 });
+    assert.equal(getToolApproval(expiredPending.approval_id, BOT_TOKEN, paths), null);
+    const approval = toolApproval({ generation: session.generation });
+    assert.deepEqual(saveToolApproval(approval, BOT_TOKEN, paths), approval);
+    assert.deepEqual(getToolApproval(approval.approval_id, BOT_TOKEN, paths), approval);
+    const raw = await readFile(paths.path, "utf8");
+    assert.equal(raw.includes("df -h /config"), false);
+    assert.equal(raw.includes(approval.preview), false);
+    assert.throws(
+      () => listToolApprovals(WRONG_BOT_TOKEN, paths),
+      (error) => error?.code === "ETELEGRAMTOOLAPPROVAL",
+    );
+
+    const approved = decideToolApproval(
+      approval.approval_id,
+      701,
+      "approve",
+      BOT_TOKEN,
+      paths,
+    );
+    assert.equal(approved.status, "approved");
+    assert.match(approved.commit_token, /^[A-Za-z0-9_-]{22}$/u);
+    const committed = commitToolApproval(
+      approval.approval_id,
+      approved.commit_token,
+      BOT_TOKEN,
+      paths,
+    );
+    assert.equal(committed.status, "committed");
+    assert.deepEqual(cleanupToolApprovals(BOT_TOKEN, {
+      ...paths,
+      now: approval.expires_at + 1,
+    }), { expired: 0, stale: 0 });
+    const result = {
+      status: "completed",
+      exit_code: 0,
+      stdout: "Filesystem /config",
+      stderr: "",
+      timed_out: false,
+      duration_ms: 12,
+    };
+    const completed = completeToolApproval(
+      approval.approval_id,
+      approved.commit_token,
+      result,
+      BOT_TOKEN,
+      paths,
+    );
+    assert.equal(completed.status, "completed");
+    assert.deepEqual(JSON.parse(completed.execution_result_json), result);
+    assert.deepEqual(cleanupToolApprovals(BOT_TOKEN, {
+      ...paths,
+      now: approval.expires_at + 60_000,
+    }), { expired: 0, stale: 0 });
+    assert.equal(
+      getToolApproval(approval.approval_id, BOT_TOKEN, paths).status,
+      "completed",
+    );
+    assert.deepEqual(
+      completeToolApproval(
+        approval.approval_id,
+        approved.commit_token,
+        result,
+        BOT_TOKEN,
+        paths,
+      ),
+      completed,
+    );
+    assert.throws(
+      () => completeToolApproval(
+        approval.approval_id,
+        approved.commit_token,
+        { ...result, stdout: "changed" },
+        BOT_TOKEN,
+        paths,
+      ),
+      /changed after durable completion/u,
+    );
+  } finally {
+    await rm(paths.root, { recursive: true, force: true });
+  }
+});
+
+test("universal multi-choice actions and questions bind one opaque Telegram choice", async () => {
+  const choices = [
+    { token: "choiceA1", choice_id: "config", label: "/config" },
+    { token: "choiceB2", choice_id: "data", label: "/data" },
+  ];
+  for (const operation of ["multi_choice_terminal", "question"]) {
+    const paths = await fixture();
+    try {
+      const session = ensureSession("10001", "-20002", paths);
+      bindSessionConversation(
+        "10001",
+        "-20002",
+        session.generation,
+        "conversation.tool",
+        paths,
+      );
+      const approval = toolApproval({ generation: session.generation, operation, choices });
+      saveToolApproval(approval, BOT_TOKEN, paths);
+      assert.throws(
+        () => decideToolApproval(
+          approval.approval_id,
+          702,
+          "choose",
+          BOT_TOKEN,
+          { ...paths, choiceToken: "unknown1" },
+        ),
+        /choice is invalid/u,
+      );
+      const selected = decideToolApproval(
+        approval.approval_id,
+        702,
+        "choose",
+        BOT_TOKEN,
+        { ...paths, choiceToken: "choiceB2" },
+      );
+      assert.equal(selected.selected_choice_id, "data");
+      if (operation === "question") {
+        assert.equal(selected.status, "answered");
+        assert.equal(selected.commit_token, null);
+      } else {
+        assert.equal(selected.status, "approved");
+        assert.match(selected.commit_token, /^[A-Za-z0-9_-]{22}$/u);
+      }
+      assert.deepEqual(cleanupToolApprovals(BOT_TOKEN, {
+        ...paths,
+        now: approval.expires_at + 60_000,
+      }), { expired: 0, stale: 0 });
+      assert.equal(
+        getToolApproval(approval.approval_id, BOT_TOKEN, paths).status,
+        operation === "question" ? "answered" : "approved",
+      );
+      const encrypted = await readFile(paths.path, "utf8");
+      assert.equal(encrypted.includes("choiceB2"), false);
+      assert.equal(encrypted.includes("df -h /data"), false);
+    } finally {
+      await rm(paths.root, { recursive: true, force: true });
+    }
+  }
+});
+
 test("multi-choice approval tokens and selected choice remain encrypted and exactly-once", async () => {
   const paths = await fixture();
   try {
@@ -744,7 +971,7 @@ test("version 3 acknowledgement state migrates without losing a later completed 
       paths,
     );
     assert.equal(migrated.transport_offset, 101);
-    assert.equal(loadBridgeState(paths.path).version, 7);
+    assert.equal(loadBridgeState(paths.path).version, 8);
     assert.equal(acknowledgeUpdate(100, paths), 103);
     assert.equal(loadBridgeState(paths.path).transport_offset, 103);
     assert.deepEqual(loadBridgeState(paths.path).sealed_updates, []);
@@ -798,7 +1025,7 @@ test("published version 2 through 4 isolated conversation ids are discarded on s
       );
       assert.equal(resetSession("10001", "-20002", paths).generation, 2);
       const migrated = loadBridgeState(paths.path);
-      assert.equal(migrated.version, 7);
+      assert.equal(migrated.version, 8);
       assert.equal(Object.hasOwn(migrated, "conversations"), false);
     } finally {
       await rm(paths.root, { recursive: true, force: true });
@@ -833,13 +1060,13 @@ test("version 5 response outbox metadata migrates to staged attempt tracking", a
       "shared-v5-provenance",
     );
     markDeliveryAttempting(queued.delivery_id, 0, paths);
-    assert.equal(loadBridgeState(paths.path).version, 7);
+    assert.equal(loadBridgeState(paths.path).version, 8);
   } finally {
     await rm(paths.root, { recursive: true, force: true });
   }
 });
 
-test("version 6 shared-runtime state migrates to an empty version 7 terminal journal", async () => {
+test("version 6 shared-runtime state migrates to empty version 8 journals", async () => {
   const paths = await fixture();
   try {
     const session = ensureSession("10001", "-20002", paths);
@@ -857,8 +1084,9 @@ test("version 6 shared-runtime state migrates to an empty version 7 terminal jou
     await writeFile(paths.path, `${JSON.stringify(legacy, null, 2)}\n`, "utf8");
 
     const migrated = loadBridgeState(paths.path);
-    assert.equal(migrated.version, 7);
+    assert.equal(migrated.version, 8);
     assert.deepEqual(migrated.terminal_turns, []);
+    assert.deepEqual(migrated.sealed_tool_approvals, []);
     assert.deepEqual(migrated.control_effects, []);
     assert.equal(
       getSession("10001", "-20002", paths).conversation_id,

@@ -1,0 +1,47 @@
+#!/bin/bash -p
+set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
+
+if (( $# != 0 )); then
+  printf 'telegram-action-executor: command-line arguments are not supported\n' >&2
+  exit 64
+fi
+
+telegram_user_id=${HA_TELEGRAM_USER_ID-}
+telegram_chat_id=${HA_TELEGRAM_CHAT_ID-}
+session_generation=${HA_TELEGRAM_SESSION_GENERATION-}
+update_id=${HA_TELEGRAM_UPDATE_ID-}
+run_nonce=${HA_TELEGRAM_RUN_NONCE-}
+conversation_id=${HA_ANTIGRAVITY_CONVERSATION_ID-}
+
+if [[ "${ANTIGRAVITY_HA_CHANNEL:-}" != telegram ]]; then
+  printf 'telegram-action-executor: invalid Telegram channel binding\n' >&2
+  exit 78
+fi
+if [[ ! "$telegram_user_id" =~ ^[1-9][0-9]{0,19}$ \
+  || ! "$telegram_chat_id" =~ ^-?[1-9][0-9]{0,19}$ \
+  || ! "$session_generation" =~ ^[1-9][0-9]{0,15}$ \
+  || ! "$update_id" =~ ^[1-9][0-9]{0,15}$ \
+  || ! "$run_nonce" =~ ^[A-Za-z0-9_-]{24,128}$ \
+  || ! "$conversation_id" =~ ^[A-Za-z0-9._:-]{1,256}$ ]]; then
+  printf 'telegram-action-executor: invalid live Telegram run binding\n' >&2
+  exit 78
+fi
+
+# The selected action arrives as one bounded JSON object on stdin. The Node
+# executor passes its digest-checked source as one argument to this immutable
+# AppArmor transition shell; no source is interpolated into this wrapper.
+exec /usr/bin/env -i \
+  HOME=/tmp \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  ANTIGRAVITY_HA_CHANNEL=telegram \
+  HA_TELEGRAM_USER_ID="$telegram_user_id" \
+  HA_TELEGRAM_CHAT_ID="$telegram_chat_id" \
+  HA_TELEGRAM_SESSION_GENERATION="$session_generation" \
+  HA_TELEGRAM_UPDATE_ID="$update_id" \
+  HA_TELEGRAM_RUN_NONCE="$run_nonce" \
+  HA_ANTIGRAVITY_CONVERSATION_ID="$conversation_id" \
+  /usr/bin/node \
+  /usr/local/share/antigravity-ha/telegram-action-executor.mjs

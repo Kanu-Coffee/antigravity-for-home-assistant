@@ -96,6 +96,30 @@ capability/idempotency binding, unknown token·double tap·다른 두 번째 cho
 접수된 durable result만 회수해야 한다. 실제 HAOS OAuth/AppArmor와 live Telegram
 Bot API/card/service-call E2E는 별도 증거 전까지 `NOT RUN`이다.
 
+### 2.0.11 universal managed Telegram approval
+
+2.0.11은 새 설치와 Telegram의 유일한 effective native 값 `request-review`,
+`strict`/legacy autonomous schema 입력의 `request-review` 정규화, safely identified 2.0.9/2.0.10 App-owned broad
+permission의 bounded-read/proposal-only migration, exact
+`telegram_action_propose` receipt와 private run-bound coordinator를 검증한다.
+`terminal_command`, `multi_choice_terminal`, `question` schema의 size/depth/path/timeout/
+sensitive-value deny, 1~31 choice+cancel 4×8 `v4a`/`v4d`/`v4c` keyboard, encrypted
+approval state, durable commit-before-exec, no-respawn `in_doubt`, credential-free executor,
+bounded stdout/stderr와 same-conversation sealed continuation을 component fixture로
+검증한다. `/cancel`, cross-user/session/update/run mismatch와 duplicate callback도
+실행을 만들지 않아야 한다.
+upstream `readOnly: true` Playwright 네 도구만 auto-allow되고 navigate/back, tabs,
+hover, wait, resize, close는 fail closed하는지 검증한다. proposal register 성공 뒤
+encrypted approval/card sealing 전 bridge crash는 registration 복구를 주장하지 않고
+사용자 재시도 상태로 끝나야 한다.
+
+고정 CLI 1.1.13 print mode에서 PreToolUse hook이 실행되지 않고 native permission
+prompt를 external approval로 resume할 protocol이 없다는 actual-binary negative proof를
+유지한다. 따라서 arbitrary future/user plugin MCP transparent interception은 수용
+조건이 아니며 unsupported side effect의 fail-closed가 수용 조건이다. source fixture와
+local image 성공은 실제 HAOS AppArmor enforce, initial OAuth, live Telegram Bot API
+card/callback 또는 실제 HA/command E2E가 아니다. 이 항목들은 계속 `NOT RUN`이다.
+
 ### 2.1 2026-08-11 local v2 working-tree 증거
 
 | 항목 | 결과 | 정확한 범위 |
@@ -177,13 +201,13 @@ candidate와 HAOS evidence가 생기기 전에는 관련 마일스톤을 `VERIFI
 | AG-004 | settings merge | managed key 갱신, unknown/user key byte-semantic 보존 |
 | AG-005 | plugin validation | source와 installed plugin이 공식 schema 통과 |
 | AG-006 | duplicate plugin | global/staged/workspace 이름 충돌 시 fail closed |
-| AG-007 | MCP discovery | `ha_change`, `ha_memory`, `ha_read`, `ha_validate`, `playwright` 다섯 managed server가 secret env 없이 발견 |
+| AG-007 | MCP discovery | `ha_change`, `telegram_action`, `ha_memory`, `ha_read`, `ha_validate`, `playwright` 여섯 managed server가 secret env 없이 발견 |
 | AG-008 | OAuth persistence | login 후 restart/update에서 native session 보존 |
 | AG-009 | print stdin | 값 없는 `--print` 없이 pipe된 prompt가 argv/log에 없고 stdin으로 처리 |
-| AG-010 | stream parser | top-level `event`, init/progress/SUCCESS native free-text result, exact completed HA proposal receipt, optional bounded `toolAction`/`toolSummary`, single-proposal empty-text fallback, conversation binding, typed terminal failures, invalid JSON, unknown event, size limit |
-| AG-011 | headless permissions | settings policy와 AppArmor command 경계가 print mode에도 적용되고 legacy true/false는 false로 정규화 |
+| AG-010 | stream parser | top-level `event`, init/progress/SUCCESS native free-text result, exact completed HA/action proposal receipt, optional bounded `toolAction`/`toolSummary`, kind-specific single-proposal empty-text fallback, conversation binding, typed terminal/headless-permission failures, invalid JSON, unknown event, size limit |
+| AG-011 | headless permissions | effective `request-review` 하나, bounded-read/proposal-only settings와 AppArmor command 경계가 print mode에도 적용되고 `strict`/legacy autonomous option과 sandbox true/false가 보수적으로 정규화 |
 | AG-012 | forbidden flags | skip-permissions와 Telegram override 거부 |
-| AG-013 | Telegram customization inheritance | user global/workspace plugin·agent·rule·MCP를 Web/SSH와 동일하게 실행·노출·수정; shared settings policy 상속, 일반 설정의 매개 patch, raw/protected settings write deny |
+| AG-013 | Telegram customization inheritance | user global/workspace plugin·agent·rule·MCP를 Web/SSH와 동일하게 실행·노출; Telegram mutation은 exact action proposal, shared settings policy 상속, raw/protected settings/MCP-config write deny |
 | AG-014 | runtime auto-update disabled | 모든 native launch가 opt-out을 강제하고 updater spawn·binary version/digest 변동이 없음 |
 
 AG-009와 AG-010은 실제 고정 binary의 authenticated test account 또는 비밀 없는
@@ -278,11 +302,11 @@ current amd64 image와 current-source QEMU aarch64 packaging canary는 이 경�
 - local pairing entropy/TTL/single-use/revoke와 unauthorized response
 - `$()`, backtick, quotes, newline, leading dash, Unicode와 oversized input
 - shell false, `--print` 없는 exact argv와 stdin prompt
-- actual 1.1.13에서 user global/workspace plugin·agent·rule·MCP의 Web/SSH 동등 상속·
-  수정, shared native settings read와 `agy-settings patch` 일반 설정 수정 positive
-  canary. raw write와 다섯 protected key patch는 negative canary
+- actual 1.1.13에서 user global/workspace plugin·agent·rule·MCP의 Web/SSH 동등 상속,
+  shared native settings read, approved exact customization action positive canary.
+  raw protected settings/MCP-config write는 negative canary
 - per-chat FIFO, global concurrency, queue overflow, cancel와 timeout
-- callback query ACK/기본 인증의 즉시 처리, approved broker execution의 requester FIFO
+- callback query ACK/기본 인증의 즉시 처리, approved broker/executor execution의 requester FIFO
   직렬화, execution-boundary generation/conversation/requester/digest 재검증
 - validated update의 HKDF/AES-256-GCM sealed spool, plaintext/token canary 부재,
   fsync-before-transport-offset, ack ciphertext 삭제와 비순차 contiguous commit
@@ -292,9 +316,20 @@ current amd64 image와 current-source QEMU aarch64 packaging canary는 이 경�
 - proposal receipt의 optional bounded `toolAction`/`toolSummary` 허용, unknown key/
   non-string/control/oversize 거부, 단일 유효 proposal+empty terminal text의 고정 fallback,
   proposal 없는 empty terminal text 거부
+- exact `telegram_action_propose` receipt/coordinator revalidation, first-turn conversation
+  rebind, terminal/script/question schema bounds와 sensitive-path/value/daemon deny,
+  register 뒤 approval/card seal 전 crash의 사용자 재시도와 registration 비영속 경계
+- `v4a`/`v4d`/`v4c`, 31 action choices+cancel 4×8 layout, encrypted action/opaque token,
+  commit-before-executor, bounded output, sealed same-conversation continuation,
+  committed replay no-respawn `in_doubt`, `/cancel` state boundary
 - first-run pre-binding, worker/restart/idle 뒤 같은 conversation과 explicit `/new` rotation
-- global tool permission/sensitive option 동등 적용, native sandbox flag 부재/override
-  거부, legacy true/false 입력의 false 정규화, legacy Telegram mode 무시
+- 유일한 effective `request-review`/bounded-read/proposal-only managed permission과 sensitive option 적용,
+  `strict`/legacy autonomous option normalization, native sandbox flag 부재/override 거부,
+  sandbox true/false 입력의 false 정규화, legacy Telegram mode 무시
+- Playwright upstream read-only 네 도구의 auto-allow와 navigate/back/tabs/hover/wait/
+  resize/close fail-closed
+- actual CLI print mode의 native permission/external resume 부재와 unsupported arbitrary
+  plugin MCP side effect fail-closed
 - bootstrap → runtime → command AppArmor policy, PATH shell/stdio MCP의 command 전환,
   command OAuth/settings/MCP-config/token deny와 일반 `/config`/network/helper positive path
 - encrypted reply outbox의 pre-send fsync, chunk ack, 429 bounded retry,
@@ -556,8 +591,11 @@ HAOS update와 이전 image rollback은 실행하지 않았으므로 IM-012는 `
   때 미접수 proposal fail closed, 이미 접수된 execution의 durable status/result 회수,
   queue/capability 취소와 authorization 보존
 - Bot API network interruption 뒤 duplicate mutation 없음
+- `terminal_command`, `multi_choice_terminal`, `question` 실제 card/selection/result와
+  command/script exact source, credential-free executor, commit-crash `in_doubt` no-respawn
 - shared `/data/home`·`/config`에서 user global/workspace customization이 CLI와
-  동일하게 실행·수정되고 실제 OAuth canary가 reply/log/network로 유출되지 않음
+  동일하게 로드되고 승인된 exact action으로만 수정되며 실제 OAuth canary가
+  reply/log/network로 유출되지 않음
 
 실제 high-risk device를 작동하지 않는다. broker dry-run과 synthetic policy operation으로
 confirmation 강제를 검증한다.
@@ -575,8 +613,10 @@ numeric v2와 original custom repository metadata가 공개된 뒤, public v1.0.
    published generic/amd64 runtime digest와 `/data` identity 유지 확인
 3. OAuth, SSH, browser identity, memory, `/config`와 사용자 settings 확인
 4. 모든 native launch의 updater 미실행과 restart 전후 binary version/digest 불변 확인
-5. 복원된 별도 public-v1 fixture에서 `refresh_managed`의 1회성,
-   `reset_v2`, conflict failure와 restart idempotency 확인
+5. 복원된 별도 public-v1 fixture에서 `refresh_managed`의 1회성, `reset_v2`가 settings
+   ownership state와 무관하게 safe parseable file을 backup한 뒤 managed key/permission
+   bucket을 exact default로 복구하는지, `preserve`로 되돌리기 전 restart drift 복구와
+   unsafe-file conflict를 확인
 6. 기록한 public v1 source/image와 matching managed backup으로 rollback한 뒤
    repository/add-on/data identity와 recovery surface 확인
 
@@ -629,7 +669,8 @@ numeric publish 전에 공식 Home Assistant local testing 경로로 candidate m
 2. 같은 directory/slug의 content만 candidate bundle App directory로 교체하고
    local repository를 refresh해 exact prerelease version으로 update
 3. update 전후 local repository/add-on/data identity와 observed candidate digest 확인
-4. `preserve`, `refresh_managed`, `reset_v2`, ownership conflict와 restart idempotency 확인
+4. `preserve`, `refresh_managed`, ownership state 없는 safe settings의 `reset_v2` exact
+   recovery, 같은-version restart drift 복구와 unsafe-file conflict 확인
 5. migration 중 강제 종료/recovery와 기록한 v1 source-build image/managed backup으로
    local migration rollback을 수행한다. rollback report의 installed App postcondition은
    `1.0.4`다.

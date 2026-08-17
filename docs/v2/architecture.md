@@ -8,7 +8,9 @@ SSH public key ── sshd child ─────────────┼─ s
 Telegram API ─ poller ─ auth ─ session ───┘
                             │      │
                             │      └─ encrypted reply outbox ── delivery/retry
-                            └─ same-session binary/multi-choice approval ── change broker
+                            └─ same-session binary/multi-choice approval
+                                                  ├─ HA change broker
+                                                  └─ action executor
                                                   │
                 ┌─────────────────────────────────┼─────────────────┐
                 ▼                                 ▼                 ▼
@@ -38,6 +40,7 @@ Web/SSH/Telegram Antigravity, browser와 memory process는 원문 대신 scoped 
 | change broker | 높음 | typed proposal 검증, 원자적 `/config` 변경, 제한된 HA mutation |
 | Web/SSH/Telegram Antigravity | 관리자 에이전트 | 공유 `/data/home`, `/config`, OAuth, global/workspace plugin·agent·rule·MCP와 native 권한. option에 따라 restricted/diagnostic-read runtime 선택; spawned command/tool은 별도 profile |
 | Telegram bridge | 신뢰된 transport orchestrator | user/chat 인증, session binding, queue, sealed reply outbox, delivery retry와 binary/multi-choice approval callback 검증 |
+| Telegram action coordinator/executor | 최소권한 proposal/실행 경계 | run-bound proposal 등록, durable commit 뒤 exact command/script 한 번 실행; App token/OAuth 없음 |
 | browser gateway/Chromium | 비신뢰 web content 처리 | loopback HA frontend와 read-only identity |
 | memory daemon/MCP | 제한된 data processor | bounded catalog와 semantic memory. raw credential 없음 |
 | `/config` 내용과 web/log 응답 | data | 지침으로 실행하지 않음 |
@@ -104,6 +107,9 @@ base
 ├─ ha-read-broker.mjs
 ├─ ha-change-broker.mjs
 ├─ ha-change-proposal-mcp.mjs
+├─ telegram-action-proposal-mcp.mjs
+├─ telegram-action-coordinator.mjs
+├─ telegram-action-executor.mjs
 └─ telegram-bridge.mjs
 
 /usr/local/bin/
@@ -119,6 +125,8 @@ base
 ├─ ha-read-broker
 ├─ ha-change-broker
 ├─ ha-change-proposal-mcp
+├─ telegram-action-proposal-mcp
+├─ telegram-action-executor
 └─ ha-telegram-pair
 ```
 
@@ -159,7 +167,8 @@ base
 change broker와 managed browser identity의 canonical roots는 각각
 `/data/antigravity-ha/change-broker/`와 `/data/browser-auth/`다. Telegram은 별도
 settings/plugin copy를 만들지 않고 `/data/home`과 `/config`의 사용자 전역·workspace
-customization을 그대로 사용하고 수정할 수 있다.
+customization을 그대로 읽는다. Telegram mutation은 approved HA 또는 action proposal로만
+수행하며 native MCP config와 App-owned permission settings는 보호한다.
 
 Antigravity가 native하게 만드는 추가 `.gemini` 파일은 보존하되 문서화되지 않은
 인증 파일명을 코드가 추정하거나 직접 수정하지 않는다. CLI가 관리하는 OAuth
@@ -179,6 +188,7 @@ Antigravity가 native하게 만드는 추가 `.gemini` 파일은 보존하되 �
 ├─ ha-read.sock                       # bounded Core/Supervisor read 전용
 ├─ change-proposal.sock               # health/propose 전용
 ├─ change-broker.sock                 # coordinator inspect/authorize/execute/status 전용
+├─ telegram-action-proposal.sock      # current Telegram run-bound proposal 등록 전용
 ├─ home-assistant-browser.token       # optional managed read-only identity, 0600
 ├─ browser-auth-status.json           # sanitized status
 ├─ browser-network-info.json          # sanitized loopback/upstream status
@@ -197,6 +207,10 @@ key에 결합한다. 아직 실행을 접수하지 않은 change proposal은 bro
 memory에만 있으므로 bridge-only restart 뒤 broker가 계속 살아 있을 때만 기존
 approval을 재검증할 수 있다. full App/broker restart는 오래된 미접수 card를
 fail closed하고, 이미 접수된 execution만 durable idempotency/status에서 회수한다.
+action proposal의 coordinator registration도 process memory 상태다. proposal MCP 등록
+성공 뒤 bridge가 encrypted approval state와 card/outbox를 봉인하기 전에 crash하면
+registration 자체를 복구하지 않으며 사용자가 원 요청을 다시 보내야 한다. durable
+approval 보장은 이 sealing 이후에만 시작한다.
 Telegram token을 파일명, argv 또는 persisted queue에 넣지 않는다. `supervisor.token`은 init이 매
 시작마다 원자적으로 다시 만들고 AppArmor로 broker/scoped helper 외 접근을 거부한다.
 
@@ -254,14 +268,13 @@ browser, memory, broker, 일반 shell과 SSH key/App token/backup/SSL/cloud auth
 사용자가 TUI에서 승인해도 AppArmor deny와 broker의 고위험 정책은 해제되지
 않는다.
 
-native CLI의 built-in file tool처럼 runtime process 안에서 끝나는 동작과 trusted
+native CLI의 built-in file tool처럼 runtime process 안에서 끝나는 동작과 future/user
 extension은 executable transition으로 투명하게 가로챌 수 없다. App 관리
-`settings.json`의 raw write는 native permission exact deny로 막되, 일반 전역 설정은
-digest-bound `agy-settings patch`가 별도 settings-update profile에서 매개 수정한다.
-helper는 `permissions`, `enableTerminalSandbox`, `allowNonWorkspaceAccess`,
-`toolPermission`, `artifactReviewPolicy`를 거부한다. spawned command와 stdio MCP는
-command profile에 둔다. 인증된 Web/SSH의 현재 명시적 요청은 trusted direct tool
-경로를 사용할 수 있으며 Telegram broker button으로 자동 변환하지 않는다.
+`settings.json`과 native MCP config의 raw write는 native permission exact deny다.
+spawned command와 stdio MCP는 command profile에 둔다. 인증된 Web/SSH의 현재 명시적
+요청은 native review 아래 direct tool 경로를 사용할 수 있으며 Telegram button으로
+자동 변환하지 않는다. Telegram에서 지원되는 mutation은 두 proposal MCP를 먼저 거쳐야
+하고 그 밖의 side effect는 fail closed한다.
 
 SSH daemon은 `/usr/local/libexec/ha-sshd-runtime`이 `Px`로 전환한 별도 top-level
 실행 프로필에서 host private key와 `authorized_keys`만 read한다. 인증된 shell은 root
@@ -290,21 +303,35 @@ terminal result를 검증한 뒤 Telegram-safe text로 변환한다. 이 실행�
 확인하면 제거한다. 429처럼 미전송이 명확한 실패만 bounded retry하고 crash·network·
 timeout·5xx처럼 전달 여부가 모호한 send는 `/retry`까지 격리한다.
 
+Telegram bridge 시작 전 effective settings gate는 `toolPermission=request-review`만
+수용한다. `strict`, `always-proceed`, `proceed-in-sandbox`는 config schema의 upgrade
+입력 호환 값이며 user-files updater가 모두 `request-review`로 정규화한다.
+
 승인/선택/거절 callback의 Telegram ACK와 기본 인증, `/new`·`/cancel` 같은 control update는
-즉시 처리한다. 승인된 broker 실행은 같은 requester FIFO에서 session-serialized되며
+즉시 처리한다. 승인된 broker/executor 실행은 같은 requester FIFO에서 session-serialized되며
 실행 직전 durable approval과 현재 session generation,
 conversation, requester, chat, proposal/digest/expiry를 모두 다시 맞춘다. restart와
 duplicate callback에도 broker의 idempotency key가 같은 mutation을 한 번만 접수한다.
 이는 session/control routing 원칙이며 native headless tool prompt의 resume protocol은
-아니다. 운영 native tool은 managed default allow에서 통과시키고, 관리형 runtime rule은
-일반 HA service/config 변경을 `ha_change_propose` broker proposal 경계로 라우팅한다.
+아니다. 관리형 runtime rule은 HA service/config 변경을 `ha_change_propose`, terminal
+command·bounded script·command choice·finite question을 `telegram_action_propose` 경계로
+라우팅한다.
 이 경계의 durable Telegram 확인은 모든 App-managed broker `service_call`/
 `multi_choice_service_call`/`config_patch`에 적용된다. multi-choice card는 최대 31개
 사전 검증 선택지와 cancel을 4×8 grid로 표시하며 callback에는 실행 파라미터가 아닌
 encrypted approval state를 찾는 opaque token만 둔다. 선택은 authorization 전에
 영속화되고 proposal digest·requester·session generation·conversation·capability·
 idempotency에 함께 묶인다. 신뢰된 사용자 전역 native tool과 direct command/API
-helper는 관리자 권한을 상속하며 broker가 투명하게 가로채지 않는다.
+helper의 arbitrary headless side effect는 approval로 간주하지 않는다. action proposal은
+private 0600 socket에서 active run nonce와 conversation에 결합한다. bridge는 encrypted
+durable approval을 commit한 뒤 exact source/cwd/timeout만 credential-free executor에
+보내고 sealed result를 같은 conversation의 새 turn으로 전달한다. commit 뒤 completion을
+증명할 수 없으면 `in_doubt`이며 재실행하지 않는다. pinned CLI 1.1.13은 native prompt
+external resume를 지원하지 않으므로 임의 future/plugin MCP는 transparent interception
+대상이 아니며 unsupported side effect는 fail closed한다.
+proposal coordinator의 register 응답만 받은 단계는 durable state가 아니다. encrypted
+approval/card sealing 전에 bridge가 crash하면 기존 등록을 실행하거나 재구성하지 않고
+사용자에게 새 요청을 요구한다.
 
 ### 6.3 브라우저
 
@@ -315,7 +342,12 @@ Antigravity → filtered Playwright MCP → Chromium → 127.0.0.1:8099 gateway
 ```
 
 gateway는 외부 interface에 bind하지 않는다. browser child는 Supervisor token을
-받지 않고, 임시 profile 외의 credential 경로를 읽지 못한다.
+받지 않고, 임시 profile 외의 credential 경로를 읽지 못한다. Telegram auto-allow는
+upstream `readOnly: true`인 `browser_console_messages`,
+`browser_network_requests`, `browser_snapshot`, `browser_take_screenshot` 네 도구뿐이다.
+`browser_navigate`, `browser_navigate_back`, `browser_tabs`, `browser_hover`,
+`browser_wait_for`, `browser_resize`, `browser_close` 등 mutation-capable 도구는 typed
+approval adapter 전까지 fail closed한다.
 
 ### 6.4 메모리
 
@@ -353,12 +385,11 @@ credential lifecycle 권한이 필요하므로 scoped privileged helper로 분�
 
 ## 7. 변경 broker 계약
 
-이 계약은 `ha_change_propose`로 제출된 App-managed broker operation에 적용된다.
-`command(*)`/`mcp(*)`, 직접 `ha-api`/`supervisor-api`, 일반 `/config` shell write와
-신뢰된 사용자 설치·전역 native tool은 같은 관리자 채널의 권한을 상속하며 broker가
-투명하게 intercept하지 않는다. 관리형 runtime rule은 일반 HA service/config 변경을
-broker로 라우팅하지만, 직접 경로의 mutation은 exact deny와 AppArmor 안에서 사용자
-rule과 현재 명시적 요청을 따른다.
+이 계약은 `ha_change_propose`로 제출된 App-managed HA operation에 적용된다. Telegram
+terminal/script/question operation은 별도 `telegram_action_propose` coordinator/executor
+계약을 사용한다. authenticated Web/SSH direct tool은 native interactive review와
+AppArmor 아래 동작하지만 Telegram headless 요청은 direct mutation으로 fallback하지
+않는다.
 
 proposal은 최소 다음 필드를 가진 typed envelope다.
 

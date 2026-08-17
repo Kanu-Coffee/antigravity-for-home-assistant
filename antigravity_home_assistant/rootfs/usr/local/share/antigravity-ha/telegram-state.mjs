@@ -21,7 +21,7 @@ import {
 import { basename, dirname, join } from "node:path";
 
 const DEFAULT_STATE_PATH = "/data/antigravity-ha/telegram/bridge-state.json";
-const MAX_STATE_BYTES = 3 * 1024 * 1024;
+const MAX_STATE_BYTES = 6 * 1024 * 1024;
 const MAX_SESSIONS = 128;
 const MAX_UPDATE_LEDGER_ENTRIES = 128;
 const MAX_SEALED_UPDATE_ENTRIES = 128;
@@ -35,6 +35,9 @@ const MAX_SEALED_OUTBOX_BYTES = 768 * 1024;
 const MAX_PENDING_APPROVALS = 128;
 const MAX_APPROVAL_PLAINTEXT_BYTES = 8 * 1024;
 const MAX_SEALED_APPROVAL_BYTES = 1024 * 1024;
+const MAX_PENDING_TOOL_APPROVALS = 64;
+const MAX_TOOL_APPROVAL_PLAINTEXT_BYTES = 40 * 1024;
+const MAX_SEALED_TOOL_APPROVAL_BYTES = 2 * 1024 * 1024;
 const MAX_TERMINAL_TURNS = 64;
 const MAX_TERMINAL_PLAINTEXT_BYTES = 96 * 1024;
 const MAX_SEALED_TERMINAL_BYTES = 512 * 1024;
@@ -44,6 +47,7 @@ const REQUIRED_UID = typeof process.getuid === "function" ? process.getuid() : 0
 const SEALED_UPDATE_SCHEMA = "antigravity-ha-telegram-update/v1";
 const SEALED_DELIVERY_SCHEMA = "antigravity-ha-telegram-delivery/v1";
 const SEALED_APPROVAL_SCHEMA = "antigravity-ha-telegram-approval/v1";
+const SEALED_TOOL_APPROVAL_SCHEMA = "antigravity-ha-telegram-tool-approval/v1";
 const SEALED_TERMINAL_SCHEMA = "antigravity-ha-telegram-terminal/v1";
 const SEALED_UPDATE_ALGORITHM = "aes-256-gcm";
 const KEY_DERIVATION_SALT = Buffer.from("antigravity-ha/telegram-spool/salt/v1", "utf8");
@@ -52,12 +56,28 @@ const OUTBOX_KEY_DERIVATION_SALT = Buffer.from("antigravity-ha/telegram-outbox/s
 const OUTBOX_KEY_DERIVATION_INFO = Buffer.from("antigravity-ha/telegram-outbox/aes-256-gcm/v1", "utf8");
 const APPROVAL_KEY_DERIVATION_SALT = Buffer.from("antigravity-ha/telegram-approval/salt/v1", "utf8");
 const APPROVAL_KEY_DERIVATION_INFO = Buffer.from("antigravity-ha/telegram-approval/aes-256-gcm/v1", "utf8");
+const TOOL_APPROVAL_KEY_DERIVATION_SALT = Buffer.from("antigravity-ha/telegram-tool-approval/salt/v1", "utf8");
+const TOOL_APPROVAL_KEY_DERIVATION_INFO = Buffer.from("antigravity-ha/telegram-tool-approval/aes-256-gcm/v1", "utf8");
 const TERMINAL_KEY_DERIVATION_SALT = Buffer.from("antigravity-ha/telegram-terminal/salt/v1", "utf8");
 const TERMINAL_KEY_DERIVATION_INFO = Buffer.from("antigravity-ha/telegram-terminal/aes-256-gcm/v1", "utf8");
 const CONVERSATION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
 const DELIVERY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const APPROVAL_CHOICE_ID_PATTERN = /^[A-Za-z0-9_-]{1,24}$/u;
 const APPROVAL_CHOICE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{8,16}$/u;
+const TOOL_APPROVAL_CALL_ID_PATTERN = /^sha256:[a-f0-9]{64}$/u;
+const TOOL_APPROVAL_COMMIT_TOKEN_PATTERN = /^[A-Za-z0-9_-]{22}$/u;
+const TOOL_NAME_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/u;
+const TOOL_ACTION_PROPOSAL_ID_PATTERN = /^ta_[A-Za-z0-9_-]{20,48}$/u;
+const TOOL_ACTION_OPERATIONS = new Set([
+  "terminal_command",
+  "multi_choice_terminal",
+  "question",
+]);
+const TOOL_ACTION_TERMINAL_STATUSES = new Set([
+  "completed",
+  "failed",
+  "in_doubt",
+]);
 
 function telegramId(value, signed) {
   const text = String(value ?? "");
@@ -87,7 +107,7 @@ function ensureStorage(path) {
 
 function emptyState() {
   return {
-    version: 7,
+    version: 8,
     update_offset: 0,
     transport_offset: 0,
     update_ledger: [],
@@ -95,6 +115,7 @@ function emptyState() {
     sessions: [],
     response_outbox: [],
     sealed_approvals: [],
+    sealed_tool_approvals: [],
     terminal_turns: [],
     control_effects: [],
   };
@@ -215,6 +236,14 @@ function deriveSealedApprovalKey(botToken) {
   );
 }
 
+function deriveSealedToolApprovalKey(botToken) {
+  return deriveBotTokenKey(
+    botToken,
+    TOOL_APPROVAL_KEY_DERIVATION_SALT,
+    TOOL_APPROVAL_KEY_DERIVATION_INFO,
+  );
+}
+
 function deriveSealedTerminalKey(botToken) {
   return deriveBotTokenKey(
     botToken,
@@ -242,6 +271,12 @@ function outboxFailure(message) {
 function approvalFailure(message) {
   const error = new Error(message);
   error.code = "ETELEGRAMAPPROVAL";
+  return error;
+}
+
+function toolApprovalFailure(message) {
+  const error = new Error(message);
+  error.code = "ETELEGRAMTOOLAPPROVAL";
   return error;
 }
 
@@ -800,6 +835,242 @@ function decryptSealedApproval(record, key) {
   return approval;
 }
 
+function validateToolApproval(value) {
+  const keys = [
+    "approval_id",
+    "proposal_id",
+    "call_id",
+    "run_id",
+    "update_id",
+    "user_id",
+    "chat_id",
+    "generation",
+    "conversation_id",
+    "step_index",
+    "tool_name",
+    "request_digest",
+    "preview",
+    "risk",
+    "status",
+    "decision_update_id",
+    "commit_token",
+    "expires_at",
+    "choice_tokens",
+    "choice_prompt",
+    "selected_choice_id",
+    "operation",
+    "action_json",
+    "execution_result_json",
+  ];
+  if (!hasExactKeys(value, keys) ||
+      typeof value.approval_id !== "string" ||
+      !DELIVERY_ID_PATTERN.test(value.approval_id) ||
+      typeof value.proposal_id !== "string" ||
+      !TOOL_ACTION_PROPOSAL_ID_PATTERN.test(value.proposal_id) ||
+      typeof value.call_id !== "string" ||
+      !TOOL_APPROVAL_CALL_ID_PATTERN.test(value.call_id) ||
+      typeof value.run_id !== "string" || !DELIVERY_ID_PATTERN.test(value.run_id) ||
+      !Number.isSafeInteger(value.update_id) || value.update_id < 0 ||
+      !Number.isSafeInteger(value.step_index) || value.step_index < 0 ||
+      typeof value.conversation_id !== "string" ||
+      !CONVERSATION_ID_PATTERN.test(value.conversation_id) ||
+      typeof value.tool_name !== "string" || !TOOL_NAME_PATTERN.test(value.tool_name) ||
+      typeof value.request_digest !== "string" ||
+      !TOOL_APPROVAL_CALL_ID_PATTERN.test(value.request_digest) ||
+      typeof value.preview !== "string" || value.preview.length < 1 ||
+      Buffer.byteLength(value.preview, "utf8") > 28 * 1024 ||
+      /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value.preview) ||
+      !["low", "high"].includes(value.risk) ||
+      !["pending", "approved", "committed", "denied", "answered",
+        "completed", "failed", "in_doubt"].includes(value.status) ||
+      !Number.isSafeInteger(value.expires_at) || value.expires_at < 1 ||
+      (value.decision_update_id !== null &&
+        (!Number.isSafeInteger(value.decision_update_id) || value.decision_update_id < 0)) ||
+      (value.commit_token !== null &&
+        (typeof value.commit_token !== "string" ||
+          !TOOL_APPROVAL_COMMIT_TOKEN_PATTERN.test(value.commit_token))) ||
+      (value.choice_prompt !== null &&
+        (typeof value.choice_prompt !== "string" || value.choice_prompt.length < 1 ||
+          Buffer.byteLength(value.choice_prompt, "utf8") > 1_024 ||
+          /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value.choice_prompt))) ||
+      (value.selected_choice_id !== null &&
+        (typeof value.selected_choice_id !== "string" ||
+          !APPROVAL_CHOICE_ID_PATTERN.test(value.selected_choice_id))) ||
+      typeof value.operation !== "string" || !TOOL_ACTION_OPERATIONS.has(value.operation) ||
+      typeof value.action_json !== "string" || value.action_json.length < 2 ||
+      Buffer.byteLength(value.action_json, "utf8") > 24 * 1024 ||
+      (value.execution_result_json !== null &&
+        (typeof value.execution_result_json !== "string" ||
+          value.execution_result_json.length < 2 ||
+          Buffer.byteLength(value.execution_result_json, "utf8") > 48 * 1024))) {
+    throw new Error("invalid Telegram tool approval");
+  }
+  let action;
+  let executionResult = null;
+  try {
+    action = JSON.parse(value.action_json);
+    if (value.execution_result_json !== null) {
+      executionResult = JSON.parse(value.execution_result_json);
+    }
+  } catch {
+    throw new Error("invalid Telegram tool approval payload encoding");
+  }
+  if (!action || typeof action !== "object" || Array.isArray(action) ||
+      (executionResult !== null &&
+        (!executionResult || typeof executionResult !== "object" ||
+          Array.isArray(executionResult)))) {
+    throw new Error("invalid Telegram tool approval payload");
+  }
+  if (!Array.isArray(value.choice_tokens) || value.choice_tokens.length > 31) {
+    throw new Error("invalid Telegram tool approval choices");
+  }
+  const seenTokens = new Set();
+  const seenChoiceIds = new Set();
+  const choiceTokens = value.choice_tokens.map((choice) => {
+    if (!hasExactKeys(choice, ["token", "choice_id", "label"]) ||
+        typeof choice.token !== "string" ||
+        !APPROVAL_CHOICE_TOKEN_PATTERN.test(choice.token) ||
+        typeof choice.choice_id !== "string" ||
+        !APPROVAL_CHOICE_ID_PATTERN.test(choice.choice_id) ||
+        typeof choice.label !== "string" || choice.label.length < 1 ||
+        Buffer.byteLength(choice.label, "utf8") > 64 ||
+        /[\u0000-\u001f\u007f]/u.test(choice.label) ||
+        seenTokens.has(choice.token) || seenChoiceIds.has(choice.choice_id)) {
+      throw new Error("invalid Telegram tool approval choices");
+    }
+    seenTokens.add(choice.token);
+    seenChoiceIds.add(choice.choice_id);
+    return { token: choice.token, choice_id: choice.choice_id, label: choice.label };
+  });
+  const hasChoices = choiceTokens.length > 0;
+  if (hasChoices !== (value.choice_prompt !== null) ||
+      (value.selected_choice_id !== null && !seenChoiceIds.has(value.selected_choice_id))) {
+    throw new Error("invalid Telegram tool approval choices");
+  }
+  const pending = value.status === "pending";
+  const binaryApproved = ["approved", "committed"].includes(value.status);
+  const answered = value.status === "answered";
+  const denied = value.status === "denied";
+  const terminal = TOOL_ACTION_TERMINAL_STATUSES.has(value.status);
+  const choiceAction = value.operation === "multi_choice_terminal";
+  const question = value.operation === "question";
+  const binaryAction = value.operation === "terminal_command";
+  if ((binaryAction && hasChoices) || (!binaryAction && !hasChoices) ||
+      (question && value.status === "committed") ||
+      (choiceAction && answered) ||
+      (question && terminal) ||
+      (terminal && value.execution_result_json === null) ||
+      (!terminal && value.execution_result_json !== null)) {
+    throw new Error("invalid Telegram tool approval operation state");
+  }
+  if ((pending && (value.decision_update_id !== null || value.commit_token !== null ||
+        value.selected_choice_id !== null)) ||
+      (binaryApproved && (value.decision_update_id === null || value.commit_token === null ||
+        (binaryAction && value.selected_choice_id !== null) ||
+        (choiceAction && value.selected_choice_id === null) || question)) ||
+      (denied && (value.decision_update_id === null || value.commit_token !== null ||
+        value.selected_choice_id !== null)) ||
+      (answered && (!question || !hasChoices || value.decision_update_id === null ||
+        value.commit_token !== null || value.selected_choice_id === null)) ||
+      (terminal && (value.decision_update_id === null || value.commit_token === null ||
+        (binaryAction && value.selected_choice_id !== null) ||
+        (choiceAction && value.selected_choice_id === null)))) {
+    throw new Error("invalid Telegram tool approval decision");
+  }
+  return {
+    approval_id: value.approval_id,
+    proposal_id: value.proposal_id,
+    call_id: value.call_id,
+    run_id: value.run_id,
+    update_id: value.update_id,
+    user_id: telegramId(value.user_id, false),
+    chat_id: telegramId(value.chat_id, true),
+    generation: canonicalGeneration(value.generation),
+    conversation_id: value.conversation_id,
+    step_index: value.step_index,
+    tool_name: value.tool_name,
+    request_digest: value.request_digest,
+    preview: value.preview,
+    risk: value.risk,
+    status: value.status,
+    decision_update_id: value.decision_update_id,
+    commit_token: value.commit_token,
+    expires_at: value.expires_at,
+    choice_tokens: choiceTokens,
+    choice_prompt: value.choice_prompt,
+    selected_choice_id: value.selected_choice_id,
+    operation: value.operation,
+    action_json: value.action_json,
+    execution_result_json: value.execution_result_json,
+  };
+}
+
+function sealedToolApprovalAad(approvalId) {
+  return Buffer.from(`${SEALED_TOOL_APPROVAL_SCHEMA}\u0000${approvalId}`, "utf8");
+}
+
+function sealToolApproval(approval, key) {
+  const canonical = validateToolApproval(approval);
+  const plaintext = Buffer.from(JSON.stringify({
+    schema: SEALED_TOOL_APPROVAL_SCHEMA,
+    approval: canonical,
+  }), "utf8");
+  if (plaintext.length > MAX_TOOL_APPROVAL_PLAINTEXT_BYTES) {
+    throw new Error("Telegram tool approval exceeded its sealed record limit");
+  }
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv(SEALED_UPDATE_ALGORITHM, key, nonce);
+  cipher.setAAD(sealedToolApprovalAad(canonical.approval_id));
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  return {
+    approval_id: canonical.approval_id,
+    algorithm: SEALED_UPDATE_ALGORITHM,
+    nonce: nonce.toString("base64"),
+    auth_tag: cipher.getAuthTag().toString("base64"),
+    ciphertext: ciphertext.toString("base64"),
+    plaintext_bytes: plaintext.length,
+  };
+}
+
+function decryptSealedToolApproval(record, key) {
+  const nonce = canonicalBase64(record.nonce, 12);
+  const authTag = canonicalBase64(record.auth_tag, 16);
+  const ciphertext = canonicalBase64(record.ciphertext);
+  let plaintext;
+  try {
+    const decipher = createDecipheriv(SEALED_UPDATE_ALGORITHM, key, nonce);
+    decipher.setAAD(sealedToolApprovalAad(record.approval_id));
+    decipher.setAuthTag(authTag);
+    plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  } catch {
+    throw toolApprovalFailure("Telegram tool approval authentication failed");
+  }
+  if (plaintext.length !== record.plaintext_bytes ||
+      plaintext.length > MAX_TOOL_APPROVAL_PLAINTEXT_BYTES) {
+    throw toolApprovalFailure("Telegram tool approval plaintext length is invalid");
+  }
+  let document;
+  try {
+    document = JSON.parse(plaintext.toString("utf8"));
+  } catch {
+    throw toolApprovalFailure("Telegram tool approval plaintext is invalid");
+  }
+  if (!hasExactKeys(document, ["schema", "approval"]) ||
+      document.schema !== SEALED_TOOL_APPROVAL_SCHEMA) {
+    throw toolApprovalFailure("Telegram tool approval schema is invalid");
+  }
+  let approval;
+  try {
+    approval = validateToolApproval(document.approval);
+  } catch {
+    throw toolApprovalFailure("Telegram tool approval payload is invalid");
+  }
+  if (approval.approval_id !== record.approval_id) {
+    throw toolApprovalFailure("Telegram tool approval identity is invalid");
+  }
+  return approval;
+}
+
 function sealedSpoolBytes(records) {
   return records.reduce(
     (total, record) => total + canonicalBase64(record.ciphertext).length + 28,
@@ -815,6 +1086,13 @@ function sealedOutboxBytes(records) {
 }
 
 function sealedApprovalBytes(records) {
+  return records.reduce(
+    (total, record) => total + canonicalBase64(record.ciphertext).length + 28,
+    0,
+  );
+}
+
+function sealedToolApprovalBytes(records) {
   return records.reduce(
     (total, record) => total + canonicalBase64(record.ciphertext).length + 28,
     0,
@@ -848,7 +1126,7 @@ function validateControlEffect(value) {
 
 function validateState(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
-      ![2, 3, 4, 5, 6, 7].includes(value.version) ||
+      ![2, 3, 4, 5, 6, 7, 8].includes(value.version) ||
       !Number.isSafeInteger(value.update_offset) || value.update_offset < 0) {
     throw new Error("unsupported Telegram bridge state");
   }
@@ -1094,6 +1372,47 @@ function validateState(value) {
   if (sealedApprovalBytes(sealedApprovals) > MAX_SEALED_APPROVAL_BYTES) {
     throw new Error("Telegram pending approval store exceeded its byte limit");
   }
+  const rawToolApprovals = value.version >= 8 ? value.sealed_tool_approvals : [];
+  if (!Array.isArray(rawToolApprovals) ||
+      rawToolApprovals.length > MAX_PENDING_TOOL_APPROVALS) {
+    throw new Error("unsupported Telegram tool approval store");
+  }
+  const seenToolApprovalIds = new Set();
+  const sealedToolApprovals = rawToolApprovals.map((entry) => {
+    if (!hasExactKeys(entry, [
+      "approval_id",
+      "algorithm",
+      "nonce",
+      "auth_tag",
+      "ciphertext",
+      "plaintext_bytes",
+    ]) || typeof entry.approval_id !== "string" ||
+        !DELIVERY_ID_PATTERN.test(entry.approval_id) ||
+        entry.algorithm !== SEALED_UPDATE_ALGORITHM ||
+        !Number.isSafeInteger(entry.plaintext_bytes) || entry.plaintext_bytes < 1 ||
+        entry.plaintext_bytes > MAX_TOOL_APPROVAL_PLAINTEXT_BYTES) {
+      throw new Error("invalid Telegram tool approval store");
+    }
+    canonicalBase64(entry.nonce, 12);
+    canonicalBase64(entry.auth_tag, 16);
+    const ciphertext = canonicalBase64(entry.ciphertext);
+    if (ciphertext.length !== entry.plaintext_bytes ||
+        seenToolApprovalIds.has(entry.approval_id)) {
+      throw new Error("invalid Telegram tool approval store");
+    }
+    seenToolApprovalIds.add(entry.approval_id);
+    return {
+      approval_id: entry.approval_id,
+      algorithm: entry.algorithm,
+      nonce: entry.nonce,
+      auth_tag: entry.auth_tag,
+      ciphertext: entry.ciphertext,
+      plaintext_bytes: entry.plaintext_bytes,
+    };
+  });
+  if (sealedToolApprovalBytes(sealedToolApprovals) > MAX_SEALED_TOOL_APPROVAL_BYTES) {
+    throw new Error("Telegram tool approval store exceeded its byte limit");
+  }
   const rawTerminals = value.version >= 7 ? value.terminal_turns : [];
   if (!Array.isArray(rawTerminals) || rawTerminals.length > MAX_TERMINAL_TURNS) {
     throw new Error("unsupported Telegram terminal turn journal");
@@ -1166,7 +1485,7 @@ function validateState(value) {
     return effect;
   });
   return {
-    version: 7,
+    version: 8,
     update_offset: value.update_offset,
     transport_offset: transportOffset,
     update_ledger: updateLedger,
@@ -1174,6 +1493,7 @@ function validateState(value) {
     sessions,
     response_outbox: responseOutbox,
     sealed_approvals: sealedApprovals,
+    sealed_tool_approvals: sealedToolApprovals,
     terminal_turns: terminalTurns,
     control_effects: controlEffects,
   };
@@ -1415,6 +1735,15 @@ function applyNewSessionControl(effect, botToken, { path = DEFAULT_STATE_PATH } 
     const key = deriveSealedApprovalKey(botToken);
     state.sealed_approvals = state.sealed_approvals.filter((entry) => {
       const approval = decryptSealedApproval(entry, key);
+      return approval.user_id !== canonical.user_id ||
+        approval.chat_id !== canonical.chat_id ||
+        approval.generation !== previous.generation;
+    });
+  }
+  if (state.sealed_tool_approvals.length > 0) {
+    const key = deriveSealedToolApprovalKey(botToken);
+    state.sealed_tool_approvals = state.sealed_tool_approvals.filter((entry) => {
+      const approval = decryptSealedToolApproval(entry, key);
       return approval.user_id !== canonical.user_id ||
         approval.chat_id !== canonical.chat_id ||
         approval.generation !== previous.generation;
@@ -2013,6 +2342,267 @@ function cleanupPendingApprovals(botToken, {
   return { expired, stale, duplicate };
 }
 
+function saveToolApproval(approval, botToken, { path = DEFAULT_STATE_PATH } = {}) {
+  const canonical = validateToolApproval(approval);
+  const state = loadBridgeState(path);
+  const session = state.sessions.find(
+    (entry) => entry.user_id === canonical.user_id && entry.chat_id === canonical.chat_id,
+  );
+  if (!session || session.generation !== canonical.generation ||
+      session.conversation_id !== canonical.conversation_id) {
+    throw new Error("stale Telegram tool approval session binding");
+  }
+  const key = deriveSealedToolApprovalKey(botToken);
+  const existing = state.sealed_tool_approvals.find(
+    (entry) => entry.approval_id === canonical.approval_id,
+  );
+  const existingCall = state.sealed_tool_approvals.find((entry) => {
+    const candidate = decryptSealedToolApproval(entry, key);
+    return candidate.call_id === canonical.call_id;
+  });
+  if (existing || existingCall) {
+    const decrypted = decryptSealedToolApproval(existing ?? existingCall, key);
+    if (JSON.stringify(decrypted) !== JSON.stringify(canonical)) {
+      throw new Error("Telegram tool approval changed after durable registration");
+    }
+    return decrypted;
+  }
+  if (state.sealed_tool_approvals.length >= MAX_PENDING_TOOL_APPROVALS) {
+    throw new Error("Telegram tool approval store is full");
+  }
+  const sealed = sealToolApproval(canonical, key);
+  const sealedApprovals = [...state.sealed_tool_approvals, sealed];
+  if (sealedToolApprovalBytes(sealedApprovals) > MAX_SEALED_TOOL_APPROVAL_BYTES) {
+    throw new Error("Telegram tool approval store exceeded its byte limit");
+  }
+  writeBridgeState({ ...state, sealed_tool_approvals: sealedApprovals }, path);
+  return canonical;
+}
+
+function getToolApproval(approvalId, botToken, { path = DEFAULT_STATE_PATH } = {}) {
+  const canonicalId = canonicalDeliveryId(approvalId);
+  const state = loadBridgeState(path);
+  const record = state.sealed_tool_approvals.find(
+    (entry) => entry.approval_id === canonicalId,
+  );
+  if (!record) return null;
+  return decryptSealedToolApproval(record, deriveSealedToolApprovalKey(botToken));
+}
+
+function listToolApprovals(botToken, { path = DEFAULT_STATE_PATH } = {}) {
+  const state = loadBridgeState(path);
+  if (state.sealed_tool_approvals.length === 0) return [];
+  const key = deriveSealedToolApprovalKey(botToken);
+  return state.sealed_tool_approvals.map((entry) => decryptSealedToolApproval(entry, key));
+}
+
+function decideToolApproval(approvalId, updateId, decision, botToken, {
+  path = DEFAULT_STATE_PATH,
+  choiceToken = null,
+} = {}) {
+  const canonicalId = canonicalDeliveryId(approvalId);
+  if (!Number.isSafeInteger(updateId) || updateId < 0 ||
+      !["approve", "deny", "choose"].includes(decision)) {
+    throw new Error("invalid Telegram tool approval decision");
+  }
+  const state = loadBridgeState(path);
+  const index = state.sealed_tool_approvals.findIndex(
+    (entry) => entry.approval_id === canonicalId,
+  );
+  if (index < 0) throw new Error("Telegram tool approval is not available");
+  const key = deriveSealedToolApprovalKey(botToken);
+  const approval = decryptSealedToolApproval(state.sealed_tool_approvals[index], key);
+  const selectedChoice = approval.choice_tokens.find(
+    (choice) => choice.token === choiceToken,
+  );
+  if ((decision === "choose" && !selectedChoice) ||
+      (decision !== "choose" && choiceToken !== null) ||
+      (decision === "approve" && approval.operation !== "terminal_command")) {
+    throw new Error("Telegram tool approval choice is invalid");
+  }
+  if (approval.status !== "pending") {
+    const choiceExecutes = decision === "choose" &&
+      approval.operation === "multi_choice_terminal";
+    const expectedStatus = decision === "approve" || choiceExecutes
+      ? ["approved", "committed", "completed", "failed", "in_doubt"]
+      : decision === "choose" ? ["answered"] : ["denied"];
+    if (!expectedStatus.includes(approval.status) ||
+        approval.decision_update_id !== updateId ||
+        (decision === "choose" && approval.selected_choice_id !== selectedChoice.choice_id)) {
+      throw new Error("Telegram tool approval was already decided by another update");
+    }
+    return approval;
+  }
+  const executes = decision === "approve" ||
+    (decision === "choose" && approval.operation === "multi_choice_terminal");
+  const decided = {
+    ...approval,
+    status: executes ? "approved" : decision === "choose" ? "answered" : "denied",
+    decision_update_id: updateId,
+    commit_token: executes ? randomBytes(16).toString("base64url") : null,
+    selected_choice_id: selectedChoice?.choice_id ?? null,
+  };
+  state.sealed_tool_approvals[index] = sealToolApproval(decided, key);
+  writeBridgeState(state, path);
+  return decided;
+}
+
+function completeToolApproval(approvalId, commitToken, result, botToken, {
+  path = DEFAULT_STATE_PATH,
+} = {}) {
+  const canonicalId = canonicalDeliveryId(approvalId);
+  if (typeof commitToken !== "string" ||
+      !TOOL_APPROVAL_COMMIT_TOKEN_PATTERN.test(commitToken) ||
+      !result || typeof result !== "object" || Array.isArray(result) ||
+      !["completed", "failed", "in_doubt"].includes(result.status)) {
+    throw new Error("invalid Telegram tool approval result");
+  }
+  const executionResultJson = JSON.stringify(result);
+  if (Buffer.byteLength(executionResultJson, "utf8") > 48 * 1024) {
+    throw new Error("Telegram tool approval result exceeded its byte limit");
+  }
+  const state = loadBridgeState(path);
+  const index = state.sealed_tool_approvals.findIndex(
+    (entry) => entry.approval_id === canonicalId,
+  );
+  if (index < 0) throw new Error("Telegram tool approval is not available");
+  const key = deriveSealedToolApprovalKey(botToken);
+  const approval = decryptSealedToolApproval(state.sealed_tool_approvals[index], key);
+  if (!["committed", "completed", "failed", "in_doubt"].includes(approval.status) ||
+      approval.commit_token !== commitToken) {
+    throw new Error("Telegram tool approval result binding is invalid");
+  }
+  if (["completed", "failed", "in_doubt"].includes(approval.status)) {
+    if (approval.status !== result.status ||
+        approval.execution_result_json !== executionResultJson) {
+      throw new Error("Telegram tool approval result changed after durable completion");
+    }
+    return approval;
+  }
+  const completed = {
+    ...approval,
+    status: result.status,
+    execution_result_json: executionResultJson,
+  };
+  state.sealed_tool_approvals[index] = sealToolApproval(completed, key);
+  writeBridgeState(state, path);
+  return completed;
+}
+
+function commitToolApproval(approvalId, commitToken, botToken, {
+  path = DEFAULT_STATE_PATH,
+} = {}) {
+  const canonicalId = canonicalDeliveryId(approvalId);
+  if (typeof commitToken !== "string" ||
+      !TOOL_APPROVAL_COMMIT_TOKEN_PATTERN.test(commitToken)) {
+    throw new Error("invalid Telegram tool approval commit token");
+  }
+  const state = loadBridgeState(path);
+  const index = state.sealed_tool_approvals.findIndex(
+    (entry) => entry.approval_id === canonicalId,
+  );
+  if (index < 0) throw new Error("Telegram tool approval is not available");
+  const key = deriveSealedToolApprovalKey(botToken);
+  const approval = decryptSealedToolApproval(state.sealed_tool_approvals[index], key);
+  if (!["approved", "committed"].includes(approval.status) ||
+      approval.commit_token !== commitToken) {
+    throw new Error("Telegram tool approval commit binding is invalid");
+  }
+  if (approval.status === "committed") return approval;
+  const committed = { ...approval, status: "committed" };
+  state.sealed_tool_approvals[index] = sealToolApproval(committed, key);
+  writeBridgeState(state, path);
+  return committed;
+}
+
+function deleteToolApproval(approvalId, { path = DEFAULT_STATE_PATH } = {}) {
+  const canonicalId = canonicalDeliveryId(approvalId);
+  const state = loadBridgeState(path);
+  const retained = state.sealed_tool_approvals.filter(
+    (entry) => entry.approval_id !== canonicalId,
+  );
+  if (retained.length === state.sealed_tool_approvals.length) return false;
+  writeBridgeState({ ...state, sealed_tool_approvals: retained }, path);
+  return true;
+}
+
+function deleteToolApprovalsForUpdate(updateId, userId, chatId, generation, botToken, {
+  path = DEFAULT_STATE_PATH,
+} = {}) {
+  if (!Number.isSafeInteger(updateId) || updateId < 0) {
+    throw new Error("invalid Telegram tool approval update id");
+  }
+  const canonicalUser = telegramId(userId, false);
+  const canonicalChat = telegramId(chatId, true);
+  const canonicalGenerationValue = canonicalGeneration(generation);
+  const state = loadBridgeState(path);
+  const key = deriveSealedToolApprovalKey(botToken);
+  let deleted = 0;
+  const retained = state.sealed_tool_approvals.filter((entry) => {
+    const approval = decryptSealedToolApproval(entry, key);
+    const matches = approval.update_id === updateId && approval.user_id === canonicalUser &&
+      approval.chat_id === canonicalChat && approval.generation === canonicalGenerationValue;
+    if (matches) deleted += 1;
+    return !matches;
+  });
+  if (deleted > 0) writeBridgeState({ ...state, sealed_tool_approvals: retained }, path);
+  return deleted;
+}
+
+function committedToolApprovalForUpdate(updateId, userId, chatId, generation, botToken, {
+  path = DEFAULT_STATE_PATH,
+} = {}) {
+  if (!Number.isSafeInteger(updateId) || updateId < 0) return null;
+  const canonicalUser = telegramId(userId, false);
+  const canonicalChat = telegramId(chatId, true);
+  const canonicalGenerationValue = canonicalGeneration(generation);
+  return listToolApprovals(botToken, { path }).find((approval) =>
+    approval.update_id === updateId && approval.user_id === canonicalUser &&
+    approval.chat_id === canonicalChat && approval.generation === canonicalGenerationValue &&
+    approval.status === "committed") ?? null;
+}
+
+function cleanupToolApprovals(botToken, {
+  path = DEFAULT_STATE_PATH,
+  now = Date.now(),
+} = {}) {
+  if (!Number.isSafeInteger(now) || now < 0) {
+    throw new Error("invalid Telegram tool approval cleanup time");
+  }
+  const state = loadBridgeState(path);
+  if (state.sealed_tool_approvals.length === 0) return { expired: 0, stale: 0 };
+  const key = deriveSealedToolApprovalKey(botToken);
+  const sessions = new Map(state.sessions.map((session) => [
+    `${session.user_id}:${session.chat_id}`,
+    session,
+  ]));
+  let expired = 0;
+  let stale = 0;
+  const retained = state.sealed_tool_approvals.filter((entry) => {
+    const approval = decryptSealedToolApproval(entry, key);
+    const session = sessions.get(`${approval.user_id}:${approval.chat_id}`);
+    if (!session || session.generation !== approval.generation ||
+        session.conversation_id !== approval.conversation_id) {
+      stale += 1;
+      return false;
+    }
+    // TTL limits how long an untouched card may be accepted. Once the user
+    // has made a durable decision, that decision/result must survive an App
+    // outage until the callback input is acknowledged; expiring approved,
+    // answered, or terminal records here could lose a result or cause an
+    // already-approved action to be reported as if it never existed.
+    if (approval.status === "pending" && approval.expires_at <= now) {
+      expired += 1;
+      return false;
+    }
+    return true;
+  });
+  if (expired + stale > 0) {
+    writeBridgeState({ ...state, sealed_tool_approvals: retained }, path);
+  }
+  return { expired, stale };
+}
+
 function commitUpdateOffset(offset, { path = DEFAULT_STATE_PATH } = {}) {
   if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("invalid Telegram update offset");
   const state = loadBridgeState(path);
@@ -2171,6 +2761,7 @@ export {
   MAX_CONTROL_EFFECTS,
   MAX_OUTBOX_DELIVERIES,
   MAX_PENDING_APPROVALS,
+  MAX_PENDING_TOOL_APPROVALS,
   MAX_SEALED_SPOOL_BYTES,
   MAX_SEALED_UPDATE_ENTRIES,
   MAX_SESSIONS,
@@ -2181,10 +2772,16 @@ export {
   applyNewSessionControl,
   bindSessionConversation,
   cleanupPendingApprovals,
+  cleanupToolApprovals,
   clearConversation,
   commitUpdateOffset,
+  commitToolApproval,
+  committedToolApprovalForUpdate,
+  completeToolApproval,
   deletePendingApproval,
   deletePendingApprovalsForSession,
+  deleteToolApproval,
+  deleteToolApprovalsForUpdate,
   discardResponseDelivery,
   deleteTerminalTurn,
   ensureSession,
@@ -2192,10 +2789,12 @@ export {
   getControlEffect,
   getPendingApproval,
   getPendingDelivery,
+  getToolApproval,
   getSession,
   getTerminalTurn,
   listPendingApprovals,
   listPendingDeliveries,
+  listToolApprovals,
   loadBridgeState,
   loadSealedUpdates,
   markDeliveryAttempting,
@@ -2208,6 +2807,8 @@ export {
   registerSealedUpdateBatch,
   resetSession,
   resetDeliveryForRetry,
+  saveToolApproval,
+  decideToolApproval,
   savePendingApproval,
   saveControlEffect,
   saveTerminalTurn,

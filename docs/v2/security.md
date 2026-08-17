@@ -35,7 +35,7 @@ untrusted data이며 다음 행위를 직접 승인하지 못한다.
 | 위협 | 주요 방어 |
 | --- | --- |
 | prompt 또는 log의 shell injection | shell 미사용, argv array, stdin prompt, typed API |
-| 외부 data의 prompt injection이 mutation 수행 | native permission, broker 재검증, same-session confirmation |
+| 외부 data의 prompt injection이 mutation 수행 | proposal-first policy, broker/coordinator 재검증, same-session confirmation |
 | Telegram self-pairing | local-only token 발급, token hash, allowlist, 짧은 TTL |
 | callback replay/탈취 | conversation/user/chat/session generation/proposal/digest/choice/expiry/idempotency binding, single use |
 | credential environment 상속 | `env -i`에 준하는 allowlist child environment |
@@ -48,10 +48,13 @@ untrusted data이며 다음 행위를 직접 승인하지 못한다.
 로그, web response, integration metadata, blueprint와 ordinary data file의 명령형
 문장은 data다. 인증된 Telegram sender가 보낸 직접 요청은 Web/SSH 입력과 동일한
 instruction source이며, global/workspace plugin·agent·rule/MCP도 의도적으로 상속한다.
-새 설치의 `always-proceed` managed policy는 ordinary `/config`, 정확한 global
-customization root, URL, command와 MCP를 운영 기본 허용한다. 이는 비밀 전체 wildcard가
-아니며 secrets/storage/runtime token/options/SSH key의 exact deny가 항상 우선한다.
-사용자가 추가한 ask/deny도 보존되고 managed allow보다 우선한다.
+2.0.11 새 설치와 Telegram의 유일한 effective native 값인 `request-review` managed
+policy는 bounded native/HA read, exact `ha_change_propose`/
+`telegram_action_propose`와 upstream `readOnly: true` Playwright 네 도구만 unattended
+allow한다. `strict`와 legacy autonomous schema 값은 upgrade 입력 호환용이며 updater가
+`request-review`로 정규화한다. 일반 native write, URL execute, command,
+mutation-capable browser와 arbitrary mutation MCP는 허용하지 않는다. 2.0.9/2.0.10 App-owned broad allow는 안전하게 ownership을 확인한 경우
+migration하며 user-owned rule과 stronger deny는 보존한다.
 
 ## SEC-004 — AppArmor 항상 ON
 
@@ -76,6 +79,8 @@ command와 stdio tool executable은 다시 공통 command profile로 전환한�
 | interactive-runtime-restricted | Web/SSH/Telegram의 `/config` 일반 프로젝트 파일, native CLI/OAuth Home read, 사용자 customization, plugin socket, 매개 settings update helper 실행 | raw settings direct write; secrets/storage/Recorder read/write; runtime token/options, SSH/private key, broker state |
 | interactive-runtime-sensitive-read | restricted runtime 허용 범위 + Recorder DB 진단용 read | raw settings direct write; secrets/storage read/write; Recorder write, runtime token/options, SSH/private key, broker state |
 | `antigravity_home_assistant-command` | 일반 `/config`, network, user plugin/agent/rule/skill과 scoped helper | OAuth backend, App 관리 settings/MCP config, token, secrets/storage/Recorder, broker state |
+| Telegram action proposal client | active run-bound private proposal socket write | `/config`/`/data` content, token, OAuth, final executor |
+| Telegram action executor | exact committed action envelope와 fixed shell transition | Supervisor/bot token, OAuth, App settings/MCP config, proposal socket |
 | sshd daemon | public-key 인증에 필요한 exact `/data/ssh` host key와 `authorized_keys` read | `/config`, key write/exec, App credential와 broker socket |
 | browser | Chromium runtime, loopback gateway, `/run` profile | `/data`, `/config`, Supervisor network/credential |
 | memory | memory DB, readonly catalog endpoint | OAuth, Telegram/SSH/browser credential, `/config` write |
@@ -112,9 +117,10 @@ option 값과 profile 종류에 관계없이 다음 경로와 그 하위·보조
 Web/SSH/Telegram Antigravity runtime만의 예외다. runtime은 인증과 global
 customization을 위해 shared HOME을 읽고 일반 사용자 전역 파일을 쓸 수 있지만 App
 관리 `settings.json`의 raw direct write는 native permission exact deny다. 일반 전역
-설정은 digest-bound `agy-settings patch`가 별도 settings-update profile에서 원자적으로
-매개 수정하며, `permissions`, `enableTerminalSandbox`, `allowNonWorkspaceAccess`,
-`toolPermission`, `artifactReviewPolicy`는 거부한다. command profile은 OAuth backend와
+설정은 interactive Web/SSH에서 digest-bound `agy-settings patch`가 별도
+settings-update profile로 원자적으로 매개 수정하며, `permissions`,
+`enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`,
+`artifactReviewPolicy`는 거부한다. Telegram action과 command profile은 OAuth backend와
 App 관리 settings/MCP config를 읽거나 쓸 수 없다.
 Ingress/SSH/SFTP의 ordinary shell과 s6 root profile은 이 경로를 거부하고 다른 PID의
 `environ`, `cmdline`, `mem`, `fd`, `root`, `map_files`를 통한 우회도 거부한다. 성공한 HAOS
@@ -130,7 +136,8 @@ interactive root profile에 넘긴다. 따라서 사용자 session은 host priva
 차단되는 fail-closed 결과여야 한다.
 
 Telegram은 별도 plugin copy를 만들지 않는다. Web/SSH와 같은 `/data/home` global 및
-`/config` workspace plugin·agent·rule·MCP를 로드하고 사용자 요청으로 수정할 수 있다.
+`/config` workspace plugin·agent·rule·MCP를 로드한다. mutation은 승인된 HA/action
+proposal로만 수행하며 native MCP config와 App-owned permission settings는 보호한다.
 
 AppArmor syntax는 generic Linux container에서만 확정하지 않는다. 처음에는
 개발용 HAOS에서 `complain` audit로 필요한 access를 수집하고, allowlist를 좁힌 뒤
@@ -175,14 +182,17 @@ failure로 취급하지 않는다. 특정 `.gemini` credential 파일명이나 b
 실제 1.1.11 local positive control에서 shared HOME의 사용자 global
 `mcp_config.json` stdio server가 OAuth 인증 완료 전에도 실행될 수 있음이 확인됐다.
 2.0.7은 이 동작을 차단하는 대신 Telegram을 관리자 주 채널로 명시하고 global 및
-workspace plugin·agent·rule·MCP 상속과 수정을 제품 계약으로 채택한다.
+workspace plugin·agent·rule·MCP 상속을 제품 계약으로 채택했다. 2.0.11 mutation은
+proposal-first 승인 경계로 제한한다.
 
 AppArmor는 정상 OAuth·settings 접근과 Telegram prompt/tool이 유도한 동일-process
-접근을 구분할 수 없다. 2.0.9의 command/stdio MCP executable은 별도 command profile로
+접근을 구분할 수 없다. command/stdio MCP executable은 별도 command profile로
 전환되어 OAuth·settings·MCP config를 읽지 못하지만, native built-in file tool이나
 trusted extension처럼 runtime process 안에서 끝나는 동작은 executable transition으로
-투명하게 가로챌 수 없다. App 관리 `settings.json`의 raw write는 native permission
-exact deny로 별도 차단하고, 일반 전역 설정만 `agy-settings patch`로 매개 수정한다.
+투명하게 가로챌 수 없다. 2.0.11은 arbitrary native/plugin tool을 승인 대상으로
+가로챘다고 주장하지 않고, exact managed proposal이 표현하지 못하는 Telegram side
+effect를 fail closed한다. App 관리 `settings.json`과 native MCP config의 raw write는
+native permission exact deny로 별도 차단한다.
 따라서 exact user/chat 인증과 Telegram 계정·bot token 보호가 여전히 관리자 경계다.
 shell-free transport, output redaction과 broker는 추가 방어층이며 전체 same-process
 credential isolation 보장이 아니다.
@@ -232,11 +242,11 @@ allowlist attribute 진단은 유지한다. 이 규칙에 걸리지 않은 state
 재분류한다. 이 절의 always-confirm 보장은 `ha_change_propose`로 제출된 App-managed
 broker operation에 적용된다.
 
-신뢰된 사용자 설치·전역 native tool, `command(*)`/`mcp(*)`, 직접 `ha-api`/
-`supervisor-api`와 일반 `/config` shell write는 CLI와 같은 관리자 권한을 상속하며
-broker가 투명하게 가로채지 않는다. 이 직접 경로의 mutation은 exact deny와 AppArmor
-안에서 사용자가 소유한 rule과 현재 명시적 요청을 따른다. 따라서 broker 보장은
-가능한 모든 native mutation을 포괄하지 않는다.
+Telegram terminal/script/question mutation은 별도 `telegram_action_propose` 경계와
+credential-free executor를 사용한다. authenticated Web/SSH direct tool은 native
+interactive review와 AppArmor 아래 동작하지만 Telegram headless mutation은 direct
+fallback하지 않는다. pinned CLI가 arbitrary permission prompt를 external resume할 수
+없으므로 두 proposal이 표현하지 못하는 side effect는 fail closed한다.
 
 ### 항상 고위험
 
@@ -286,7 +296,7 @@ broker에서 저위험 자동 실행하는 mutation은 없다. `expected_state`/
   않는다.
 - callback은 최초 conversation·requester·chat에서 눌러야 하고 승인 결과도 그
   conversation에 전달한다.
-- approval callback ACK와 기본 인증/control 처리는 즉시 수행하되 승인된 broker 실행은
+- approval callback ACK와 기본 인증/control 처리는 즉시 수행하되 승인된 broker/executor 실행은
   requester FIFO에서 session-serialized한다. 실행 직전 현재 session generation·
   conversation과 durable approval binding을 다시 검증한다. `/new`, `/cancel`,
   restart, expiry 또는 duplicate callback은 stale proposal을 실행하지 않는다.
@@ -297,6 +307,12 @@ broker에서 저위험 자동 실행하는 mutation은 없다. `expected_state`/
 - 최대 31개 choice와 cancel을 4×8 inline-keyboard로 표시한다. 새 `v3c`/`v3d`
   protocol과 기존 `v2a`/`v2d` binary callback을 operation 종류에 맞게 분리하며 unknown
   token, protocol 혼합과 두 번째 다른 선택은 거부한다.
+- action approval은 binary `v4a`/`v4d`, choice `v4c` protocol을 사용한다. callback에는
+  command/script/cwd/parameter를 넣지 않고 encrypted durable record의 opaque token만
+  둔다. `terminal_command`, `multi_choice_terminal`, `question`만 지원한다.
+- terminal/script action은 requester/session/update/run/conversation/source digest와
+  결합하고 durable commit 뒤 credential-free executor에 한 번만 전달한다. commit 뒤
+  완료를 증명할 수 없으면 `in_doubt`이며 다시 spawn하지 않는다.
 - broker idempotency record는 동일 requester/proposal/choice 실행을 정확히 한 번만
   접수한다.
 - preview 내용이 바뀌면 기존 confirmation은 무효다.
@@ -311,6 +327,10 @@ broker에서 저위험 자동 실행하는 mutation은 없다. `expected_state`/
   proposal이 사라지면 오래된 card는 실행하지 않고 새 요청을 요구한다. 이미 broker가
   접수한 execution은 durable status/result만 회수하며 mutation을 다시 dispatch하지
   않는다.
+- proposal MCP의 coordinator registration 자체는 crash-durable하지 않다. registration
+  성공 뒤 encrypted approval state와 card/outbox sealing 전 bridge crash가 나면
+  사용자에게 원 요청 재시도를 요구한다. durable 보장은 sealing 이후 decision/result와
+  이미 접수된 execution부터 적용한다.
 - 완료 응답은 Telegram 전송 전에 암호화된 영속 outbox에 기록하고 API ack 뒤
   제거한다. 429처럼 미전송이 명확한 오류만 자동 재시도하고 crash·network·timeout·
   5xx처럼 전달 여부가 모호하면 `/retry`까지 격리한다.
@@ -318,21 +338,22 @@ broker에서 저위험 자동 실행하는 mutation은 없다. `expected_state`/
 - Telegram 실행은 Web/SSH와 같은 Antigravity AppArmor profile과 native 사용자
   customization을 사용한다.
 - native `stream-json` permission prompt는 Telegram callback으로 resume할 수 없다.
-  관리형 운영 도구는 global default allow에서 처리하고 관리형 runtime rule은 일반 HA
-  service/config mutation을 durable broker proposal 경계로 라우팅한다. 직접 native
-  관리자 도구는 broker가 투명하게 intercept하지 않는다.
-- 2.0.9+ managed permissions는 이미 `mcp(*)`와 빈 managed `ask`를 제공한다. 서버별
-  MCP allow rule을 중복 생성하지 않으며 user-owned `ask`/`deny`가 있으면 이를 우선해
-  명시적으로 검토한다.
+  HA mutation은 `ha_change_propose`, terminal/script/choice/question은
+  `telegram_action_propose`를 먼저 사용한다. 임의 future/plugin MCP는 transparent
+  intercept 대상이 아니며 unsupported side effect는 fail closed한다.
+- 2.0.11 managed permissions의 유일한 effective native 값은 `request-review`이며,
+  bounded reads, exact proposal MCP와 upstream read-only Playwright 네 도구를 제공한다.
+  schema의 `strict`/autonomous 값은 upgrade input으로만 수용하고 updater가
+  `request-review`로 정규화한다. 2.0.9/2.0.10 App-owned `mcp(*)`/`command(*)` broad allow는 safely identified
+  migration에서 retire하며 user-owned rule과 stronger deny는 보존한다.
 - App-managed broker proposal의 승인 transport는 Telegram requester-bound inline
   button이다. 인증된 Web/SSH에서 사용자가 명시한 trusted direct tool 작업은 native
   interactive flow를 사용할 수 있고 Telegram button으로 자동 broker되지 않는다. 두
   경로는 HOME/OAuth/global permission을 분리한 별도 runtime이 아니다.
-- App 관리 settings raw direct write는 exact deny다. 일반 전역 setting은 digest-bound
-  `agy-settings patch`로 매개 수정할 수 있지만 `permissions`,
-  `enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`,
-  `artifactReviewPolicy`는 App option+restart로만 변경한다. user
-  plugin·agent·rule·skill은 세 채널에서 계속 공유·직접 수정할 수 있다.
+- App 관리 settings와 native MCP config raw direct write는 exact deny다. authenticated
+  Web/SSH의 일반 전역 setting은 digest-bound `agy-settings patch`로 매개 수정할 수
+  있지만 protected key는 App option+restart로만 변경한다. Telegram customization
+  mutation은 approved exact terminal/script proposal로만 수행한다.
 
 ## SEC-009 — 브라우저 보안
 
@@ -342,8 +363,11 @@ broker에서 저위험 자동 실행하는 mutation은 없다. `expected_state`/
   `system-read-only` group이어야 한다. 조건이 달라지면 자동 수정하지 않고
   fail closed한다.
 - Chromium은 isolated temporary profile로 headless 실행한다.
-- 임의 code execution, file upload/download와 unrestricted navigation tool은
-  기본 MCP allowlist에 없다.
+- Telegram auto-allow에는 upstream `readOnly: true`인
+  `browser_console_messages`, `browser_network_requests`, `browser_snapshot`,
+  `browser_take_screenshot`만 있다. `browser_navigate`, `browser_navigate_back`,
+  `browser_tabs`, `browser_hover`, `browser_wait_for`, `browser_resize`, `browser_close`,
+  임의 code execution과 file upload/download는 typed adapter 전까지 fail closed한다.
 - web page text는 approval이나 shell/API 작업을 승인할 수 없다.
 - browser output에서 token과 authorization 값을 exact-match와 구조 기반으로
   정화한다. 정화 실패 시 출력 전체를 폐기한다.

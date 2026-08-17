@@ -30,6 +30,7 @@ CONTROL_CONFLICT_VOLUME="${TEST_ID}-control-conflict"
 PERMISSION_MIGRATION_VOLUME="${TEST_ID}-permission-migration"
 PERMISSION_V208_MIGRATION_VOLUME="${TEST_ID}-permission-v208-migration"
 PERMISSION_V208_AMBIGUOUS_VOLUME="${TEST_ID}-permission-v208-ambiguous"
+PERMISSION_V3_MIGRATION_VOLUME="${TEST_ID}-permission-v3-migration"
 PERMISSION_UNOWNED_VOLUME="${TEST_ID}-permission-unowned"
 PERMISSION_AMBIGUOUS_VOLUME="${TEST_ID}-permission-ambiguous"
 PUBLIC_V1_VOLUME="${TEST_ID}-public-v1"
@@ -48,6 +49,7 @@ VOLUMES=(
   "${PERMISSION_MIGRATION_VOLUME}"
   "${PERMISSION_V208_MIGRATION_VOLUME}"
   "${PERMISSION_V208_AMBIGUOUS_VOLUME}"
+  "${PERMISSION_V3_MIGRATION_VOLUME}"
   "${PERMISSION_UNOWNED_VOLUME}"
   "${PERMISSION_AMBIGUOUS_VOLUME}"
   "${PUBLIC_V1_VOLUME}"
@@ -191,25 +193,28 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
   test "$(stat -c "%a:%U:%G" /data/home/.gemini/antigravity-cli/settings.json)" = 600:root:root
   test "$(stat -c "%a:%U:%G" /data/home/.gemini/config/mcp_config.json)" = 600:root:root
   jq --exit-status '
-    .toolPermission == "strict"
+    .toolPermission == "request-review"
     and .enableTerminalSandbox == false
     and .altScreenMode == "never"
-    and (.permissions.allow | index("command(*)") != null)
-    and (.permissions.allow | index("mcp(*)") != null)
-    and (.permissions.ask | length == 0)
+    and (.permissions.allow | index("command(*)") == null)
+    and (.permissions.allow | index("mcp(*)") == null)
+    and (.permissions.ask | index("command(*)") == null)
+    and (.permissions.ask | index("write_file(*)") == null)
+    and (.permissions.ask | index("read_url(*)") == null)
+    and (.permissions.ask | index("execute_url(*)") == null)
     and (.permissions.deny | index("read_file(/config/secrets.yaml)") != null)
     and (.permissions.allow | index("read_file(/config)") != null)
-    and (.permissions.allow | index("write_file(/config)") != null)
+    and (.permissions.allow | index("write_file(/config)") == null)
     and (.permissions.allow | index("read_file(/data/home/.gemini/config)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/config)") != null)
+    and (.permissions.allow | index("write_file(/data/home/.gemini/config)") == null)
     and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/agents)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/agents)") != null)
+    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/agents)") == null)
     and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/plugins)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/plugins)") != null)
+    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/plugins)") == null)
     and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/skills)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/skills)") != null)
+    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/skills)") == null)
     and (.permissions.allow | index("read_file(/data/home/.gemini/GEMINI.md)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/GEMINI.md)") != null)
+    and (.permissions.allow | index("write_file(/data/home/.gemini/GEMINI.md)") == null)
     and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
     and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") == null)
     and (.permissions.deny | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
@@ -234,7 +239,10 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
     and (.permissions.deny | index("read_file(/data)") == null)
     and (.permissions.deny | index("write_file(/data)") == null)
     and (.permissions.allow | index("mcp(playwright/browser_snapshot)") != null)
-    and (.permissions.allow | index("mcp(playwright/browser_click)") != null)
+    and (.permissions.allow | index("mcp(playwright/browser_click)") == null)
+    and (.permissions.ask | index("mcp(playwright/browser_click)") == null)
+    and (.permissions.allow | index("mcp(ha_change/ha_change_propose)") != null)
+    and (.permissions.allow | index("mcp(telegram_action/telegram_action_propose)") != null)
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
   jq --exit-status '.mcpServers == {}' \
     /data/home/.gemini/config/mcp_config.json >/dev/null
@@ -242,8 +250,10 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
   jq --exit-status '
     (.managed.settings.keys | index("toolPermission") != null)
     and (.managed.settings.keys | index("permissions") != null)
-    and (.managed.settings.permission_rules | index("command(*)") != null)
-    and (.managed.settings.permission_rules | index("mcp(*)") != null)
+    and (.managed.settings.permission_rules | index("command(*)") == null)
+    and (.managed.settings.permission_rules | index("mcp(*)") == null)
+    and (.managed.settings.permission_rules
+      | index("mcp(telegram_action/telegram_action_propose)") != null)
     and (.managed.settings.permission_rules
       | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
   ' /data/antigravity-ha/migration/native-files-state.json >/dev/null
@@ -404,15 +414,20 @@ run_script "${MAIN_VOLUME}" "${SETTINGS_SECRET}" "${MANAGED_BACKUP_DIRECTORY}" <
   set -Eeuo pipefail
   jq --arg marker "$1" --exit-status '
     .user_marker == $marker
-    and .toolPermission == "strict"
+    and .toolPermission == "request-review"
     and (.permissions.allow | index("user(custom/read)") != null)
     and (.permissions.allow | index("mcp(playwright/browser_snapshot)") != null)
     and (.permissions.ask | index("mcp(playwright/browser_snapshot)") == null)
-    and (.permissions.allow | index("command(*)") != null)
-    and (.permissions.allow | index("mcp(*)") != null)
-    and (.permissions.ask | length == 0)
+    and (.permissions.allow | index("command(*)") == null)
+    and (.permissions.allow | index("mcp(*)") == null)
+    and (.permissions.ask | index("command(*)") == null)
+    and (.permissions.ask | index("write_file(*)") == null)
     and (.permissions.deny
       | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
+    and (.permissions.deny
+      | index("read_file(/data/home/.gemini/config/mcp_config.json)") != null)
+    and (.permissions.deny
+      | index("write_file(/data/home/.gemini/config/mcp_config.json)") != null)
     and .permissions.user_bucket == ["user(custom/permission)"]
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
   test -f "$2/settings.before"
@@ -430,16 +445,34 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
   mv /tmp/options.json /data/options.json
 SCRIPT
 RESET_OUTPUT=$(run_helper "${MAIN_VOLUME}") \
-  || fail 'same-version reset_v2 idempotency run failed'
+  || fail 'same-version reset_v2 permission recovery failed'
 assert_json "${RESET_OUTPUT}" '
+  .mode == "reset_v2"
+  and .refreshed == ["settings"]
+  and (.backup_directory | startswith("/data/antigravity-ha/backups/native-files/refresh-"))
+'
+assert_sanitized "${RESET_OUTPUT}"
+run_script "${MAIN_VOLUME}" "${SETTINGS_SECRET}" <<'SCRIPT'
+  jq --arg marker "$1" --exit-status '
+    .user_marker == $marker
+    and .toolPermission == "request-review"
+    and .permissions.ask == []
+    and (.permissions.allow | index("user(custom/read)") == null)
+    and (.permissions | has("user_bucket") | not)
+    and (.permissions.allow
+      | index("mcp(telegram_action/telegram_action_propose)") != null)
+  ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
+SCRIPT
+[[ $(path_hash "${MAIN_VOLUME}" /data/home/.gemini/config/mcp_config.json) == "${MCP_HASH}" ]]
+[[ $(path_hash "${MAIN_VOLUME}" /data/antigravity/auth.json) == "${AUTH_HASH}" ]]
+[[ $(path_hash "${MAIN_VOLUME}" /data/antigravity/config.toml) == "${LEGACY_HASH}" ]]
+RESET_IDEMPOTENT_OUTPUT=$(run_helper "${MAIN_VOLUME}") \
+  || fail 'same-version reset_v2 idempotency run failed'
+assert_json "${RESET_IDEMPOTENT_OUTPUT}" '
   .mode == "reset_v2"
   and .refreshed == []
   and .backup_directory == null
 '
-assert_sanitized "${RESET_OUTPUT}"
-[[ $(path_hash "${MAIN_VOLUME}" /data/home/.gemini/config/mcp_config.json) == "${MCP_HASH}" ]]
-[[ $(path_hash "${MAIN_VOLUME}" /data/antigravity/auth.json) == "${AUTH_HASH}" ]]
-[[ $(path_hash "${MAIN_VOLUME}" /data/antigravity/config.toml) == "${LEGACY_HASH}" ]]
 
 run_script "${RESET_VOLUME}" "${SETTINGS_SECRET}" "${MCP_SECRET}" <<'SCRIPT'
   set -Eeuo pipefail
@@ -498,10 +531,11 @@ run_script "${RESET_VOLUME}" "${BACKUP_DIRECTORY}" "${SETTINGS_SECRET}" "${MCP_S
     .toolPermission == "request-review"
     and .enableTerminalSandbox == false
     and .user_reset_key == $marker
-    and (.permissions.deny | index("user(custom/deny)") != null)
+    and (.permissions.deny | index("user(custom/deny)") == null)
     and (.permissions.allow | index("mcp(playwright/browser_snapshot)") != null)
-    and (.permissions.allow | index("mcp(playwright/browser_click)") != null)
+    and (.permissions.allow | index("mcp(playwright/browser_click)") == null)
     and (.permissions.ask | index("mcp(playwright/browser_click)") == null)
+    and (.permissions.allow | index("mcp(telegram_action/telegram_action_propose)") != null)
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
   jq --arg marker "$3" --exit-status '
     .user_reset_key == $marker
@@ -536,6 +570,14 @@ run_script "${PERMISSION_MIGRATION_VOLUME}" \
     | cut -d ' ' -f 1)" = "$1"
   test "$(sha256sum /data/antigravity-ha/migration/native-files-state.json \
     | cut -d ' ' -f 1)" = "$2"
+  jq --exit-status '
+    (.permissions.allow
+      | index("mcp(ha_read/ha_read_storage_usage)") == null)
+  ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
+  jq --exit-status '
+    (.managed.settings.permission_rules
+      | index("mcp(ha_read/ha_read_storage_usage)") == null)
+  ' /data/antigravity-ha/migration/native-files-state.json >/dev/null
 
   jq '
     .toolPermission = "strict"
@@ -579,6 +621,10 @@ PERMISSION_OUTER_HASH_BEFORE=$(run_script \
     }
     /^  "enableTerminalSandbox": (true|false),$/ {
       print "  \"enableTerminalSandbox\": <managed-value>,"
+      next
+    }
+    /^  "toolPermission": "[^"]+",$/ {
+      print "  \"toolPermission\": <managed-value>,"
       next
     }
     !inside { print }
@@ -662,6 +708,10 @@ PERMISSION_OUTER_HASH_AFTER=$(run_script \
       print "  \"enableTerminalSandbox\": <managed-value>,"
       next
     }
+    /^  "toolPermission": "[^"]+",$/ {
+      print "  \"toolPermission\": <managed-value>,"
+      next
+    }
     !inside { print }
   ' /data/home/.gemini/antigravity-cli/settings.json \
     | sha256sum | cut -d ' ' -f 1
@@ -674,7 +724,7 @@ run_script "${PERMISSION_MIGRATION_VOLUME}" <<'SCRIPT'
   grep -Fxq '  "user_byte_marker"  :  "preserve\\u002dexact",' \
     /data/home/.gemini/antigravity-cli/settings.json
   jq --exit-status '
-    .toolPermission == "strict"
+    .toolPermission == "request-review"
     and .user_byte_marker == "preserve\\u002dexact"
     and .user_suffix == "preserve-after-permissions"
     and .permissions.user_policy == {owner: "user", enabled: true}
@@ -682,19 +732,21 @@ run_script "${PERMISSION_MIGRATION_VOLUME}" <<'SCRIPT'
     and (.permissions.ask | index("user(custom/ask)") != null)
     and (.permissions.deny | index("user(custom/deny)") != null)
     and (.permissions.allow | index("read_file(/config)") != null)
-    and (.permissions.allow | index("write_file(/config)") != null)
+    and (.permissions.allow | index("write_file(/config)") == null)
     and (.permissions.allow | index("read_file(/data/home/.gemini/config)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/config)") != null)
+    and (.permissions.allow | index("write_file(/data/home/.gemini/config)") == null)
     and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/agents)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/agents)") != null)
+    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/agents)") == null)
     and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/plugins)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/plugins)") != null)
+    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/plugins)") == null)
     and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/skills)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/skills)") != null)
+    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/skills)") == null)
     and (.permissions.allow | index("read_file(/data/home/.gemini/GEMINI.md)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/GEMINI.md)") != null)
+    and (.permissions.allow | index("write_file(/data/home/.gemini/GEMINI.md)") == null)
     and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
     and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") == null)
+    and (.permissions.allow
+      | index("mcp(ha_read/ha_read_storage_usage)") != null)
     and (.permissions.deny | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
     and (([
       "read_file(/data/home/.aws)",
@@ -724,6 +776,8 @@ run_script "${PERMISSION_MIGRATION_VOLUME}" <<'SCRIPT'
     and (.managed.settings.permission_rules | index("read_file(/data)") == null)
     and (.managed.settings.permission_rules | index("write_file(/data)") == null)
     and (.managed.settings.permission_rules | index("read_file(/config)") != null)
+    and (.managed.settings.permission_rules
+      | index("mcp(ha_read/ha_read_storage_usage)") != null)
   ' /data/antigravity-ha/migration/native-files-state.json >/dev/null
 SCRIPT
 PERMISSION_SETTINGS_HASH_AFTER=$(path_hash \
@@ -784,6 +838,14 @@ run_script "${PERMISSION_V208_MIGRATION_VOLUME}" <<'SCRIPT'
   install -m 0600 /etc/antigravity/mcp_config.json \
     /data/home/.gemini/config/mcp_config.json
   chmod 0600 /data/home/.gemini/antigravity-cli/settings.json
+  jq --exit-status '
+    (.permissions.allow
+      | index("mcp(ha_read/ha_read_storage_usage)") == null)
+  ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
+  jq --exit-status '
+    (.managed.settings.permission_rules
+      | index("mcp(ha_read/ha_read_storage_usage)") == null)
+  ' /data/antigravity-ha/migration/native-files-state.json >/dev/null
 SCRIPT
 PERMISSION_V208_OUTPUT=$(run_helper "${PERMISSION_V208_MIGRATION_VOLUME}") \
   || fail 'public 2.0.8 preserve permission migration failed'
@@ -803,14 +865,22 @@ run_script "${PERMISSION_V208_MIGRATION_VOLUME}" <<'SCRIPT'
     and (.permissions.ask | index("user(v208/ask)") != null)
     and (.permissions.deny | index("user(v208/deny)") != null)
     and (.permissions.allow | index("read_file(/config)") != null)
-    and (.permissions.allow | index("write_file(/config)") != null)
-    and (.permissions.allow | index("read_url(*)") != null)
-    and (.permissions.allow | index("execute_url(*)") != null)
-    and (.permissions.allow | index("command(*)") != null)
-    and (.permissions.allow | index("mcp(*)") != null)
-    and (.permissions.allow | index("mcp(playwright/browser_click)") != null)
+    and (.permissions.allow | index("write_file(/config)") == null)
+    and (.permissions.allow | index("read_url(*)") == null)
+    and (.permissions.allow | index("execute_url(*)") == null)
+    and (.permissions.allow | index("command(*)") == null)
+    and (.permissions.allow | index("mcp(*)") == null)
+    and (.permissions.allow | index("mcp(playwright/browser_click)") == null)
     and (.permissions.ask | index("mcp(home-assistant/*)") == null)
     and (.permissions.ask | index("mcp(playwright/browser_click)") == null)
+    and (.permissions.ask | index("write_file(*)") == null)
+    and (.permissions.ask | index("read_url(*)") == null)
+    and (.permissions.ask | index("execute_url(*)") == null)
+    and (.permissions.ask | index("command(*)") == null)
+    and (.permissions.allow | index("mcp(ha_change/ha_change_propose)") != null)
+    and (.permissions.allow
+      | index("mcp(ha_read/ha_read_storage_usage)") != null)
+    and (.permissions.allow | index("mcp(telegram_action/telegram_action_propose)") != null)
     and (.permissions.deny | index("command(sudo)") == null)
     and (.permissions.deny | index("command(rm -rf)") == null)
     and (.permissions.deny | index("read_file(/config/secrets.yaml)") != null)
@@ -841,9 +911,13 @@ run_script "${PERMISSION_V208_MIGRATION_VOLUME}" <<'SCRIPT'
     and (.permissions.deny | length == (unique | length))
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
   jq --exit-status '
-    (.managed.settings.permission_rules | index("command(*)") != null)
-    and (.managed.settings.permission_rules | index("mcp(*)") != null)
+    (.managed.settings.permission_rules | index("command(*)") == null)
+    and (.managed.settings.permission_rules | index("mcp(*)") == null)
     and (.managed.settings.permission_rules | index("mcp(home-assistant/*)") == null)
+    and (.managed.settings.permission_rules
+      | index("mcp(ha_read/ha_read_storage_usage)") != null)
+    and (.managed.settings.permission_rules
+      | index("mcp(telegram_action/telegram_action_propose)") != null)
   ' /data/antigravity-ha/migration/native-files-state.json >/dev/null
 SCRIPT
 PERMISSION_V208_IDEMPOTENT=$(run_helper "${PERMISSION_V208_MIGRATION_VOLUME}") \
@@ -857,8 +931,7 @@ assert_json "${PERMISSION_V208_IDEMPOTENT}" '
 '
 
 # A user may deliberately move an App-owned 2.0.8 rule to a stronger bucket.
-# That is an explicit override, not proof that the old App layout is intact;
-# preserve mode must leave both settings and ownership state byte-identical.
+# Preserve that explicit deny while retiring the remainder of the old layout.
 run_script "${PERMISSION_V208_AMBIGUOUS_VOLUME}" <<'SCRIPT'
   set -Eeuo pipefail
   umask 077
@@ -880,30 +953,94 @@ run_script "${PERMISSION_V208_AMBIGUOUS_VOLUME}" <<'SCRIPT'
     /data/home/.gemini/config/mcp_config.json
   chmod 0600 /data/home/.gemini/antigravity-cli/settings.json
 SCRIPT
-PERMISSION_V208_AMBIGUOUS_HASH=$(path_hash \
-  "${PERMISSION_V208_AMBIGUOUS_VOLUME}" \
-  /data/home/.gemini/antigravity-cli/settings.json)
-PERMISSION_V208_AMBIGUOUS_STATE_HASH=$(path_hash \
-  "${PERMISSION_V208_AMBIGUOUS_VOLUME}" \
-  /data/antigravity-ha/migration/native-files-state.json)
 PERMISSION_V208_AMBIGUOUS_OUTPUT=$(run_helper \
   "${PERMISSION_V208_AMBIGUOUS_VOLUME}") \
-  || fail 'ambiguous public 2.0.8 preserve permissions did not fail safe'
+  || fail 'public 2.0.8 explicit deny was not preserved during migration'
 assert_json "${PERMISSION_V208_AMBIGUOUS_OUTPUT}" '
-  .permission_migration == "skipped_ambiguous"
+  .permission_migration == "applied"
   and .created == []
-  and .refreshed == []
-  and .backup_directory == null
-  and (.warnings | any(contains("2.0.8 permission layout was ambiguous")))
+  and .refreshed == ["settings"]
+  and (.backup_directory | startswith("/data/antigravity-ha/backups/native-files/refresh-"))
 '
-[[ $(path_hash "${PERMISSION_V208_AMBIGUOUS_VOLUME}" \
-  /data/home/.gemini/antigravity-cli/settings.json) == \
-  "${PERMISSION_V208_AMBIGUOUS_HASH}" ]]
-[[ $(path_hash "${PERMISSION_V208_AMBIGUOUS_VOLUME}" \
-  /data/antigravity-ha/migration/native-files-state.json) == \
-  "${PERMISSION_V208_AMBIGUOUS_STATE_HASH}" ]]
 run_script "${PERMISSION_V208_AMBIGUOUS_VOLUME}" <<'SCRIPT'
-  test ! -e /data/antigravity-ha/migration/native-files.json
+  jq --exit-status '
+    (.permissions.deny | index("command(*)") != null)
+    and (.permissions.ask | index("command(*)") == null)
+    and (.permissions.allow | index("command(*)") == null)
+    and (.permissions.allow | index("mcp(*)") == null)
+    and (.permissions.allow
+      | index("mcp(telegram_action/telegram_action_propose)") != null)
+  ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
+SCRIPT
+
+# Reconstruct the exact 2.0.9/2.0.10 broad App-owned layout from immutable
+# 2.0.8 source lists plus this image's sensitive deny set. Preserve mode must
+# retire its native writes and wildcards, normalize always-proceed, and retain
+# a user-added stronger command deny.
+run_script "${PERMISSION_V3_MIGRATION_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  umask 077
+  install -d -m 0700 /data/antigravity /run/antigravity-ha
+  jq -n '{
+    antigravity_tool_permission: "request-review",
+    antigravity_terminal_sandbox: false,
+    antigravity_user_files_update_mode: "preserve"
+  }' > /data/options.json
+  /usr/local/bin/antigravity-user-files-update >/dev/null
+  jq --slurpfile v208 /test-fixtures/public-2.0.8-preserve-settings.json '
+    .toolPermission = "always-proceed"
+    | .permissions.allow = (
+        [$v208[0].permissions.allow[]
+          | select(startswith("read_file(") or startswith("write_file("))
+          | select(. != "write_file(/data/home/.gemini/antigravity-cli/settings.json)")]
+        + ["read_url(*)", "execute_url(*)", "command(*)", "mcp(*)"]
+        + [$v208[0].permissions.allow[]
+          | select(startswith("mcp(playwright/"))]
+        + [$v208[0].permissions.ask[]
+          | select(startswith("mcp(playwright/"))]
+      )
+    | .permissions.ask = []
+    | .permissions.deny |= map(select(
+        . != "read_file(/data/home/.gemini/config/mcp_config.json)"
+        and . != "write_file(/data/home/.gemini/config/mcp_config.json)"
+      ))
+    | .permissions.deny += ["command(*)", "user(v3/deny)"]
+  ' /data/home/.gemini/antigravity-cli/settings.json > /tmp/settings.json
+  mv /tmp/settings.json /data/home/.gemini/antigravity-cli/settings.json
+  jq --slurpfile settings /data/home/.gemini/antigravity-cli/settings.json '
+    .applied.settings = ["2.0.10"]
+    | .managed.settings.permission_rules = (
+        $settings[0].permissions.allow
+        + ($settings[0].permissions.deny | map(select(. != "command(*)" and . != "user(v3/deny)")))
+      )
+  ' /data/antigravity-ha/migration/native-files-state.json > /tmp/state.json
+  mv /tmp/state.json /data/antigravity-ha/migration/native-files-state.json
+  chmod 0600 /data/home/.gemini/antigravity-cli/settings.json \
+    /data/antigravity-ha/migration/native-files-state.json
+SCRIPT
+PERMISSION_V3_OUTPUT=$(run_helper "${PERMISSION_V3_MIGRATION_VOLUME}") \
+  || fail '2.0.9/2.0.10 broad permission migration failed'
+assert_json "${PERMISSION_V3_OUTPUT}" '
+  .permission_migration == "applied"
+  and .refreshed == ["settings"]
+  and (.backup_directory | startswith("/data/antigravity-ha/backups/native-files/refresh-"))
+'
+run_script "${PERMISSION_V3_MIGRATION_VOLUME}" <<'SCRIPT'
+  jq --exit-status '
+    .toolPermission == "request-review"
+    and (.permissions.allow | index("command(*)") == null)
+    and (.permissions.allow | index("mcp(*)") == null)
+    and (.permissions.allow | index("read_url(*)") == null)
+    and (.permissions.allow | index("execute_url(*)") == null)
+    and (.permissions.allow | index("write_file(/config)") == null)
+    and (.permissions.ask | index("command(*)") == null)
+    and (.permissions.ask | index("write_file(*)") == null)
+    and (.permissions.deny | index("command(*)") != null)
+    and (.permissions.deny | index("user(v3/deny)") != null)
+    and (.permissions.allow | index("mcp(ha_change/ha_change_propose)") != null)
+    and (.permissions.allow
+      | index("mcp(telegram_action/telegram_action_propose)") != null)
+  ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
 SCRIPT
 
 # Matching contents without an ownership record are user-owned. Preserve mode
@@ -1089,7 +1226,7 @@ run_script "${LEGACY_VOLUME}" <<'SCRIPT'
     .toolPermission == "request-review"
     and .enableTerminalSandbox == false
     and (.permissions.allow | index("mcp(playwright/browser_snapshot)") != null)
-    and (.permissions.allow | index("mcp(playwright/browser_click)") != null)
+    and (.permissions.allow | index("mcp(playwright/browser_click)") == null)
     and (.permissions.ask | index("mcp(playwright/browser_click)") == null)
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
 SCRIPT
@@ -1109,19 +1246,28 @@ run_script "${CONFLICT_VOLUME}" <<'SCRIPT'
   printf '{"mcpServers":{"user_owned":{"command":"user-mcp"}}}\n' \
     > /data/home/.gemini/config/mcp_config.json
 SCRIPT
-CONFLICT_SETTINGS_HASH=$(path_hash "${CONFLICT_VOLUME}" /data/home/.gemini/antigravity-cli/settings.json)
 CONFLICT_MCP_HASH=$(path_hash "${CONFLICT_VOLUME}" /data/home/.gemini/config/mcp_config.json)
-if run_helper "${CONFLICT_VOLUME}" >/tmp/native-conflict-output 2>&1; then
-  fail 'reset_v2 accepted settings without App ownership state'
-fi
-[[ $(path_hash "${CONFLICT_VOLUME}" /data/home/.gemini/antigravity-cli/settings.json) == "${CONFLICT_SETTINGS_HASH}" ]]
+CONFLICT_OUTPUT=$(run_helper "${CONFLICT_VOLUME}") \
+  || fail 'reset_v2 did not recover settings without App ownership state'
+assert_json "${CONFLICT_OUTPUT}" '
+  .mode == "reset_v2"
+  and .refreshed == ["settings"]
+  and (.backup_directory | startswith("/data/antigravity-ha/backups/native-files/refresh-"))
+'
+assert_sanitized "${CONFLICT_OUTPUT}"
 [[ $(path_hash "${CONFLICT_VOLUME}" /data/home/.gemini/config/mcp_config.json) == "${CONFLICT_MCP_HASH}" ]]
 run_script "${CONFLICT_VOLUME}" <<'SCRIPT'
-  jq --exit-status '.user_owned_key == "preserve"' \
+  jq --exit-status '
+    .user_owned_key == "preserve"
+    and .toolPermission == "request-review"
+    and .permissions.ask == []
+    and (.permissions.allow
+      | index("mcp(telegram_action/telegram_action_propose)") != null)
+  ' \
     /data/home/.gemini/antigravity-cli/settings.json >/dev/null
   jq --exit-status '.mcpServers.user_owned.command == "user-mcp"' \
     /data/home/.gemini/config/mcp_config.json >/dev/null
-  test ! -e /data/antigravity-ha/migration/native-files.json
+  test -e /data/antigravity-ha/migration/native-files-state.json
 SCRIPT
 
 run_script "${PARTIAL_CONFLICT_VOLUME}" <<'SCRIPT'
@@ -1137,20 +1283,24 @@ run_script "${PARTIAL_CONFLICT_VOLUME}" <<'SCRIPT'
   printf '{"toolPermission":"strict","user_owned_key":"preserve"}\n' \
     > /data/home/.gemini/antigravity-cli/settings.json
 SCRIPT
-PARTIAL_CONFLICT_SETTINGS_HASH=$(path_hash \
-  "${PARTIAL_CONFLICT_VOLUME}" \
-  /data/home/.gemini/antigravity-cli/settings.json)
-if run_helper "${PARTIAL_CONFLICT_VOLUME}" \
-  >/tmp/native-partial-conflict-output 2>&1; then
-  fail 'reset_v2 mutated a missing MCP peer before detecting settings ownership conflict'
-fi
-[[ $(path_hash "${PARTIAL_CONFLICT_VOLUME}" \
-  /data/home/.gemini/antigravity-cli/settings.json) == \
-  "${PARTIAL_CONFLICT_SETTINGS_HASH}" ]]
+PARTIAL_CONFLICT_OUTPUT=$(run_helper "${PARTIAL_CONFLICT_VOLUME}") \
+  || fail 'reset_v2 did not recover unowned settings with a missing MCP peer'
+assert_json "${PARTIAL_CONFLICT_OUTPUT}" '
+  .mode == "reset_v2"
+  and .created == ["mcp"]
+  and .refreshed == ["settings"]
+  and (.backup_directory | startswith("/data/antigravity-ha/backups/native-files/refresh-"))
+'
+assert_sanitized "${PARTIAL_CONFLICT_OUTPUT}"
 run_script "${PARTIAL_CONFLICT_VOLUME}" <<'SCRIPT'
-  test ! -e /data/home/.gemini/config/mcp_config.json
-  test ! -e /data/antigravity-ha/migration/native-files-state.json
-  test ! -e /data/antigravity-ha/migration/native-files.json
+  jq --exit-status '
+    .user_owned_key == "preserve"
+    and .toolPermission == "request-review"
+    and .permissions.ask == []
+  ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
+  jq --exit-status '.mcpServers == {}' \
+    /data/home/.gemini/config/mcp_config.json >/dev/null
+  test -e /data/antigravity-ha/migration/native-files-state.json
 SCRIPT
 
 # Reproduce the ambiguous hash case that a phase-less journal cannot safely
