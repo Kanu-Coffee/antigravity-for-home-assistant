@@ -5,7 +5,7 @@
 
 ## TG-001 — 범위
 
-2.0.9 Telegram 브리지는 Antigravity와 별개인 축소 agent가 아니라 같은 관리자
+2.0.10 Telegram 브리지는 Antigravity와 별개인 축소 agent가 아니라 같은 관리자
 환경을 노출하는 transport adapter다. Bot API long polling, 인증, stable session,
 per-session queue, print transport, 암호화 reply outbox와 confirmation routing을
 담당한다. shell, interactive TUI와 tmux pane scraping은 범위 밖이다.
@@ -130,8 +130,10 @@ type NormalizedUpdate =
   broker `execute`에 이미 접수된 durable mutation은 취소되었다고 응답하지 않는다.
   bridge는 `execute_status` 조회를 계속해 terminal result를 사용자에게 전달한다.
 - 실행 중 model queue는 `/run`에만 저장한다. approval은 durable state에
-  conversation/user/chat/session generation/proposal digest/expiry를 결합하고 restart 뒤
-  모두 재검증될 때만 계속한다.
+  conversation/user/chat/session generation/proposal digest/expiry를 결합한다. bridge만
+  재시작되고 proposal을 가진 broker가 계속 살아 있을 때는 모두 재검증한 뒤 계속할
+  수 있다. App 전체 또는 broker 재시작으로 아직 접수하지 않은 in-memory proposal이
+  사라지면 기존 approval은 실행하지 않고 새 요청을 요구한다.
 - conversation binding은 opaque Antigravity conversation ID만 `/data`에 저장하고
   idle timeout으로 만료하거나 worker 실패 시 교체하지 않는다. response는 delivery가
   끝날 때까지만 sealed reply outbox에 저장하고 처리 완료 prompt는 저장하지 않는다.
@@ -215,12 +217,15 @@ Unicode-safe 분할한다. 초과 결과는 local raw output을 보존하지 않
 보고한다.
 
 pinned 1.1.13 stream의 top-level discriminator는 `type`이 아니라 `event`다. init과
-terminal result는 같은 conversation ID여야 하며, terminal은
-`result.status == "SUCCESS"`와 non-empty bounded native free-text
-`result.response`를 모두 충족해야 한다. 일반 채팅에는 `--json-schema`나 generated
-`finish` tool을 강제하지 않으며 terminal response를 App 전용 JSON으로 다시 parse하지
-않는다. legacy `type`, 실패 status, 다른 conversation ID와 recursive fallback
-payload는 거부한다.
+terminal result는 같은 conversation ID여야 하며 terminal은
+`result.status == "SUCCESS"`와 bounded string `result.response`를 충족해야 한다. 일반
+채팅에는 `--json-schema`나 generated `finish` tool을 강제하지 않으며 terminal
+response를 App 전용 JSON으로 다시 parse하지 않는다. proposal 없는 빈 response,
+legacy `type`, 실패 status, 다른 conversation ID와 recursive fallback payload는
+거부한다. 정확히 하나의 완료된 유효 HA proposal receipt가 존재하고 terminal text만
+비어 있으면 2.0.10은 고정된 `Home Assistant 변경 제안을 준비했습니다.` 문구를
+사용해 approval card delivery를 계속한다. non-string, 32 KiB 초과, proposal receipt가
+없거나 중복된 빈 response는 계속 fail closed한다.
 
 HA 변경 proposal ID는 정확한 `call_mcp_tool`의
 `ha_change/ha_change_propose` step이 `DONE`으로 완료한 tool output에서만 추출한다.
@@ -228,6 +233,13 @@ HA 변경 proposal ID는 정확한 `call_mcp_tool`의
 거부한다. receipt를 얻은 뒤에도 bridge가 durable conversation binding을 별도로
 확인하고 trusted broker에서 동일 requester와 live proposal metadata를 검증해야
 approval을 만든다.
+
+receipt의 `parameters`는 `Arguments`, `ServerName`, `ToolName`을 필수로 하고
+`toolAction`, `toolSummary`만 optional compatibility metadata로 허용한다. optional
+값은 각각 NUL·비공백 control character가 없는 최대 1,024 UTF-8 byte 문자열이어야
+한다. unknown key, non-string, 금지 control character 또는 byte 상한 초과는
+`proposal_result_invalid`다.
+진단에는 raw key/value 대신 고정 reason class와 key/metadata 개수만 기록한다.
 
 pinned 1.1.13 native child의 stderr는 원문을 저장·로그·회신하지 않는다. bridge는
 `Error: authentication required. Run 'antigravity-real' to log in, then retry.`라는
@@ -268,14 +280,22 @@ type PreviewLine = {
 
 type ChangeProposal = {
   proposal_id: string;
-  operation: "config_patch" | "service_call" | "device_test";
+  operation:
+    | "config_patch"
+    | "service_call"
+    | "multi_choice_service_call"
+    | "device_test";
   risk: "low" | "high";
   requester: {
     surface: "telegram";
     user_id: string;
     chat_id: string;
   };
-  preview: ConfigPatchPreview | ServiceCallPreview | DeviceTestPreview;
+  preview:
+    | ConfigPatchPreview
+    | ServiceCallPreview
+    | MultiChoiceServiceCallPreview
+    | DeviceTestPreview;
   preview_digest: `sha256:${string}`;
   expires_at: string;
 };
@@ -332,6 +352,26 @@ type ServiceCallPreview = {
     | {kind: "fresh_entity_state"; entity_id: string; expected_state: string};
 };
 
+type MultiChoiceServiceCallPreview = {
+  format: "ha-multi-choice-service-call-v1";
+  summary: string;
+  prompt: string;
+  choices: Array<{
+    choice_id: string;
+    label: string;
+    service: string;
+    entity_id: string | string[] | null;
+    service_data: Record<string, unknown>;
+    precondition:
+      | {kind: "none"}
+      | {kind: "fresh_entity_state"; entity_id: string; expected_state: string};
+    verification:
+      | {kind: "api_completion"}
+      | {kind: "fresh_entity_state"; entity_id: string; expected_state: string};
+  }>;
+  cancel_label: string;
+};
+
 type DeviceTestPreview = {
   format: "device-test-plan-v1";
   summary: string;
@@ -383,6 +423,14 @@ semantic fresh-state verification을 추가한다.
 `verify_state`는 단일 entity에서만 선택 지원하며 그 밖의 성공은 API completion까지만
 보고한다.
 
+`multi_choice_service_call`은 상호 배타적인 1~31개 선택지를 받는다. `choice_id`는
+proposal 안에서 고유한 `[A-Za-z0-9_-]{1,24}`, label과 optional `cancel_label`은 각각
+최대 64 UTF-8 byte이며 prompt는 최대 500문자/1,024 UTF-8 byte다. 각 선택지는 위
+`service_call` validator 전체를 재사용하고 broker가 한 번 가져온 live service
+registry snapshot에서 모두 검증되어야 한다. 하나라도 실패하면 proposal 전체를
+거부한다. preview와 digest에는 모든 normalized 선택지를 묶되 callback에는 실행
+파라미터를 넣지 않는다.
+
 `device_test` payload는 `light`, `switch`, `input_boolean` 중 exact entity와
 `turn_on`/`turn_off`, `expected_prior_state`만 받는다. expected prior와 service가 만드는
 test state가 같으면 no-op이므로 proposal 단계에서 거부한다. lock/cover/alarm/climate,
@@ -422,14 +470,15 @@ global allow rule에 포함된 plugin·agent·rule·`/config` file action과
 service/config mutation의 사람 확인은 same-session broker proposal/button으로
 수행한다. 관리형 runtime rule은 일반 HA service/config
 변경을 `ha_change_propose`로 라우팅한다. 이 경로로 제출된 모든 App-managed broker
-`service_call`/`config_patch`는 durable Telegram 확인이 필요하다. 그 밖의 native
+`service_call`/`multi_choice_service_call`/`config_patch`는 durable Telegram 확인이
+필요하다. 그 밖의 native
 tool이 `request-review`를 요구하면 Telegram 전용 auto-approve를 만들지 않고
 비대화형 거부한다. 사용자는 Web/SSH에서 검토하거나 global
 `antigravity_tool_permission`을 명시적으로 변경해야 한다.
 
-App-managed broker의 모든 `config_patch`, `service_call`, `device_test`는 `high`이며
-global native policy와 관계없이 human confirmation이 필요하다. model의 risk 표시는
-이 판정을 낮출 수 없다.
+App-managed broker의 모든 `config_patch`, `service_call`,
+`multi_choice_service_call`, `device_test`는 `high`이며 global native policy와
+관계없이 human confirmation이 필요하다. model의 risk 표시는 이 판정을 낮출 수 없다.
 
 신뢰된 사용자 설치·전역 native tool, `command(*)`/`mcp(*)`, 직접 `ha-api`/
 `supervisor-api`와 일반 `/config` shell write는 CLI와 같은 관리자 권한을 상속하고
@@ -441,8 +490,9 @@ native mutation을 포괄하지 않는다. broker 고위험 목록은
 승인 근거로 사용할 수 있고 Telegram button으로 자동 broker되지 않는다. 이것은 승인
 transport 차이이지 HOME, OAuth, global permission을 나눈 별도 runtime이 아니다.
 
-coordinator 내부 logical record는 wire JSON이 아니다. random approval ID만 callback
-data에 두고 durable state에는 다음 binding을 보관한다.
+coordinator 내부 logical record는 wire JSON이 아니다. callback data에는 random
+approval ID와 multi-choice일 때만 opaque choice token을 두고 durable state에는 다음
+binding을 보관한다.
 
 ```ts
 type PendingApproval = {
@@ -455,23 +505,35 @@ type PendingApproval = {
   idempotencyKey: string;
   expiresAt: number;
   state: "pending" | "approved";
+  choiceTokens?: Array<{token: string; choiceId: string; label: string}>;
+  selectedChoiceId?: string | null;
 };
 ```
 
 - 기본 TTL은 2분이다.
-- inline Confirm/Cancel button의 callback data에는 random approval ID만 넣는다.
+- binary card는 기존 `v2a:<approval_id>`/`v2d:<approval_id>`를 계속 처리한다.
+  multi-choice card는 `v3c:<approval_id>:<opaque_choice_token>`과
+  `v3d:<approval_id>`를 사용한다. callback data는 Telegram의 64-byte 상한을
+  넘지 않으며 HA domain/service/entity/`service_data` 또는 raw `choice_id`를 싣지
+  않는다.
+- multi-choice 1~31개에 cancel을 더한 최대 32개 button을 행당 최대 4개, 최대 8행으로
+  배치한다. label과 cancel label은 각각 64 UTF-8 byte 이하이고 선택 token→
+  `choice_id` mapping은 approval과 함께 암호화해 저장한다.
 - callback requester/chat/current generation/conversation이 record와 다르면 generic denial 후 아무 상태도
   바꾸지 않는다.
 - callback은 즉시 ACK하고 기본 인증을 검사하지만 승인된 broker 실행은 requester FIFO에
   넣는다. 실행 직전에 durable record, current session과 broker proposal/digest를 다시
   비교하고 1회용 capability를 발급한다.
-- Cancel, expiry, `/cancel`, proposal 변경 또는 첫 Confirm 시 record를
-  원자적으로 terminal 상태로 바꾸거나 폐기한다. restart 자체는 유효 approval을 잃지
-  않지만 재검증할 수 없는 record는 실행하지 않는다.
+- Cancel, expiry, `/cancel`, proposal 변경 또는 첫 Confirm/Choice 시 record를
+  원자적으로 terminal 상태로 바꾸거나 폐기한다. choice는 broker authorization 전에
+  durable record에 먼저 기록한다. bridge restart 뒤 mapping을 복구할 수 있지만
+  broker가 재시작해 in-memory proposal을 잃었다면 미접수 approval을 실행하지 않는다.
 - 실행 직전 broker가 risk, target와 현재 precondition을 다시 검증하고 결과를 같은
   conversation reply outbox에 넣는다.
-- durable idempotency key는 restart 또는 duplicate callback 뒤에도 동일 mutation을
-  정확히 한 번만 접수하며 replay는 저장된 status/result만 회수한다.
+- durable idempotency key는 선택한 `choice_id`까지 capability, execute request,
+  status/result와 결합한다. 이미 broker가 접수한 실행은 restart 또는 duplicate
+  callback 뒤에도 동일 mutation을 정확히 한 번만 접수하며 replay는 저장된
+  status/result만 회수한다.
 
 ## TG-010 — 실행과 결과
 
@@ -480,6 +542,10 @@ record를 fsync하고 즉시 durable job 접수 상태를 반환한다. 실제 m
 직렬 worker에서 수행하며 짧은 socket timeout에 묶지 않는다. bridge는 같은 requester와
 idempotency key로 `execute_status`를 조회해 `completed` result 또는 재시작 뒤
 `in_doubt`를 회수한다. 동일 key의 재시도는 새 mutation을 시작하지 않는다.
+`multi_choice_service_call`은 authorization과 execute에 같은 `choice_id`가 있어야 하고
+broker가 capability·proposal digest·idempotency record의 선택과 다시 대조한 뒤 해당
+proposal 안의 사전 검증된 service call 하나만 실행한다. 다른 선택지를 같은 key로
+재시도하거나 binary approval에 choice를 붙이는 요청은 거부한다.
 
 config 변경:
 
@@ -569,11 +635,15 @@ reason/result/status class만 허용하며 재시작 시 0부터 시작한다. �
 
 - unauthenticated user가 pairing 정보와 runtime 상태를 얻지 못한다.
 - cross-user/chat callback, replay, expiry와 changed-preview confirmation이 거부된다.
+- 31개 choice+cancel의 4×8 layout, `v3c`/`v3d` callback, legacy `v2a`/`v2d`, unknown
+  token과 두 번째 다른 선택의 거부를 검증한다.
 - shell metacharacter가 argv나 shell execution으로 변하지 않는다.
 - per-chat serialization, global concurrency와 queue limit이 지켜진다.
 - global permission option이 Web/SSH/Telegram에 동일하게 적용되고 legacy
   `telegram_access_mode`가 권한 source로 사용되지 않는다.
-- timeout/cancel/restart 뒤 child와 capability가 남지 않는다.
+- timeout/cancel/restart 뒤 child와 capability가 남지 않는다. bridge-only restart는
+  broker가 살아 있을 때 encrypted choice mapping을 복구하고, full App/broker restart는
+  미접수 in-memory proposal을 실행하지 않으며 접수된 결과만 durable status로 회수한다.
 - token/prompt/raw output canary가 App log, Telegram reply와 artifact에 없다.
 - split stderr marker와 대용량 stderr에서도 matcher state가 bounded이고 원문을
   남기지 않으며 exit 1+exact marker, exit 70, 나머지 실패가 서로 오인되지 않는다.
@@ -581,6 +651,9 @@ reason/result/status class만 허용하며 재시작 시 0부터 시작한다. �
   사용하며 오직 `/new`만 새 ID를 만든다.
 - model 성공 뒤 Telegram 실패·process crash에서도 encrypted outbox가 같은 reply를
   재전송하고 ack 뒤에만 제거한다.
+- optional bounded `toolAction`/`toolSummary` receipt와 단일 유효 proposal 뒤의 빈
+  terminal-text fallback은 승인 카드를 만들고, unknown metadata key와 proposal 없는
+  빈 response는 typed failure로 남는다.
 - pairing/local command/transport 정상과 공유 native OAuth·Antigravity 상태를 혼동하지
   않고 인증 필요 시 `ha-antigravity-login`만 안전하게 안내한다.
 - 실제 1.1.13에서 user global/workspace plugin·agent·rule·MCP와 native permission을

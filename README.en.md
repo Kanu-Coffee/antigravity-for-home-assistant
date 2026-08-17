@@ -171,7 +171,11 @@ That helper updates atomically but rejects the App-owned security keys
 `toolPermission`, and `artifactReviewPolicy`; change those policies only through
 App options and a restart. User plugins, agents,
 skills, and rules remain shared and directly writable, and updates preserve
-existing user-owned rules. The bridge receives
+existing user-owned rules. Version 2.0.9 and later image-managed defaults already
+allow `mcp(*)` and leave managed `ask` empty. Do not add redundant
+server-specific rules such as `mcp(ha_change/*)`, `mcp(ha_read/*)`, or
+`mcp(ha_memory/*)`. User-added `ask` and `deny` rules still take precedence.
+The bridge receives
 the prompt through piped stdin and runs the shared
 `antigravity --output-format stream-json`
 launcher with the same `/data/home` and `/config`. It does not inject input into a shell or shared tmux session, but it
@@ -184,12 +188,38 @@ Because 1.1.13 `stream-json` cannot resume a native permission prompt, a Telegra
 button cannot continue that prompt. Managed runtime rules route ordinary Home
 Assistant service/config changes through `ha_change_propose`. The broker supports
 every live Home Assistant domain/service with bounded `service_data` and ordinary
-YAML patches. Every App-managed broker `service_call`/`config_patch` submitted
-that way is high-risk and requires
-durable requester/chat/session-bound Approve/Deny buttons; global tool policy
+YAML patches. Every App-managed broker `service_call`,
+`multi_choice_service_call`, or `config_patch` submitted that way is high-risk
+and requires durable requester/chat/session-bound Approve/Choose/Deny buttons;
+global tool policy
 cannot downgrade that broker classification. Approved service calls are checked
 against live `/api/services`; YAML uses an expected digest, atomic backup/write,
 and `ha-config-check`, with exact rollback on failure.
+
+Starting in 2.0.10, the broker also supports `multi_choice_service_call` with
+one to 31 mutually exclusive service calls. Telegram renders at most 32 buttons
+including Cancel, with no more than four buttons per row and eight rows. A
+choice callback carries only a short opaque token, never executable parameters.
+The bridge revalidates its encrypted token-to-choice mapping and the broker's
+requester, session generation, conversation, proposal digest, choice, and
+idempotency bindings before executing exactly one prevalidated choice. New
+`v3c`/`v3d` choose/cancel callbacks coexist with legacy `v2a`/`v2d`
+Approve/Deny cards.
+
+Choice mappings and selections persist across a bridge restart, but an
+unstarted proposal itself remains in change-broker memory. A bridge-only restart
+can therefore revalidate a card while the broker remains alive; a full App or
+broker restart that loses the proposal rejects the old card and requires a new
+request. An execution already accepted by the broker can recover its durable
+idempotency status or completed result without dispatching the mutation again.
+
+The 2.0.10 stream parser accepts bounded string `toolAction` and `toolSummary`
+metadata in addition to the required `Arguments`, `ServerName`, and `ToolName`
+fields. If exactly one completed valid proposal receipt exists but only its
+terminal text is empty, the bridge substitutes a fixed safe acknowledgement so
+the approval card can still be delivered. A proposal-free empty response,
+unknown parameter key, non-string result, or oversized result remains
+fail-closed.
 
 Trusted user-installed/global native tools, `command(*)`/`mcp(*)`, direct
 `ha-api`/`supervisor-api`, and ordinary `/config` shell writes inherit the same

@@ -886,12 +886,38 @@ function proposalReceiptFromStepUpdate(stepUpdate) {
       parameters.ToolName !== "ha_change_propose") {
     return null;
   }
+  const parameterKeys = Object.keys(parameters);
+  const allowedParameterKeys = new Set([
+    "Arguments",
+    "ServerName",
+    "ToolName",
+    "toolAction",
+    "toolSummary",
+  ]);
+  const hasRequiredParameterKeys = ["Arguments", "ServerName", "ToolName"]
+    .every((key) => Object.hasOwn(parameters, key));
+  const hasOnlyAllowedParameterKeys = parameterKeys
+    .every((key) => allowedParameterKeys.has(key));
+  const metadataKeys = ["toolAction", "toolSummary"]
+    .filter((key) => Object.hasOwn(parameters, key));
+  const hasValidMetadata = metadataKeys.every((key) =>
+    typeof parameters[key] === "string" &&
+    Buffer.byteLength(parameters[key], "utf8") <= 1_024 &&
+    !/[\u0000-\u001f\u007f]/u.test(parameters[key]));
   if (stepUpdate.tool_name !== "call_mcp_tool" ||
       stepUpdate.tool_info.name !== "call_mcp_tool" ||
-      JSON.stringify(Object.keys(parameters).sort()) !==
-      JSON.stringify(["Arguments", "ServerName", "ToolName"]) ||
+      !hasRequiredParameterKeys || !hasOnlyAllowedParameterKeys || !hasValidMetadata ||
       !isPlainObject(parameters.Arguments) || !Number.isSafeInteger(stepUpdate.step_index) ||
       stepUpdate.step_index < 0 || !["ACTIVE", "DONE", "ERROR"].includes(stepUpdate.state)) {
+    audit("proposal_receipt_invalid", {
+      reason_class: !hasRequiredParameterKeys || !hasOnlyAllowedParameterKeys
+        ? "proposal_metadata_keys_invalid"
+        : !hasValidMetadata
+          ? "proposal_metadata_value_invalid"
+          : "proposal_step_contract_invalid",
+      parameter_key_count: parameterKeys.length,
+      metadata_key_count: metadataKeys.length,
+    });
     throw streamFailure("proposal_result_invalid");
   }
   if (stepUpdate.state !== "DONE") {
@@ -1003,11 +1029,21 @@ function parseStreamResult(stream) {
   if (initEvents !== 1 || resultEvents !== 1 || response === null) {
     throw streamFailure("terminal_missing");
   }
-  if (response.trim().length === 0 || Buffer.byteLength(response) > MAX_RESULT_BYTES) {
+  if (Buffer.byteLength(response, "utf8") > MAX_RESULT_BYTES) {
     throw streamFailure("terminal_response_invalid");
   }
   if (proposalIds.length > 1 || proposalIds.length !== proposalCallSteps.size) {
     throw streamFailure("proposal_result_invalid");
+  }
+  if (response.trim().length === 0) {
+    if (proposalIds.length !== 1 || proposalCallSteps.size !== 1) {
+      throw streamFailure("terminal_response_invalid");
+    }
+    response = "Home Assistant 변경 제안을 준비했습니다.";
+    audit("terminal_response_fallback", {
+      reason_class: "empty_response_with_bound_proposal",
+      proposal_count: 1,
+    });
   }
   return {
     response,
@@ -1485,7 +1521,7 @@ function deleteApprovalRecord(id, request, { botToken = null, statePath } = {}) 
 
 function approvalFromDurable(record) {
   if (record === null) return null;
-  return {
+  const request = {
     requester: {
       surface: "telegram",
       user_id: record.user_id,
@@ -1503,6 +1539,32 @@ function approvalFromDurable(record) {
     approvedUpdateId: record.approved_update_id,
     timer: null,
   };
+  if (Array.isArray(record.choice_tokens)) {
+    request.choiceTokens = record.choice_tokens.map((choice) => ({
+      token: choice.token,
+      choiceId: choice.choice_id,
+      label: choice.label,
+    }));
+    request.choicePrompt = record.choice_prompt;
+    request.cancelLabel = record.cancel_label;
+    request.selectedChoiceId = record.selected_choice_id;
+  }
+  return request;
+}
+
+function sameApprovalChoices(record, request) {
+  const durableChoices = Array.isArray(record.choice_tokens)
+    ? record.choice_tokens.map((choice) => ({
+      token: choice.token,
+      choiceId: choice.choice_id,
+      label: choice.label,
+    }))
+    : null;
+  const requestChoices = Array.isArray(request.choiceTokens) ? request.choiceTokens : null;
+  return JSON.stringify(durableChoices) === JSON.stringify(requestChoices) &&
+    (record.choice_prompt ?? null) === (request.choicePrompt ?? null) &&
+    (record.cancel_label ?? null) === (request.cancelLabel ?? null) &&
+    (record.selected_choice_id ?? null) === (request.selectedChoiceId ?? null);
 }
 
 function assertApprovalRunBinding(id, request, botToken, stateOptions) {
@@ -1522,7 +1584,8 @@ function assertApprovalRunBinding(id, request, botToken, stateOptions) {
       durable.proposal_id !== request.proposal.proposal_id ||
       durable.preview_digest !== request.proposal.preview_digest ||
       durable.idempotency_key !== request.idempotencyKey ||
-      durable.approved_update_id !== request.approvedUpdateId) {
+      durable.approved_update_id !== request.approvedUpdateId ||
+      !sameApprovalChoices(durable, request)) {
     throw new ApprovalSessionChangedError();
   }
   return session;
@@ -1579,6 +1642,20 @@ function createApproval({ requester, proposal, idempotencyKey, session }, {
   );
   const id = randomBytes(16).toString("base64url");
   const expiresAt = Date.now() + APPROVAL_TTL_MS;
+  const proposalChoices = validatedProposalChoices(proposal);
+  const allocatedTokens = new Set();
+  const choiceTokens = proposalChoices?.choices.map((choice) => {
+    let token;
+    do {
+      token = randomBytes(6).toString("base64url");
+    } while (allocatedTokens.has(token));
+    allocatedTokens.add(token);
+    return {
+      token,
+      choiceId: choice.choiceId,
+      label: choice.label,
+    };
+  }) ?? null;
   const timer = setTimeout(() => {
     const expired = pendingApprovals.get(id);
     if (expired) {
@@ -1587,7 +1664,7 @@ function createApproval({ requester, proposal, idempotencyKey, session }, {
     }
   }, APPROVAL_TTL_MS);
   timer.unref();
-  pendingApprovals.set(id, {
+  const pendingApproval = {
     requester: { ...requester },
     proposal: { ...proposal },
     idempotencyKey,
@@ -1596,9 +1673,16 @@ function createApproval({ requester, proposal, idempotencyKey, session }, {
     conversationId: session.conversation_id,
     approvedUpdateId: null,
     timer,
-  });
+  };
+  if (choiceTokens !== null) {
+    pendingApproval.choiceTokens = choiceTokens.map((choice) => ({ ...choice }));
+    pendingApproval.choicePrompt = proposalChoices.prompt;
+    pendingApproval.cancelLabel = proposalChoices.cancelLabel;
+    pendingApproval.selectedChoiceId = null;
+  }
+  pendingApprovals.set(id, pendingApproval);
   try {
-    savePendingApproval({
+    const durableApproval = {
       approval_id: id,
       user_id: requester.user_id,
       chat_id: requester.chat_id,
@@ -1610,13 +1694,120 @@ function createApproval({ requester, proposal, idempotencyKey, session }, {
       idempotency_key: idempotencyKey,
       expires_at: expiresAt,
       approved_update_id: null,
-    }, botToken, stateOptions);
+    };
+    if (choiceTokens !== null) {
+      durableApproval.choice_tokens = choiceTokens.map((choice) => ({
+        token: choice.token,
+        choice_id: choice.choiceId,
+        label: choice.label,
+      }));
+      durableApproval.choice_prompt = proposalChoices.prompt;
+      durableApproval.cancel_label = proposalChoices.cancelLabel;
+      durableApproval.selected_choice_id = null;
+    }
+    savePendingApproval(durableApproval, botToken, stateOptions);
   } catch (error) {
     deleteApprovalRecord(id, pendingApprovals.get(id), { botToken, statePath });
     throw error;
   }
   recordApproval("requested", proposal.risk);
-  return { id, expiresAt };
+  return {
+    id,
+    expiresAt,
+    ...(choiceTokens === null ? {} : {
+      choices: choiceTokens,
+      prompt: proposalChoices.prompt,
+      cancelLabel: proposalChoices.cancelLabel,
+    }),
+  };
+}
+
+function boundedChoiceText(value, field, maxBytes, maxChars = maxBytes) {
+  if (typeof value !== "string" || value.length < 1 ||
+      value.length > maxChars ||
+      Buffer.byteLength(value, "utf8") > maxBytes ||
+      /[\u0000-\u001f\u007f]/u.test(value)) {
+    throw new Error(`change broker returned an invalid multi-choice ${field}`);
+  }
+  return value;
+}
+
+function validatedProposalChoices(proposal) {
+  if (proposal.operation !== "multi_choice_service_call") return null;
+  const preview = proposal.preview;
+  if (!isPlainObject(preview) || preview.format !== "ha-multi-choice-service-call-v1" ||
+      !Array.isArray(preview.choices) || preview.choices.length < 1 ||
+      preview.choices.length > 31) {
+    throw new Error("change broker returned an invalid multi-choice preview");
+  }
+  const seen = new Set();
+  const choices = preview.choices.map((choice) => {
+    if (!isPlainObject(choice) || typeof choice.choice_id !== "string" ||
+        !/^[A-Za-z0-9_-]{1,24}$/u.test(choice.choice_id) || seen.has(choice.choice_id)) {
+      throw new Error("change broker returned an invalid multi-choice choice id");
+    }
+    seen.add(choice.choice_id);
+    return {
+      choiceId: choice.choice_id,
+      label: boundedChoiceText(choice.label, "label", 64),
+    };
+  });
+  return {
+    prompt: boundedChoiceText(preview.prompt, "prompt", 1_024, 500),
+    cancelLabel: preview.cancel_label === undefined
+      ? "취소"
+      : boundedChoiceText(preview.cancel_label, "cancel label", 64),
+    choices,
+  };
+}
+
+function approvalCallbackData(value) {
+  if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > 64) {
+    throw new Error("Telegram approval callback exceeded its byte limit");
+  }
+  return value;
+}
+
+function renderApprovalChoiceCard(proposal, approval) {
+  const proposalChoices = validatedProposalChoices(proposal);
+  if (proposalChoices === null) {
+    return {
+      prompt: "이 변경을 실행할까요?",
+      replyMarkup: {
+        inline_keyboard: [[
+          { text: "실행", callback_data: approvalCallbackData(`v2a:${approval.id}`) },
+          { text: "취소", callback_data: approvalCallbackData(`v2d:${approval.id}`) },
+        ]],
+      },
+    };
+  }
+  if (!Array.isArray(approval.choices) ||
+      approval.choices.length !== proposalChoices.choices.length) {
+    throw new Error("Telegram multi-choice approval token binding is invalid");
+  }
+  const buttons = approval.choices.map((choice, index) => {
+    const expected = proposalChoices.choices[index];
+    if (choice.choiceId !== expected.choiceId || choice.label !== expected.label ||
+        typeof choice.token !== "string" || !/^[A-Za-z0-9_-]{8,16}$/u.test(choice.token)) {
+      throw new Error("Telegram multi-choice approval token binding is invalid");
+    }
+    return {
+      text: expected.label,
+      callback_data: approvalCallbackData(`v3c:${approval.id}:${choice.token}`),
+    };
+  });
+  buttons.push({
+    text: approval.cancelLabel,
+    callback_data: approvalCallbackData(`v3d:${approval.id}`),
+  });
+  const inlineKeyboard = [];
+  for (let index = 0; index < buttons.length; index += 4) {
+    inlineKeyboard.push(buttons.slice(index, index + 4));
+  }
+  if (inlineKeyboard.length > 8 || inlineKeyboard.some((row) => row.length > 4)) {
+    throw new Error("Telegram multi-choice approval keyboard exceeded its layout limit");
+  }
+  return { prompt: approval.prompt, replyMarkup: { inline_keyboard: inlineKeyboard } };
 }
 
 function renderProposal(proposal) {
@@ -1638,6 +1829,7 @@ function renderExecutionResult(result) {
     replayed: result?.replayed === true,
   };
   for (const key of [
+    "choice_id",
     "reason",
     "config_check",
     "reload",
@@ -1706,7 +1898,8 @@ async function inspectProposal(proposalId, requester) {
   });
   const expiresAt = Date.parse(proposal?.expires_at ?? "");
   if (proposal?.proposal_id !== proposalId ||
-      !["config_patch", "service_call", "device_test"].includes(proposal?.operation) ||
+      !["config_patch", "service_call", "device_test", "multi_choice_service_call"]
+        .includes(proposal?.operation) ||
       proposal?.requester?.user_id !== requester.user_id ||
       proposal?.requester?.chat_id !== requester.chat_id ||
       !["low", "high"].includes(proposal?.risk) ||
@@ -1715,6 +1908,7 @@ async function inspectProposal(proposalId, requester) {
       !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
     throw new Error("change broker returned an invalid proposal binding");
   }
+  validatedProposalChoices(proposal);
   return proposal;
 }
 
@@ -1722,16 +1916,32 @@ function terminalExecutionResult(state, replayed = false) {
   if (!state || typeof state !== "object" || Array.isArray(state)) {
     throw new Error("change broker returned an invalid execution state");
   }
+  const hasChoiceId = Object.hasOwn(state, "choice_id");
+  const isMultiChoice = state.operation === "multi_choice_service_call";
+  if ((isMultiChoice &&
+      (!hasChoiceId || typeof state.choice_id !== "string" ||
+        !/^[A-Za-z0-9_-]{1,24}$/u.test(state.choice_id))) ||
+      (!isMultiChoice && hasChoiceId)) {
+    throw new Error("change broker returned an invalid execution choice binding");
+  }
   if (state.status === "completed") {
     if (!state.result || typeof state.result !== "object" || Array.isArray(state.result)) {
       throw new Error("change broker returned an invalid durable execution result");
     }
-    return { ...state.result, replayed: replayed || state.replayed === true };
+    if ((isMultiChoice && state.result.choice_id !== state.choice_id) ||
+        (!isMultiChoice && Object.hasOwn(state.result, "choice_id"))) {
+      throw new Error("change broker returned an invalid execution result choice binding");
+    }
+    return {
+      ...state.result,
+      replayed: replayed || state.replayed === true,
+    };
   }
   if (state.status === "in_doubt") {
     return {
       status: "in_doubt",
       operation: typeof state.operation === "string" ? state.operation : "unknown",
+      ...(isMultiChoice ? { choice_id: state.choice_id } : {}),
       reason: typeof state.reason === "string"
         ? state.reason
         : "previous_attempt_not_proven_complete",
@@ -1764,6 +1974,9 @@ async function waitForExecution(requester, idempotencyKey, {
       return {
         status: "in_doubt",
         operation: typeof state?.operation === "string" ? state.operation : "unknown",
+        ...(state?.operation === "multi_choice_service_call"
+          ? { choice_id: state.choice_id }
+          : {}),
         reason: "durable_result_wait_timeout",
         changed: null,
         replayed,
@@ -1838,6 +2051,14 @@ async function executeProposal(
   const brokerRequest = options.brokerRequest ?? sendBrokerRequest;
   const assertActive = options.assertActive ?? (() => {});
   const updatePhase = options.setPhase ?? (() => {});
+  const choiceId = options.choiceId ?? null;
+  const proposalChoices = validatedProposalChoices(proposal);
+  if ((proposalChoices === null && choiceId !== null) ||
+      (proposalChoices !== null &&
+        (typeof choiceId !== "string" ||
+          !proposalChoices.choices.some((choice) => choice.choiceId === choiceId)))) {
+    throw new Error("change broker execution choice binding is invalid");
+  }
   updatePhase("authorizing");
   assertActive();
   const authorized = await brokerRequest("authorize", {
@@ -1845,7 +2066,12 @@ async function executeProposal(
     requester,
     preview_digest: proposal.preview_digest,
     authorization,
+    ...(choiceId === null ? {} : { choice_id: choiceId }),
   });
+  if ((choiceId === null && Object.hasOwn(authorized ?? {}, "choice_id")) ||
+      (choiceId !== null && authorized?.choice_id !== choiceId)) {
+    throw new Error("change broker authorization choice binding is invalid");
+  }
   assertActive();
   const executionPayload = {
     proposal_id: proposal.proposal_id,
@@ -1853,6 +2079,7 @@ async function executeProposal(
     preview_digest: proposal.preview_digest,
     capability: authorized.capability,
     idempotency_key: idempotencyKey,
+    ...(choiceId === null ? {} : { choice_id: choiceId }),
   };
   let started;
   let lastError = null;
@@ -2087,7 +2314,9 @@ async function processPrompt(config, message, ticket = null, {
 
   const proposal = await proposalInspect(workerResult.proposalIds[0], requester);
   assertJobActive(ticket);
-  const disposition = proposalDisposition(config.toolPermission, proposal.risk);
+  const disposition = proposal.operation === "multi_choice_service_call"
+    ? "human_confirmation"
+    : proposalDisposition(config.toolPermission, proposal.risk);
 
   if (disposition === "autonomous_policy") {
     recordApproval("autonomous", proposal.risk);
@@ -2125,6 +2354,7 @@ async function processPrompt(config, message, ticket = null, {
     idempotencyKey,
     session: boundSession,
   }, { botToken: config.botToken, statePath });
+  const approvalCard = renderApprovalChoiceCard(proposal, approval);
   const [queued, approvalDelivery] = terminalFinalize(
     terminalId,
     [
@@ -2135,13 +2365,8 @@ async function processPrompt(config, message, ticket = null, {
         updateId: message.updateId,
         generation: boundSession.generation,
         stage: "approval",
-        text: `${renderProposal(proposal)}\n\n이 변경을 실행할까요?`,
-        replyMarkup: {
-          inline_keyboard: [[
-            { text: "실행", callback_data: `v2a:${approval.id}` },
-            { text: "취소", callback_data: `v2d:${approval.id}` },
-          ]],
-        },
+        text: `${renderProposal(proposal)}\n\n${approvalCard.prompt}`,
+        replyMarkup: approvalCard.replyMarkup,
       }),
     ],
     config.botToken,
@@ -2152,6 +2377,47 @@ async function processPrompt(config, message, ticket = null, {
   await drainResponseDelivery(approvalDelivery, config.botToken, { statePath, api });
 }
 
+function parseApprovalCallback(data) {
+  if (typeof data !== "string" || Buffer.byteLength(data, "utf8") > 64) return null;
+  let match = /^(v2a|v2d):([A-Za-z0-9_-]{16,64})$/u.exec(data);
+  if (match) {
+    return {
+      protocol: match[1],
+      approvalId: match[2],
+      choiceToken: null,
+      action: match[1] === "v2a" ? "approve" : "dismiss",
+    };
+  }
+  match = /^v3c:([A-Za-z0-9_-]{16,64}):([A-Za-z0-9_-]{8,16})$/u.exec(data);
+  if (match) {
+    return {
+      protocol: "v3c",
+      approvalId: match[1],
+      choiceToken: match[2],
+      action: "choose",
+    };
+  }
+  match = /^v3d:([A-Za-z0-9_-]{16,64})$/u.exec(data);
+  if (!match) return null;
+  return {
+    protocol: "v3d",
+    approvalId: match[1],
+    choiceToken: null,
+    action: "dismiss",
+  };
+}
+
+function callbackMatchesApproval(parsed, request) {
+  const isChoiceApproval = Array.isArray(request.choiceTokens);
+  if (isChoiceApproval) {
+    return parsed.protocol === "v3d" ||
+      (parsed.protocol === "v3c" && request.choiceTokens.some(
+        (choice) => choice.token === parsed.choiceToken,
+      ));
+  }
+  return parsed.protocol === "v2a" || parsed.protocol === "v2d";
+}
+
 async function handleCallback(config, callback, {
   statePath,
   api = telegramApi,
@@ -2159,17 +2425,18 @@ async function handleCallback(config, callback, {
   acknowledgeInput = null,
 } = {}) {
   const callbackId = callback.id;
-  const match = /^(v2a|v2d):([A-Za-z0-9_-]{16,64})$/.exec(callback.data ?? "");
+  const parsed = parseApprovalCallback(callback.data ?? "");
+  const approvalId = parsed?.approvalId ?? null;
   const stateOptions = statePath === undefined ? {} : { path: statePath };
-  let request = match ? pendingApprovals.get(match[2]) : undefined;
-  if (!request && match) {
+  let request = approvalId === null ? undefined : pendingApprovals.get(approvalId);
+  if (!request && approvalId !== null) {
     request = approvalFromDurable(
-      getPendingApproval(match[2], config.botToken, stateOptions),
+      getPendingApproval(approvalId, config.botToken, stateOptions),
     ) ?? undefined;
   }
   const chatId = String(callback.message?.chat?.id ?? "");
   const userId = String(callback.from?.id ?? "");
-  if (match && (!Number.isSafeInteger(callback.updateId) || callback.updateId < 0)) {
+  if (parsed && (!Number.isSafeInteger(callback.updateId) || callback.updateId < 0)) {
     recordDenial("invalid_request");
     await api(config.botToken, "answerCallbackQuery", {
       callback_query_id: callbackId,
@@ -2182,7 +2449,8 @@ async function handleCallback(config, callback, {
   const callbackIdempotencyKey = Number.isSafeInteger(durableApprovalUpdateId)
     ? `tgcb:${userId}:${chatId}:${durableApprovalUpdateId}`
     : request?.idempotencyKey ?? null;
-  if (!request && match?.[1] === "v2a" && callbackIdempotencyKey !== null) {
+  if (!request && ["approve", "choose"].includes(parsed?.action) &&
+      callbackIdempotencyKey !== null) {
     const requester = { surface: "telegram", user_id: userId, chat_id: chatId };
     const recoveredExecution = await lookupExecution(requester, callbackIdempotencyKey)
       .catch((error) => {
@@ -2210,9 +2478,9 @@ async function handleCallback(config, callback, {
     }
   }
   if (!request || (request.approvedUpdateId === null && request.expiresAt < Date.now())) {
-    if (!request) recordDenial(match ? "expired" : "invalid_request");
+    if (!request) recordDenial(parsed ? "expired" : "invalid_request");
     if (request?.approvedUpdateId === null && request?.expiresAt < Date.now()) {
-      deleteApprovalRecord(match[2], request, {
+      deleteApprovalRecord(approvalId, request, {
         botToken: config.botToken,
         statePath,
       });
@@ -2226,6 +2494,15 @@ async function handleCallback(config, callback, {
     });
     return;
   }
+  if (!callbackMatchesApproval(parsed, request)) {
+    recordDenial("invalid_request");
+    await api(config.botToken, "answerCallbackQuery", {
+      callback_query_id: callbackId,
+      text: "이 승인 카드의 선택지가 아니거나 잘못된 요청입니다.",
+      show_alert: true,
+    });
+    return;
+  }
   const currentSession = getSession(userId, chatId, stateOptions);
   const staleSession = (
     currentSession?.generation !== request.generation ||
@@ -2235,7 +2512,7 @@ async function handleCallback(config, callback, {
       staleSession) {
     if (staleSession && request.requester.chat_id === chatId &&
         request.requester.user_id === userId) {
-      deleteApprovalRecord(match[2], request, {
+      deleteApprovalRecord(approvalId, request, {
         botToken: config.botToken,
         statePath,
       });
@@ -2258,8 +2535,8 @@ async function handleCallback(config, callback, {
     if (typeof acknowledgeInput === "function") acknowledgeInput();
     return;
   }
-  if (match[1] === "v2d") {
-    deleteApprovalRecord(match[2], request, {
+  if (parsed.action === "dismiss") {
+    deleteApprovalRecord(approvalId, request, {
       botToken: config.botToken,
       statePath,
     });
@@ -2267,28 +2544,39 @@ async function handleCallback(config, callback, {
     await api(config.botToken, "answerCallbackQuery", { callback_query_id: callbackId, text: "취소했습니다." });
     return;
   }
+  const replayingApprovedCallback = request.approvedUpdateId !== null;
   const approvedRecord = markPendingApprovalApproved(
-    match[2],
+    approvalId,
     durableApprovalUpdateId,
     config.botToken,
-    stateOptions,
+    { ...stateOptions, choiceToken: parsed.choiceToken },
   );
   if (request.timer) clearTimeout(request.timer);
   request = {
     ...request,
     approvedUpdateId: approvedRecord.approved_update_id,
+    ...(Array.isArray(request.choiceTokens)
+      ? { selectedChoiceId: approvedRecord.selected_choice_id }
+      : {}),
     timer: null,
   };
-  pendingApprovals.set(match[2], request);
+  pendingApprovals.set(approvalId, request);
   afterApprovalTransition({
-    approvalId: match[2],
+    approvalId,
     updateId: request.approvedUpdateId,
+    choiceId: request.selectedChoiceId ?? null,
   });
   recordApproval("confirmed", request.proposal.risk);
   audit("approval_consumed", {
     chat: opaqueId(chatId),
     user: opaqueId(userId),
     risk: request.proposal.risk,
+  });
+  await api(config.botToken, "answerCallbackQuery", {
+    callback_query_id: callbackId,
+    text: request.selectedChoiceId === null || request.selectedChoiceId === undefined
+      ? "승인했습니다."
+      : "선택을 접수했습니다.",
   });
   const approvedRun = enqueueRequester(userId, chatId, async (ticket) => {
     let completion = "success";
@@ -2300,16 +2588,70 @@ async function handleCallback(config, callback, {
       // and session binding at the execution boundary so an old button can
       // never authorize work in a replacement Antigravity conversation.
       executionSession = assertApprovalRunBinding(
-        match[2],
+        approvalId,
         request,
         config.botToken,
         stateOptions,
       );
+      const deliverResult = async (result) => {
+        const resultChoiceId = result?.choice_id ?? null;
+        if ((request.selectedChoiceId === undefined && resultChoiceId !== null) ||
+            (request.selectedChoiceId !== undefined &&
+              resultChoiceId !== request.selectedChoiceId)) {
+          throw new Error("durable execution choice binding changed");
+        }
+        const durable = {
+          userId,
+          updateId: durableApprovalUpdateId,
+          generation: executionSession.generation,
+          statePath,
+          api,
+          onQueued: () => {
+            deleteApprovalRecord(approvalId, request, {
+              botToken: config.botToken,
+              statePath,
+            });
+            if (typeof acknowledgeInput === "function") acknowledgeInput();
+          },
+        };
+        await sendExecutionResult(config.botToken, chatId, result, durable);
+      };
+      if (replayingApprovedCallback) {
+        setJobPhase(ticket, "recovery_lookup");
+        const recoveredExecution = await lookupExecution(
+          request.requester,
+          callbackIdempotencyKey ?? request.idempotencyKey,
+          {
+            assertActive: () => assertJobActive(ticket),
+            signal: ticket.cancellationController.signal,
+            onExecutionFound: () => {
+              setJobPhase(ticket, "durable_running");
+              if (ticket) ticket.cancelled = false;
+            },
+          },
+        );
+        if (recoveredExecution !== null) {
+          audit("approved_execution_recovered", {
+            chat: opaqueId(chatId),
+            user: opaqueId(userId),
+            risk: request.proposal.risk,
+          });
+          await deliverResult(recoveredExecution);
+          return;
+        }
+      }
       setJobPhase(ticket, "authorizing");
       const current = await inspectProposal(request.proposal.proposal_id, request.requester);
       assertJobActive(ticket);
       if (current.preview_digest !== request.proposal.preview_digest) {
         throw new Error("approved proposal preview changed");
+      }
+      const currentChoices = validatedProposalChoices(current);
+      if ((currentChoices === null && request.selectedChoiceId !== undefined) ||
+          (currentChoices !== null && !currentChoices.choices.some(
+            (choice) => choice.choiceId === request.selectedChoiceId,
+          ))) {
+        throw new Error("approved proposal choice changed");
       }
       const result = await executeProposal(
         current,
@@ -2320,27 +2662,16 @@ async function handleCallback(config, callback, {
           assertActive: () => assertJobActive(ticket),
           setPhase: (phase) => setJobPhase(ticket, phase),
           signal: ticket.cancellationController.signal,
+          ...(request.selectedChoiceId === undefined
+            ? {}
+            : { choiceId: request.selectedChoiceId }),
         },
       );
-      const durable = {
-        userId,
-        updateId: durableApprovalUpdateId,
-        generation: executionSession.generation,
-        statePath,
-        api,
-        onQueued: () => {
-          deleteApprovalRecord(match[2], request, {
-            botToken: config.botToken,
-            statePath,
-          });
-          if (typeof acknowledgeInput === "function") acknowledgeInput();
-        },
-      };
-      await sendExecutionResult(config.botToken, chatId, result, durable);
+      await deliverResult(result);
     } catch (error) {
       completion = ticket.cancelled ? "cancelled" : jobResultClass(error);
       if (error instanceof RequestCancelledError || ticket.cancelled) {
-        cancelApprovedRequestBeforeExecution(match[2], request, config, {
+        cancelApprovedRequestBeforeExecution(approvalId, request, config, {
           statePath,
           acknowledgeInput,
         });
@@ -2348,7 +2679,7 @@ async function handleCallback(config, callback, {
       }
       if (error instanceof ApprovalSessionChangedError) {
         completion = "cancelled";
-        deleteApprovalRecord(match[2], request, {
+        deleteApprovalRecord(approvalId, request, {
           botToken: config.botToken,
           statePath,
         });
@@ -2383,7 +2714,7 @@ async function handleCallback(config, callback, {
         text: "승인된 작업을 완료하지 못했습니다. App 로그를 확인하세요.",
         statePath,
       });
-      deleteApprovalRecord(match[2], request, {
+      deleteApprovalRecord(approvalId, request, {
         botToken: config.botToken,
         statePath,
       });
@@ -2398,10 +2729,10 @@ async function handleCallback(config, callback, {
     // starts. Clean up the durable approved record here as well; otherwise a
     // /cancel issued while another turn is running can leave the requester
     // permanently blocked by an approval that will never execute. Attach this
-    // observer before calling Telegram so cleanup also happens if the callback
-    // acknowledgement itself encounters a transport error.
+    // observer immediately so cancellation cannot leave an approved record
+    // behind after Telegram has acknowledged the callback.
     if (error instanceof RequestCancelledError) {
-      cancelApprovedRequestBeforeExecution(match[2], request, config, {
+      cancelApprovedRequestBeforeExecution(approvalId, request, config, {
         statePath,
         acknowledgeInput,
       });
@@ -2410,10 +2741,6 @@ async function handleCallback(config, callback, {
     throw error;
   });
   void settledApprovedRun.catch(() => {});
-  await api(config.botToken, "answerCallbackQuery", {
-    callback_query_id: callbackId,
-    text: "승인했습니다.",
-  });
   await settledApprovedRun;
 }
 
@@ -2614,7 +2941,7 @@ function normalizeUpdate(update) {
     if (!/^[1-9]\d{0,19}$/.test(fromId) || !/^-?[1-9]\d{0,19}$/.test(chatId) ||
         typeof update.callback_query.id !== "string" || update.callback_query.id.length < 1 ||
         update.callback_query.id.length > 128 ||
-        typeof data !== "string" || Buffer.byteLength(data) > 128) {
+        typeof data !== "string" || Buffer.byteLength(data, "utf8") > 64) {
       return null;
     }
     if (!/^[a-z_]{1,32}$/u.test(chatType)) return null;

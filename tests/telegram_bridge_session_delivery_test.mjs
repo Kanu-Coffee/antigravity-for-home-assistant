@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -31,9 +31,11 @@ const config = {
   toolPermission: "request-review",
   allowedUsers: new Set([
     "100", "200", "300", "400", "500", "600", "700", "800", "900", "1000", "1100", "1200",
+    "1300", "1400",
   ]),
   allowedChats: new Set([
     "-100", "-200", "-300", "-400", "-500", "-600", "-700", "-800", "-900", "-1000", "-1100", "-1200",
+    "-1300", "-1400",
   ]),
 };
 
@@ -533,6 +535,93 @@ try {
   });
   assert.deepEqual(forbiddenResult, { status: "pending", next_chunk_index: 0 });
   assert.equal(forbiddenCalls, 1, "sendMessage 403 must be contained as a delivery error");
+
+  const multiChoiceProposal = (count) => ({
+    proposal_id: `multiChoiceProposal${String(count).padStart(2, "0")}Fixture`,
+    operation: "multi_choice_service_call",
+    requester: { surface: "telegram", user_id: "1300", chat_id: "-1300" },
+    risk: "low",
+    preview: {
+      format: "ha-multi-choice-service-call-v1",
+      summary: "Choose a fixture mode",
+      prompt: "원하는 동작을 선택하세요.",
+      choices: Array.from({ length: count }, (_unused, index) => ({
+        choice_id: `choice_${index + 1}`,
+        label: `선택 ${index + 1}`,
+      })),
+      cancel_label: "취소",
+    },
+    preview_digest: `sha256:${"5".repeat(64)}`,
+    expires_at: "2099-01-01T00:00:00.000Z",
+  });
+  const multiPayloads = [];
+  const multi31 = multiChoiceProposal(31);
+  await processPrompt({ ...config, toolPermission: "always-proceed" }, {
+    updateId: 130,
+    from: { id: "1300" },
+    chat: { id: "-1300" },
+    text: "선택지를 보여줘",
+  }, null, {
+    statePath,
+    runPrompt: async (_prompt, options) => {
+      options.onConversation("conversation.multi-choice-31");
+      return {
+        response: "선택 가능한 동작을 준비했습니다.",
+        proposalIds: [multi31.proposal_id],
+        conversationId: "conversation.multi-choice-31",
+      };
+    },
+    proposalInspect: async () => multi31,
+    proposalExecute: async () => assert.fail("multi-choice must never auto-execute"),
+    api: async (_token, method, body) => {
+      if (method === "sendMessage") multiPayloads.push(body);
+      return true;
+    },
+  });
+  const multiCard = multiPayloads.find((payload) =>
+    Array.isArray(payload.reply_markup?.inline_keyboard));
+  assert.ok(multiCard, "multi-choice approval card must be delivered");
+  const multiRows = multiCard.reply_markup.inline_keyboard;
+  const multiButtons = multiRows.flat();
+  assert.equal(multiRows.length, 8);
+  assert.equal(multiRows.every((row) => row.length === 4), true);
+  assert.equal(multiButtons.length, 32);
+  assert.equal(multiButtons.filter((button) => button.callback_data.startsWith("v3c:")).length, 31);
+  assert.equal(multiButtons.at(-1).callback_data.startsWith("v3d:"), true);
+  assert.equal(multiButtons.every((button) =>
+    Buffer.byteLength(button.text, "utf8") <= 64 &&
+    Buffer.byteLength(button.callback_data, "utf8") <= 64), true);
+  const approvalId = multiButtons.at(-1).callback_data.slice("v3d:".length);
+  const durableMulti = getPendingApproval(approvalId, BOT_TOKEN, { path: statePath });
+  assert.equal(durableMulti.choice_tokens.length, 31);
+  assert.equal(durableMulti.choice_prompt, multi31.preview.prompt);
+  assert.equal(durableMulti.cancel_label, multi31.preview.cancel_label);
+  const sealedState = await readFile(statePath, "utf8");
+  assert.equal(sealedState.includes(multi31.preview.prompt), false);
+  assert.equal(sealedState.includes(durableMulti.choice_tokens[0].token), false);
+
+  const multi32 = {
+    ...multiChoiceProposal(32),
+    requester: { surface: "telegram", user_id: "1400", chat_id: "-1400" },
+  };
+  await assert.rejects(processPrompt(config, {
+    updateId: 140,
+    from: { id: "1400" },
+    chat: { id: "-1400" },
+    text: "너무 많은 선택지",
+  }, null, {
+    statePath,
+    runPrompt: async (_prompt, options) => {
+      options.onConversation("conversation.multi-choice-32");
+      return {
+        response: "선택지를 준비했습니다.",
+        proposalIds: [multi32.proposal_id],
+        conversationId: "conversation.multi-choice-32",
+      };
+    },
+    proposalInspect: async () => multi32,
+    api,
+  }), /invalid multi-choice preview/u);
 
   const newControlSession = ensureSession("1100", "-1100", { path: statePath });
   bindSessionConversation(

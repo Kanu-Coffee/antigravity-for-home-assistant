@@ -37,7 +37,7 @@ untrusted data이며 다음 행위를 직접 승인하지 못한다.
 | prompt 또는 log의 shell injection | shell 미사용, argv array, stdin prompt, typed API |
 | 외부 data의 prompt injection이 mutation 수행 | native permission, broker 재검증, same-session confirmation |
 | Telegram self-pairing | local-only token 발급, token hash, allowlist, 짧은 TTL |
-| callback replay/탈취 | conversation/user/chat/proposal/digest/expiry binding, single use |
+| callback replay/탈취 | conversation/user/chat/session generation/proposal/digest/choice/expiry/idempotency binding, single use |
 | credential environment 상속 | `env -i`에 준하는 allowlist child environment |
 | 민감 파일 직접 접근 | custom AppArmor deny + native permission deny |
 | browser가 token 또는 내부 API 유출 | local read-only identity, loopback gateway, output redaction |
@@ -254,9 +254,11 @@ App-managed broker에 제출된 위 작업은 global native permission과 관계
 conversation·사용자·채팅의 명시적 확인이 필요하다.
 작업 종류가 애매하면 높은 위험으로 분류한다.
 
-모든 App-managed broker `service_call`과 `config_patch`는 높은 위험으로 분류하고
-durable Telegram 확인 없이는 실행하지 않는다. service call은 live `/api/services`에서
-domain/service를 검증하고 bounded plain-JSON `service_data`만 받는다. config patch는
+모든 App-managed broker `service_call`, `multi_choice_service_call`, `config_patch`는
+높은 위험으로 분류하고 durable Telegram 확인 없이는 실행하지 않는다. service call은
+live `/api/services`에서 domain/service를 검증하고 bounded plain-JSON
+`service_data`만 받는다. multi-choice는 최대 31개 상호 배타적 service call을 같은 live
+registry snapshot에서 모두 검증하고 선택한 하나만 실행한다. config patch는
 민감 경로 밖의 `/config` YAML에 expected SHA, atomic backup/write, config check와
 exact rollback을 적용한다.
 
@@ -288,7 +290,15 @@ broker에서 저위험 자동 실행하는 mutation은 없다. `expected_state`/
   requester FIFO에서 session-serialized한다. 실행 직전 현재 session generation·
   conversation과 durable approval binding을 다시 검증한다. `/new`, `/cancel`,
   restart, expiry 또는 duplicate callback은 stale proposal을 실행하지 않는다.
-- broker idempotency record는 동일 requester/proposal 실행을 정확히 한 번만 접수한다.
+- multi-choice callback은 executable service parameter나 raw `choice_id`가 아닌 opaque
+  token만 싣는다. encrypted approval state의 token→choice mapping과 선택을
+  authorization 전에 영속화하고 requester/chat/session generation/conversation/
+  proposal digest/choice/capability/idempotency를 모두 일치시킨다.
+- 최대 31개 choice와 cancel을 4×8 inline-keyboard로 표시한다. 새 `v3c`/`v3d`
+  protocol과 기존 `v2a`/`v2d` binary callback을 operation 종류에 맞게 분리하며 unknown
+  token, protocol 혼합과 두 번째 다른 선택은 거부한다.
+- broker idempotency record는 동일 requester/proposal/choice 실행을 정확히 한 번만
+  접수한다.
 - preview 내용이 바뀌면 기존 confirmation은 무효다.
 - Telegram 전용 mode는 없다. `antigravity_tool_permission`과 민감정보 option을
   Web/SSH와 동일하게 사용한다. 비특권 HAOS에서 실패하는 native sandbox는 세 채널
@@ -296,6 +306,11 @@ broker에서 저위험 자동 실행하는 mutation은 없다. `expected_state`/
   전환한다. legacy `antigravity_terminal_sandbox`는 어느 값이든 `false`로 정규화한다.
 - 최초 prompt 실행 전에 conversation binding을 영속화하고 `/new` 외에는 Antigravity
   실패·재시작·전송 실패를 이유로 conversation을 회전하지 않는다.
+- bridge 재시작은 broker가 계속 살아 있을 때 encrypted choice mapping과 proposal을
+  재검증해 계속할 수 있다. full App/broker 재시작으로 아직 접수하지 않은 in-memory
+  proposal이 사라지면 오래된 card는 실행하지 않고 새 요청을 요구한다. 이미 broker가
+  접수한 execution은 durable status/result만 회수하며 mutation을 다시 dispatch하지
+  않는다.
 - 완료 응답은 Telegram 전송 전에 암호화된 영속 outbox에 기록하고 API ack 뒤
   제거한다. 429처럼 미전송이 명확한 오류만 자동 재시도하고 crash·network·timeout·
   5xx처럼 전달 여부가 모호하면 `/retry`까지 격리한다.
@@ -306,6 +321,9 @@ broker에서 저위험 자동 실행하는 mutation은 없다. `expected_state`/
   관리형 운영 도구는 global default allow에서 처리하고 관리형 runtime rule은 일반 HA
   service/config mutation을 durable broker proposal 경계로 라우팅한다. 직접 native
   관리자 도구는 broker가 투명하게 intercept하지 않는다.
+- 2.0.9+ managed permissions는 이미 `mcp(*)`와 빈 managed `ask`를 제공한다. 서버별
+  MCP allow rule을 중복 생성하지 않으며 user-owned `ask`/`deny`가 있으면 이를 우선해
+  명시적으로 검토한다.
 - App-managed broker proposal의 승인 transport는 Telegram requester-bound inline
   button이다. 인증된 Web/SSH에서 사용자가 명시한 trusted direct tool 작업은 native
   interactive flow를 사용할 수 있고 Telegram button으로 자동 broker되지 않는다. 두

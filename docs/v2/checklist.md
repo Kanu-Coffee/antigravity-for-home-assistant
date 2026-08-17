@@ -67,6 +67,11 @@
   실행한다.
 - Telegram은 최초 실행 전에 conversation을 결합하고 `/new` 전까지 유지하며,
   same-session approval과 암호화 reply outbox의 retry/ack를 보장한다.
+- `multi_choice_service_call` approval은 최대 31개 사전 검증 service call과 cancel을
+  4×8 grid에 표시하고 opaque callback token만 사용한다. choice는 authorization 전에
+  durable state에 기록하고 requester/session generation/conversation/digest/choice/
+  capability/idempotency를 모두 결합한다. bridge restart와 full App/broker restart의
+  proposal 생존 범위를 혼동하지 않는다.
 - callback ACK와 기본 인증/control은 즉시 처리하되 승인된 broker 실행은 requester
   FIFO에서 session-serialized한다. 실행 직전 current generation/conversation/requester/
   digest를 재검증하고 durable idempotency로 같은 mutation을 한 번만 접수한다.
@@ -210,8 +215,8 @@
 | M5-03 | `PARTIAL` | local-only pairing create/list/revoke | pairing security suite PASS; HAOS operator flow TODO |
 | M5-04 | `PARTIAL` | input normalization과 shell-free shared-runtime invocation | injection/argv/stdin suite PASS; live conversation TODO |
 | M5-05 | `PARTIAL` | pre-bound stable session, explicit `/new`, per-chat queue, cancel와 timeout | 2.0.9 component 재검증 및 live HAOS Telegram TODO |
-| M5-06 | `PARTIAL` | stream-json parser와 Telegram chunking | parser/output suite PASS; live Telegram formatting TODO |
-| M5-07 | `PARTIAL` | typed proposal와 broker-generated human-reviewable confirmation preview | local secret-safe diff + replay/cross-chat PASS; HAOS Telegram E2E TODO |
+| M5-06 | `PARTIAL` | stream-json parser, bounded metadata/single-proposal empty-text fallback와 Telegram chunking | parser/output component PASS; live Telegram formatting TODO |
+| M5-07 | `PARTIAL` | typed binary/multi-choice proposal, 31+cancel grid와 broker-generated human-reviewable confirmation preview | local secret-safe diff + choice binding/replay/cross-chat PASS; HAOS Telegram E2E TODO |
 | M5-08 | `PARTIAL` | operational default allow, sensitive exact deny, native-prompt/broker 경계와 high-risk matrix | 2.0.9 local policy suite 및 HAOS E2E TODO |
 | M5-09 | `PARTIAL` | encrypted reply outbox, rate limit/backoff/idempotent result | pre-send persist/retry/ack component와 live Bot API TODO |
 | M5-10 | `TODO` | 실제 HAOS Telegram E2E | sanitized E2E report |

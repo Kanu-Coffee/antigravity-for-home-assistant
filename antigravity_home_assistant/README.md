@@ -37,7 +37,9 @@ Home Assistant 안에서 antigravity와 대화하며 설정을 살펴보고 대�
 
 Telegram을 켜면 같은 OAuth, 전역 plugin/agent/rule/MCP와 권한 정책을 사용합니다.
 첫 요청에서 만든 대화는 `/new` 전까지 유지되고 승인과 응답도 그 session에서
-이어집니다. 별도 Telegram 로그인이나 HOME은 없습니다.
+이어집니다. 별도 Telegram 로그인이나 HOME은 없습니다. 2.0.10은 사전 검증된
+service call을 최대 31개까지 한 승인 카드에 표시하고 사용자가 고른 하나만 실행하는
+`multi_choice_service_call`을 지원합니다. 기존 실행/취소 카드도 그대로 동작합니다.
 
 SSH를 사용하지 않는다면 `authorized_keys`를 비워 둬도 됩니다. Web UI는 그대로 동작합니다.
 

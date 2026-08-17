@@ -184,6 +184,12 @@ native prompt에서 멈추지 않게 한다. secrets, storage, runtime option/to
 `read_file(/data)`와 `write_file(/data)`, 2.0.8의 좁은 managed rule은 ownership
 migration에서 제거하고 위 2.0.9 기준으로 교체한다.
 
+따라서 2.0.9 이상은 새 설치와 안전하게 migration된 설치 모두에서 `mcp(*)`가
+`ha_change`, `ha_read`, `ha_memory`, `ha_validate`, `playwright`를 포함한다.
+비대화형 Telegram을 위해 각 server별 allow 항목을 다시 만들지 않는다. 누락된
+개별 항목을 추가하는 방식은 현재 권한 문제의 해결책이 아니며, user-owned
+`ask`/`deny`가 있으면 그 규칙을 명시적으로 검토한다.
+
 `antigravity_tool_permission`은 `toolPermission`에 다음과 같이 1:1 매핑한다.
 
 | App option | native value | App 의미 |
@@ -198,7 +204,8 @@ migration에서 제거하고 위 2.0.9 기준으로 교체한다.
 resume가 아니다. 관리형 운영 도구는 기본 allow에서 통과시키며, 사람 확인이 필요한
 일반 HA service/config 변경은 runtime rule이 `ha_change_propose`로 라우팅한 별도
 durable broker proposal이 App-managed 승인 경계다. 이 경로의 모든 broker
-`service_call`/`config_patch`는 durable Telegram 확인이 필요하다. 신뢰된 사용자 설치·
+`service_call`/`multi_choice_service_call`/`config_patch`는 durable Telegram 확인이
+필요하다. 신뢰된 사용자 설치·
 전역 native tool, `command(*)`/`mcp(*)`, 직접 `ha-api`/`supervisor-api`와 일반
 `/config` shell write는 CLI와 같은 관리자 권한을 상속하고 broker가 투명하게
 가로채지 않으며, exact deny와 AppArmor 안에서 사용자 rule과 현재 명시적 요청을
@@ -381,6 +388,10 @@ first-run OAuth가 가능한 controlling TTY에서 `agy`를 실행하고 안내�
   `call_mcp_tool(ha_change/ha_change_propose)` stream receipt에서만 후보를
   추출하고 requester-bound broker inspection으로 다시 검증한다. Telegram
   일반 채팅에는 `--json-schema`/`finish`를 강제하지 않는다.
+- proposal receipt parameters는 `Arguments`, `ServerName`, `ToolName`을 필수로 하고
+  optional `toolAction`/`toolSummary`만 추가로 허용한다. optional metadata는 각각
+  NUL·비공백 control character가 없는 최대 1,024 UTF-8 byte 문자열이어야 하며
+  unknown key와 다른 value type은 `proposal_result_invalid`다.
 - 1.1.13은 pipe된 non-TTY stdin에서 print mode를 자동 선택한다. 값 없는
   `--print`/`-p`는 다음 argv를 prompt로 소비하므로 bridge argv에 넣지 않는다.
 - stdout은 NDJSON 전용, stderr는 비밀 정화된 진단 전용이다.
@@ -410,17 +421,22 @@ parser는 한 줄에 JSON object 하나인 NDJSON만 받는다. 알려진 1.1.13
 `event: "result"`다. terminal object는 init과 같은 conversation ID와
 `result.status == "SUCCESS"`를 충족해야 한다. 일반 답변은 native free-text
 `result.response`이며 bridge는 이를 App 전용 JSON으로 다시 parse하거나 model에
-`--json-schema`/`finish` tool을 강제하지 않는다. NUL을 제거한 뒤 non-empty와 32 KiB
-상한만 검증한다. unknown event는 안전하게 무시하고 비밀 정화된 metric을 남기되
-전체 raw line은 기록하지 않는다.
+`--json-schema`/`finish` tool을 강제하지 않는다. NUL을 제거한 뒤 32 KiB 상한을
+검증한다. proposal이 없는 일반 답변은 non-empty여야 한다. 정확히 하나의 완료된 유효
+proposal receipt만 존재하는데 terminal text가 비어 있으면 bridge가 고정된
+`Home Assistant 변경 제안을 준비했습니다.` 문구를 대신 사용해 approval delivery를
+계속한다. unknown event는 안전하게 무시하고 비밀 정화된 metric을 남기되 전체 raw
+line은 기록하지 않는다.
 
 proposal ID는 임의 model text나 terminal JSON에서 받지 않는다. 정확한
 `call_mcp_tool`의 `ha_change/ha_change_propose` step이 `DONE`으로 끝나고 그 tool
 output이 단 하나의 유효한 proposal ID를 반환한 경우만 receipt로 채택한다. 이후
 bridge가 durable conversation binding을 별도로 확인하고 trusted change broker에서
 동일 requester와 live proposal metadata를 다시 검증해야 approval을 만들 수 있다.
-시작됐지만 완료되지 않은 proposal call, 중복
-proposal 또는 잘못된 receipt는 `proposal_result_invalid`로 fail closed한다.
+시작됐지만 완료되지 않은 proposal call, 중복 proposal 또는 잘못된 receipt는
+`proposal_result_invalid`로 fail closed한다. 필수 parameter 세 개 외에는 bounded
+`toolAction`/`toolSummary` 문자열만 호환 metadata로 인정하고, key 이름이나 value를
+로그에 남기지 않은 채 key/metadata 개수와 고정 reason class만 기록한다.
 
 다음 조건은 job 실패다.
 
@@ -428,7 +444,7 @@ proposal 또는 잘못된 receipt는 `proposal_result_invalid`로 fail closed한
 - invalid UTF-8 또는 invalid JSON
 - init 없이 tool/result event 수신
 - terminal result 중복 또는 누락
-- terminal status 실패, 비어 있거나 과대한 free-text response
+- terminal status 실패, proposal 없는 빈 response, non-string 또는 과대한 response
 - init/terminal/bound conversation 불일치
 - 완료되지 않았거나 malformed/중복인 HA change proposal receipt
 - process timeout, signal 또는 non-zero exit

@@ -33,8 +33,8 @@ const MAX_OUTBOX_RESPONSE_BYTES = 256 * 1024;
 const MAX_OUTBOX_PLAINTEXT_BYTES = MAX_OUTBOX_RESPONSE_BYTES + 16 * 1024;
 const MAX_SEALED_OUTBOX_BYTES = 768 * 1024;
 const MAX_PENDING_APPROVALS = 128;
-const MAX_APPROVAL_PLAINTEXT_BYTES = 2 * 1024;
-const MAX_SEALED_APPROVAL_BYTES = 256 * 1024;
+const MAX_APPROVAL_PLAINTEXT_BYTES = 8 * 1024;
+const MAX_SEALED_APPROVAL_BYTES = 1024 * 1024;
 const MAX_TERMINAL_TURNS = 64;
 const MAX_TERMINAL_PLAINTEXT_BYTES = 96 * 1024;
 const MAX_SEALED_TERMINAL_BYTES = 512 * 1024;
@@ -56,6 +56,8 @@ const TERMINAL_KEY_DERIVATION_SALT = Buffer.from("antigravity-ha/telegram-termin
 const TERMINAL_KEY_DERIVATION_INFO = Buffer.from("antigravity-ha/telegram-terminal/aes-256-gcm/v1", "utf8");
 const CONVERSATION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
 const DELIVERY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const APPROVAL_CHOICE_ID_PATTERN = /^[A-Za-z0-9_-]{1,24}$/u;
+const APPROVAL_CHOICE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{8,16}$/u;
 
 function telegramId(value, signed) {
   const text = String(value ?? "");
@@ -161,7 +163,7 @@ function validateNormalizedUpdate(value) {
     if (!hasExactKeys(callback, ["updateId", "id", "from", "message", "data"]) ||
         callback.updateId !== value.updateId ||
         typeof callback.id !== "string" || callback.id.length < 1 || callback.id.length > 128 ||
-        typeof callback.data !== "string" || Buffer.byteLength(callback.data, "utf8") > 128 ||
+        typeof callback.data !== "string" || Buffer.byteLength(callback.data, "utf8") > 64 ||
         !hasExactKeys(callback.message, ["chat"])) {
       throw new Error("invalid normalized Telegram callback");
     }
@@ -636,10 +638,18 @@ function validatePendingApproval(value) {
     "expires_at",
   ];
   const currentKeys = [...legacyKeys, "approved_update_id"];
+  const choiceKeys = [
+    ...currentKeys,
+    "choice_tokens",
+    "choice_prompt",
+    "cancel_label",
+    "selected_choice_id",
+  ];
   const approvedUpdateId = Object.hasOwn(value ?? {}, "approved_update_id")
     ? value.approved_update_id
     : null;
-  if ((!hasExactKeys(value, legacyKeys) && !hasExactKeys(value, currentKeys)) ||
+  const hasChoices = hasExactKeys(value, choiceKeys);
+  if ((!hasExactKeys(value, legacyKeys) && !hasExactKeys(value, currentKeys) && !hasChoices) ||
       typeof value.approval_id !== "string" ||
       !DELIVERY_ID_PATTERN.test(value.approval_id) ||
       typeof value.conversation_id !== "string" ||
@@ -657,7 +667,52 @@ function validatePendingApproval(value) {
         (!Number.isSafeInteger(approvedUpdateId) || approvedUpdateId < 0))) {
     throw new Error("invalid Telegram pending approval");
   }
-  return {
+  let choiceTokens;
+  let choicePrompt;
+  let cancelLabel;
+  let selectedChoiceId;
+  if (hasChoices) {
+    if (!Array.isArray(value.choice_tokens) || value.choice_tokens.length < 1 ||
+        value.choice_tokens.length > 31 ||
+        typeof value.choice_prompt !== "string" || value.choice_prompt.length < 1 ||
+        value.choice_prompt.length > 500 ||
+        Buffer.byteLength(value.choice_prompt, "utf8") > 1_024 ||
+        /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value.choice_prompt) ||
+        typeof value.cancel_label !== "string" || value.cancel_label.length < 1 ||
+        Buffer.byteLength(value.cancel_label, "utf8") > 64 ||
+        /[\u0000-\u001f\u007f]/u.test(value.cancel_label) ||
+        (value.selected_choice_id !== null &&
+          (typeof value.selected_choice_id !== "string" ||
+            !APPROVAL_CHOICE_ID_PATTERN.test(value.selected_choice_id)))) {
+      throw new Error("invalid Telegram pending approval choices");
+    }
+    const seenTokens = new Set();
+    const seenChoiceIds = new Set();
+    choiceTokens = value.choice_tokens.map((choice) => {
+      if (!hasExactKeys(choice, ["token", "choice_id", "label"]) ||
+          typeof choice.token !== "string" ||
+          !APPROVAL_CHOICE_TOKEN_PATTERN.test(choice.token) ||
+          typeof choice.choice_id !== "string" ||
+          !APPROVAL_CHOICE_ID_PATTERN.test(choice.choice_id) ||
+          typeof choice.label !== "string" || choice.label.length < 1 ||
+          Buffer.byteLength(choice.label, "utf8") > 64 ||
+          /[\u0000-\u001f\u007f]/u.test(choice.label) ||
+          seenTokens.has(choice.token) || seenChoiceIds.has(choice.choice_id)) {
+        throw new Error("invalid Telegram pending approval choices");
+      }
+      seenTokens.add(choice.token);
+      seenChoiceIds.add(choice.choice_id);
+      return { token: choice.token, choice_id: choice.choice_id, label: choice.label };
+    });
+    choicePrompt = value.choice_prompt;
+    cancelLabel = value.cancel_label;
+    selectedChoiceId = value.selected_choice_id;
+    if ((selectedChoiceId === null) !== (approvedUpdateId === null) ||
+        (selectedChoiceId !== null && !seenChoiceIds.has(selectedChoiceId))) {
+      throw new Error("invalid Telegram pending approval choice selection");
+    }
+  }
+  const canonical = {
     approval_id: value.approval_id,
     user_id: telegramId(value.user_id, false),
     chat_id: telegramId(value.chat_id, true),
@@ -670,6 +725,13 @@ function validatePendingApproval(value) {
     expires_at: value.expires_at,
     approved_update_id: approvedUpdateId,
   };
+  if (hasChoices) {
+    canonical.choice_tokens = choiceTokens;
+    canonical.choice_prompt = choicePrompt;
+    canonical.cancel_label = cancelLabel;
+    canonical.selected_choice_id = selectedChoiceId;
+  }
+  return canonical;
 }
 
 function sealedApprovalAad(approvalId) {
@@ -1793,6 +1855,7 @@ function savePendingApproval(approval, botToken, { path = DEFAULT_STATE_PATH } =
 
 function markPendingApprovalApproved(approvalId, updateId, botToken, {
   path = DEFAULT_STATE_PATH,
+  choiceToken = null,
 } = {}) {
   const canonicalId = canonicalDeliveryId(approvalId);
   if (!Number.isSafeInteger(updateId) || updateId < 0) {
@@ -1805,13 +1868,25 @@ function markPendingApprovalApproved(approvalId, updateId, botToken, {
   if (index < 0) throw new Error("Telegram pending approval is not available");
   const key = deriveSealedApprovalKey(botToken);
   const approval = decryptSealedApproval(state.sealed_approvals[index], key);
+  const isChoiceApproval = Array.isArray(approval.choice_tokens);
+  const selectedChoice = isChoiceApproval
+    ? approval.choice_tokens.find((choice) => choice.token === choiceToken)
+    : null;
+  if ((isChoiceApproval && !selectedChoice) || (!isChoiceApproval && choiceToken !== null)) {
+    throw new Error("Telegram approval choice is invalid");
+  }
   if (approval.approved_update_id !== null) {
-    if (approval.approved_update_id !== updateId) {
+    if (approval.approved_update_id !== updateId ||
+        (isChoiceApproval && approval.selected_choice_id !== selectedChoice.choice_id)) {
       throw new Error("Telegram approval was already consumed by another update");
     }
     return approval;
   }
-  const approved = { ...approval, approved_update_id: updateId };
+  const approved = {
+    ...approval,
+    approved_update_id: updateId,
+    ...(isChoiceApproval ? { selected_choice_id: selectedChoice.choice_id } : {}),
+  };
   state.sealed_approvals[index] = sealPendingApproval(approved, key);
   writeBridgeState(state, path);
   return approved;

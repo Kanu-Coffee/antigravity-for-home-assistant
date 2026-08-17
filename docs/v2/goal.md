@@ -29,7 +29,9 @@ Antigravity native plugin으로 제공한다.
    durable reply delivery를 유지한다. approval callback ACK/control은 즉시 처리하되
    broker 실행은 requester FIFO에서 직렬화하고, 실행 직전 requester/session을
    재검증한다. `ha_change_propose`로 제출된 모든 App-managed broker
-   `service_call`/`config_patch`에 고위험 확인과 exactly-once broker 접수를 강제한다.
+   `service_call`/`multi_choice_service_call`/`config_patch`에 고위험 확인과
+   exactly-once broker 접수를 강제한다. multi-choice는 최대 31개 사전 검증 선택지 중
+   하나만 requester/session/digest/choice/idempotency binding으로 실행한다.
    관리형 runtime rule은 일반 HA service/config 변경을 broker로 라우팅하지만, 신뢰된
    사용자 전역 native tool과 direct command/API helper는 관리자 권한을 상속하며
    broker가 투명하게 가로채지 않는다.

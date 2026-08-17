@@ -601,6 +601,87 @@ test("pending approvals are encrypted, restart-readable, and invalidated by sess
   }
 });
 
+test("multi-choice approval tokens and selected choice remain encrypted and exactly-once", async () => {
+  const paths = await fixture();
+  try {
+    const session = ensureSession("10001", "-20002", paths);
+    bindSessionConversation(
+      "10001",
+      "-20002",
+      session.generation,
+      "conversation.approval",
+      paths,
+    );
+    const approval = {
+      ...pendingApproval(session.generation, "approval-multi-choice"),
+      choice_tokens: [
+        { token: "opaqueA1", choice_id: "cool_24", label: "냉방 24℃" },
+        { token: "opaqueB2", choice_id: "dry_mode", label: "제습" },
+      ],
+      choice_prompt: "운전 모드를 선택하세요.",
+      cancel_label: "취소",
+      selected_choice_id: null,
+    };
+    assert.deepEqual(savePendingApproval(approval, BOT_TOKEN, paths), approval);
+    const raw = await readFile(paths.path, "utf8");
+    for (const privateValue of [
+      "opaqueA1", "opaqueB2", "cool_24", "dry_mode", "운전 모드를 선택하세요.",
+    ]) {
+      assert.equal(raw.includes(privateValue), false);
+    }
+    assert.throws(
+      () => markPendingApprovalApproved(
+        approval.approval_id,
+        177,
+        BOT_TOKEN,
+        { ...paths, choiceToken: "unknown1" },
+      ),
+      /choice is invalid/u,
+    );
+    const selected = markPendingApprovalApproved(
+      approval.approval_id,
+      177,
+      BOT_TOKEN,
+      { ...paths, choiceToken: "opaqueB2" },
+    );
+    assert.equal(selected.approved_update_id, 177);
+    assert.equal(selected.selected_choice_id, "dry_mode");
+    assert.deepEqual(
+      markPendingApprovalApproved(
+        approval.approval_id,
+        177,
+        BOT_TOKEN,
+        { ...paths, choiceToken: "opaqueB2" },
+      ),
+      selected,
+    );
+    assert.throws(
+      () => markPendingApprovalApproved(
+        approval.approval_id,
+        177,
+        BOT_TOKEN,
+        { ...paths, choiceToken: "opaqueA1" },
+      ),
+      /another update/u,
+    );
+    assert.throws(
+      () => markPendingApprovalApproved(
+        approval.approval_id,
+        178,
+        BOT_TOKEN,
+        { ...paths, choiceToken: "opaqueB2" },
+      ),
+      /another update/u,
+    );
+    assert.equal(
+      getPendingApproval(approval.approval_id, BOT_TOKEN, paths).selected_choice_id,
+      "dry_mode",
+    );
+  } finally {
+    await rm(paths.root, { recursive: true, force: true });
+  }
+});
+
 test("durable acknowledgement ledger commits only an observed completed prefix", async () => {
   const paths = await fixture();
   try {

@@ -35,7 +35,9 @@ import {
   requestFailureReason,
   runAntigravityPrompt,
   safeError,
+  terminalExecutionResult,
   telegramTransportErrorCode,
+  waitForExecution,
   waitForTelegramAuthorization,
   workerStatusSnapshot,
 } from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs";
@@ -453,7 +455,7 @@ assert.deepEqual(parsedProposalStream, {
 });
 assert.equal(JSON.stringify(parsedProposalStream).includes(proposalOutputCanary), false);
 
-const managedProposalStep = ({ state, stepIndex = 7, output = null }) => ({
+const managedProposalStep = ({ state, stepIndex = 7, output = null, metadata = {} }) => ({
   event: "step_update",
   step_update: {
     step_index: stepIndex,
@@ -466,6 +468,7 @@ const managedProposalStep = ({ state, stepIndex = 7, output = null }) => ({
         Arguments: { summary: "fixture" },
         ServerName: "ha_change",
         ToolName: "ha_change_propose",
+        ...metadata,
       },
       ...(output === null ? {} : { output }),
     },
@@ -475,6 +478,104 @@ const successTerminal = (conversationId, response = "fixture response") => ({
   event: "result",
   result: { conversation_id: conversationId, status: "SUCCESS", response },
 });
+for (const [suffix, metadata] of [
+  ["action", { toolAction: "Proposing Home Assistant change" }],
+  ["summary", { toolSummary: "Prepared a validated proposal" }],
+  ["both", { toolSummary: "Prepared proposal", toolAction: "Propose change" }],
+  ["reverse", { toolAction: "Propose change", toolSummary: "Prepared proposal" }],
+]) {
+  const conversationId = `conversation.metadata-${suffix}`;
+  assert.deepEqual(parseStreamResult([
+    JSON.stringify({ event: "init", conversation_id: conversationId }),
+    JSON.stringify(managedProposalStep({
+      state: "DONE",
+      metadata,
+      output: JSON.stringify({ proposal_id: proposalId }),
+    })),
+    JSON.stringify(successTerminal(conversationId, "metadata compatible")),
+  ].join("\n")), {
+    response: "metadata compatible",
+    proposalIds: [proposalId],
+    conversationId,
+  });
+}
+for (const [suffix, metadata] of [
+  ["unknown", { unexpectedMetadata: "blocked" }],
+  ["non-string", { toolAction: { unsafe: true } }],
+  ["control", { toolSummary: "unsafe\u0000metadata" }],
+  ["oversize", { toolAction: "a".repeat(1_025) }],
+]) {
+  const conversationId = `conversation.metadata-invalid-${suffix}`;
+  assert.throws(
+    () => parseStreamResult([
+      JSON.stringify({ event: "init", conversation_id: conversationId }),
+      JSON.stringify(managedProposalStep({
+        state: "DONE",
+        metadata,
+        output: JSON.stringify({ proposal_id: proposalId }),
+      })),
+      JSON.stringify(successTerminal(conversationId)),
+    ].join("\n")),
+    (error) => error instanceof AntigravityWorkerError &&
+      error.reasonClass === "proposal_result_invalid",
+  );
+}
+assert.deepEqual(parseStreamResult([
+  JSON.stringify({ event: "init", conversation_id: "conversation.empty-proposal-response" }),
+  JSON.stringify(managedProposalStep({
+    state: "DONE",
+    output: JSON.stringify({ proposal_id: proposalId }),
+  })),
+  JSON.stringify(successTerminal("conversation.empty-proposal-response", "  \n")),
+].join("\n")), {
+  response: "Home Assistant 변경 제안을 준비했습니다.",
+  proposalIds: [proposalId],
+  conversationId: "conversation.empty-proposal-response",
+});
+assert.throws(
+  () => parseStreamResult([
+    JSON.stringify({ event: "init", conversation_id: "conversation.empty-no-proposal" }),
+    JSON.stringify(successTerminal("conversation.empty-no-proposal", "")),
+  ].join("\n")),
+  (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "terminal_response_invalid",
+);
+for (const [suffix, response] of [
+  ["non-string-with-proposal", { invalid: true }],
+  ["oversize-with-proposal", " ".repeat(32_769)],
+]) {
+  const conversationId = `conversation.${suffix}`;
+  assert.throws(
+    () => parseStreamResult([
+      JSON.stringify({ event: "init", conversation_id: conversationId }),
+      JSON.stringify(managedProposalStep({
+        state: "DONE",
+        output: JSON.stringify({ proposal_id: proposalId }),
+      })),
+      JSON.stringify({
+        event: "result",
+        result: { conversation_id: conversationId, status: "SUCCESS", response },
+      }),
+    ].join("\n")),
+    (error) => error instanceof AntigravityWorkerError &&
+      error.reasonClass === "terminal_response_invalid",
+  );
+}
+assert.throws(
+  () => parseStreamResult([
+    JSON.stringify({ event: "init", conversation_id: "conversation.non-string-response" }),
+    JSON.stringify({
+      event: "result",
+      result: {
+        conversation_id: "conversation.non-string-response",
+        status: "SUCCESS",
+        response: null,
+      },
+    }),
+  ].join("\n")),
+  (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "terminal_response_invalid",
+);
 assert.throws(
   () => parseStreamResult([
     JSON.stringify({ event: "init", conversation_id: "conversation.missing-receipt" }),
@@ -674,6 +775,59 @@ assert.throws(
   (error) => error instanceof AntigravityWorkerError &&
     error.reasonClass === "stream_contract_failed",
 );
+assert.deepEqual(terminalExecutionResult({
+  status: "in_doubt",
+  operation: "multi_choice_service_call",
+  choice_id: "dry_mode",
+  reason: "synthetic_transport_loss",
+}), {
+  status: "in_doubt",
+  operation: "multi_choice_service_call",
+  choice_id: "dry_mode",
+  reason: "synthetic_transport_loss",
+  changed: null,
+  replayed: false,
+});
+assert.throws(
+  () => terminalExecutionResult({
+    status: "running",
+    operation: "service_call",
+    choice_id: "must_not_exist",
+  }),
+  /invalid execution choice binding/u,
+);
+assert.throws(
+  () => terminalExecutionResult({
+    status: "completed",
+    operation: "multi_choice_service_call",
+    choice_id: "dry_mode",
+    result: {
+      status: "succeeded",
+      operation: "multi_choice_service_call",
+      choice_id: "cool_24",
+    },
+  }),
+  /invalid execution result choice binding/u,
+);
+assert.deepEqual(await waitForExecution(
+  { surface: "telegram", user_id: "100", chat_id: "-200" },
+  "tgcb:100:-200:timeout-choice",
+  {
+    initialState: {
+      status: "running",
+      operation: "multi_choice_service_call",
+      choice_id: "dry_mode",
+    },
+    waitTimeoutMs: 0,
+  },
+), {
+  status: "in_doubt",
+  operation: "multi_choice_service_call",
+  choice_id: "dry_mode",
+  reason: "durable_result_wait_timeout",
+  changed: null,
+  replayed: false,
+});
 assert.ok(chunkText("A".repeat(32_768)).every((part) => Array.from(part).length <= 4_096));
 assert.throws(() => chunkText("A".repeat(32_769)), /message limit/u);
 assert.equal(safeError(new Error("Bearer abc\nnext")).includes("abc"), false);
@@ -1014,6 +1168,25 @@ assert.equal(normalizeUpdate({
     from: { id: 100 },
     message: { chat: { id: -200, type: "private" } },
     data: "confirm:fixture",
+  },
+}), null);
+const callback64 = "x".repeat(64);
+assert.equal(normalizeUpdate({
+  update_id: 13,
+  callback_query: {
+    id: "callback-64",
+    from: { id: 100 },
+    message: { chat: { id: -200, type: "private" } },
+    data: callback64,
+  },
+})?.value.data, callback64);
+assert.equal(normalizeUpdate({
+  update_id: 14,
+  callback_query: {
+    id: "callback-65",
+    from: { id: 100 },
+    message: { chat: { id: -200, type: "private" } },
+    data: "x".repeat(65),
   },
 }), null);
 assert.match(renderCancellationResult({

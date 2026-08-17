@@ -58,6 +58,16 @@ sandbox is not used because HAOS does not grant its privileged capabilities.
   Apps, updating Home Assistant OS, or deleting databases.
 - During a diagnostic, do not update Core, OS, Apps, custom integrations, or
   third-party repositories automatically. Present evidence and a rollback plan.
+- For a requester-bound Telegram mutation with several mutually exclusive
+  service choices, use one broker-validated `multi_choice_service_call`. The
+  card supports at most 31 prevalidated choices plus cancel; only the opaque
+  selection bound to the requester, session, preview digest, capability, and
+  idempotency key may execute.
+- A bridge-only restart may recover an encrypted choice mapping while the
+  change broker still holds the proposal. A full App or broker restart loses an
+  unstarted in-memory proposal, so reject the old card and request a new
+  proposal. Recover only durable status/results for executions already accepted
+  by the broker; never dispatch them again.
 
 ## Feedback validation
 

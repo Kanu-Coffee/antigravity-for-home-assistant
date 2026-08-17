@@ -8,7 +8,7 @@ SSH public key ── sshd child ─────────────┼─ s
 Telegram API ─ poller ─ auth ─ session ───┘
                             │      │
                             │      └─ encrypted reply outbox ── delivery/retry
-                            └─ same-session approval ── change broker
+                            └─ same-session binary/multi-choice approval ── change broker
                                                   │
                 ┌─────────────────────────────────┼─────────────────┐
                 ▼                                 ▼                 ▼
@@ -37,7 +37,7 @@ Web/SSH/Telegram Antigravity, browser와 memory process는 원문 대신 scoped 
 | App init과 credential file boundary | 최고 | 원본 Supervisor credential, option secret, root-only runtime file 생성 |
 | change broker | 높음 | typed proposal 검증, 원자적 `/config` 변경, 제한된 HA mutation |
 | Web/SSH/Telegram Antigravity | 관리자 에이전트 | 공유 `/data/home`, `/config`, OAuth, global/workspace plugin·agent·rule·MCP와 native 권한. option에 따라 restricted/diagnostic-read runtime 선택; spawned command/tool은 별도 profile |
-| Telegram bridge | 신뢰된 transport orchestrator | user/chat 인증, session binding, queue, sealed reply outbox, delivery retry와 approval callback 검증 |
+| Telegram bridge | 신뢰된 transport orchestrator | user/chat 인증, session binding, queue, sealed reply outbox, delivery retry와 binary/multi-choice approval callback 검증 |
 | browser gateway/Chromium | 비신뢰 web content 처리 | loopback HA frontend와 read-only identity |
 | memory daemon/MCP | 제한된 data processor | bounded catalog와 semantic memory. raw credential 없음 |
 | `/config` 내용과 web/log 응답 | data | 지침으로 실행하지 않음 |
@@ -191,8 +191,12 @@ Antigravity가 native하게 만드는 추가 `.gemini` 파일은 보존하되 �
 ```
 
 socket, one-time change capability, browser profile와 screenshot은 App 재시작 때
-폐기한다. Telegram conversation binding과 암호화된 pending update/reply outbox는
-`/data`에 crash-safe하게 보존하며 approval은 같은 conversation key에 결합한다.
+폐기한다. Telegram conversation binding, 암호화된 choice-token mapping과 pending
+update/reply outbox는 `/data`에 crash-safe하게 보존하며 approval은 같은 conversation
+key에 결합한다. 아직 실행을 접수하지 않은 change proposal은 broker process
+memory에만 있으므로 bridge-only restart 뒤 broker가 계속 살아 있을 때만 기존
+approval을 재검증할 수 있다. full App/broker restart는 오래된 미접수 card를
+fail closed하고, 이미 접수된 execution만 durable idempotency/status에서 회수한다.
 Telegram token을 파일명, argv 또는 persisted queue에 넣지 않는다. `supervisor.token`은 init이 매
 시작마다 원자적으로 다시 만들고 AppArmor로 broker/scoped helper 외 접근을 거부한다.
 
@@ -274,7 +278,7 @@ session shell로 상속되지 않고 private-key 및 다른 PID `/proc` 우회 d
 Update → normalize → user/chat auth → session bind → per-session queue → shared Antigravity
                                   │                              │
                                   │                              ├→ sealed reply outbox → Telegram ack
-                                  │                              └→ approval in same conversation
+                                  │                              └→ binary/multi-choice approval in same conversation
                                   └──────────── explicit /new rotates conversation
 ```
 
@@ -286,7 +290,7 @@ terminal result를 검증한 뒤 Telegram-safe text로 변환한다. 이 실행�
 확인하면 제거한다. 429처럼 미전송이 명확한 실패만 bounded retry하고 crash·network·
 timeout·5xx처럼 전달 여부가 모호한 send는 `/retry`까지 격리한다.
 
-승인/거절 callback의 Telegram ACK와 기본 인증, `/new`·`/cancel` 같은 control update는
+승인/선택/거절 callback의 Telegram ACK와 기본 인증, `/new`·`/cancel` 같은 control update는
 즉시 처리한다. 승인된 broker 실행은 같은 requester FIFO에서 session-serialized되며
 실행 직전 durable approval과 현재 session generation,
 conversation, requester, chat, proposal/digest/expiry를 모두 다시 맞춘다. restart와
@@ -295,7 +299,11 @@ duplicate callback에도 broker의 idempotency key가 같은 mutation을 한 번
 아니다. 운영 native tool은 managed default allow에서 통과시키고, 관리형 runtime rule은
 일반 HA service/config 변경을 `ha_change_propose` broker proposal 경계로 라우팅한다.
 이 경계의 durable Telegram 확인은 모든 App-managed broker `service_call`/
-`config_patch`에 적용된다. 신뢰된 사용자 전역 native tool과 direct command/API
+`multi_choice_service_call`/`config_patch`에 적용된다. multi-choice card는 최대 31개
+사전 검증 선택지와 cancel을 4×8 grid로 표시하며 callback에는 실행 파라미터가 아닌
+encrypted approval state를 찾는 opaque token만 둔다. 선택은 authorization 전에
+영속화되고 proposal digest·requester·session generation·conversation·capability·
+idempotency에 함께 묶인다. 신뢰된 사용자 전역 native tool과 direct command/API
 helper는 관리자 권한을 상속하며 broker가 투명하게 가로채지 않는다.
 
 ### 6.3 브라우저
@@ -417,6 +425,11 @@ transient `device_test`는 persistent `service_call`과 다른 preview 형식을
   Telegram confirmation 대상이다.
   `expected_state`/`verify_state`는 단일 entity에서만 선택 지원하며 그 밖에는 REST API
   completion 이상을 주장하지 않는다.
+- `multi_choice_service_call`은 1~31개의 mutually exclusive service call을 같은 live
+  service registry snapshot에서 모두 검증한다. 각 choice는 일반 `service_call`과 같은
+  entity/`service_data`/precondition/verification 제한을 사용하고 하나라도 실패하면
+  proposal 전체를 거부한다. broker authorization capability, execution, durable
+  idempotency/status/result는 선택한 `choice_id`까지 결합하며 정확히 하나만 실행한다.
 - `config_patch`는 민감 exact deny 경로를 제외한 `/config` 내 일반 YAML을 대상으로
   expected SHA → atomic backup/write → config check 순서로 실행한다. 검사 실패는 exact
   backup restore와 재검사로 rollback한다. activation 생략은 `restart_required`, 명시적

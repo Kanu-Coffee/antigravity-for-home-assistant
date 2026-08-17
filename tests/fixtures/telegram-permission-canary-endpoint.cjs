@@ -208,9 +208,11 @@ const server = http.createServer((request, response) => {
       names,
       "call_mcp_tool",
       {
-        ServerName: "permission_canary",
-        ToolName: "permission_canary",
+        ServerName: "ha_change",
+        ToolName: "ha_change_propose",
         Arguments: { value: "MCP_PERMISSION_CANARY_OK" },
+        toolAction: "Prepare a synthetic Home Assistant change proposal",
+        toolSummary: "Synthetic Home Assistant proposal metadata canary",
       },
       "mcp",
     )) return;

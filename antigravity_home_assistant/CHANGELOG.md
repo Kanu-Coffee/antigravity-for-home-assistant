@@ -2,6 +2,48 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.0.10] - 2026-08-17
+
+### Added
+
+- Add broker-bound `multi_choice_service_call` proposals with up to 31 unique
+  choices. Each choice reuses the full registered-service, entity,
+  `service_data`, precondition, verification, size, depth, redaction, and
+  preview-digest validation applied to an ordinary service call. Telegram adds
+  Cancel as at most the 32nd button and keeps the keyboard within four buttons
+  per row and eight rows.
+- Render durable Telegram choice grids with an explicit cancel action and
+  backward-compatible binary approval buttons. The encrypted approval record
+  maps short opaque callback tokens to broker choice IDs, persists the selected
+  choice before authorization, and recovers across a bridge-only restart while
+  the broker still holds the proposal. A full App or broker restart rejects an
+  unstarted in-memory proposal; an execution already accepted by the broker
+  recovers durable status/result without executing a different or duplicate
+  service call. Duplicate taps, `/new`, `/cancel`, and delivery retry remain
+  fail-closed or idempotent as appropriate.
+
+### Fixed
+
+- Accept the pinned Antigravity stream's required managed-MCP routing fields
+  with optional bounded `toolAction` and `toolSummary` display metadata, while
+  continuing to reject unknown keys, invalid states, malformed output, multiple
+  proposal receipts, or non-broker tools.
+- Preserve a valid single Home Assistant proposal when Antigravity completes
+  its tool turn with an empty final text response. The bridge substitutes one
+  fixed assistant acknowledgement so the durable approval card is queued;
+  proposal-free empty responses and oversized or non-string terminal results
+  remain fail-closed.
+- Report proposal parameter-shape and metadata failures through bounded,
+  privacy-safe reason classes instead of retaining raw stream keys, values,
+  proposal previews, prompts, or stderr.
+
+### Security
+
+- Bind the selected choice through the broker authorization capability,
+  execution request, idempotency record, persisted status, requester, session
+  generation, conversation, and complete proposal preview digest. Telegram
+  callback data never carries executable Home Assistant parameters.
+
 ## [2.0.9] - 2026-08-17
 
 ### Changed

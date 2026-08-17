@@ -38,7 +38,10 @@ Use antigravity inside Home Assistant to inspect your setup and improve dashboar
 When enabled, Telegram uses the same OAuth, global plugins, agents, rules, MCP,
 and permission policy. Its first request keeps one conversation until `/new`,
 with approvals and replies continuing in that session. There is no separate
-Telegram sign-in or HOME.
+Telegram sign-in or HOME. Version 2.0.10 supports `multi_choice_service_call`,
+showing up to 31 prevalidated service-call choices on one approval card and
+executing only the selected choice. Existing Approve/Deny cards remain
+compatible.
 
 If you do not need SSH, leave `authorized_keys` empty. The Web UI will continue to work.
 

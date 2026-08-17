@@ -46,10 +46,12 @@ exact rollback/recheck한다. 일반 `/config` YAML을 지원하되 sensitive de
 conversation을 만든다. 고위험 작업은 같은 conversation·사용자·채팅의 확인이
 필요하다.
 관리형 runtime rule은 일반 HA service/config 변경을 `ha_change_propose`로 라우팅한다.
-이 경로로 제출된 모든 App-managed broker `service_call`/`config_patch`는 고위험
-proposal로 durable Telegram 확인을 받은 뒤 실행한다. broker는 모든 live-validated
-HA service domain/service와 bounded `service_data`, 민감 경로 밖의 일반 YAML patch를
-지원한다. 신뢰된 사용자 설치·전역 native tool, `command(*)`/`mcp(*)`, 직접
+이 경로로 제출된 모든 App-managed broker `service_call`/
+`multi_choice_service_call`/`config_patch`는 고위험 proposal로 durable Telegram
+확인을 받은 뒤 실행한다. broker는 모든 live-validated HA service domain/service와
+bounded `service_data`, 최대 31개의 상호 배타적인 사전 검증 service-call 선택지,
+민감 경로 밖의 일반 YAML patch를 지원한다. 신뢰된 사용자 설치·전역 native tool,
+`command(*)`/`mcp(*)`, 직접
 `ha-api`/`supervisor-api`와 `/config` shell write는 CLI와 같은 관리자 권한을 상속하고
 broker가 투명하게 가로채지 않는다. 이 경로의 mutation은 exact deny와 AppArmor 안에서
 사용자 rule과 현재 명시적 요청을 따른다.
@@ -162,6 +164,10 @@ preset으로 복사하지 않는다. 사용자 `/config/AGENTS.md`와 다른 프
 - approval callback ACK와 기본 인증은 즉시 처리하되 broker 실행은 requester FIFO에서
   session-serialized한다. 실행 직전 requester/chat/current generation/conversation을
   재검증하고 durable idempotency로 한 번만 접수한다.
+- `multi_choice_service_call`은 1~31개의 사전 검증 선택지와 cancel을 4×8 이내의
+  inline keyboard로 표시한다. callback에는 opaque token만 넣고 encrypted
+  token→choice mapping, proposal digest, requester/session/choice/capability/idempotency를
+  재검증해 정확히 하나만 실행한다. 기존 binary callback도 호환한다.
 - 답변은 전송 전에 암호화된 영속 outbox에 기록하고 Telegram 확인 뒤 제거한다.
 - 상세 계약은 [telegram-spec.md](telegram-spec.md)를 따른다.
 
@@ -252,7 +258,8 @@ write deny는 option 값과 무관한 불변조건이다.
   sandbox는 Web/SSH/Telegram 모두 사용하지 않으며 AppArmor command 경계는 option으로
   완화할 수 없다.
 - 새 설치 managed policy는 operational `/config`/global customization/URL/command/MCP를
-  기본 허용하고 secrets/storage/token/key exact deny를 우선한다. native headless
+  `mcp(*)`로 기본 허용하고 managed `ask`를 비우며 secrets/storage/token/key exact
+  deny를 우선한다. 따라서 MCP server별 allow rule을 중복 생성하지 않는다. native headless
   permission prompt는 Telegram에서 resume하지 않는다. 관리형 runtime rule이 일반 HA
   service/config 변경을 라우팅한 `ha_change_propose` broker proposal이 App-managed 승인
   경계다. 신뢰된 사용자 전역 native tool과 direct command/API helper는 이 broker에
@@ -266,6 +273,10 @@ write deny는 option 값과 무관한 불변조건이다.
 - session key는 인증된 `(user_id, chat_id)`이며 최초 실행 전에 conversation ID를
   영속 결합한다. approval callback ACK와 control 처리는 즉시 수행하고 broker 실행은
   동일 requester FIFO에서 직렬화하며, 실행 직전 durable session binding을 다시 검증한다.
+- choice mapping과 선택은 bridge restart에 대비해 암호화해 보존한다. broker가 계속
+  살아 있는 bridge-only restart는 proposal을 재검증해 이어갈 수 있지만 full
+  App/broker restart로 미접수 in-memory proposal이 사라지면 오래된 card를 실행하지
+  않고 새 요청을 요구한다. 이미 접수된 execution은 durable status/result만 회수한다.
 - `/new`가 아니면 conversation ID를 교체하거나 worker 실패를 이유로 자동 회전하지
   않는다.
 - model 결과는 암호화된 영속 reply outbox에 먼저 기록하고 Telegram API가 전달을

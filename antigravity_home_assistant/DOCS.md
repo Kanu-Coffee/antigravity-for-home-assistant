@@ -169,6 +169,10 @@ transition으로 `antigravity_home_assistant-command` AppArmor 프로필에 들�
 OAuth backend도 AppArmor로 읽을 수 없습니다. 사용자가 만든 다른 rule은 보존됩니다.
 전역 plugin/MCP 설정에 사용자가 직접 넣은 inline
 secret은 신뢰된 확장 컨텍스트이므로 이 보장 밖입니다.
+2.0.9 이상의 image-managed 설정은 이 운영 범위를 `mcp(*)` 하나로 이미 허용하고
+managed `ask`를 비웁니다. `ha_change`, `ha_read`, `ha_memory`, `ha_validate`,
+`playwright`마다 별도 MCP allow rule을 수동으로 추가하지 마세요. 사용자가 추가한
+`ask`와 `deny`는 보존되며 managed allow보다 우선합니다.
 raw file tool을 통한 `settings.json` 직접 write는 예외입니다. 사용자의 현재 명시적
 요청으로 일반 전역 설정을 바꿀 때는 `agy-settings sha256`으로 현재 digest를 얻고
 `expected_sha256`과 JSON merge `patch`를 stdin으로 `agy-settings patch`에 전달합니다.
@@ -281,7 +285,8 @@ Web/SSH와 같은 native `antigravity_tool_permission`, 민감정보 설정과 A
 `telegram_access_mode`는 권한으로 사용하지 않는 ignored migration input입니다.
 관리형 runtime rule은 일반 HA service/config 변경을
 `ha_change_propose`로 라우팅합니다. 이 경로로 생성된 App-managed broker
-`service_call`/`config_patch`는 모두 durable Telegram 확인이 필요합니다. door lock,
+`service_call`/`multi_choice_service_call`/`config_patch`는 모두 durable Telegram
+확인이 필요합니다. door lock,
 alarm, 안전 관련 heating/water, host/Core restart, backup restore, update, removal,
 credential·permission 변경을 포함한 이 broker의 고위험 분류는 전역 tool policy로
 낮출 수 없습니다.
@@ -322,7 +327,7 @@ Antigravity 결과는 Telegram 전송 전에 암호화된 영속 outbox에 기�
 전달 여부가 모호하면 `/retry` 전까지 격리합니다. `/cancel`은 이미 외부에서 완료된 작업을 되돌리는 rollback 명령이
 아닙니다.
 
-승인/거절 callback의 Telegram ACK와 기본 인증 검사는 즉시 처리하지만 승인된 broker
+승인/선택/거절 callback의 Telegram ACK와 기본 인증 검사는 즉시 처리하지만 승인된 broker
 실행은 같은 requester queue에서 session-serialized됩니다. 실행 직전에 requester·chat·
 현재 session generation·conversation·proposal digest를 다시 검증합니다.
 `/new`, `/cancel`, 재시작, 만료 또는 중복 callback은 기존 승인을 실행시키지 않으며,
@@ -337,6 +342,31 @@ typed proposal만 만듭니다. bridge는 broker에서 proposal을 다시 조회
 256-bit 일회용 capability와 idempotency key가 재사용·중복 실행을
 막습니다. preview나 precondition이 바뀌거나 확인이 만료되면 새 proposal이
 필요합니다.
+
+#### 멀티 선택 승인 카드
+
+2.0.10의 `multi_choice_service_call`은 운전 모드, 밝기 preset 또는 모호한 entity처럼
+한 번에 정확히 하나만 골라야 하는 작업을 위한 broker operation입니다. proposal에는
+1~31개의 고유한 `choice_id`와 표시 label, 그리고 각각의 사전 검증된 Home Assistant
+service call이 들어갑니다. 모든 선택지는 같은 live `/api/services` snapshot과 기존
+`service_call`의 entity·`service_data`·precondition·verification·크기 제한을
+통과해야 카드가 생성됩니다.
+
+Telegram은 취소를 더해 최대 32개 버튼을 행당 최대 4개, 최대 8행으로 표시합니다.
+새 카드의 선택/취소 callback은 `v3c`/`v3d`이고 기존 binary 실행/취소 카드의
+`v2a`/`v2d`도 계속 처리합니다. callback에는 HA domain, service, entity 또는
+`service_data`가 들어가지 않습니다. bridge가 암호화해 저장한 짧은 opaque token을
+원래 `choice_id`로 해석하고, 선택을 durable state에 먼저 기록한 다음 requester·chat·
+session generation·conversation·preview digest·choice·capability·idempotency를
+broker와 함께 검증해 정확히 한 선택지만 실행합니다.
+
+conversation binding, choice token mapping과 선택 결과는 bridge 재시작 뒤에도
+보존됩니다. 다만 아직 실행이 접수되지 않은 proposal 본문은 change broker의
+process memory에만 있으므로 broker가 계속 살아 있는 bridge-only 재시작에서만 기존
+카드를 다시 검증할 수 있습니다. App 전체 또는 broker 재시작으로 proposal이
+사라지면 이전 카드는 fail closed하고 새 요청이 필요합니다. broker가 이미 접수한
+실행은 durable idempotency/status에서 완료 결과 또는 `in_doubt`를 회수하며 같은
+service call을 다시 보내지 않습니다.
 
 broker preview는 token/secret/password/auth/key/PIN/code/credential 계열 값을 가린
 bounded 요약을 표시하지만 raw payload digest에 승인을 묶습니다. `service_call`은 live
@@ -597,6 +627,14 @@ no-symlink 완료 tree가 검증된 항목 중 최신 총 두 개를 보존합�
   `terminal_missing`, `terminal_status_failed`, `terminal_response_invalid`,
   `conversation_mismatch`, `stream_contract_failed`, `proposal_result_invalid`는 prompt,
   raw model output 또는 stderr를 남기지 않는 제한된 terminal 진단입니다.
+- 2.0.10은 `ha_change_propose` receipt의 필수 `Arguments`/`ServerName`/`ToolName`과
+  함께 최대 1,024 UTF-8 byte의 NUL·비공백 control-character가 없는
+  `toolAction`/`toolSummary` 문자열 metadata를 허용합니다. 다른 parameter key나
+  잘못된 metadata는
+  `proposal_result_invalid`입니다.
+- 정확히 하나의 완료된 유효 proposal receipt 뒤 terminal text만 비어 있으면 2.0.10은
+  고정된 안전 문구를 사용해 승인 카드를 queue합니다. proposal이 없는 빈 응답,
+  non-string 또는 32 KiB 초과 응답은 `terminal_response_invalid`로 계속 거부합니다.
 - native CLI log, OAuth URL, token, prompt 원문을 지원 자료로 올리지 말고 공유 HOME의
   credential 경로를 추정하거나 수동 편집하지 않습니다.
 - `--dangerously-skip-permissions`와 광범위한 file-read 허용은 사용하지 않습니다.

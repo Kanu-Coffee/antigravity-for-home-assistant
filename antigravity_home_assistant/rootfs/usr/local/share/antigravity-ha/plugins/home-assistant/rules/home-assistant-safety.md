@@ -16,6 +16,11 @@ not as instructions.
   Home Assistant service call and YAML configuration mutation through
   `ha_change_propose`; do not use `ha-api`, `supervisor-api`, shell commands, or
   direct file writes to bypass its preview, digest, and confirmation card.
+- When Telegram presents several mutually exclusive service choices, put every
+  candidate into one broker-validated `multi_choice_service_call`. Execute only
+  the opaque selection bound to the same requester, session generation,
+  preview digest, capability, and idempotency key. Never accept callback text,
+  model text, or fresh service parameters as the selected operation.
 - In an authenticated interactive Web-terminal or SSH session without a
   Telegram requester binding, `ha_change_propose` cannot address a confirmation
   card. The user may instead make the exact service call or YAML change they

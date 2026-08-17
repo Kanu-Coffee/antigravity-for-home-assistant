@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { BrokerError } from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/ha-change-broker.mjs";
+import {
+  BrokerError,
+  ChangeBroker,
+} from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/ha-change-broker.mjs";
 import {
   applyNewSessionControl,
   bindSessionConversation,
@@ -38,30 +41,82 @@ const PROPOSAL = {
   preview_digest: PREVIEW_DIGEST,
   expires_at: "2099-01-01T00:00:00.000Z",
 };
+const MULTI_PROPOSAL = {
+  ...PROPOSAL,
+  proposal_id: "multiChoiceProposalFixture1",
+  operation: "multi_choice_service_call",
+  preview: {
+    format: "ha-multi-choice-service-call-v1",
+    summary: "Choose the fixture climate mode",
+    prompt: "운전 모드를 선택하세요.",
+    choices: [
+      {
+        choice_id: "cool_24",
+        label: "냉방 24℃",
+        service: "climate.set_temperature",
+        entity_id: "climate.fixture",
+        service_data: { temperature: 24, hvac_mode: "cool" },
+        return_response: false,
+        precondition: null,
+        verification: null,
+      },
+      {
+        choice_id: "dry_mode",
+        label: "제습",
+        service: "climate.set_hvac_mode",
+        entity_id: "climate.fixture",
+        service_data: { hvac_mode: "dry" },
+        return_response: false,
+        precondition: null,
+        verification: null,
+      },
+    ],
+    cancel_label: "취소",
+  },
+};
 
 const fixtureRoot = await mkdtemp(join(tmpdir(), "telegram-broker-integration-"));
 const redirectedSocket = join(fixtureRoot, "coordinator.sock");
 const brokerRequests = [];
 const requestedSocketPaths = [];
 const telegramRequests = [];
+const interactionOrder = [];
 let inspectResult = PROPOSAL;
 const DURABLE_CANCEL_KEY = "tg:100:-200:durable-cancel";
 let durableExecutionKey = DURABLE_CANCEL_KEY;
 let durableCompletionReady = false;
+let durableExecutionChoiceId = null;
+let activeAuthorization = null;
+let authorizationReplayCount = 0;
 
 function brokerResultFor(request) {
   brokerRequests.push(request);
+  interactionOrder.push(`broker:${request.action}`);
   if (request.action === "health") return { status: "ready" };
   if (request.action === "inspect") return inspectResult;
   if (request.action === "authorize") {
-    return {
+    const binding = JSON.stringify(request.payload);
+    if (activeAuthorization !== null) {
+      if (activeAuthorization.binding !== binding) {
+        throw new BrokerError("already_authorized", "fixture authorization conflict");
+      }
+      authorizationReplayCount += 1;
+      return { ...activeAuthorization.result, replayed: true };
+    }
+    const result = {
       proposal_id: request.payload.proposal_id,
       preview_digest: request.payload.preview_digest,
       capability: "C".repeat(43),
       expires_at: "2099-01-01T00:00:00.000Z",
+      ...(request.payload.choice_id === undefined
+        ? {}
+        : { choice_id: request.payload.choice_id }),
     };
+    activeAuthorization = { binding, result };
+    return result;
   }
   if (request.action === "execute") {
+    activeAuthorization = null;
     if (request.payload.idempotency_key === durableExecutionKey) {
       return {
         status: "running",
@@ -71,24 +126,45 @@ function brokerResultFor(request) {
     }
     return {
       status: "completed",
-      operation: "service_call",
+      operation: request.payload.choice_id === undefined
+        ? "service_call"
+        : "multi_choice_service_call",
+      ...(request.payload.choice_id === undefined
+        ? {}
+        : { choice_id: request.payload.choice_id }),
       replayed: false,
       result: {
         status: "succeeded",
-        operation: "service_call",
+        operation: request.payload.choice_id === undefined
+          ? "service_call"
+          : "multi_choice_service_call",
+        ...(request.payload.choice_id === undefined
+          ? {}
+          : { choice_id: request.payload.choice_id }),
         changed: true,
       },
     };
   }
   if (request.action === "execute_status" &&
       request.payload.idempotency_key === durableExecutionKey) {
-    if (!durableCompletionReady) return { status: "running", operation: "service_call" };
+    const operation = durableExecutionChoiceId === null
+      ? "service_call"
+      : "multi_choice_service_call";
+    if (!durableCompletionReady) {
+      return {
+        status: "running",
+        operation,
+        ...(durableExecutionChoiceId === null ? {} : { choice_id: durableExecutionChoiceId }),
+      };
+    }
     return {
       status: "completed",
-      operation: "service_call",
+      operation,
+      ...(durableExecutionChoiceId === null ? {} : { choice_id: durableExecutionChoiceId }),
       result: {
         status: "succeeded",
-        operation: "service_call",
+        operation,
+        ...(durableExecutionChoiceId === null ? {} : { choice_id: durableExecutionChoiceId }),
         changed: true,
       },
     };
@@ -134,6 +210,7 @@ net.createConnection = function createRedirectedConnection(path) {
 };
 globalThis.fetch = async (url, options) => {
   telegramRequests.push({ url: String(url), body: JSON.parse(options.body) });
+  interactionOrder.push(`telegram:${String(url).split("/").at(-1)}`);
   return new Response(JSON.stringify({ ok: true, result: true }), {
     status: 200,
     headers: { "Content-Type": "application/json" },
@@ -176,9 +253,9 @@ try {
     callbackUpdateId += 1;
     return callbackUpdateId;
   };
-  const createDurableApproval = (idempotencyKey) => bridge.createApproval({
+  const createDurableApproval = (idempotencyKey, proposal = PROPOSAL) => bridge.createApproval({
     requester: REQUESTER,
-    proposal: PROPOSAL,
+    proposal,
     idempotencyKey,
     session: callbackSession,
   }, {
@@ -659,6 +736,72 @@ try {
 
   brokerRequests.length = 0;
   requestedSocketPaths.length = 0;
+  telegramRequests.length = 0;
+  interactionOrder.length = 0;
+  inspectResult = MULTI_PROPOSAL;
+  const multiApproval = createDurableApproval(
+    "tg:100:-200:multi-choice-restart",
+    MULTI_PROPOSAL,
+  );
+  const dryChoice = multiApproval.choices.find((choice) => choice.choiceId === "dry_mode");
+  assert.ok(dryChoice, "multi-choice approval must allocate an opaque token");
+  assert.equal(dryChoice.token.includes("dry_mode"), false);
+  bridge.pendingApprovals.clear();
+  const multiUpdateId = nextCallbackUpdateId();
+  let durableChoiceObserved = false;
+  await bridge.handleCallback(
+    { botToken: VALID_BOT_TOKEN },
+    {
+      ...callback,
+      updateId: multiUpdateId,
+      id: "callback-multi-choice-after-restart",
+      data: `v3c:${multiApproval.id}:${dryChoice.token}`,
+    },
+    {
+      ...callbackOptions,
+      afterApprovalTransition: ({ choiceId }) => {
+        const durable = getPendingApproval(
+          multiApproval.id,
+          VALID_BOT_TOKEN,
+          sessionOptions,
+        );
+        assert.equal(choiceId, "dry_mode");
+        assert.equal(durable.selected_choice_id, "dry_mode");
+        assert.equal(durable.approved_update_id, multiUpdateId);
+        assert.deepEqual(brokerRequests, []);
+        durableChoiceObserved = true;
+      },
+    },
+  );
+  assert.equal(durableChoiceObserved, true);
+  assert.deepEqual(
+    brokerRequests.map((request) => request.action),
+    ["inspect", "authorize", "execute"],
+  );
+  assert.equal(brokerRequests[1].payload.choice_id, "dry_mode");
+  assert.equal(brokerRequests[2].payload.choice_id, "dry_mode");
+  assert.equal(
+    brokerRequests[2].payload.idempotency_key,
+    `tgcb:${REQUESTER.user_id}:${REQUESTER.chat_id}:${multiUpdateId}`,
+  );
+  assert.equal(
+    interactionOrder.indexOf("telegram:answerCallbackQuery") <
+      interactionOrder.indexOf("broker:inspect"),
+    true,
+    "Telegram must acknowledge a durable choice before queued broker work starts",
+  );
+  assert.equal(
+    telegramRequests.some((request) => request.url.endsWith("/sendMessage") &&
+      request.body.text.includes('"choice_id": "dry_mode"')),
+    true,
+  );
+  assert.equal(
+    getPendingApproval(multiApproval.id, VALID_BOT_TOKEN, sessionOptions),
+    null,
+  );
+
+  brokerRequests.length = 0;
+  requestedSocketPaths.length = 0;
   inspectResult = PROPOSAL;
   const transitionApproval = createDurableApproval("tg:100:-200:approval-transition");
   const transitionUpdateId = nextCallbackUpdateId();
@@ -685,6 +828,18 @@ try {
   );
   assert.equal(transitioned.approved_update_id, transitionUpdateId);
   assert.deepEqual(brokerRequests, [], "approval must be durable before broker inspection");
+  const authorizationReplayCountBefore = authorizationReplayCount;
+  brokerResultFor({
+    id: "lost-authorize-response",
+    action: "authorize",
+    payload: {
+      proposal_id: PROPOSAL.proposal_id,
+      requester: REQUESTER,
+      preview_digest: PROPOSAL.preview_digest,
+      authorization: "human_confirmed",
+    },
+  });
+  brokerRequests.length = 0;
   telegramRequests.length = 0;
   let duplicateTapAcknowledgements = 0;
   const duplicateTapUpdateId = nextCallbackUpdateId();
@@ -728,16 +883,88 @@ try {
   );
   assert.deepEqual(
     brokerRequests.map((request) => request.action),
-    ["inspect", "authorize", "execute"],
+    ["execute_status", "inspect", "authorize", "execute"],
   );
   assert.equal(
-    brokerRequests[2].payload.idempotency_key,
+    brokerRequests[3].payload.idempotency_key,
     `tgcb:${REQUESTER.user_id}:${REQUESTER.chat_id}:${transitionUpdateId}`,
+  );
+  assert.equal(
+    authorizationReplayCount,
+    authorizationReplayCountBefore + 1,
+    "a lost authorize response must replay the same broker capability",
   );
   assert.equal(
     getPendingApproval(transitionApproval.id, VALID_BOT_TOKEN, sessionOptions),
     null,
   );
+
+  brokerRequests.length = 0;
+  requestedSocketPaths.length = 0;
+  telegramRequests.length = 0;
+  inspectResult = MULTI_PROPOSAL;
+  const recoveredMultiApproval = createDurableApproval(
+    "tg:100:-200:multi-choice-execute-recovery",
+    MULTI_PROPOSAL,
+  );
+  const recoveredDryChoice = recoveredMultiApproval.choices.find(
+    (choice) => choice.choiceId === "dry_mode",
+  );
+  const recoveredMultiUpdateId = nextCallbackUpdateId();
+  const recoveredMultiCallback = {
+    ...callback,
+    updateId: recoveredMultiUpdateId,
+    id: "callback-multi-choice-execute-recovery",
+    data: `v3c:${recoveredMultiApproval.id}:${recoveredDryChoice.token}`,
+  };
+  await assert.rejects(bridge.handleCallback(
+    { botToken: VALID_BOT_TOKEN },
+    recoveredMultiCallback,
+    {
+      ...callbackOptions,
+      afterApprovalTransition: () => {
+        throw new Error("synthetic crash before recovered multi execution");
+      },
+    },
+  ), /synthetic crash/u);
+  assert.equal(
+    getPendingApproval(
+      recoveredMultiApproval.id,
+      VALID_BOT_TOKEN,
+      sessionOptions,
+    ).selected_choice_id,
+    "dry_mode",
+  );
+  durableExecutionKey =
+    `tgcb:${REQUESTER.user_id}:${REQUESTER.chat_id}:${recoveredMultiUpdateId}`;
+  durableExecutionChoiceId = "dry_mode";
+  durableCompletionReady = true;
+  brokerRequests.length = 0;
+  telegramRequests.length = 0;
+  bridge.pendingApprovals.clear();
+  await bridge.handleCallback(
+    { botToken: VALID_BOT_TOKEN },
+    recoveredMultiCallback,
+    callbackOptions,
+  );
+  assert.deepEqual(
+    brokerRequests.map((request) => request.action),
+    ["execute_status"],
+    "a completed durable execution must be delivered without inspect or reauthorization",
+  );
+  assert.equal(
+    telegramRequests.some((request) => request.url.endsWith("/sendMessage") &&
+      request.body.text.includes('"choice_id": "dry_mode"')),
+    true,
+  );
+  assert.equal(
+    getPendingApproval(recoveredMultiApproval.id, VALID_BOT_TOKEN, sessionOptions),
+    null,
+  );
+  durableExecutionChoiceId = null;
+  durableExecutionKey = DURABLE_CANCEL_KEY;
+  durableCompletionReady = false;
+  inspectResult = PROPOSAL;
 
   brokerRequests.length = 0;
   requestedSocketPaths.length = 0;
@@ -907,6 +1134,116 @@ try {
       request.body.text.includes("이전 승인 요청을 실행하지 않았습니다")),
     true,
   );
+
+  const consentRequester = {
+    surface: "telegram",
+    user_id: "1500",
+    chat_id: "-1500",
+  };
+  const deceptiveLabel = "조명 상태만 확인";
+  const sensitiveAccessCode = "fixture-access-code-must-not-reach-telegram-819274";
+  const consentConfigRoot = join(fixtureRoot, "consent-broker-config");
+  await mkdir(consentConfigRoot, { recursive: true, mode: 0o700 });
+  const consentBroker = new ChangeBroker({
+    configRoot: consentConfigRoot,
+    dataRoot: join(fixtureRoot, "consent-broker-data"),
+    supervisorToken: "fixture-supervisor-token",
+    haUrl: "http://supervisor.fixture/core/api",
+    fetchImpl: async (url, options) => {
+      assert.equal(url, "http://supervisor.fixture/core/api/services");
+      assert.equal(options.method, "GET");
+      assert.equal(options.headers.Authorization, "Bearer fixture-supervisor-token");
+      return new Response(JSON.stringify([{
+        domain: "lock",
+        services: { unlock: {} },
+      }]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+    memoryChange: {
+      async begin() {
+        throw new Error("approval preview must not start a memory change");
+      },
+      async verify() {
+        throw new Error("approval preview must not verify a memory change");
+      },
+    },
+    audit: () => {},
+  });
+  const consentProposal = await consentBroker.dispatch("propose", {
+    proposal: {
+      requester: consentRequester,
+      operation: "multi_choice_service_call",
+      summary: "Choose one fixture action",
+      ttl_seconds: 120,
+      payload: {
+        prompt: "실행할 작업을 선택하세요.",
+        choices: [{
+          choice_id: "deceptive_unlock",
+          label: deceptiveLabel,
+          domain: "lock",
+          service: "unlock",
+          entity_id: "lock.front_door_fixture",
+          service_data: {
+            access_code: sensitiveAccessCode,
+            retry_count: 2,
+          },
+        }],
+        cancel_label: "취소",
+      },
+    },
+  });
+  const consentPreviewChoice = consentProposal.preview.choices[0];
+  assert.equal(consentPreviewChoice.label, deceptiveLabel);
+  assert.equal(consentPreviewChoice.service, "lock.unlock");
+  assert.equal(consentPreviewChoice.entity_id, "lock.front_door_fixture");
+  assert.deepEqual(consentPreviewChoice.service_data, {
+    access_code: "<redacted>",
+    retry_count: 2,
+  });
+  assert.equal(JSON.stringify(consentProposal).includes(sensitiveAccessCode), false);
+
+  const consentTelegramBodies = [];
+  const consentStatePath = join(fixtureRoot, "consent-telegram", "bridge-state.json");
+  await bridge.processPrompt({
+    botToken: VALID_BOT_TOKEN,
+    toolPermission: "always-proceed",
+  }, {
+    updateId: 1_500,
+    from: { id: consentRequester.user_id },
+    chat: { id: consentRequester.chat_id, type: "private" },
+    text: "안전한 선택지를 보여줘",
+  }, null, {
+    statePath: consentStatePath,
+    runPrompt: async (_prompt, options) => {
+      options.onConversation("conversation.deceptive-consent-fixture");
+      return {
+        response: "선택지를 준비했습니다.",
+        proposalIds: [consentProposal.proposal_id],
+        conversationId: "conversation.deceptive-consent-fixture",
+      };
+    },
+    proposalInspect: async (proposalId, requester) => consentBroker.dispatch("inspect", {
+      proposal_id: proposalId,
+      requester,
+    }),
+    proposalExecute: async () => assert.fail("multi-choice consent must not auto-execute"),
+    api: async (_token, method, body) => {
+      if (method === "sendMessage") consentTelegramBodies.push(body);
+      return true;
+    },
+  });
+  const consentCard = consentTelegramBodies.find((body) =>
+    Array.isArray(body.reply_markup?.inline_keyboard));
+  assert.ok(consentCard, "broker preview must reach a Telegram approval card");
+  const consentButtons = consentCard.reply_markup.inline_keyboard.flat();
+  assert.equal(consentButtons[0].text, deceptiveLabel);
+  assert.equal(consentCard.text.includes('"service": "lock.unlock"'), true);
+  assert.equal(consentCard.text.includes('"entity_id": "lock.front_door_fixture"'), true);
+  assert.equal(consentCard.text.includes('"access_code": "<redacted>"'), true);
+  assert.equal(consentCard.text.includes('"retry_count": 2'), true);
+  assert.equal(JSON.stringify(consentTelegramBodies).includes(sensitiveAccessCode), false);
 } finally {
   net.createConnection = originalCreateConnection;
   globalThis.fetch = originalFetch;

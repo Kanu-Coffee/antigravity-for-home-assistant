@@ -25,7 +25,7 @@ export const DEFAULT_CONFIG_ROOT = "/config";
 export const DEFAULT_DATA_ROOT = "/data/antigravity-ha/change-broker";
 
 const SERVER_NAME = "antigravity-ha-change-broker";
-const SERVER_VERSION = "1.3.0";
+const SERVER_VERSION = "1.4.0";
 const STATE_VERSION = 1;
 const MAX_SOCKET_MESSAGE_BYTES = 1024 * 1024;
 const MAX_CONFIG_BYTES = 1024 * 1024;
@@ -42,6 +42,8 @@ const MAX_SERVICE_DATA_BYTES = 64 * 1024;
 const MAX_SERVICE_DATA_DEPTH = 12;
 const MAX_SERVICE_DATA_NODES = 2048;
 const MAX_SERVICE_DATA_ARRAY_ITEMS = 512;
+const MAX_MULTI_CHOICE_ITEMS = 31;
+const MAX_MULTI_CHOICE_PAYLOAD_BYTES = 512 * 1024;
 const MAX_ACTIVATION_HELPERS = 50;
 const MAX_PROPOSALS = 128;
 const MAX_COMPLETED_ENTRIES = 256;
@@ -863,6 +865,31 @@ function servicePreviewValue(value, key = "", depth = 0) {
   return value;
 }
 
+function buildServiceCallPreview(summary, payload) {
+  return {
+    format: "ha-service-call-v1",
+    summary,
+    service: `${payload.domain}.${payload.service}`,
+    entity_id: payload.entity_id,
+    service_data: servicePreviewValue(payload.service_data),
+    return_response: payload.return_response,
+    precondition: payload.expected_state === null
+      ? { kind: "none" }
+      : {
+          kind: "fresh_entity_state",
+          entity_id: payload.entity_id,
+          expected_state: payload.expected_state,
+        },
+    verification: payload.verify_state === null
+      ? { kind: "api_completion" }
+      : {
+          kind: "fresh_entity_state",
+          entity_id: payload.entity_id,
+          expected_state: payload.verify_state,
+        },
+  };
+}
+
 function normalizeServiceCallPayload(value) {
   const payload = assertPlainObject(value, "payload");
   assertOnlyKeys(
@@ -936,6 +963,84 @@ function normalizeServiceCallPayload(value) {
   };
 }
 
+function normalizeChoiceDisplayText(value, label, { maxCharacters = 500, maxBytes = 1024 } = {}) {
+  const normalized = requireString(value, label, { max: maxCharacters })
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (
+    normalized.length < 1 ||
+    Buffer.byteLength(normalized, "utf8") > maxBytes ||
+    SENSITIVE_YAML_VALUE.test(normalized) ||
+    /-----BEGIN [A-Z ]*PRIVATE KEY-----/u.test(normalized)
+  ) {
+    throw new BrokerError("invalid_request", `${label} is unsafe for a Telegram choice card`);
+  }
+  return normalized;
+}
+
+function normalizeMultiChoiceServiceCallPayload(value) {
+  const payload = assertPlainObject(value, "payload");
+  assertOnlyKeys(payload, new Set(["prompt", "choices", "cancel_label"]), "payload");
+  const prompt = normalizeChoiceDisplayText(payload.prompt, "payload.prompt");
+  if (
+    !Array.isArray(payload.choices) ||
+    payload.choices.length < 1 ||
+    payload.choices.length > MAX_MULTI_CHOICE_ITEMS
+  ) {
+    throw new BrokerError(
+      "invalid_request",
+      `payload.choices must contain between 1 and ${MAX_MULTI_CHOICE_ITEMS} choices`,
+    );
+  }
+  const choiceIds = new Set();
+  const choices = payload.choices.map((valueChoice, index) => {
+    const choice = assertPlainObject(valueChoice, `payload.choices[${index}]`);
+    assertOnlyKeys(
+      choice,
+      new Set([
+        "choice_id",
+        "label",
+        "domain",
+        "service",
+        "entity_id",
+        "service_data",
+        "return_response",
+        "expected_state",
+        "verify_state",
+      ]),
+      `payload.choices[${index}]`,
+    );
+    const choiceId = requireString(choice.choice_id, `payload.choices[${index}].choice_id`, {
+      max: 24,
+      pattern: /^[A-Za-z0-9_-]{1,24}$/u,
+    });
+    if (choiceIds.has(choiceId)) {
+      throw new BrokerError("invalid_request", "payload.choices contains a duplicate choice_id");
+    }
+    choiceIds.add(choiceId);
+    const label = normalizeChoiceDisplayText(
+      choice.label,
+      `payload.choices[${index}].label`,
+      { maxCharacters: 64, maxBytes: 64 },
+    );
+    const serviceCall = normalizeServiceCallPayload(Object.fromEntries(
+      Object.entries(choice).filter(([key]) => key !== "choice_id" && key !== "label"),
+    ));
+    return { choice_id: choiceId, label, ...serviceCall };
+  });
+  const cancelLabel = payload.cancel_label === undefined
+    ? "취소"
+    : normalizeChoiceDisplayText(payload.cancel_label, "payload.cancel_label", {
+        maxCharacters: 64,
+        maxBytes: 64,
+      });
+  const normalized = { prompt, choices, cancel_label: cancelLabel };
+  if (Buffer.byteLength(stableStringify(normalized)) > MAX_MULTI_CHOICE_PAYLOAD_BYTES) {
+    throw new BrokerError("invalid_request", "payload choices exceed the aggregate byte limit");
+  }
+  return normalized;
+}
+
 function normalizeDeviceTestPayload(value) {
   const payload = assertPlainObject(value, "payload");
   assertOnlyKeys(
@@ -991,6 +1096,23 @@ function classifyRisk() {
   return "high";
 }
 
+function normalizeSelectedChoiceId(proposal, value, label = "choice_id") {
+  if (proposal.operation !== "multi_choice_service_call") {
+    if (value !== undefined) {
+      throw new BrokerError("invalid_request", `${label} is only valid for a multi-choice proposal`);
+    }
+    return null;
+  }
+  const choiceId = requireString(value, label, {
+    max: 24,
+    pattern: /^[A-Za-z0-9_-]{1,24}$/u,
+  });
+  if (!proposal.payload.choices.some((choice) => choice.choice_id === choiceId)) {
+    throw new BrokerError("invalid_choice", "selected choice is not part of this proposal");
+  }
+  return choiceId;
+}
+
 function normalizeProposal(value, nowMs) {
   const input = assertPlainObject(value, "proposal");
   assertOnlyKeys(
@@ -1009,6 +1131,7 @@ function normalizeProposal(value, nowMs) {
   if (
     operation !== "config_patch" &&
     operation !== "service_call" &&
+    operation !== "multi_choice_service_call" &&
     operation !== "device_test"
   ) {
     throw new BrokerError("unsupported_operation", "operation is not implemented by this broker");
@@ -1029,7 +1152,9 @@ function normalizeProposal(value, nowMs) {
     ? normalizeConfigPatchPayload(input.payload)
     : operation === "service_call"
       ? normalizeServiceCallPayload(input.payload)
-      : normalizeDeviceTestPayload(input.payload);
+      : operation === "multi_choice_service_call"
+        ? normalizeMultiChoiceServiceCallPayload(input.payload)
+        : normalizeDeviceTestPayload(input.payload);
   const expiresAtMs = nowMs + ttlSeconds * 1000;
   return {
     requester,
@@ -1175,12 +1300,14 @@ async function assertNoSymlinkComponents(rootPath, relativePath) {
   }
 }
 
-function safeExecutionResult(error, operation) {
+function safeExecutionResult(error, operation, choiceId = null) {
+  const selection = choiceId === null ? {} : { choice_id: choiceId };
   if (error instanceof BrokerError) {
     if (["config_verification_in_doubt", "execution_in_doubt", "rollback_failed"].includes(error.code)) {
       return {
         status: "in_doubt",
         operation,
+        ...selection,
         reason: error.code,
         changed: null,
       };
@@ -1188,6 +1315,7 @@ function safeExecutionResult(error, operation) {
     return {
       status: "failed",
       operation,
+      ...selection,
       reason: error.code,
       changed: false,
     };
@@ -1195,6 +1323,7 @@ function safeExecutionResult(error, operation) {
   return {
     status: "in_doubt",
     operation,
+    ...selection,
     reason: "internal_error",
     changed: null,
   };
@@ -1513,30 +1642,28 @@ export class ChangeBroker {
         normalized.payload.domain,
         normalized.payload.service,
       );
-      preview = {
-        format: "ha-service-call-v1",
-        summary: normalized.summary,
-        service: `${normalized.payload.domain}.${normalized.payload.service}`,
-        entity_id: normalized.payload.entity_id,
-        service_data: servicePreviewValue(normalized.payload.service_data),
-        return_response: normalized.payload.return_response,
-        precondition: normalized.payload.expected_state === null
-          ? { kind: "none" }
-          : {
-              kind: "fresh_entity_state",
-              entity_id: normalized.payload.entity_id,
-              expected_state: normalized.payload.expected_state,
-            },
-        verification: normalized.payload.verify_state === null
-          ? { kind: "api_completion" }
-          : {
-              kind: "fresh_entity_state",
-              entity_id: normalized.payload.entity_id,
-              expected_state: normalized.payload.verify_state,
-            },
-      };
+      preview = buildServiceCallPreview(normalized.summary, normalized.payload);
       if (Buffer.byteLength(JSON.stringify(preview)) > MAX_PUBLIC_PREVIEW_BYTES) {
         throw new BrokerError("preview_too_large", "safe service preview exceeded the limit");
+      }
+    } else if (normalized.operation === "multi_choice_service_call") {
+      await this.#assertServicesAvailable(normalized.payload.choices);
+      preview = {
+        format: "ha-multi-choice-service-call-v1",
+        summary: normalized.summary,
+        prompt: normalized.payload.prompt,
+        choices: normalized.payload.choices.map((choice) => ({
+          choice_id: choice.choice_id,
+          label: choice.label,
+          ...Object.fromEntries(
+            Object.entries(buildServiceCallPreview(choice.label, choice))
+              .filter(([key]) => !["format", "summary"].includes(key)),
+          ),
+        })),
+        cancel_label: normalized.payload.cancel_label,
+      };
+      if (Buffer.byteLength(JSON.stringify(preview)) > MAX_PUBLIC_PREVIEW_BYTES) {
+        throw new BrokerError("preview_too_large", "safe multi-choice preview exceeded the limit");
       }
     } else {
       preview = {
@@ -1600,12 +1727,13 @@ export class ChangeBroker {
     const value = assertPlainObject(input, "authorization");
     assertOnlyKeys(
       value,
-      new Set(["proposal_id", "requester", "preview_digest", "authorization"]),
+      new Set(["proposal_id", "requester", "preview_digest", "authorization", "choice_id"]),
       "authorization",
     );
     const proposal = this.#requireLiveProposal(value.proposal_id);
     const requester = normalizeRequester(value.requester);
     this.#assertBinding(proposal, requester, value.preview_digest);
+    const choiceId = normalizeSelectedChoiceId(proposal, value.choice_id);
     const authorization = requireString(value.authorization, "authorization", {
       max: 32,
       pattern: /^(?:autonomous_policy|human_confirmed)$/u,
@@ -1613,26 +1741,61 @@ export class ChangeBroker {
     if (authorization === "autonomous_policy" && proposal.risk !== "low") {
       throw new BrokerError("human_confirmation_required", "high-risk proposal requires human confirmation");
     }
-    if (this.capabilities.has(proposal.proposal_id)) {
-      throw new BrokerError("already_authorized", "proposal already has an active capability");
+    const existingCapability = this.capabilities.get(proposal.proposal_id);
+    if (existingCapability) {
+      const exactReplay =
+        existingCapability.expires_at_ms > this.now() &&
+        existingCapability.authorization === authorization &&
+        existingCapability.choice_id === choiceId &&
+        constantTimeDigestMatch(
+          existingCapability.requester_digest,
+          sha256Digest(stableStringify(requester)),
+        ) &&
+        constantTimeDigestMatch(existingCapability.preview_digest, proposal.preview_digest);
+      if (!exactReplay) {
+        throw new BrokerError(
+          "already_authorized",
+          "proposal already has a differently bound active capability",
+        );
+      }
+      this.audit("proposal_authorization_replayed", {
+        operation: proposal.operation,
+        risk: proposal.risk,
+        authorization,
+        ...(choiceId === null ? {} : { choice_id: choiceId }),
+        requester: requesterHash(requester),
+      });
+      return {
+        proposal_id: proposal.proposal_id,
+        preview_digest: proposal.preview_digest,
+        capability: existingCapability.capability,
+        ...(choiceId === null ? {} : { choice_id: choiceId }),
+        expires_at: new Date(proposal.expires_at_ms).toISOString(),
+        replayed: true,
+      };
     }
     const capability = opaqueId(32);
     this.capabilities.set(proposal.proposal_id, {
+      capability,
       digest: sha256Digest(capability),
       requester_digest: sha256Digest(stableStringify(requester)),
       preview_digest: proposal.preview_digest,
+      choice_id: choiceId,
+      authorization,
       expires_at_ms: proposal.expires_at_ms,
     });
     this.audit("proposal_authorized", {
       operation: proposal.operation,
       risk: proposal.risk,
       authorization,
+      ...(choiceId === null ? {} : { choice_id: choiceId }),
       requester: requesterHash(requester),
     });
     return {
       proposal_id: proposal.proposal_id,
       preview_digest: proposal.preview_digest,
       capability,
+      ...(choiceId === null ? {} : { choice_id: choiceId }),
       expires_at: new Date(proposal.expires_at_ms).toISOString(),
     };
   }
@@ -1646,6 +1809,7 @@ export class ChangeBroker {
       return {
         status: accepted ? "accepted" : "running",
         operation: entry.operation,
+        ...(entry.choice_id ? { choice_id: entry.choice_id } : {}),
         replayed,
       };
     }
@@ -1653,6 +1817,7 @@ export class ChangeBroker {
       return {
         status: "completed",
         operation: entry.operation,
+        ...(entry.choice_id ? { choice_id: entry.choice_id } : {}),
         result: entry.result,
         replayed,
       };
@@ -1660,6 +1825,7 @@ export class ChangeBroker {
     return {
       status: "in_doubt",
       operation: entry.operation,
+      ...(entry.choice_id ? { choice_id: entry.choice_id } : {}),
       reason: "previous_attempt_not_proven_complete",
       replayed,
     };
@@ -1669,7 +1835,14 @@ export class ChangeBroker {
     const value = assertPlainObject(input, "execution");
     assertOnlyKeys(
       value,
-      new Set(["proposal_id", "requester", "preview_digest", "capability", "idempotency_key"]),
+      new Set([
+        "proposal_id",
+        "requester",
+        "preview_digest",
+        "capability",
+        "idempotency_key",
+        "choice_id",
+      ]),
       "execution",
     );
     const requester = normalizeRequester(value.requester);
@@ -1683,12 +1856,25 @@ export class ChangeBroker {
       max: 128,
       pattern: /^[A-Za-z0-9._:@+-]+$/u,
     });
+    const requestedChoiceId = value.choice_id === undefined
+      ? null
+      : requireString(value.choice_id, "choice_id", {
+          max: 24,
+          pattern: /^[A-Za-z0-9_-]{1,24}$/u,
+        });
     const scopeDigest = sha256Digest(stableStringify({ requester, idempotency_key: idempotencyKey }));
     const existing = this.idempotency.get(scopeDigest);
     if (existing) {
+      if (existing.operation === "multi_choice_service_call" && requestedChoiceId === null) {
+        throw new BrokerError("invalid_request", "choice_id is required for a multi-choice proposal");
+      }
+      if (existing.operation !== "multi_choice_service_call" && requestedChoiceId !== null) {
+        throw new BrokerError("invalid_request", "choice_id is only valid for a multi-choice proposal");
+      }
       if (
         existing.proposal_id !== proposalId ||
-        existing.preview_digest !== previewDigest
+        existing.preview_digest !== previewDigest ||
+        (existing.choice_id ?? null) !== requestedChoiceId
       ) {
         throw new BrokerError("idempotency_conflict", "idempotency key is bound to another proposal");
       }
@@ -1701,6 +1887,7 @@ export class ChangeBroker {
 
     const proposal = this.#requireLiveProposal(proposalId);
     this.#assertBinding(proposal, requester, previewDigest);
+    const choiceId = normalizeSelectedChoiceId(proposal, value.choice_id);
     const capability = requireString(value.capability, "capability", {
       min: 43,
       max: 64,
@@ -1715,6 +1902,7 @@ export class ChangeBroker {
         sha256Digest(stableStringify(requester)),
       ) ||
       !constantTimeDigestMatch(storedCapability.preview_digest, previewDigest) ||
+      storedCapability.choice_id !== choiceId ||
       !constantTimeDigestMatch(storedCapability.digest, sha256Digest(capability))
     ) {
       throw new BrokerError("invalid_capability", "capability is invalid, expired, or already consumed");
@@ -1724,6 +1912,7 @@ export class ChangeBroker {
       proposal_id: proposalId,
       preview_digest: previewDigest,
       operation: proposal.operation,
+      ...(choiceId === null ? {} : { choice_id: choiceId }),
       started_at: new Date(this.now()).toISOString(),
     };
     this.idempotency.set(scopeDigest, inProgressEntry);
@@ -1743,6 +1932,7 @@ export class ChangeBroker {
     void execution.catch((error) => {
       this.audit("execution_job_failed", {
         operation: proposal.operation,
+        ...(choiceId === null ? {} : { choice_id: choiceId }),
         reason: error instanceof BrokerError ? error.code : "internal_error",
         requester: requesterHash(requester),
       });
@@ -1761,9 +1951,11 @@ export class ChangeBroker {
         ? await this.#executeConfigPatch(proposal)
         : proposal.operation === "service_call"
           ? await this.#executeServiceCall(proposal)
-          : await this.#executeDeviceTest(proposal);
+          : proposal.operation === "multi_choice_service_call"
+            ? await this.#executeMultiChoiceServiceCall(proposal, inProgressEntry.choice_id)
+            : await this.#executeDeviceTest(proposal);
     } catch (error) {
-      result = safeExecutionResult(error, proposal.operation);
+      result = safeExecutionResult(error, proposal.operation, inProgressEntry.choice_id ?? null);
     }
     const completedAtMs = this.now();
     const completedAt = new Date(completedAtMs).toISOString();
@@ -1772,6 +1964,7 @@ export class ChangeBroker {
       proposal_id: proposal.proposal_id,
       preview_digest: proposal.preview_digest,
       operation: proposal.operation,
+      ...(inProgressEntry.choice_id ? { choice_id: inProgressEntry.choice_id } : {}),
       completed_at: completedAt,
       expires_at_ms: completedAtMs + IDEMPOTENCY_TTL_MS,
       result,
@@ -1809,6 +2002,7 @@ export class ChangeBroker {
         operation: proposal.operation,
         risk: proposal.risk,
         status: result.status,
+        ...(inProgressEntry.choice_id ? { choice_id: inProgressEntry.choice_id } : {}),
         reason: result.reason || "ok",
         requester: requesterHash(requester),
       });
@@ -1847,6 +2041,7 @@ export class ChangeBroker {
       return {
         status: "in_doubt",
         operation: started.state.operation,
+        ...(started.state.choice_id ? { choice_id: started.state.choice_id } : {}),
         reason: started.state.reason ?? "previous_attempt_not_proven_complete",
         changed: null,
         replayed: true,
@@ -2814,7 +3009,7 @@ export class ChangeBroker {
     }
   }
 
-  async #assertServiceAvailable(domain, service) {
+  async #assertServicesAvailable(serviceCalls) {
     const response = await this.#requestJson(`${this.haUrl}/services`, {
       method: "GET",
       maxResponseBytes: MAX_SERVICE_REGISTRY_RESPONSE_BYTES,
@@ -2825,19 +3020,25 @@ export class ChangeBroker {
         "Home Assistant returned an invalid service registry",
       );
     }
-    const domainEntry = response.find(
-      (item) => isPlainObject(item) && item.domain === domain,
-    );
-    if (!domainEntry) {
-      throw new BrokerError("unsupported_service", "service domain is not currently registered");
+    for (const { domain, service } of serviceCalls) {
+      const domainEntry = response.find(
+        (item) => isPlainObject(item) && item.domain === domain,
+      );
+      if (!domainEntry) {
+        throw new BrokerError("unsupported_service", "service domain is not currently registered");
+      }
+      const services = domainEntry.services;
+      const available = Array.isArray(services)
+        ? services.includes(service)
+        : isPlainObject(services) && own(services, service);
+      if (!available) {
+        throw new BrokerError("unsupported_service", "service is not currently registered");
+      }
     }
-    const services = domainEntry.services;
-    const available = Array.isArray(services)
-      ? services.includes(service)
-      : isPlainObject(services) && own(services, service);
-    if (!available) {
-      throw new BrokerError("unsupported_service", "service is not currently registered");
-    }
+  }
+
+  async #assertServiceAvailable(domain, service) {
+    return this.#assertServicesAvailable([{ domain, service }]);
   }
 
   async #readEntityState(entityId) {
@@ -2903,6 +3104,19 @@ export class ChangeBroker {
       if (attempt < 4) await this.sleep(200);
     }
     throw new BrokerError("fresh_verification_failed", "entity did not reach the expected state");
+  }
+
+  async #executeMultiChoiceServiceCall(proposal, choiceId) {
+    const choice = proposal.payload.choices.find((item) => item.choice_id === choiceId);
+    if (!choice) {
+      throw new BrokerError("invalid_choice", "authorized choice is unavailable");
+    }
+    const result = await this.#executeServiceCall({ ...proposal, payload: choice });
+    return {
+      ...result,
+      operation: "multi_choice_service_call",
+      choice_id: choice.choice_id,
+    };
   }
 
   async #executeServiceCall(proposal) {

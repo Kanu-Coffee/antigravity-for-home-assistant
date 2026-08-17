@@ -175,6 +175,11 @@ command/stdio tools also cannot read the native OAuth backend under AppArmor.
 Other user-created rules are preserved. Inline secrets that
 users put in global plugin/MCP configuration belong to a trusted extension
 context and are outside this guarantee.
+Version 2.0.9 and later image-managed settings already express this operational
+scope through `mcp(*)` and an empty managed `ask` bucket. Do not manually add a
+separate MCP allow rule for each of `ha_change`, `ha_read`, `ha_memory`,
+`ha_validate`, or `playwright`. User-added `ask` and `deny` rules are preserved
+and take precedence over managed allow rules.
 Writing `settings.json` directly through a raw file tool is the exception. For
 an explicit current user request to change an ordinary global setting, obtain
 the current digest with `agy-settings sha256`, then send `expected_sha256` and a
@@ -291,8 +296,9 @@ sensitive-data setting, and AppArmor command boundary as Web and SSH. The native
 nested sandbox is not used. A `telegram_access_mode` saved by 2.0.6 or earlier
 is ignored migration input, not an authorization source. Managed
 runtime rules route ordinary Home Assistant service/config changes through
-`ha_change_propose`. Every App-managed broker `service_call`/`config_patch`
-created that way requires durable Telegram confirmation. Global policy cannot
+`ha_change_propose`. Every App-managed broker `service_call`,
+`multi_choice_service_call`, and `config_patch` created that way requires
+durable Telegram confirmation. Global policy cannot
 downgrade the broker's high-risk classification, including locks, alarms, safety
 heating/water, host or Core restarts, restores, updates, removals, or credential
 and permission changes.
@@ -336,7 +342,7 @@ acknowledges delivery. Clearly unsent 429 responses use bounded backoff; ambiguo
 delivery failures remain isolated until `/retry`. `/cancel` is not a rollback
 command for work already completed externally.
 
-Telegram acknowledges an Approve/Deny callback and performs its basic authorization
+Telegram acknowledges an Approve/Choose/Deny callback and performs its basic authorization
 checks immediately, but approved broker execution remains session-serialized in
 the same requester queue. Execution revalidates requester, chat, current session
 generation, conversation, proposal digest, and expiry. `/new`, `/cancel`, restart,
@@ -353,6 +359,34 @@ and a short TTL. The approval callback and result continue in that session.
 A one-time 256-bit capability plus an idempotency key prevents reuse and
 duplicate execution. A changed preview or precondition, or an expired approval,
 requires a new proposal.
+
+#### Multi-choice approval cards
+
+Version 2.0.10 `multi_choice_service_call` is the broker operation for a driving
+mode, brightness preset, ambiguous entity, or any other question where exactly
+one action must be selected. A proposal contains one to 31 unique `choice_id`
+values, display labels, and prevalidated Home Assistant service calls. Every
+choice must pass one live `/api/services` snapshot plus the ordinary
+`service_call` entity, `service_data`, precondition, verification, and size
+limits before the card is created.
+
+Telegram adds Cancel and renders at most 32 buttons, with no more than four per
+row and eight rows. New cards use `v3c`/`v3d` choose/cancel callbacks while
+legacy binary `v2a`/`v2d` Approve/Deny cards remain supported. Callback data
+contains no HA domain, service, entity, or `service_data`. The bridge resolves a
+short opaque token through its encrypted mapping, persists the selection before
+authorization, then revalidates requester, chat, session generation,
+conversation, preview digest, choice, capability, and idempotency with the
+broker before executing exactly one choice.
+
+Conversation binding, choice-token mapping, and the selected choice survive a
+bridge restart. The body of an unstarted proposal remains only in
+change-broker process memory, however, so an old card can be revalidated after a
+bridge-only restart only while that broker remains alive. A full App or broker
+restart that loses the proposal rejects the card and requires a new request. An
+execution already accepted by the broker recovers a completed result or
+`in_doubt` from durable idempotency/status state without sending the service
+call again.
 
 Broker previews redact token/secret/password/auth/key/PIN/code/credential-like
 values while binding approval to the raw payload digest. `service_call` validates
@@ -633,6 +667,15 @@ without the user's explicit current confirmation.
   `conversation_mismatch`, `stream_contract_failed`, and
   `proposal_result_invalid` identify terminal stages without retaining prompts,
   raw model output, or stderr.
+- Version 2.0.10 permits `toolAction` and `toolSummary` string metadata of at
+  most 1,024 UTF-8 bytes without NUL or non-whitespace control characters,
+  alongside the required `Arguments`, `ServerName`, and `ToolName` receipt
+  parameters. Any other key or invalid metadata remains
+  `proposal_result_invalid`.
+- If terminal text alone is empty after exactly one completed valid proposal
+  receipt, 2.0.10 uses a fixed safe acknowledgement and queues the approval
+  card. A proposal-free empty response, non-string response, or response above
+  32 KiB remains `terminal_response_invalid`.
 - Never upload native CLI logs, OAuth URLs, tokens, or raw prompts. Do not guess
   or manually edit credential paths in the shared HOME.
 - Never use `--dangerously-skip-permissions` or a broad file-read grant.

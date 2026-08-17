@@ -95,10 +95,12 @@ Antigravity 명령이나 설정을 추정하지 않는다. 문서와 고정 bina
 - Ingress, 공개키 SSH와 Telegram에서 정의된 사용자 흐름이 동작한다.
 - Telegram이 CLI의 전역 환경·권한을 상속하고 `/new`까지 같은 session과 reply
   outbox를 유지한다. `ha_change_propose`로 제출된 App-managed broker
-  `service_call`/`config_patch`에는 durable requester/session-bound approval과
-  exactly-once broker 접수를 강제한다. 관리형 runtime rule은 일반 HA service/config
-  변경을 이 broker로 라우팅한다. 신뢰된 사용자 전역 native tool과 direct command/API
-  helper는 관리자 권한을 상속하며 broker가 투명하게 가로채지 않는다.
+  `service_call`/`multi_choice_service_call`/`config_patch`에는 durable
+  requester/session/choice-bound approval과 exactly-once broker 접수를 강제한다.
+  multi-choice는 최대 31개 사전 검증 선택지 중 하나만 실행하고 기존 binary approval과
+  호환한다. 관리형 runtime rule은 일반 HA service/config 변경을 이 broker로
+  라우팅한다. 신뢰된 사용자 전역 native tool과 direct command/API helper는 관리자
+  권한을 상속하며 broker가 투명하게 가로채지 않는다.
 - custom AppArmor가 항상 활성화되고 민감 경로 차단을 실제 HAOS에서 확인한다.
 - HA API, 로그, 메모리와 dashboard browser 기능이 최소권한 경계 안에서
   동작한다.

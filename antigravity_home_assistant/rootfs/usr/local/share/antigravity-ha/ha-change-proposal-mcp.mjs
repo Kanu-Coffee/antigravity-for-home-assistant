@@ -8,7 +8,7 @@ import {
 } from "./ha-change-broker.mjs";
 
 const SERVER_NAME = "antigravity-ha-change-proposal";
-const SERVER_VERSION = "1.1.0";
+const SERVER_VERSION = "1.2.0";
 const DEFAULT_PROTOCOL_VERSION = "2024-11-05";
 const MAX_LINE_BYTES = 1024 * 1024;
 
@@ -118,6 +118,53 @@ const serviceCallSchema = {
   additionalProperties: false,
 };
 
+const multiChoiceServiceCallSchema = {
+  type: "object",
+  properties: {
+    prompt: {
+      type: "string",
+      minLength: 1,
+      maxLength: 500,
+      description: "Question shown above the Telegram choice buttons.",
+    },
+    choices: {
+      type: "array",
+      minItems: 1,
+      maxItems: 31,
+      description:
+        "Mutually exclusive, broker-validated service calls. Only the choice selected by the bound Telegram requester can execute.",
+      items: {
+        type: "object",
+        properties: {
+          choice_id: {
+            type: "string",
+            pattern: "^[A-Za-z0-9_-]{1,24}$",
+            description: "Stable unique identifier for this choice; it is not an execution capability.",
+          },
+          label: {
+            type: "string",
+            minLength: 1,
+            maxLength: 64,
+            description: "Telegram button label, additionally limited to 64 UTF-8 bytes by the broker.",
+          },
+          ...serviceCallSchema.properties,
+        },
+        required: ["choice_id", "label", "domain", "service"],
+        additionalProperties: false,
+      },
+    },
+    cancel_label: {
+      type: "string",
+      minLength: 1,
+      maxLength: 64,
+      default: "취소",
+      description: "Telegram dismiss button label, additionally limited to 64 UTF-8 bytes.",
+    },
+  },
+  required: ["prompt", "choices"],
+  additionalProperties: false,
+};
+
 const deviceTestSchema = {
   type: "object",
   properties: {
@@ -150,7 +197,7 @@ const tools = [
     name: "ha_change_propose",
     title: "Propose a bounded Home Assistant change",
     description:
-      "Create a short-lived, broker-validated preview for one YAML replacement, any currently registered Home Assistant service call, or one separate transient device test with mandatory verified restoration. YAML replacements use digest preconditions, atomic backup/write, Home Assistant configuration checking, and verified rollback; files without a safe reload report restart_required. This tool never executes the change, never issues a capability, and cannot approve its own proposal. Show the returned preview to the bound Telegram user/chat; a separate trusted coordinator must authorize and execute it.",
+      "Create a short-lived, broker-validated preview for one YAML replacement, any currently registered Home Assistant service call, a mutually exclusive set of service-call choices, or one separate transient device test with mandatory verified restoration. YAML replacements use digest preconditions, atomic backup/write, Home Assistant configuration checking, and verified rollback; files without a safe reload report restart_required. This tool never executes the change, never issues a capability, and cannot approve its own proposal. Show the returned preview to the bound Telegram user/chat; a separate trusted coordinator must authorize and execute it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -159,6 +206,7 @@ const tools = [
           enum: [
             "config_patch",
             "service_call",
+            "multi_choice_service_call",
             "device_test",
             "restart",
             "update",
@@ -166,7 +214,7 @@ const tools = [
             "delete",
           ],
           description:
-            "Only config_patch, service_call, and device_test are executable in v2. device_test is transient and never aliases service_call. Unsupported operations are included so the broker can return an explicit fail-closed result.",
+            "Only config_patch, service_call, multi_choice_service_call, and device_test are executable. A multi-choice proposal executes exactly one prevalidated choice selected by the bound Telegram requester. device_test is transient and never aliases service_call. Unsupported operations are included so the broker can return an explicit fail-closed result.",
         },
         summary: {
           type: "string",
@@ -181,7 +229,12 @@ const tools = [
           default: 120,
         },
         payload: {
-          oneOf: [configPatchSchema, serviceCallSchema, deviceTestSchema],
+          oneOf: [
+            configPatchSchema,
+            serviceCallSchema,
+            multiChoiceServiceCallSchema,
+            deviceTestSchema,
+          ],
         },
       },
       required: ["operation", "summary", "payload"],

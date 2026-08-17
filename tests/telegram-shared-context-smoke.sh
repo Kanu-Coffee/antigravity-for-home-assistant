@@ -673,10 +673,13 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       /config/permission-canary-mcp.cjs
     jq -n "{
       mcpServers: {
-        permission_canary: {
+        ha_change: {
           command: \"/usr/bin/node\",
           args: [\"/config/permission-canary-mcp.cjs\"],
-          env: {PERMISSION_CANARY_REQUIRE_APPARMOR: \"false\"}
+          env: {
+            PERMISSION_CANARY_REQUIRE_APPARMOR: \"false\",
+            PERMISSION_CANARY_TOOL_NAME: \"ha_change_propose\"
+          }
         }
       }
     }" > /data/home/.gemini/config/mcp_config.json

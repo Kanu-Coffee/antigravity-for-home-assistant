@@ -36,3 +36,28 @@ for (const expected of ["run_command", "call_mcp_tool"]) {
     throw new Error(`${expected} did not complete under the managed allow rule`);
   }
 }
+const haChangeStep = toolSteps.find((step) =>
+  step.tool_name === "call_mcp_tool" && step.state === "DONE" &&
+  step.tool_info?.parameters?.ServerName === "ha_change" &&
+  step.tool_info?.parameters?.ToolName === "ha_change_propose");
+if (!haChangeStep) {
+  throw new Error("native ha_change proposal metadata canary did not complete");
+}
+const proposalParameters = haChangeStep.tool_info.parameters;
+const proposalParameterKeys = Object.keys(proposalParameters).sort();
+const requiredProposalParameterKeys = ["Arguments", "ServerName", "ToolName"];
+const allowedProposalParameterKeys = new Set([
+  ...requiredProposalParameterKeys,
+  "toolAction",
+  "toolSummary",
+]);
+if (!requiredProposalParameterKeys.every((key) => proposalParameterKeys.includes(key)) ||
+    !proposalParameterKeys.every((key) => allowedProposalParameterKeys.has(key)) ||
+    (Object.hasOwn(proposalParameters, "toolAction") &&
+      proposalParameters.toolAction !==
+        "Prepare a synthetic Home Assistant change proposal") ||
+    (Object.hasOwn(proposalParameters, "toolSummary") &&
+      proposalParameters.toolSummary !==
+        "Synthetic Home Assistant proposal metadata canary")) {
+  throw new Error("native ha_change proposal metadata shape changed");
+}

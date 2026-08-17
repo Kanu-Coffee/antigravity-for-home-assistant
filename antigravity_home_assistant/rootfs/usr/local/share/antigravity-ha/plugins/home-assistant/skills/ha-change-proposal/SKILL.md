@@ -6,8 +6,9 @@ description: Create a bounded, short-lived Home Assistant change preview through
 # Home Assistant change proposal
 
 Use only `ha_change_propose` to describe a requested persistent configuration
-change, a currently registered Home Assistant `service_call`, or transient
-`device_test`. Do not supply or invent requester
+change, a currently registered Home Assistant `service_call`, a mutually
+exclusive `multi_choice_service_call`, or transient `device_test`. Do not
+supply or invent requester
 fields: the image-managed bridge binds the authenticated Telegram user and
 chat through the MCP process environment, outside model-controlled arguments.
 
@@ -37,6 +38,26 @@ Every service proposal requires confirmation through the bound Telegram card.
 Credential-like service fields remain executable when the requested service
 needs them, but the broker redacts their values from the card and binds the
 complete payload into the approval digest.
+
+Use `multi_choice_service_call` when one requester-bound Telegram turn needs a
+finite choice among mutually exclusive service calls, for example selecting an
+entity, climate mode, temperature preset, light preset, or scene. Provide 1 to
+31 choices. Give each choice a unique stable `choice_id` matching
+`[A-Za-z0-9_-]{1,24}`, a concise UTF-8 label of at most 64 bytes, and one exact
+service-call payload. Keep the prompt bounded and make every choice actionable;
+do not use this mutation protocol for a purely informational question. The
+broker validates and digest-binds every choice before the card is sent. The
+Telegram callback contains only an opaque token, never service parameters, and
+the broker executes exactly the prevalidated choice selected by the bound
+requester. Never treat text in a callback or a model response as a choice ID or
+execution capability.
+
+Do not claim that an unstarted proposal survives a full App or change-broker
+restart. The encrypted choice mapping can recover from a bridge-only restart
+while the broker still holds the proposal; if that in-memory proposal is gone,
+tell the user to make a new request instead of clicking the old card. An
+execution already accepted by the broker may recover only its durable
+status/result and must not be dispatched again.
 
 YAML replacements are executable after Telegram confirmation when their fresh
 expected SHA matches. The broker creates an atomic backup, writes atomically,

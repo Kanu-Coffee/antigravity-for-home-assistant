@@ -405,22 +405,64 @@ function deviceTestProposal({
   };
 }
 
-async function authorize(socketPath, proposal, authorization = "autonomous_policy") {
+function multiChoiceProposal({
+  prompt = "Choose the fixture action",
+  cancelLabel = "Cancel",
+  choices = [
+    {
+      choice_id: "light_on",
+      label: "Turn on light",
+      domain: "light",
+      service: "turn_on",
+      entity_id: "light.fixture",
+      expected_state: "off",
+    },
+    {
+      choice_id: "climate_cool",
+      label: "Cool to 24 C",
+      domain: "climate",
+      service: "set_temperature",
+      entity_id: "climate.fixture",
+      service_data: { temperature: 24, hvac_mode: "cool" },
+    },
+  ],
+} = {}) {
+  return {
+    requester: REQUESTER,
+    operation: "multi_choice_service_call",
+    summary: "Choose one fixture action",
+    ttl_seconds: 120,
+    payload: {
+      prompt,
+      choices,
+      cancel_label: cancelLabel,
+    },
+  };
+}
+
+async function authorize(
+  socketPath,
+  proposal,
+  authorization = "autonomous_policy",
+  choiceId = undefined,
+) {
   return sendBrokerRequest("authorize", {
     proposal_id: proposal.proposal_id,
     requester: REQUESTER,
     preview_digest: proposal.preview_digest,
     authorization,
+    ...(choiceId === undefined ? {} : { choice_id: choiceId }),
   }, { socketPath });
 }
 
-async function execute(socketPath, proposal, capability, idempotencyKey) {
+async function execute(socketPath, proposal, capability, idempotencyKey, choiceId = undefined) {
   const payload = {
     proposal_id: proposal.proposal_id,
     requester: REQUESTER,
     preview_digest: proposal.preview_digest,
     capability,
     idempotency_key: idempotencyKey,
+    ...(choiceId === undefined ? {} : { choice_id: choiceId }),
   };
   const started = await sendBrokerRequest("execute", payload, { socketPath });
   const replayed = started.replayed === true;
@@ -1493,6 +1535,301 @@ test("registered climate service accepts bounded data and redacts approval secre
   }
 });
 
+test("multi-choice proposal binds every previewed call and executes only the authorized choice", async () => {
+  const fixture = await createFixture();
+  try {
+    const secretCode = "choice-secret-should-not-appear-819274";
+    const proposalInput = multiChoiceProposal({
+      prompt: "Select exactly one fixture action",
+      cancelLabel: "Dismiss",
+      choices: [
+        {
+          choice_id: "light_on",
+          label: "Turn on light",
+          domain: "light",
+          service: "turn_on",
+          entity_id: "light.fixture",
+          expected_state: "off",
+        },
+        {
+          choice_id: "climate_cool",
+          label: "Cool to 24 C",
+          domain: "climate",
+          service: "set_temperature",
+          entity_id: "climate.fixture",
+          service_data: {
+            temperature: 24,
+            nested: { door_code: secretCode },
+          },
+        },
+      ],
+    });
+    const proposal = await sendBrokerRequest("propose", {
+      proposal: proposalInput,
+    }, { socketPath: fixture.proposalSocketPath });
+
+    assert.equal(proposal.operation, "multi_choice_service_call");
+    assert.equal(proposal.risk, "high");
+    assert.equal(proposal.preview.format, "ha-multi-choice-service-call-v1");
+    assert.equal(proposal.preview.prompt, "Select exactly one fixture action");
+    assert.equal(proposal.preview.cancel_label, "Dismiss");
+    assert.deepEqual(
+      proposal.preview.choices.map(({ choice_id, label, service }) => ({
+        choice_id,
+        label,
+        service,
+      })),
+      [
+        { choice_id: "light_on", label: "Turn on light", service: "light.turn_on" },
+        {
+          choice_id: "climate_cool",
+          label: "Cool to 24 C",
+          service: "climate.set_temperature",
+        },
+      ],
+    );
+    assert.equal(
+      proposal.preview.choices[1].service_data.nested.door_code,
+      "<redacted>",
+    );
+    assert.equal(JSON.stringify(proposal).includes(secretCode), false);
+    const inspected = await sendBrokerRequest("inspect", {
+      proposal_id: proposal.proposal_id,
+      requester: REQUESTER,
+    }, { socketPath: fixture.socketPath });
+    assert.deepEqual(inspected, proposal);
+
+    const changedSecret = await sendBrokerRequest("propose", {
+      proposal: multiChoiceProposal({
+        prompt: proposalInput.payload.prompt,
+        cancelLabel: proposalInput.payload.cancel_label,
+        choices: proposalInput.payload.choices.map((choice) =>
+          choice.choice_id === "climate_cool"
+            ? {
+                ...choice,
+                service_data: {
+                  ...choice.service_data,
+                  nested: { door_code: `${secretCode}-changed` },
+                },
+              }
+            : choice),
+      }),
+    }, { socketPath: fixture.proposalSocketPath });
+    assert.deepEqual(changedSecret.preview, proposal.preview);
+    assert.notEqual(changedSecret.preview_digest, proposal.preview_digest);
+
+    await assert.rejects(
+      authorize(fixture.socketPath, proposal, "human_confirmed"),
+      (error) => error.code === "invalid_request",
+    );
+    await assert.rejects(
+      authorize(fixture.socketPath, proposal, "human_confirmed", "missing_choice"),
+      (error) => error.code === "invalid_choice",
+    );
+    const authorization = await authorize(
+      fixture.socketPath,
+      proposal,
+      "human_confirmed",
+      "climate_cool",
+    );
+    assert.equal(authorization.choice_id, "climate_cool");
+    const replayedAuthorization = await authorize(
+      fixture.socketPath,
+      proposal,
+      "human_confirmed",
+      "climate_cool",
+    );
+    assert.equal(replayedAuthorization.capability, authorization.capability);
+    assert.equal(replayedAuthorization.choice_id, "climate_cool");
+    assert.equal(replayedAuthorization.replayed, true);
+    await assert.rejects(
+      authorize(
+        fixture.socketPath,
+        proposal,
+        "human_confirmed",
+        "light_on",
+      ),
+      (error) => error.code === "already_authorized",
+    );
+
+    await assert.rejects(
+      execute(
+        fixture.socketPath,
+        proposal,
+        authorization.capability,
+        "multi-choice-fixture-0001",
+        "light_on",
+      ),
+      (error) => error.code === "invalid_capability",
+    );
+    const result = await execute(
+      fixture.socketPath,
+      proposal,
+      authorization.capability,
+      "multi-choice-fixture-0001",
+      "climate_cool",
+    );
+    assert.equal(result.status, "succeeded");
+    assert.equal(result.operation, "multi_choice_service_call");
+    assert.equal(result.choice_id, "climate_cool");
+    assert.equal(fixture.ha.states.get("light.fixture"), "off");
+    const mutationCalls = fixture.ha.calls.filter((call) =>
+      call.method === "POST" && call.url.includes("/services/"));
+    assert.equal(mutationCalls.length, 1);
+    assert.equal(
+      mutationCalls[0].url.endsWith("/services/climate/set_temperature"),
+      true,
+    );
+    assert.deepEqual(JSON.parse(mutationCalls[0].body), {
+      temperature: 24,
+      nested: { door_code: secretCode },
+      entity_id: "climate.fixture",
+    });
+
+    const status = await sendBrokerRequest("execute_status", {
+      requester: REQUESTER,
+      idempotency_key: "multi-choice-fixture-0001",
+    }, { socketPath: fixture.socketPath });
+    assert.equal(status.status, "completed");
+    assert.equal(status.choice_id, "climate_cool");
+    assert.equal(status.result.choice_id, "climate_cool");
+    const durableState = await readFile(join(fixture.dataRoot, "idempotency.json"), "utf8");
+    assert.equal(durableState.includes("climate_cool"), true);
+    assert.equal(durableState.includes(secretCode), false);
+    const replay = await execute(
+      fixture.socketPath,
+      proposal,
+      "already-consumed",
+      "multi-choice-fixture-0001",
+      "climate_cool",
+    );
+    assert.equal(replay.status, "succeeded");
+    assert.equal(replay.choice_id, "climate_cool");
+    assert.equal(replay.replayed, true);
+    await assert.rejects(
+      execute(
+        fixture.socketPath,
+        proposal,
+        "already-consumed",
+        "multi-choice-fixture-0001",
+        "light_on",
+      ),
+      (error) => error.code === "idempotency_conflict",
+    );
+
+    await fixture.broker.close();
+    fixture.broker = new ChangeBroker(fixture.brokerOptions);
+    await fixture.broker.start();
+    const recoveredStatus = await sendBrokerRequest("execute_status", {
+      requester: REQUESTER,
+      idempotency_key: "multi-choice-fixture-0001",
+    }, { socketPath: fixture.socketPath });
+    assert.equal(recoveredStatus.status, "completed");
+    assert.equal(recoveredStatus.choice_id, "climate_cool");
+    assert.equal(recoveredStatus.result.choice_id, "climate_cool");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("multi-choice proposals reject unsafe cards and any unvalidated choice", async () => {
+  const fixture = await createFixture();
+  try {
+    const rejectsProposal = (proposal, code = "invalid_request") => assert.rejects(
+      sendBrokerRequest("propose", { proposal }, { socketPath: fixture.proposalSocketPath }),
+      (error) => error.code === code,
+    );
+    await rejectsProposal(multiChoiceProposal({ choices: [] }));
+    await rejectsProposal(multiChoiceProposal({
+      choices: Array.from({ length: 32 }, (_, index) => ({
+        choice_id: `choice_${index}`,
+        label: `Choice ${index}`,
+        domain: "light",
+        service: "turn_on",
+        entity_id: "light.fixture",
+      })),
+    }));
+    await rejectsProposal(multiChoiceProposal({
+      choices: [
+        {
+          choice_id: "duplicate",
+          label: "First",
+          domain: "light",
+          service: "turn_on",
+        },
+        {
+          choice_id: "duplicate",
+          label: "Second",
+          domain: "light",
+          service: "turn_off",
+        },
+      ],
+    }));
+    await rejectsProposal(multiChoiceProposal({
+      choices: [{
+        choice_id: "utf8_too_long",
+        label: "가".repeat(22),
+        domain: "light",
+        service: "turn_on",
+      }],
+    }));
+    await rejectsProposal(multiChoiceProposal({
+      choices: [{
+        choice_id: "missing_service",
+        label: "Unavailable action",
+        domain: "climate",
+        service: "not_registered",
+      }],
+    }), "unsupported_service");
+
+    const maximumProposalInput = multiChoiceProposal({
+      choices: Array.from({ length: 31 }, (_, index) => ({
+        choice_id: `bounded_${index}`,
+        label: `Bounded choice ${index}`,
+        domain: "light",
+        service: "turn_on",
+        entity_id: "light.fixture",
+      })),
+    });
+    delete maximumProposalInput.payload.cancel_label;
+    const maximumProposal = await sendBrokerRequest("propose", {
+      proposal: maximumProposalInput,
+    }, { socketPath: fixture.proposalSocketPath });
+    assert.equal(maximumProposal.preview.choices.length, 31);
+    assert.equal(maximumProposal.preview.cancel_label, "취소");
+
+    const binary = await sendBrokerRequest("propose", {
+      proposal: {
+        requester: REQUESTER,
+        operation: "service_call",
+        summary: "Turn on fixture light",
+        payload: { domain: "light", service: "turn_on", entity_id: "light.fixture" },
+      },
+    }, { socketPath: fixture.proposalSocketPath });
+    await assert.rejects(
+      authorize(fixture.socketPath, binary, "human_confirmed", "not_binary"),
+      (error) => error.code === "invalid_request",
+    );
+    const binaryAuthorization = await authorize(
+      fixture.socketPath,
+      binary,
+      "human_confirmed",
+    );
+    await assert.rejects(
+      execute(
+        fixture.socketPath,
+        binary,
+        binaryAuthorization.capability,
+        "binary-choice-forbidden-0001",
+        "not_binary",
+      ),
+      (error) => error.code === "invalid_request",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("service proposals reject unregistered actions and hostile or excessive data", async () => {
   const fixture = await createFixture();
   try {
@@ -2270,7 +2607,17 @@ test("proposal MCP exposes no authorize or execute tool and forwards the typed r
     true,
   );
   assert.equal(
+    list.result.tools[0].inputSchema.properties.operation.enum.includes(
+      "multi_choice_service_call",
+    ),
+    true,
+  );
+  assert.equal(
     JSON.stringify(list.result.tools[0].inputSchema).includes("expected_prior_state"),
+    true,
+  );
+  assert.equal(
+    JSON.stringify(list.result.tools[0].inputSchema).includes("choice_id"),
     true,
   );
 
@@ -2321,6 +2668,47 @@ test("proposal MCP exposes no authorize or execute tool and forwards the typed r
     payload: { proposal: { ...deviceArgs, requester: REQUESTER } },
   });
 
+  const multiChoiceArgs = {
+    operation: "multi_choice_service_call",
+    summary: "Choose one fixture action",
+    payload: {
+      prompt: "Which action should run?",
+      choices: [
+        {
+          choice_id: "light_on",
+          label: "Turn on light",
+          domain: "light",
+          service: "turn_on",
+          entity_id: "light.fixture",
+        },
+        {
+          choice_id: "cool_24",
+          label: "Cool to 24 C",
+          domain: "climate",
+          service: "set_temperature",
+          entity_id: "climate.fixture",
+          service_data: { temperature: 24 },
+        },
+      ],
+      cancel_label: "Dismiss",
+    },
+  };
+  const multiChoiceCall = await handle({
+    jsonrpc: "2.0",
+    id: 32,
+    method: "tools/call",
+    params: { name: "ha_change_propose", arguments: multiChoiceArgs },
+  });
+  assert.equal(multiChoiceCall.result.isError, false);
+  assert.equal(
+    multiChoiceCall.result.structuredContent.proposal.operation,
+    "multi_choice_service_call",
+  );
+  assert.deepEqual(requests.at(-1), {
+    action: "propose",
+    payload: { proposal: { ...multiChoiceArgs, requester: REQUESTER } },
+  });
+
   const spoof = await handle({
     jsonrpc: "2.0",
     id: 31,
@@ -2332,7 +2720,7 @@ test("proposal MCP exposes no authorize or execute tool and forwards the typed r
   });
   assert.equal(spoof.result.isError, true);
   assert.equal(spoof.result.structuredContent.error, "requester_override_forbidden");
-  assert.equal(requests.length, 2);
+  assert.equal(requests.length, 3);
 
   const forbidden = await handle({
     jsonrpc: "2.0",

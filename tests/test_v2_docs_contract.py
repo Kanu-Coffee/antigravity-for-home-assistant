@@ -376,12 +376,16 @@ def test_architecture_matches_current_s6_and_runtime_socket_graph() -> None:
         "mutation_sha256",
         "omitted_before_lines",
         "omitted_after_lines",
-        'operation: "config_patch" | "service_call" | "device_test"',
+        '"multi_choice_service_call"',
         'format: "device-test-plan-v1"',
         "expected_prior_state",
         "always: true",
         'kind: "automation_reload" | "script_reload" | "scene_reload"',
         'format: "ha-service-call-v1"',
+        'format: "ha-multi-choice-service-call-v1"',
+        "| MultiChoiceServiceCallPreview",
+        "choice_id: string",
+        "cancel_label: string",
         "service_data: Record<string, unknown>",
     ):
         assert fragment in proposal_section, f"Telegram proposal schema drift: {fragment}"
@@ -430,7 +434,10 @@ def test_v209_docs_define_shared_default_allow_and_scoped_durable_broker_boundar
     assert "재개하는 protocol" in documents["telegram"]
     assert "requester FIFO" in documents["telegram"]
     assert "exactly" in documents["telegram"] or "정확히 한 번" in documents["telegram"]
-    assert "모든 App-managed broker `service_call`과 `config_patch`" in documents["security"]
+    assert (
+        "모든 App-managed broker `service_call`, `multi_choice_service_call`, "
+        "`config_patch`"
+    ) in documents["security"]
     assert "가능한 모든 native mutation을 포괄하지 않는다" in documents["security"]
     assert "antigravity_terminal_sandbox" in documents["contract"]
     assert "deprecated/no-op" in documents["contract"]
@@ -467,6 +474,72 @@ def test_v209_docs_define_shared_default_allow_and_scoped_durable_broker_boundar
     assert "어느 값이든 false로 정규화" in translation_ko
     assert "terminal sandbox (deprecated)" in translation_en
     assert "normalizes either value to false" in translation_en
+
+
+def test_v210_docs_define_receipt_fallback_multi_choice_and_restart_boundary() -> None:
+    documents = {
+        name: re.sub(r"\s+", " ", read(path))
+        for name, path in {
+            "readme-ko": ROOT / "README.md",
+            "readme-en": ROOT / "README.en.md",
+            "docs-ko": ROOT / "antigravity_home_assistant" / "DOCS.md",
+            "docs-en": ROOT / "antigravity_home_assistant" / "DOCS.en.md",
+            "contract": V2 / "antigravity-contract.md",
+            "telegram": V2 / "telegram-spec.md",
+            "architecture": V2 / "architecture.md",
+            "security": V2 / "security.md",
+            "plan": V2 / "test-plan.md",
+            "checklist": V2 / "checklist.md",
+            "migration": V2 / "migration-release.md",
+            "changelog": ROOT / "antigravity_home_assistant" / "CHANGELOG.md",
+        }.items()
+    }
+
+    for name in ("readme-ko", "readme-en", "docs-ko", "docs-en"):
+        text = documents[name]
+        assert "multi_choice_service_call" in text, f"{name} omits multi-choice"
+        assert "31" in text and "32" in text, f"{name} omits keyboard bounds"
+        assert "v3c" in text and "v3d" in text
+        assert "v2a" in text and "v2d" in text
+        assert "toolAction" in text and "toolSummary" in text
+        assert "mcp(*)" in text
+
+    telegram = documents["telegram"]
+    for fragment in (
+        "1~31",
+        "4×8",
+        "64-byte 상한",
+        "opaque choice token",
+        "selectedChoiceId",
+        "proposal 없는 빈 response",
+        "1,024 UTF-8 byte",
+        "bridge-only restart",
+        "full App/broker restart",
+    ):
+        assert fragment in telegram, f"Telegram 2.0.10 contract drift: {fragment}"
+
+    for name in ("architecture", "security", "plan", "checklist", "changelog"):
+        text = documents[name]
+        assert "multi_choice_service_call" in text, f"{name} omits multi-choice"
+        assert "bridge" in text and "broker" in text
+
+    contract = documents["contract"]
+    assert "`Arguments`, `ServerName`, `ToolName`" in contract
+    assert "optional `toolAction`/`toolSummary`" in contract
+    assert "NUL·비공백 control character" in contract
+    assert "Home Assistant 변경 제안을 준비했습니다." in contract
+    assert "proposal 없는 빈 response" in contract
+
+    security = documents["security"]
+    assert "token→choice mapping" in security
+    assert "proposal digest/choice/capability/idempotency" in security
+    assert "mutation을 다시 dispatch하지 않는다" in security
+
+    changelog = documents["changelog"].split("## [2.0.9]", 1)[0]
+    assert "## [2.0.10]" in changelog
+    assert "full App or broker restart rejects an unstarted in-memory proposal" in changelog
+    assert "live Telegram/OAuth E2E" not in changelog
+    assert 'version: "2.0.10"' in documents["migration"]
 
 
 def test_v209_docs_match_native_sandbox_and_mediated_settings_policy() -> None:
@@ -637,7 +710,7 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
         "telegram_session_delivery",
     }
     template = json.loads(read(V2 / "release-evidence-template.json"))
-    assert template["version"] == "2.0.9"
+    assert template["version"] == "2.0.10"
     assert set(template["gates"]) == expected_gates
     assert "HA-008" not in json.dumps(template, sort_keys=True)
     for gate in template["gates"].values():

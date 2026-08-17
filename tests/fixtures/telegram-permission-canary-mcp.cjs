@@ -2,6 +2,7 @@ const readline = require("node:readline");
 const { readFileSync, writeFileSync } = require("node:fs");
 
 const input = readline.createInterface({ input: process.stdin });
+const toolName = process.env.PERMISSION_CANARY_TOOL_NAME ?? "permission_canary";
 
 function send(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -27,7 +28,7 @@ input.on("line", (line) => {
       id: request.id,
       result: {
         tools: [{
-          name: "permission_canary",
+          name: toolName,
           description: "Return a synthetic permission marker",
           inputSchema: {
             type: "object",
@@ -42,7 +43,7 @@ input.on("line", (line) => {
   }
   if (request.method === "tools/call") {
     if (
-      request.params?.name !== "permission_canary" ||
+      request.params?.name !== toolName ||
       request.params?.arguments?.value !== "MCP_PERMISSION_CANARY_OK"
     ) {
       process.exit(65);

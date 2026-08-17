@@ -22,6 +22,17 @@ confirmation card. Do not bypass that path with `ha-api`, `supervisor-api`, a
 shell command, or a direct file write; the broker owns config checks, backup,
 rollback, reload, and supported memory verification.
 
+When the requested Telegram mutation has several mutually exclusive valid
+answers, use one `multi_choice_service_call` proposal instead of asking the
+user to type an unbound answer and then constructing a new change. The card may
+contain up to 31 prevalidated choices plus one cancel button. Only the opaque
+button token selected by the same requester/session is accepted; never derive
+service parameters from callback text.
+If the full App or change broker restarts before execution is accepted, the
+in-memory proposal is gone and the old card must fail closed; ask for a new
+request. Do not confuse this with a bridge-only restart while the broker remains
+alive or with durable recovery of an execution the broker already accepted.
+
 In an authenticated interactive Web-terminal or SSH session without a Telegram
 requester binding, the proposal MCP cannot address a confirmation card. For an
 exact mutation the user explicitly requested in the current conversation, use

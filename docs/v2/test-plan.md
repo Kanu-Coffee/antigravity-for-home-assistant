@@ -78,6 +78,24 @@ refresh와 change-broker config backup fixture는 각 범주에서 검증된 완
 최신 총 2개, active journal/result 보존, atomic quarantine crash retry와
 manifestless/unsafe/symlink 보존을 확인한다.
 
+### 2.0.10 Telegram proposal receipt와 multi-choice
+
+2.0.10은 필수 managed-MCP parameter 세 개에 optional bounded
+`toolAction`/`toolSummary`가 추가된 실제 stream shape를 수용하고 unknown/invalid
+metadata는 fail closed해야 한다. 정확히 하나의 완료된 유효 proposal receipt 뒤 빈
+terminal text만 고정 문구로 대체하며 proposal 없는 빈 응답은 계속
+`terminal_response_invalid`여야 한다.
+
+`multi_choice_service_call`은 1~31개 선택지 모두에 ordinary `service_call` validator와
+한 live service registry snapshot을 적용하고, cancel을 포함한 최대 32개 button을
+4×8 안에 배치한다. `v3c`/`v3d`와 legacy `v2a`/`v2d`, encrypted opaque-token mapping,
+선택-before-authorization, requester/session generation/conversation/digest/choice/
+capability/idempotency binding, unknown token·double tap·다른 두 번째 choice·restart
+경계를 검증한다. bridge-only restart는 broker가 살아 있을 때만 기존 proposal을
+계속할 수 있고, full App/broker restart는 미접수 in-memory proposal을 실행하지 않으며
+접수된 durable result만 회수해야 한다. 실제 HAOS OAuth/AppArmor와 live Telegram
+Bot API/card/service-call E2E는 별도 증거 전까지 `NOT RUN`이다.
+
 ### 2.1 2026-08-11 local v2 working-tree 증거
 
 | 항목 | 결과 | 정확한 범위 |
@@ -162,7 +180,7 @@ candidate와 HAOS evidence가 생기기 전에는 관련 마일스톤을 `VERIFI
 | AG-007 | MCP discovery | `ha_change`, `ha_memory`, `ha_read`, `ha_validate`, `playwright` 다섯 managed server가 secret env 없이 발견 |
 | AG-008 | OAuth persistence | login 후 restart/update에서 native session 보존 |
 | AG-009 | print stdin | 값 없는 `--print` 없이 pipe된 prompt가 argv/log에 없고 stdin으로 처리 |
-| AG-010 | stream parser | top-level `event`, init/progress/SUCCESS native free-text result, exact completed HA proposal receipt, conversation binding, typed terminal failures, invalid JSON, unknown event, size limit |
+| AG-010 | stream parser | top-level `event`, init/progress/SUCCESS native free-text result, exact completed HA proposal receipt, optional bounded `toolAction`/`toolSummary`, single-proposal empty-text fallback, conversation binding, typed terminal failures, invalid JSON, unknown event, size limit |
 | AG-011 | headless permissions | settings policy와 AppArmor command 경계가 print mode에도 적용되고 legacy true/false는 false로 정규화 |
 | AG-012 | forbidden flags | skip-permissions와 Telegram override 거부 |
 | AG-013 | Telegram customization inheritance | user global/workspace plugin·agent·rule·MCP를 Web/SSH와 동일하게 실행·노출·수정; shared settings policy 상속, 일반 설정의 매개 patch, raw/protected settings write deny |
@@ -216,6 +234,12 @@ current amd64 image와 current-source QEMU aarch64 packaging canary는 이 경�
 - live `/api/services` 기반 모든 domain/service, optional 단일/100개 entity,
   bounded/prototype-safe/redacted-but-digest-bound `service_data`, 단일 entity의 optional
   prior-state/fresh-result verify와 그 밖의 API-completion-only 보고
+- `multi_choice_service_call`의 1/31개 boundary와 0/32개 거부, unique bounded
+  `choice_id`/label/prompt/cancel, 모든 choice의 ordinary service-call validation, 한 live
+  service registry snapshot, 전체 payload/digest binding과 선택한 하나의 execution
+- choice가 authorize capability/execute/idempotency/status/result에 끝까지 결합되고
+  missing/unknown/different choice, binary operation의 choice 주입과 같은 key의 다른
+  선택 replay를 fail closed하는지 검증
 - 별도 typed `device_test`의 light/switch/input_boolean on/off allowlist, no-op/safety
   domain 거부, broker-generated test+restore preview, fresh prior/test/restore 순서와
   test-call error/verification failure에도 always restore
@@ -265,6 +289,9 @@ current amd64 image와 current-source QEMU aarch64 packaging canary는 이 경�
 - Bot API transport ack 뒤 process crash/restart replay, wrong-token/tamper fail-closed와
   sealed spool 128 records/2 MiB 경계
 - NDJSON invalid/oversized/missing result/non-zero exit
+- proposal receipt의 optional bounded `toolAction`/`toolSummary` 허용, unknown key/
+  non-string/control/oversize 거부, 단일 유효 proposal+empty terminal text의 고정 fallback,
+  proposal 없는 empty terminal text 거부
 - first-run pre-binding, worker/restart/idle 뒤 같은 conversation과 explicit `/new` rotation
 - global tool permission/sensitive option 동등 적용, native sandbox flag 부재/override
   거부, legacy true/false 입력의 false 정규화, legacy Telegram mode 무시
@@ -273,7 +300,10 @@ current amd64 image와 current-source QEMU aarch64 packaging canary는 이 경�
 - encrypted reply outbox의 pre-send fsync, chunk ack, 429 bounded retry,
   crash/network/timeout/5xx ambiguity 격리와 명시적 `/retry`, 최종 제거
 - App-managed broker high-risk always-confirm matrix와 모든 broker
-  `service_call`/`config_patch`의 durable human confirmation 강제
+  `service_call`/`multi_choice_service_call`/`config_patch`의 durable human confirmation 강제
+- 31 choice+cancel의 4×8 inline keyboard, `v3c`/`v3d` choice/dismiss와 legacy
+  `v2a`/`v2d`, callback 64-byte 상한, encrypted opaque-token mapping, 선택의
+  authorization-before persistence와 restart recovery/fail-closed 경계
 - cross-user/chat callback, replay, expiry와 preview digest change
 - config replacement 원문을 Bot에 보내지 않고 broker structured preview만
   confirmation에 사용하며 model summary-only preview를 거부
@@ -517,10 +547,14 @@ HAOS update와 이전 image rollback은 실행하지 않았으므로 IM-012는 `
 - unauthorized user/chat와 pairing probe 거부
 - 조회와 per-chat session continuation, explicit `/new` rotation
 - global native permission 동등 적용과 same-session change confirmation/cancel/expiry
+- `multi_choice_service_call`의 synthetic safe choices, 31-choice layout 경계,
+  한 선택 실행과 다른 choice/double-tap/unknown-token 거부, legacy binary card 호환
 - safe fixture entity `device_test`의 test+restore preview, human confirmation과 최종
   prior-state 복원. 실제 safety-critical entity는 사용하지 않음
 - callback replay/cross-user negative test
-- App restart 때 queue/capability 취소와 authorization 보존
+- bridge restart 때 broker가 살아 있는 pending choice mapping 복구, App/broker restart
+  때 미접수 proposal fail closed, 이미 접수된 execution의 durable status/result 회수,
+  queue/capability 취소와 authorization 보존
 - Bot API network interruption 뒤 duplicate mutation 없음
 - shared `/data/home`·`/config`에서 user global/workspace customization이 CLI와
   동일하게 실행·수정되고 실제 OAuth canary가 reply/log/network로 유출되지 않음

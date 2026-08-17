@@ -528,6 +528,10 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
     )
     assert '"ha_change"' in plugin_mcp
     assert "/usr/local/bin/ha-change-proposal-mcp" in plugin_mcp
+    assert "multi_choice_service_call" in proposal_skill
+    assert re.search(r"Provide 1 to\s+31 choices", proposal_skill)
+    assert "callback contains only an opaque token" in proposal_skill
+    assert "prevalidated choice" in proposal_skill
     assert '"ha_read"' in plugin_mcp
     assert "/usr/local/bin/ha-read-mcp" in plugin_mcp
     assert '"ha_validate"' in plugin_mcp
@@ -630,7 +634,7 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
     ):
         assert f'"{tool}"' in helper
     assert "mcp(ha_read/${tool})" in helper
-    assert "Do not supply or invent requester" in proposal_skill
+    assert re.search(r"Do not\s+supply or invent requester\s+fields", proposal_skill)
     assert "process environment" in proposal_skill
     assert "Use `device_test`, never `service_call`" in proposal_skill
     assert "`expected_prior_state`" in proposal_skill

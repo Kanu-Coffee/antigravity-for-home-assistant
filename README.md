@@ -162,6 +162,10 @@ App 소유 보안 key인 `permissions`, `enableTerminalSandbox`,
 정책은 App 옵션과 재시작으로만 바꿉니다.
 사용자 plugin·agent·skill·rule은 계속 공유되고 직접 수정할 수 있으며 기존 user-owned
 rule은 update에서 보존됩니다.
+2.0.9 이상의 image-managed 기본 설정은 이미 `mcp(*)`를 허용하고 managed `ask`를
+비웁니다. 따라서 `mcp(ha_change/*)`, `mcp(ha_read/*)`, `mcp(ha_memory/*)` 같은
+서버별 규칙을 수동으로 중복 추가할 필요가 없습니다. 사용자가 별도로 추가한
+`ask`/`deny`는 계속 우선합니다.
 bridge는 pipe된 stdin으로 질문을 받고 같은 `/data/home`과 `/config`에서 공유
 `antigravity --output-format stream-json` launcher를 실행합니다. 별도 shell이나 공유
 tmux에 입력을 주입하지 않지만 CLI와 같은 전역
@@ -172,11 +176,33 @@ backoff로 재시도하고 전달 여부가 모호하면 `/retry` 전까지 격�
 native prompt를 Telegram 버튼으로 이어서 재개할 수 없습니다. 관리형 runtime rule은
 일반 HA service/config 변경을 `ha_change_propose`로 라우팅합니다. broker는 모든 live
 HA domain/service와 bounded `service_data`, 일반 YAML patch를 지원합니다. 이 경로로
-생성된 App-managed broker `service_call`/`config_patch`는 모두 고위험이며 requester·chat·
-session에 영속 결합된 승인/거절 버튼이 필요합니다. 이 broker 분류는 전역 tool
+생성된 App-managed broker `service_call`/`multi_choice_service_call`/`config_patch`는
+모두 고위험이며 requester·chat·session에 영속 결합된 승인/선택/거절 버튼이
+필요합니다. 이 broker 분류는 전역 tool
 policy로 낮출 수 없습니다. 승인된 service call은 live `/api/services` 검증 뒤
 실행하며 YAML은 expected digest, atomic backup/write와 `ha-config-check`를 거쳐 실패 시
 exact rollback합니다.
+
+2.0.10부터 broker는 하나의 질문에 상호 배타적인 1~31개 service call을 담는
+`multi_choice_service_call`도 지원합니다. Telegram은 취소를 포함해 최대 32개 버튼을
+행당 최대 4개, 최대 8행으로 표시합니다. 선택 callback은 실행 파라미터가 아닌 짧은
+opaque token만 전달하며, bridge가 암호화해 저장한 token→choice binding과 broker의
+requester·session generation·conversation·proposal digest·choice·idempotency
+binding을 모두 재검증한 뒤 사전 검증된 선택지 하나만 실행합니다. 새 `v3c`/`v3d`
+choice/cancel callback과 기존 `v2a`/`v2d` 실행/취소 카드는 함께 지원됩니다.
+
+choice mapping과 선택 결과는 bridge 재시작에 대비해 영속화되지만, 아직 실행을
+접수하지 않은 proposal 자체는 change broker의 메모리에만 있습니다. 따라서 bridge만
+재시작되고 broker가 계속 살아 있으면 카드를 재검증할 수 있지만, App 전체 또는
+broker가 재시작되어 proposal이 사라졌다면 오래된 카드를 실행하지 않고 새 요청을
+요구합니다. broker가 이미 접수한 실행의 완료 결과는 durable idempotency/status로
+회수하며 같은 변경을 다시 실행하지 않습니다.
+
+2.0.10 stream parser는 필수 `Arguments`/`ServerName`/`ToolName`에 더해 bounded 문자열
+`toolAction`/`toolSummary` metadata를 허용합니다. 정확히 하나의 완료된 유효 proposal
+receipt가 있는데 terminal text만 비어 있으면 고정된 안전 문구를 넣어 승인 카드를
+계속 전달합니다. proposal이 없는 빈 응답, 알 수 없는 parameter key, non-string 또는
+과대 응답은 계속 fail closed합니다.
 
 신뢰된 사용자 설치·전역 native tool, `command(*)`/`mcp(*)`, 직접 `ha-api`/
 `supervisor-api`와 일반 `/config` shell write는 CLI와 같은 관리자 권한을 상속하며

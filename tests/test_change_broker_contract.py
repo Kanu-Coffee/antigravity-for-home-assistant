@@ -125,6 +125,13 @@ def test_change_broker_source_has_fail_closed_contract(rootfs: Path) -> None:
     assert 'status: "completed"' in source
     assert 'operation === "config_patch"' in source
     assert 'operation === "service_call"' in source
+    assert 'operation === "multi_choice_service_call"' in source
+    assert "normalizeMultiChoiceServiceCallPayload" in source
+    assert "MAX_MULTI_CHOICE_ITEMS = 31" in source
+    assert 'format: "ha-multi-choice-service-call-v1"' in source
+    assert "#executeMultiChoiceServiceCall" in source
+    assert 'existingCapability.authorization === authorization' in source
+    assert 'capability: existingCapability.capability' in source
     assert '"device_test"' in source
     assert "normalizeDeviceTestPayload" in source
     assert "#executeDeviceTest" in source
@@ -185,6 +192,9 @@ def test_change_broker_source_has_fail_closed_contract(rootfs: Path) -> None:
     assert '"script_reload"' in proposal
     assert '"scene_reload"' in proposal
     assert 'required: ["domain", "service"]' in proposal
+    assert '"multi_choice_service_call"' in proposal
+    assert "maxItems: 31" in proposal
+    assert 'required: ["choice_id", "label", "domain", "service"]' in proposal
     assert 'service_data' in proposal
     assert 'return_response' in proposal
     assert '"device_test"' in proposal
