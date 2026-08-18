@@ -171,3 +171,9 @@
 - 2.0.12 amd64 Telegram reconciliation/reconnect/restart PASS와 AppArmor attach FAIL은
   서로 독립된 현장 결과다. aarch64 `NOT RUN` owner waiver는 experimental 배포의
   위험 수용일 뿐 AppArmor 또는 architecture PASS가 아니다.
+- 공개 2.0.13의 실제 HAOS amd64 startup은 `/run/s6`·`/run/service` directory entry
+  생성 거부와 `s6-overlay-suexec` exit 111로 `FAIL`했다. 2.0.14는 exact S6 runtime·
+  container exit result와 nginx PID access만 추가하고 기존 credential·민감정보 deny를
+  유지한다. 이 수정은 2.0.13 보안 경계를 바꾸는 새 migration이 아니므로 2.0.14를
+  `breaking_versions`에 추가하지 않으며, 실제 HAOS 기동·재시작 수용은 `NOT RUN`으로
+  유지한다.

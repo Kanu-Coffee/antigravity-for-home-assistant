@@ -31,16 +31,15 @@
 > 확인하세요. 현재 `experimental`이며 실제 HAOS 양쪽 아키텍처의 전체 설치·업데이트·
 > rollback 검증은 릴리스별 증거를 확인해야 합니다.
 
-**2.0.13 AppArmor 보안 전환:** 실제 HAOS 18.2 amd64에서 2.0.11→2.0.12
-`preserve` 업데이트의 Telegram 자동 권한 복구, Bot 재연결·메시지 전달과 App
-재시작/재연결은 통과했습니다. 그러나 같은 기기에서 project custom AppArmor가
-attach되지 않고 `docker-default (enforce)`가 관찰되어 AppArmor 항목은 실패했습니다.
-2.0.13은 Supervisor의 single-primary scanner와 호환되도록 slug primary 선언 하나만
-column 0에 두고 나머지 독립 global `Px` target 선언을 들여쓰며, AppArmor parser가
-읽는 23개 profile 이름과 전이는 유지합니다. 의도한 least-privilege deny가 처음
-활성화될 수 있으므로 breaking update입니다. aarch64 실기기 검증은 장비 부재로
-`NOT RUN`이며 experimental 배포에 한해 소유자가 면제했지만, 이는 PASS가 아닙니다.
-2.0.13 custom profile의 실제 HAOS 재검증도 아직 `NOT RUN`입니다.
+**2.0.14 S6/AppArmor 기동 복구:** 공개 2.0.13으로 업데이트한 실제 HAOS 18.2
+amd64에서 이전 컨테이너의 정상 Telegram 처리와 순차 종료 뒤, 새 컨테이너가
+`/run/s6`와 `/run/service`를 만들지 못해 `s6-overlay-suexec` exit 111로 기동에
+실패했습니다. 이는 Telegram 연결 장애가 아니라 custom AppArmor가 S6 runtime
+디렉터리 자체를 허용하지 않은 startup 결함입니다. 2.0.14는 S6와 nginx에 필요한
+정확한 runtime 경로만 추가하고 기존 민감정보 deny를 유지합니다. 실제 HAOS 2.0.14
+기동·재시작 수용 시험은 아직 `NOT RUN`입니다. aarch64 실기기 시험도 장비 부재로
+`NOT RUN`이며 experimental 배포 면제는 PASS가 아닙니다. 2.0.13은 보안 경계 전환
+버전으로 계속 breaking 목록에 남고, 2.0.14는 그 경계 안의 corrective patch입니다.
 
 ## v2가 제공하는 것
 
@@ -95,8 +94,8 @@ column 0에 두고 나머지 독립 global `Px` target 선언을 들여쓰며, A
 > 기기·설정·terminal/script 작업을 실행할 수 있습니다. OAuth 자료, App 소유 권한
 > 설정과 민감 경로는 직접 수정할 수 없습니다. bot token, 허용된 chat과 Telegram
 > 계정을 HA 관리자 credential처럼 보호하세요. amd64의 기본 Bot API 재연결·전달과
-> App 재시작은 2.0.12에서 확인됐지만, OAuth, 전체 승인/mutation 행렬, 2.0.13 custom
-> AppArmor와 aarch64 실기기 E2E는 아직 완료되지 않았습니다.
+> App 재시작은 2.0.12에서 확인됐지만, OAuth, 전체 승인/mutation 행렬, corrected
+> 2.0.14 custom AppArmor와 aarch64 실기기 E2E는 아직 완료되지 않았습니다.
 
 Web UI 또는 SSH에서 `ha-antigravity-login`으로 공식 native first-run OAuth를 한 번
 완료한 뒤 bot을 활성화합니다. 별도 Telegram identity, `ha-telegram-login`, 전용 HOME

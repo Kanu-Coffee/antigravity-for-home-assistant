@@ -28,14 +28,13 @@
 기록을 확인하세요.
 
 2.0.12의 실제 HAOS 18.2 amd64 `preserve` 업데이트에서는 Telegram 권한 자동 복구,
-Bot 재연결·전달과 App 재시작/재연결이 통과했습니다. 그러나 custom AppArmor attach는
-실패했고 `docker-default (enforce)`가 관찰됐습니다. 2.0.13은 Supervisor가 column 0에서
-찾는 slug primary 선언만 하나로 유지하고 나머지 22개 선언을 들여써, AppArmor
-parser가 기존 23개 독립 global profile과 `Px transition`을 그대로 load하도록
-수정합니다. 의도한 least-privilege deny가 처음 적용될 수 있는 breaking update입니다.
-2.0.13의 실제 HAOS AppArmor 재검증은 아직 `NOT RUN`입니다. aarch64 실기기 시험도
-장비 부재로 `NOT RUN`이며, 소유자가 experimental 배포에 한해 면제했지만 PASS로
-간주하지 않습니다.
+Bot 재연결·전달과 App 재시작/재연결이 통과했고 custom AppArmor attach는
+`docker-default (enforce)`로 실패했습니다. 이를 고친 공개 2.0.13은 다음 컨테이너
+기동에서 custom profile이 `/run/s6`와 `/run/service` 생성을 막아
+`s6-overlay-suexec` exit 111로 실패했습니다. 2.0.14는 S6와 nginx의 정확한 runtime
+경로만 허용하고 기존 민감정보 deny를 유지합니다. 2.0.14의 실제 HAOS 기동·재시작
+검증은 아직 `NOT RUN`입니다. aarch64 실기기 시험도 장비 부재로 `NOT RUN`이며,
+소유자가 experimental 배포에 한해 면제했지만 PASS로 간주하지 않습니다.
 
 ### 실행 표면
 
@@ -507,10 +506,12 @@ Telegram 명령, migration mode로 AppArmor를 끌 수 없고 HA 보호 모드 �
 않아야 합니다.
 
 2.0.12 amd64 현장 보고에서 `docker-default (enforce)`가 확인된 것은 custom policy
-PASS가 아니라 attach `FAIL`입니다. 2.0.13 업데이트 뒤 App terminal과 관련 service
-실행 경로의 `/proc/self/attr/current` 및 Supervisor 상태에서
-`antigravity_home_assistant` named profile이 enforce인지 확인하고, 예상하지 않은
-`DENIED`를 검토하세요. 문제를 우회하려고 보호 mode나 AppArmor를 끄지 마세요.
+PASS가 아니라 attach `FAIL`입니다. 공개 2.0.13에서는 custom policy 활성화 뒤 S6가
+필요한 `/run/s6`·`/run/service` 디렉터리 자체를 만들 수 없어 다음 기동이 exit 111로
+실패했습니다. 2.0.14 업데이트 뒤 App terminal과 관련 service 실행 경로의
+`/proc/self/attr/current` 및 Supervisor 상태에서 `antigravity_home_assistant` named
+profile이 enforce인지 확인하고, `s6-mkdir` 오류와 예상하지 않은 `DENIED`를 검토하세요.
+문제를 우회하려고 보호 mode나 AppArmor를 끄지 마세요.
 
 ### 민감정보 옵션
 
@@ -774,7 +775,8 @@ browser 계약, migration과 AppArmor policy parse를 대상으로 합니다. �
 
 - 실제 HAOS amd64의 clean install과 aarch64의 install·start·update
 - 양쪽 아키텍처의 native Antigravity OAuth와 plugin discovery
-- 2.0.13에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되는지
+- 2.0.14에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되고 S6가
+  최초 기동·stop/start·restart를 완료하는지
 - 공개 GHCR generic manifest와 per-arch digest의 실제 pull
 - 실제 dashboard, live Telegram card/callback/command/HA action, migration 세 mode와
   rollback E2E
@@ -784,8 +786,9 @@ manifest와 HAOS acceptance 기록에서 해당 항목이 통과했는지 확인
 계획이나 unit test를 실제 장치 검증으로 해석하지 마세요.
 
 현재 좁은 현장 증거는 2.0.12 amd64 Telegram reconcile/reconnect와 App
-restart/reconnect `PASS`, 같은 image의 custom AppArmor attach `FAIL`, aarch64
-`NOT RUN`입니다. 이 결과를 전체 HA-001~HA-008 또는 AA-001 PASS로 확대하지 않습니다.
+restart/reconnect `PASS`, 같은 image의 custom AppArmor attach `FAIL`, 공개 2.0.13의
+S6/AppArmor startup `FAIL`, 2.0.14와 aarch64 실기기 `NOT RUN`입니다. 이 결과를 전체
+HA-001~HA-008 또는 AA-001 PASS로 확대하지 않습니다.
 
 ## 지원 보고서
 

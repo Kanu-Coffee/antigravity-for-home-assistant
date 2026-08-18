@@ -146,8 +146,14 @@
 - 2.0.13 source는 slug primary만 column 0에 두고 나머지 22개 독립 global profile
   선언을 들여쓴다. AppArmor parser의 23개 이름, `Px transition`과 deny 의미는
   유지하며 nested subprofile로 바꾸지 않는다.
-- parser/static/Supervisor-source contract가 PASS해도 실제 2.0.13 HAOS attach/enforce와
-  AA-001 positive/negative matrix 전에는 AppArmor milestone을 `VERIFIED`로 올리지 않는다.
+- 공개 2.0.13의 실제 HAOS amd64 업데이트에서는 새 컨테이너가 `/run/s6`와
+  `/run/service`를 만들지 못하고 `s6-overlay-suexec` exit 111로 종료되어
+  AppArmor/S6 startup이 `FAIL`했다. 앞선 Telegram metrics는 이전 컨테이너의 정상
+  기록이며 이 startup 결함을 Telegram 실패로 분류하지 않는다.
+- 2.0.14는 S6 runtime entry·container exit result와 nginx PID의 exact access만
+  복구하고 기존 민감정보 deny를 유지한다. 2.0.14 실제 HAOS 최초 기동·stop/start·
+  restart와 AA-001 positive/negative matrix는 `NOT RUN`이며, 완료 전 AppArmor
+  milestone을 `VERIFIED`로 올리지 않는다.
 
 ### 2026-08-11 local v2 증거 스냅샷
 
@@ -244,9 +250,9 @@
 | M3-02 | `PARTIAL` | typed proposal, risk classifier, capability 구현 | broker unit/security suite PASS; HAOS mutation TODO |
 | M3-03 | `PARTIAL` | secret-safe structured preview와 일반 YAML transaction/check/reload-or-restart-required/exact rollback | local broker suite PASS; HAOS safe change TODO |
 | M3-04 | `PARTIAL` | service_call과 분리된 typed transient device prior/test/always-restore workflow | local success/failure/in-doubt/replay PASS; HAOS safe test TODO |
-| M3-05 | `PARTIAL` | custom `apparmor.txt` root와 restricted/sensitive-read top-level named `Px` 실행 프로필 작성 | parser/static transition tests PASS; 2.0.12 amd64 attach FAIL, 2.0.13 HAOS retest TODO |
+| M3-05 | `PARTIAL` | custom `apparmor.txt` root와 restricted/sensitive-read top-level named `Px` 실행 프로필 작성 | parser/static transition tests PASS; 2.0.12 amd64 attach FAIL, 2.0.13 S6 startup FAIL, 2.0.14 HAOS retest TODO |
 | M3-06 | `TODO` | HAOS complain audit로 최소 allowlist 조정 | sanitized audit report |
-| M3-07 | `TODO` | HAOS enforce positive/negative matrix | 2.0.12 amd64 custom attach FAIL; 2.0.13 AppArmor E2E TODO |
+| M3-07 | `TODO` | HAOS enforce positive/negative matrix | 2.0.12 amd64 custom attach FAIL; 2.0.13 S6 startup FAIL; 2.0.14 AppArmor E2E TODO |
 | M3-08 | `PARTIAL` | App-managed broker 고위험 항상 확인 불변조건 검증 | local policy/replay matrix PASS; real Telegram E2E TODO |
 | M3-09 | `PARTIAL` | 민감정보 option의 profile 선택과 불변 deny 구현 | local profile matrix PASS; false/true HAOS matrix TODO |
 | M3-10 | `PARTIAL` | shared native OAuth 동일-process 잔여 위험과 관리자 trust-model 검증 | local shared-HOME canary; actual HAOS OAuth 비유출/AppArmor TODO |
@@ -291,7 +297,7 @@
 | M6-04 | `PARTIAL` | reset_v2가 ownership state와 무관하게 safe settings를 backup하고 managed key/permission을 exact 복구, preserve 전 매-start drift 복구 | local state/target journal + SIGKILL rollback PASS; HAOS rollback TODO |
 | M6-05 | `PARTIAL` | memory/browser/SSH/OAuth preservation | amd64 public-v1 fixture와 QEMU arm64 restart persistence PASS; HA-005/HA-006/HA-007 TODO |
 | M6-06 | `PARTIAL` | amd64/aarch64 build/runtime와 per-checkout bounded local cache | 2.0.9 build helper contract 및 shared Telegram/permission/broker 재검증; native HAOS both arch TODO |
-| M6-07 | `PARTIAL` | `image`, AppArmor와 breaking metadata | 2.0.13 breaking binding/static loader contract; 2.0.12 amd64 attach FAIL, corrected HAOS install TODO |
+| M6-07 | `PARTIAL` | `image`, AppArmor와 breaking metadata | 2.0.13 breaking binding/static loader contract; 2.0.13 S6 startup FAIL, 2.0.14 corrected HAOS install TODO |
 | M6-08 | `PARTIAL` | staged candidate exact-digest smoke, HAOS rehearsal bundle와 rebuild 없는 idempotent promotion | remote PR Builder PASS; Candidate workflow/actual bundle run TODO |
 | M6-09 | `PARTIAL` | leaf SBOM, provenance, exact Cosign identity와 anonymous preflight | local workflow contract; public registry retrieval TODO |
 | M6-10 | `PARTIAL` | candidate-bound local HAOS rehearsal과 post-publish public acceptance | pre-finalize finalizer와 post-publish HA-005/HA-008 validator/uploader implemented; HA-005/006/007/008 NOT RUN |

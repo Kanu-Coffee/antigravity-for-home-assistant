@@ -27,16 +27,16 @@ Use antigravity inside Home Assistant to inspect your setup and improve dashboar
 > [!WARNING]
 > This app is a powerful administrative tool that can directly change your Home Assistant configuration. Telegram is equivalent to the CLI as an administrator channel, so protect the bot token, authorized chats, and Telegram accounts. Back up important data, review plans and diffs, and never expose the SSH port directly to the internet.
 
-**2.0.13 AppArmor security transition:** The real-HAOS amd64 2.0.12 update
-passed Telegram permission reconciliation, reconnect, and App
-restart/reconnect, but custom AppArmor attachment failed and
-`docker-default (enforce)` was observed. Version 2.0.13 corrects that boundary
-with one Supervisor-recognized slug primary declaration plus 22 indented
-declarations that the AppArmor parser continues to load as independent global
-`Px` targets. Intended denials may now apply, so this is a breaking update.
-Real-HAOS validation of the corrected 2.0.13 policy and aarch64 device testing
-are `NOT RUN`; the unavailable-aarch64 owner waiver is an experimental
-deployment decision, not a PASS.
+**2.0.14 S6/AppArmor startup recovery:** On real HAOS amd64, the public 2.0.13
+update's custom AppArmor policy blocked creation of `/run/s6` and
+`/run/service`, so the new container failed to start with
+`s6-overlay-suexec` exit 111. Earlier Telegram metrics and the orderly stop
+belong to the previous healthy container and do not show a Telegram failure.
+Version 2.0.14 permits only the exact S6 and nginx runtime paths while retaining
+sensitive-data denials. Real-HAOS 2.0.14 startup/restart validation and
+real-device aarch64 testing are `NOT RUN`; the unavailable-device waiver is not
+a PASS. Version 2.0.13 remains the breaking security transition, and 2.0.14 is
+a corrective patch.
 
 ## Quick start
 

@@ -7,7 +7,7 @@ name: Main release
       version:
         description: Numeric App version already present on main
         required: true
-        default: "2.0.13"
+        default: "2.0.14"
         type: string
       candidate_run_id:
         description: Successful Candidate build run ID
@@ -197,7 +197,10 @@ jobs:
               "$RUN_ID" "$RUN_ATTEMPT"
             printf -- '- Multi-arch OCI digest: `%s`\n' \
               "$(jq --raw-output .images.generic.digest "$candidate")"
-            printf -- '- Status: experimental prerelease; real-device acceptance continues after publication.'
+            printf -- '- Status: experimental prerelease; real-device acceptance continues after publication.\n'
+            printf -- '- amd64 HAOS acceptance at publication: `NOT RUN`.\n'
+            printf -- '- aarch64 HAOS acceptance at publication: `NOT RUN`; owner-waived for experimental deployment, not a PASS.\n'
+            printf -- '- Overall v2 acceptance at publication: `PARTIAL`.'
           } > main-release-notes.md
           {
             printf 'amd64_image=%s\n' \

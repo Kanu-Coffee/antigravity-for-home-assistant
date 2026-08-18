@@ -146,7 +146,7 @@ restart/reconnect는 `PASS`했다. 이 좁은 결과는 unrelated settings/globa
 `FAIL`이고, aarch64 실기기 결과는 장비 부재로 `NOT RUN`이다. 소유자가 experimental
 배포에서 aarch64 결과를 면제했지만 이 면제를 PASS 증거로 기록하지 않는다.
 
-### 2.0.13 Supervisor AppArmor primary declaration 호환성
+### 2.0.13 Supervisor AppArmor primary declaration과 2.0.14 S6 startup
 
 2.0.12 `apparmor.txt`의 들여쓰기 없는 최상위 `profile` 선언 23개는 Supervisor
 2026.07.5의 App policy primary scanner가 요구하는 정확히 한 개의 `^profile[ ]` 선언과
@@ -155,10 +155,17 @@ restart/reconnect는 `PASS`했다. 이 좁은 결과는 unrelated settings/globa
 `Px transition`과 path deny는 동일해야 하며 nested subprofile로 바꾸지 않는다.
 
 정적 수용은 Supervisor primary 선언 1개, AppArmor parser의 기존 23개 global profile,
-기존 transition target과 deny 집합 보존을 각각 검사한다. 실제 HAOS에서는 2.0.13
-설치·restart 뒤 root와 각 서비스 경로의 named profile enforce, option false/true
-positive/negative AA-001 matrix 및 예상 밖 `DENIED` 0건을 새로 관찰해야 한다. 이
-2.0.13 실기기 AppArmor 결과는 현재 `NOT RUN`이다.
+기존 transition target과 deny 집합 보존을 각각 검사한다. 공개 2.0.13의 실제 HAOS
+18.2 amd64 업데이트에서는 이전 컨테이너의 정상 Telegram metrics와 순차 종료 뒤 새
+컨테이너의 `/run/s6`·`/run/service` 생성이 `Permission denied`로 실패하고
+`s6-overlay-suexec`가 exit 111로 종료됐다. 따라서 2.0.13 실기기 AppArmor/S6 startup
+결과는 `FAIL`이며 Telegram 연결 실패로 분류하지 않는다.
+
+2.0.14는 S6 runtime directory entry와 container exit result, nginx PID에 필요한
+접근만 추가하고 기존 credential·민감정보 deny를 유지해야 한다. 실제 HAOS에서는
+2.0.14 설치 뒤 최초 기동, stop/start와 restart, root와 각 서비스 경로의 named profile
+enforce, option false/true positive/negative AA-001 matrix, `s6-mkdir`/exit 111 및 예상
+밖 `DENIED` 0건을 새로 관찰한다. 2.0.14 실기기 AppArmor 결과는 현재 `NOT RUN`이다.
 
 ### 2.1 2026-08-11 local v2 working-tree 증거
 
