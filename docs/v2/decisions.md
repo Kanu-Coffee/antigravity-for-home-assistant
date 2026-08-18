@@ -149,5 +149,25 @@
   살아 있는 fail-closed hold에 둔다. 같은 설정의 fatal/S6 restart loop는 금지하며
   안전한 복구 뒤 App restart가 필요하다.
 - 명시적 `reset_v2`는 Telegram 활성화 여부와 무관한 broader drift recovery로 유지한다.
-  2.0.12 repaired image의 실제 HAOS update, live Bot API 재연결과 hold 동작은 별도
-  실기기 증거 전까지 `NOT RUN`이다.
+  2026-08-18 실제 HAOS amd64에서 2.0.12 public update, live Bot API 재연결·전달과
+  App restart/reconnect는 `PASS`했다. unsafe-boundary hold, unrelated state/OAuth 보존과
+  전체 HA-004는 `NOT RUN`이며 좁은 성공을 확대하지 않는다. 같은 기기의 custom
+  AppArmor attach는 `FAIL`, aarch64는 owner-waived `NOT RUN`이다.
+
+## ADR-008 — Supervisor primary scanner와 독립 AppArmor profile 표현
+
+- 상태: `Accepted`
+- Supervisor 2026.07.5는 App의 `apparmor.txt`에서 column 0의 `^profile[ ]` primary
+  선언을 정확히 하나만 허용한다. 2.0.12의 23개 column-0 선언은 이 presentation
+  계약을 위반했고 custom policy가 설치되지 않아 실제 amd64에서
+  `docker-default (enforce)`가 관찰됐다.
+- 2.0.13은 `antigravity_home_assistant` slug primary 선언 하나만 column 0에 두고
+  다른 22개 선언을 들여쓴다. AppArmor parser는 들여쓰기와 무관하게 동일한 23개
+  독립 global named profile과 기존 `Px transition` target을 load한다. profile을
+  nesting하거나 root profile 권한으로 합치지 않는다.
+- 이 변경으로 project least-privilege deny가 처음 실제 적용될 수 있으므로 2.0.13은
+  breaking version이다. parser와 source contract PASS만으로 HAOS attach를 주장하지
+  않으며 2.0.13 설치 뒤 AA-001을 새로 수행한다.
+- 2.0.12 amd64 Telegram reconciliation/reconnect/restart PASS와 AppArmor attach FAIL은
+  서로 독립된 현장 결과다. aarch64 `NOT RUN` owner waiver는 experimental 배포의
+  위험 수용일 뿐 AppArmor 또는 architecture PASS가 아니다.

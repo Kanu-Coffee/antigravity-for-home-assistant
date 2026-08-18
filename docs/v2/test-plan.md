@@ -137,9 +137,28 @@ card/callback 또는 실제 HA/command E2E가 아니다. 이 항목들은 계속
 - invalid effective settings는 Bot API 호출 전 `permission_boundary_blocked` 한 건을
   만들고 bridge process를 exit시키거나 S6 restart loop를 만들지 않는 live hold
 
-현장 수동 settings 복구는 이 repaired image의 증거가 아니다. 2.0.12 image로 수행한
-실제 HAOS update/restart, live Bot API reconnect, OAuth/AppArmor와 hold E2E는 별도
-실기기 evidence 전까지 `NOT RUN`이다.
+현장 수동 settings 복구는 이 repaired image의 증거가 아니다. 2026-08-18 실제 HAOS
+18.2 amd64에서 public 2.0.11→2.0.12 `preserve` update, automatic reconciliation,
+`permission_boundary_ready` 29/0/33, live Bot API reconnect·delivery와 App
+restart/reconnect는 `PASS`했다. 이 좁은 결과는 unrelated settings/global MCP/OAuth
+보존, unsafe boundary hold, 전체 HA-004 또는 다른 architecture를 PASS로 만들지 않는다.
+같은 보고의 AppArmor는 project custom profile이 아니라 `docker-default (enforce)`여서
+`FAIL`이고, aarch64 실기기 결과는 장비 부재로 `NOT RUN`이다. 소유자가 experimental
+배포에서 aarch64 결과를 면제했지만 이 면제를 PASS 증거로 기록하지 않는다.
+
+### 2.0.13 Supervisor AppArmor primary declaration 호환성
+
+2.0.12 `apparmor.txt`의 들여쓰기 없는 최상위 `profile` 선언 23개는 Supervisor
+2026.07.5의 App policy primary scanner가 요구하는 정확히 한 개의 `^profile[ ]` 선언과
+맞지 않았다. 2.0.13은 slug primary 선언 하나만 column 0에 유지하고 나머지 22개
+독립 global profile 선언을 들여쓴다. AppArmor parser 관점의 23개 profile 이름,
+`Px transition`과 path deny는 동일해야 하며 nested subprofile로 바꾸지 않는다.
+
+정적 수용은 Supervisor primary 선언 1개, AppArmor parser의 기존 23개 global profile,
+기존 transition target과 deny 집합 보존을 각각 검사한다. 실제 HAOS에서는 2.0.13
+설치·restart 뒤 root와 각 서비스 경로의 named profile enforce, option false/true
+positive/negative AA-001 matrix 및 예상 밖 `DENIED` 0건을 새로 관찰해야 한다. 이
+2.0.13 실기기 AppArmor 결과는 현재 `NOT RUN`이다.
 
 ### 2.1 2026-08-11 local v2 working-tree 증거
 

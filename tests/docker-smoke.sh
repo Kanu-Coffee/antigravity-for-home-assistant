@@ -121,6 +121,10 @@ docker run --rm --platform "$TEST_PLATFORM" \
     [[ ! -e /tmp/npm-cache ]]
     [[ ! -e /root/.cache/ms-playwright ]]
   ' || fail 'candidate image retained package-manager or browser download caches'
+docker run --rm --platform "$TEST_PLATFORM" \
+  --entrypoint /bin/bash "${IMAGE}" -ceu '
+    ! compgen -G "/etc/ssh/ssh_host_*" >/dev/null
+  ' || fail 'candidate image retained build-time SSH host keys'
 tests/public-v2-upgrade-smoke.sh "${IMAGE}" \
   || fail 'Public 2.0.6 to candidate upgrade smoke failed'
 tests/telegram-shared-context-smoke.sh "${IMAGE}" \

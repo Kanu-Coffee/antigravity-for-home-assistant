@@ -153,12 +153,16 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   deny @{PROC}@{pid}/map_files/** rwklm,
 }
 
+# Supervisor accepts exactly one column-zero `profile ` declaration as the
+# primary App profile. Keep every secondary declaration below indented by two
+# spaces; AppArmor still parses them as independent global profiles, not local
+# child profiles, so the existing directed Px boundaries and names stay intact.
 # The public launch profiles are intentionally short-lived bootstraps.  They
 # validate the image-owned shell wrapper, clear the inherited environment with
 # the image-owned env binary, and make the one permitted transition into the
 # native CLI runtime.  Keeping the bootstrap separate means model-controlled
 # tools cannot re-exec antigravity-real in the OAuth-readable runtime profile.
-profile antigravity_home_assistant-interactive-restricted flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-interactive-restricted flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   signal,
@@ -183,7 +187,7 @@ profile antigravity_home_assistant-interactive-restricted flags=(attach_disconne
   /proc/** r,
 }
 
-profile antigravity_home_assistant-interactive-runtime-restricted flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-interactive-runtime-restricted flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   network,
@@ -316,7 +320,7 @@ profile antigravity_home_assistant-interactive-runtime-restricted flags=(attach_
   deny @{PROC}@{pid}/map_files/** rwklm,
 }
 
-profile antigravity_home_assistant-interactive-sensitive-read flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-interactive-sensitive-read flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   signal,
@@ -345,7 +349,7 @@ profile antigravity_home_assistant-interactive-sensitive-read flags=(attach_disc
   /proc/** r,
 }
 
-profile antigravity_home_assistant-interactive-runtime-sensitive-read flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-interactive-runtime-sensitive-read flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   network,
@@ -485,7 +489,7 @@ profile antigravity_home_assistant-interactive-runtime-sensitive-read flags=(att
 # in this profile: ordinary commands, /config work, networking and bounded HA
 # helpers remain usable, while the shared OAuth/config HOME and runtime
 # credentials are not reachable from model-generated shell input.
-profile antigravity_home_assistant-command flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-command flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   network,
@@ -619,7 +623,7 @@ profile antigravity_home_assistant-command flags=(attach_disconnected,mediate_de
   deny @{PROC}@{pid}/map_files/** rwklm,
 }
 
-profile antigravity_home_assistant-settings-update flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-settings-update flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   signal,
@@ -673,7 +677,7 @@ profile antigravity_home_assistant-settings-update flags=(attach_disconnected,me
   deny @{PROC}@{pid}/map_files/** rwklm,
 }
 
-profile antigravity_home_assistant-init flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-init flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   network,
@@ -751,7 +755,7 @@ profile antigravity_home_assistant-init flags=(attach_disconnected,mediate_delet
 # authenticated shell/command and external SFTP session makes a discrete
 # transition back to the ordinary interactive profile before processing user
 # input, so it cannot inherit these read permissions.
-profile antigravity_home_assistant-sshd /usr/local/libexec/ha-sshd-runtime flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-sshd /usr/local/libexec/ha-sshd-runtime flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   network,
@@ -821,7 +825,7 @@ profile antigravity_home_assistant-sshd /usr/local/libexec/ha-sshd-runtime flags
   deny /run/antigravity-ha/ha-read.sock rwklm,
 }
 
-profile antigravity_home_assistant-ha-helper flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-ha-helper flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   network,
@@ -892,7 +896,7 @@ profile antigravity_home_assistant-ha-helper flags=(attach_disconnected,mediate_
   deny @{PROC}@{pid}/map_files/** rwklm,
 }
 
-profile antigravity_home_assistant-telegram-admin flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-telegram-admin flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   signal,
@@ -954,7 +958,7 @@ profile antigravity_home_assistant-telegram-admin flags=(attach_disconnected,med
   deny @{PROC}@{pid}/map_files/** rwklm,
 }
 
-profile antigravity_home_assistant-telegram flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-telegram flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   network,
@@ -1037,7 +1041,7 @@ profile antigravity_home_assistant-telegram flags=(attach_disconnected,mediate_d
 # inspect the Telegram bot token, Supervisor credential, native HOME, or
 # workspace. The bridge rebinds every first-turn proposal to the observed init
 # conversation before accepting its digest.
-profile antigravity_home_assistant-telegram-action-proposal-client flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-telegram-action-proposal-client flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   network unix stream,
@@ -1094,7 +1098,7 @@ profile antigravity_home_assistant-telegram-action-proposal-client flags=(attach
 # credential before the immutable Node executor verifies the selected action
 # digest. Only the fixed command shell may transition to the existing command
 # profile; no model process can enter this profile directly.
-profile antigravity_home_assistant-telegram-action-executor flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-telegram-action-executor flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   signal,
@@ -1170,7 +1174,7 @@ profile antigravity_home_assistant-telegram-action-executor flags=(attach_discon
   deny @{PROC}@{pid}/map_files/** rwklm,
 }
 
-profile antigravity_home_assistant-change-proposal-client flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-change-proposal-client flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   network unix stream,
@@ -1226,7 +1230,7 @@ profile antigravity_home_assistant-change-proposal-client flags=(attach_disconne
   deny @{PROC}@{pid}/map_files/** rwklm,
 }
 
-profile antigravity_home_assistant-broker-bootstrap flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-broker-bootstrap flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   signal,
@@ -1267,7 +1271,7 @@ profile antigravity_home_assistant-broker-bootstrap flags=(attach_disconnected,m
   deny @{PROC}@{pid}/map_files/** rwklm,
 }
 
-profile antigravity_home_assistant-change-broker flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-change-broker flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   network,
@@ -1336,7 +1340,7 @@ profile antigravity_home_assistant-change-broker flags=(attach_disconnected,medi
   deny @{PROC}@{pid}/map_files/** rwklm,
 }
 
-profile antigravity_home_assistant-read-broker flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-read-broker flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   network inet,
@@ -1387,7 +1391,7 @@ profile antigravity_home_assistant-read-broker flags=(attach_disconnected,mediat
   deny @{PROC}@{pid}/map_files/** rwklm,
 }
 
-profile antigravity_home_assistant-read-client flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-read-client flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   network unix stream,
@@ -1436,7 +1440,7 @@ profile antigravity_home_assistant-read-client flags=(attach_disconnected,mediat
   deny @{PROC}@{pid}/map_files/** rwklm,
 }
 
-profile antigravity_home_assistant-memory flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-memory flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   network unix stream,
@@ -1490,7 +1494,7 @@ profile antigravity_home_assistant-memory flags=(attach_disconnected,mediate_del
   deny @{PROC}@{pid}/map_files/** rwklm,
 }
 
-profile antigravity_home_assistant-playwright-bootstrap flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-playwright-bootstrap flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   network,
@@ -1551,7 +1555,7 @@ profile antigravity_home_assistant-playwright-bootstrap flags=(attach_disconnect
   deny @{PROC}@{pid}/map_files/** rwklm,
 }
 
-profile antigravity_home_assistant-browser flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-browser flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   network,
@@ -1603,7 +1607,7 @@ profile antigravity_home_assistant-browser flags=(attach_disconnected,mediate_de
 # Authenticated SSH/SFTP and the ttyd command shell enter this profile before
 # processing user-controlled input. Native Antigravity HOME remains inaccessible
 # until the image-managed Antigravity launcher performs its narrower transition.
-profile antigravity_home_assistant-shell flags=(attach_disconnected,mediate_deleted) {
+  profile antigravity_home_assistant-shell flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   network,

@@ -27,6 +27,16 @@
 사용하도록 패키징됩니다. 설치 전 릴리스의 multi-arch manifest와 실제 HAOS 검증
 기록을 확인하세요.
 
+2.0.12의 실제 HAOS 18.2 amd64 `preserve` 업데이트에서는 Telegram 권한 자동 복구,
+Bot 재연결·전달과 App 재시작/재연결이 통과했습니다. 그러나 custom AppArmor attach는
+실패했고 `docker-default (enforce)`가 관찰됐습니다. 2.0.13은 Supervisor가 column 0에서
+찾는 slug primary 선언만 하나로 유지하고 나머지 22개 선언을 들여써, AppArmor
+parser가 기존 23개 독립 global profile과 `Px transition`을 그대로 load하도록
+수정합니다. 의도한 least-privilege deny가 처음 적용될 수 있는 breaking update입니다.
+2.0.13의 실제 HAOS AppArmor 재검증은 아직 `NOT RUN`입니다. aarch64 실기기 시험도
+장비 부재로 `NOT RUN`이며, 소유자가 experimental 배포에 한해 면제했지만 PASS로
+간주하지 않습니다.
+
 ### 실행 표면
 
 | 표면 | 용도 | 변경 경계 |
@@ -496,6 +506,12 @@ Telegram 명령, migration mode로 AppArmor를 끌 수 없고 HA 보호 모드 �
 조건으로 요구하지 않습니다. profile attach가 실패하면 넓은 권한으로 fallback하지
 않아야 합니다.
 
+2.0.12 amd64 현장 보고에서 `docker-default (enforce)`가 확인된 것은 custom policy
+PASS가 아니라 attach `FAIL`입니다. 2.0.13 업데이트 뒤 App terminal과 관련 service
+실행 경로의 `/proc/self/attr/current` 및 Supervisor 상태에서
+`antigravity_home_assistant` named profile이 enforce인지 확인하고, 예상하지 않은
+`DENIED`를 검토하세요. 문제를 우회하려고 보호 mode나 AppArmor를 끄지 마세요.
+
 ### 민감정보 옵션
 
 `antigravity_sensitive_data_access`는 AppArmor on/off switch가 아니라 Ingress/SSH/Telegram에서
@@ -750,15 +766,15 @@ sync는 계속 보존합니다. refresh 중 비정상 종료로 남은 `running`
 
 ## 검증 상태와 알려진 제한
 
-2026-08-17 저장소 기준으로 정적·component test는 native CLI wrapper, read/change
+2026-08-18 저장소 기준으로 정적·component test는 native CLI wrapper, read/change
 broker, universal action proposal/coordinator/executor, Telegram binding/replay, memory,
 browser 계약, migration과 AppArmor policy parse를 대상으로 합니다. 다음은 generic
 개발 환경의 성공만으로 `VERIFIED`라고
 표시할 수 없습니다.
 
-- 실제 HAOS amd64와 aarch64의 clean install·start·update
+- 실제 HAOS amd64의 clean install과 aarch64의 install·start·update
 - 양쪽 아키텍처의 native Antigravity OAuth와 plugin discovery
-- HAOS에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되는지
+- 2.0.13에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되는지
 - 공개 GHCR generic manifest와 per-arch digest의 실제 pull
 - 실제 dashboard, live Telegram card/callback/command/HA action, migration 세 mode와
   rollback E2E
@@ -766,6 +782,10 @@ browser 계약, migration과 AppArmor policy parse를 대상으로 합니다. �
 따라서 App은 experimental 상태를 유지합니다. 각 release의 CI, Builder, GHCR
 manifest와 HAOS acceptance 기록에서 해당 항목이 통과했는지 확인하세요. 문서의
 계획이나 unit test를 실제 장치 검증으로 해석하지 마세요.
+
+현재 좁은 현장 증거는 2.0.12 amd64 Telegram reconcile/reconnect와 App
+restart/reconnect `PASS`, 같은 image의 custom AppArmor attach `FAIL`, aarch64
+`NOT RUN`입니다. 이 결과를 전체 HA-001~HA-008 또는 AA-001 PASS로 확대하지 않습니다.
 
 ## 지원 보고서
 

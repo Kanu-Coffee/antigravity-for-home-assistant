@@ -28,6 +28,18 @@ This App is not a HACS integration. It currently has `stage: experimental` and
 installing, check the release's multi-architecture manifest and recorded tests
 on real HAOS.
 
+On a real HAOS 18.2 amd64 host, the 2.0.12 `preserve` update passed Telegram
+permission reconciliation, Bot reconnect/delivery, and App restart/reconnect.
+Custom AppArmor attachment failed and `docker-default (enforce)` was observed.
+Version 2.0.13 leaves only the slug primary declaration at column zero for
+Supervisor and indents the other 22 declarations so the AppArmor parser still
+loads the existing 23 independent global profiles and each `Px transition`.
+This is a breaking update because intended least-privilege denials may apply for
+the first time. Real-HAOS verification of the corrected 2.0.13 policy remains
+`NOT RUN`. Real-device aarch64 testing is also `NOT RUN` because hardware was
+unavailable; its owner waiver covers experimental deployment only and is not a
+PASS.
+
 ### Runtime surfaces
 
 | Surface | Purpose | Change boundary |
@@ -531,6 +543,13 @@ default profile. No user option, Telegram command, or migration mode can turn
 it off, and the App does not require disabling HA protection mode. A failed
 profile attach must not fall back to broader permissions.
 
+The `docker-default (enforce)` result in the 2.0.12 amd64 field report is a
+custom-policy attachment `FAIL`, not an AppArmor PASS. After updating to 2.0.13,
+check `/proc/self/attr/current` from the App terminal and relevant service paths
+plus Supervisor state for an enforced `antigravity_home_assistant` named
+profile, and review unexpected `DENIED` events. Do not disable protection mode
+or AppArmor as a workaround.
+
 ### Sensitive-data option
 
 `antigravity_sensitive_data_access` is not an AppArmor on/off switch. It selects
@@ -808,15 +827,16 @@ without the user's explicit current confirmation.
 
 ## Verification status and known limitations
 
-As of the repository state on 2026-08-17, static and component tests cover the
+As of the repository state on 2026-08-18, static and component tests cover the
 native CLI wrapper, read/change brokers, universal action
 proposal/coordinator/executor, Telegram binding and replay, memory, browser
 contracts, migration, and AppArmor policy parsing. Success in a generic
 development environment cannot mark these items `VERIFIED`:
 
-- Clean install, start, and update on real HAOS amd64 and aarch64
+- Clean install on real HAOS amd64, and install/start/update on aarch64
 - Native Antigravity OAuth and plugin discovery on both architectures
-- Discrete custom AppArmor execution profiles attached in enforce mode on HAOS
+- Corrected 2.0.13 custom AppArmor execution profiles attached in enforce mode
+  on HAOS
 - Actual pull of the public GHCR generic manifest and per-architecture digests
 - End-to-end dashboard, live Telegram cards/callbacks/commands/HA actions, all
   migration modes, and rollback
@@ -824,6 +844,11 @@ development environment cannot mark these items `VERIFIED`:
 The App therefore remains experimental. Check the release CI, Builder, GHCR
 manifest, and HAOS acceptance record for each item. Do not interpret plans or
 unit tests in these documents as validation on a real device.
+
+The current narrow field record is: 2.0.12 amd64 Telegram
+reconcile/reconnect and App restart/reconnect `PASS`, custom AppArmor attachment
+on that image `FAIL`, and aarch64 `NOT RUN`. It is not a PASS for the complete
+HA-001 through HA-008 or AA-001 matrices.
 
 ## Support reports
 
