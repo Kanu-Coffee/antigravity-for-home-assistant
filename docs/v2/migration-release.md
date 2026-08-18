@@ -61,7 +61,7 @@ AppArmor가 `/usr/bin/bashio`의 resolved `/usr/lib/bashio/bashio` target 실행
 2.0.15는 관찰된 Bashio denial만 완화하지 않고 전체 cold-start trace에서 확인한 exact runtime
 closure를 적용한다. resolved Bashio/S6/execline/Bash와 Telegram pause, shell
 `utempter`, Chromium child 실행은 사용하는 profile에만 열고, interpreted Playwright
-runtime과 traced font/config metadata만 browser에서 읽는다. init의 계정/nginx 상태,
+wrapper/runtime과 traced font/config metadata만 browser에서 읽는다. init의 계정/nginx 상태,
 SSH OOM/accounting, HA feedback report subtree와 fontconfig cache는 필요한 mutation 경로만 허용한다.
 새로운 `/usr/lib/**`·`/package/admin/**` 전체 execute, `/etc/**` 전체 write 또는 기존
 credential·민감정보 경계를 넓히지 않는다. 실제 custom profile을 exact image에

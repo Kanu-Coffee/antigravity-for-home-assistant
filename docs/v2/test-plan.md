@@ -173,8 +173,8 @@ restart/reconnect는 `PASS`했다. 이 좁은 결과는 unrelated settings/globa
 
 - primary/init의 `/usr/lib/bashio/bashio`, init의 pinned
   `execline`·`s6-envdir`·`with-contenv`, narrow profile의 resolved `/usr/bin/bash`,
-  Telegram의 resolved `s6-pause`, shell의 architecture-bound `utempter`, browser의
-  interpreted Playwright runtime read, `/usr/lib/chromium/chromium`·
+  Telegram의 resolved `s6-pause`, shell의 architecture-bound `utempter`, Playwright
+  bootstrap/browser의 interpreted wrapper/runtime read, `/usr/lib/chromium/chromium`·
   `chrome_crashpad_handler` exact execute, traced font/config metadata read와 profile 집합
 - init passwd/shadow lock·교체 파일과 nginx PID/temp state, sshd의
   `owner @{PROC}@{pid}/oom_score_adj`, shell의 `/run/utmp`·`/var/log/wtmp`, HA helper의

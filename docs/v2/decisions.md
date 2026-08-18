@@ -183,7 +183,7 @@
 - 2.0.15는 관찰된 Bashio denial만 완화하지 않고 전체 cold-start trace의 exact runtime
   closure를 적용한다. resolved Bashio/S6/execline/Bash, Telegram pause, shell
   `utempter`, Chromium child는 사용하는 profile에만 execute를 주며 interpreted
-  Playwright runtime과 traced font/config metadata만 browser에서 읽는다. init 계정/nginx,
+  Playwright wrapper/runtime과 traced font/config metadata만 browser에서 읽는다. init 계정/nginx,
   SSH OOM/accounting, feedback report subtree와 fontconfig cache는 필요한 mutation 경로만 연다. broad
   `/usr/lib/**`·`/package/admin/**` execute 또는 `/etc/**` write는 새로 추가하지 않고 기존
   credential·민감정보 deny를 유지한다.

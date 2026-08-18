@@ -18,7 +18,7 @@ All notable changes to this App are documented in this file.
   S6/execline (`execline`, `s6-envdir`, `with-contenv`, and Telegram's
   `s6-pause`), Debian's resolved `/usr/bin/bash`, the shell's architecture-bound
   `utempter`, Chromium's main and crashpad child binaries, and the interpreted
-  Playwright runtime after its profile transition. Browser reads are limited to
+  Playwright wrapper/runtime after their profile transitions. Browser reads are limited to
   the traced font/config metadata, and its fontconfig lock/temp/replace lifecycle
   is limited to `/var/cache/fontconfig`. Other narrow mutation rules cover only
   init's passwd/shadow locks and nginx PID/temp state, sshd's own OOM score plus

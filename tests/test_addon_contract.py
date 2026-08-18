@@ -713,6 +713,9 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
         "/usr/lib/chromium/chromium rix,": {
             "antigravity_home_assistant-browser"
         },
+        "/usr/local/bin/ha-playwright-mcp r,": {
+            "antigravity_home_assistant-playwright-bootstrap"
+        },
         "/usr/local/libexec/ha-playwright-runtime r,": {
             "antigravity_home_assistant-browser"
         },
@@ -794,6 +797,9 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
     ):
         assert shadowing_deny not in helper_profile
     assert "/usr/lib/chromium/** rix," not in source
+    assert "/usr/local/bin/** r," not in profiles[
+        "antigravity_home_assistant-playwright-bootstrap"
+    ]
     assert "/usr/local/libexec/** r," not in browser_profile
     assert "/usr/share/** r," not in browser_profile
     assert "/var/cache/** rwkl," not in source
