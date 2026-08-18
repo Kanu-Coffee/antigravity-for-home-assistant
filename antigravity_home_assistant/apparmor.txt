@@ -736,6 +736,11 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   /run/ rw,
   /run/antigravity-ha/ rw,
   /run/antigravity-ha/** rwk,
+  # The second with-contenv invocation runs after the init Px transition.
+  # s6-envdir lists this flat directory and reads each inherited value before
+  # the init entrypoint captures and removes SUPERVISOR_TOKEN.
+  /run/s6/container_environment/ r,
+  /run/s6/container_environment/* r,
   /run/nginx.pid rwk,
   /run/sshd/ rw,
   /run/sshd/** rwk,

@@ -531,6 +531,23 @@ def test_apparmor_allows_only_resolved_cold_start_executable_targets(
         assert actual_profiles == expected_profiles
         assert source.count(f"  {rule}\n") == len(expected_profiles)
 
+    # The init runtime re-enters the with-contenv chain after its Px
+    # transition. Keep the inherited s6 environment read-only and flat: the
+    # directory must be listable and each environment file readable, but init
+    # must not gain write access to the S6 runtime tree.
+    for rule in (
+        "/run/s6/container_environment/ r,",
+        "/run/s6/container_environment/* r,",
+    ):
+        actual_profiles = {
+            name for name, rules in rules_by_profile.items() if rule in rules
+        }
+        assert actual_profiles == {"antigravity_home_assistant-init"}
+        assert source.count(f"  {rule}\n") == 1
+    assert "/run/s6/container_environment/** r," not in source
+    assert "/run/s6/container_environment/ rw," not in source
+    assert "/run/s6/container_environment/* rw," not in source
+
     # Keep each new secondary-profile exception tied to the resolved files.
     # The primary profile's pre-existing /package/** runtime grant is recorded
     # explicitly; this correction must not copy it into a secondary profile or
@@ -571,6 +588,14 @@ def test_apparmor_allows_only_resolved_cold_start_executable_targets(
     assert parser_rules.count(
         "aare: /package/admin/s6-overlay-3.2.2.0/command/with-contenv"
         "   ->   /package/admin/s6-overlay-3\\.2\\.2\\.0/command/with-contenv"
+    ) == 1
+    assert parser_rules.count(
+        "aare: /run/s6/container_environment/   ->   "
+        "/run/s6/container_environment/"
+    ) == 1
+    assert parser_rules.count(
+        "aare: /run/s6/container_environment/*   ->   "
+        "/run/s6/container_environment/[^/\\x00][^/\\x00]*"
     ) == 1
 
 
