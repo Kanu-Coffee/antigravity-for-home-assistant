@@ -61,7 +61,15 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   /root/.ssh/ rw,
   /root/.ssh/** rwkl,
   /run/ rw,
-  /run/{s6,s6-rc*,service}/** rwix,
+  # s6-overlay 3.2.2.0 creates these exact directories before populating
+  # their descendants.  A trailing /** rule does not match the directory
+  # itself under AppArmor, so keep both lifecycle surfaces explicit.
+  /run/{s6,s6-rc*,service}/ rw,
+  /run/{s6,s6-rc*,service}/** rwkix,
+  # s6-rc-init also creates /run/s6-rc as a symlink to its dynamic live dir.
+  /run/s6-rc* rw,
+  /run/s6-linux-init-container-results/ rw,
+  /run/s6-linux-init-container-results/** rwk,
   /run/antigravity-ha/ rw,
   /run/antigravity-ha/.ha-memoryd-stderr.* rwk,
   /run/antigravity-ha/ha-feedback-options.json r,
@@ -71,6 +79,7 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   /run/antigravity-ha/user-files-update.lock rwk,
   /run/nginx/ rw,
   /run/nginx/** rwk,
+  /run/nginx.pid rwk,
   /run/sshd/ rw,
   /run/sshd/** rwk,
   /tmp/ rw,

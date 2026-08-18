@@ -90,6 +90,12 @@ AppArmor parser에는 계속 별도 global named profile이며 기존 `Px transi
 그대로 유지한다. 들여쓰기는 Supervisor presentation 호환성이지 profile nesting이나
 권한 병합이 아니다.
 
+공개 2.0.13의 실제 HAOS amd64 startup에서는 이 custom 경계가 S6보다 먼저 적용됐지만
+descendant-only `/run` rule이 `/run/s6`와 `/run/service` directory entry의 생성을
+허용하지 않아 exit 111로 실패했다. 2.0.14는 S6 runtime directory·container exit
+result와 nginx PID의 exact access만 허용한다. `/run/**` 전체나 credential·민감정보
+경계를 넓히는 우회는 허용하지 않으며, 2.0.14 HAOS enforce 수용은 `NOT RUN`이다.
+
 | profile | 허용 | 주요 deny |
 | --- | --- | --- |
 | init/broker | options 읽기, 제한된 `/data`, Supervisor socket/API | 임의 host path, kernel/admin capability |
@@ -467,5 +473,6 @@ OAuth/AppArmor gate가 검증되지 않으면 v2 보안은 `VERIFIED`가 아니�
 재연결·전달과 App restart/reconnect는 2026-08-18 `PASS`했다. unsafe-boundary hold,
 OAuth/unrelated-state 보존과 전체 Telegram security matrix는 `NOT RUN`이다. 같은
 현장의 custom AppArmor attach는 `docker-default (enforce)` 관찰로 `FAIL`했고,
-2.0.13 corrected profile의 실기기 enforce는 아직 `NOT RUN`이다. aarch64 실기기
-`NOT RUN`은 experimental 배포에 한해 owner-waived됐지만 PASS가 아니다.
+공개 2.0.13은 S6 runtime directory 생성 거부와 exit 111로 startup `FAIL`했다.
+2.0.14 corrected profile의 실기기 enforce·재시작은 아직 `NOT RUN`이다. aarch64
+실기기 `NOT RUN`은 experimental 배포에 한해 owner-waived됐지만 PASS가 아니다.

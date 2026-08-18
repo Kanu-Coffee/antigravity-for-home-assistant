@@ -120,9 +120,10 @@ Antigravity 명령이나 설정을 추정하지 않는다. 문서와 고정 bina
   reconcile/reconnect/delivery와 App restart/reconnect는 PASS했지만 custom AppArmor
   attach는 `docker-default (enforce)`로 FAIL했다. 2.0.13은 Supervisor-recognized slug
   primary 선언 하나와 AppArmor parser가 독립 global profile로 읽는 22개 들여쓴
-  `Px transition` target 선언으로 loader 호환성을 고친다. 2.0.13 HAOS AppArmor는
-  `NOT RUN`이고, aarch64 실기기 `NOT RUN`은 owner-waived experimental 배포 결정이지
-  PASS가 아니다.
+  `Px transition` target 선언으로 loader 호환성을 고쳤지만, 공개 image의 다음
+  startup은 `/run/s6`·`/run/service` 생성 거부와 exit 111로 FAIL했다. 2.0.14는 exact
+  S6/nginx runtime access만 복구하며 HAOS 최초 기동·재시작 결과는 `NOT RUN`이다.
+  aarch64 실기기 `NOT RUN`은 owner-waived experimental 배포 결정이지 PASS가 아니다.
 - proposal registration만으로 crash durability를 주장하지 않는다. encrypted
   approval/card sealing 전 bridge crash는 사용자가 원 요청을 반복해야 한다.
 - 명시적 `reset_v2`는 safe parseable settings를 backup하고 ownership state와

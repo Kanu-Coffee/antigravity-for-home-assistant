@@ -32,18 +32,17 @@
 > consult each release's evidence for complete install, update, and rollback
 > verification on both real HAOS architectures.
 
-**2.0.13 AppArmor security transition:** On a real HAOS 18.2 amd64 host, the
-2.0.11-to-2.0.12 `preserve` update passed Telegram permission reconciliation,
-Bot reconnection and delivery, and App restart/reconnect. The same host failed
-the project-specific AppArmor attachment check and reported
-`docker-default (enforce)`. Version 2.0.13 leaves only the slug primary
-declaration at column zero for Supervisor's single-primary scanner and indents
-the other independent global `Px` targets while retaining all 23 profile names
-and transitions for the AppArmor parser. Because intended least-privilege
-denials may become active for the first time, this is a breaking update.
-Real-device aarch64 testing is `NOT RUN` due to unavailable hardware and was
-owner-waived only for experimental deployment; it is not a PASS. Real-HAOS
-validation of the corrected 2.0.13 profile is also `NOT RUN`.
+**2.0.14 S6/AppArmor startup recovery:** After a public 2.0.13 update on a real
+HAOS 18.2 amd64 host, healthy Telegram activity and the old container's orderly
+shutdown were followed by a new-container startup failure: S6 could not create
+`/run/s6` or `/run/service`, and `s6-overlay-suexec` exited 111. This is a
+custom-AppArmor S6 runtime-directory defect, not a Telegram connection failure.
+Version 2.0.14 adds only the exact S6 and nginx runtime paths while retaining
+the existing sensitive-data denials. Real-HAOS 2.0.14 first-start and restart
+acceptance is still `NOT RUN`. Real-device aarch64 testing is also `NOT RUN`
+because hardware is unavailable; its experimental-release waiver is not a
+PASS. Version 2.0.13 remains the breaking security-boundary transition, while
+2.0.14 is a corrective patch within that boundary.
 
 ## What v2 provides
 
@@ -100,7 +99,7 @@ attach OAuth material to an issue.
 > cannot be modified directly. Protect the bot token, authorized chats, and
 > Telegram accounts as Home Assistant administrator credentials. Basic amd64
 > Bot API reconnect/delivery and App restart passed on 2.0.12, but OAuth, the
-> complete approval/mutation matrix, corrected 2.0.13 custom AppArmor, and
+> complete approval/mutation matrix, corrected 2.0.14 custom AppArmor, and
 > aarch64 real-device E2E remain incomplete.
 
 Complete official native first-run OAuth once with `ha-antigravity-login` in the

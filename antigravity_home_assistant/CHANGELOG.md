@@ -2,6 +2,37 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.0.14] - 2026-08-18
+
+### Fixed
+
+- Restore S6 Overlay startup while the project custom AppArmor profile is
+  enforced. The public 2.0.13 policy allowed descendants of the S6 runtime
+  trees but omitted the directory entries that S6 must create and traverse,
+  so the next container start could fail at `/run/s6` and `/run/service` with
+  `Permission denied` and `s6-overlay-suexec` exit code 111. Version 2.0.14
+  grants only the required S6 runtime-directory, container-exit-result, and
+  nginx PID-file access; it does not broaden Home Assistant secrets, native
+  OAuth, Supervisor credentials, SSH keys, broker state, or Recorder access.
+- Keep 2.0.13 in `breaking_versions` because it is the release that activates
+  the intended custom security boundary. Version 2.0.14 is a corrective patch
+  within that boundary and is not added as a separate breaking migration.
+
+### Real-device evidence and limitations
+
+- A sanitized real-HAOS 18.2 amd64 update report for public 2.0.13 recorded an
+  orderly stop after healthy Telegram activity, followed by the S6
+  `/run/s6`/`/run/service` permission failures and exit code 111 on the new
+  container start. This is an AppArmor/S6 startup `FAIL`, not a Telegram
+  transport failure.
+- Real-HAOS acceptance of the corrected 2.0.14 image is `NOT RUN` at this source
+  cutoff. It must verify first start, stop/start and restart, named-profile
+  enforcement, zero unexpected AppArmor denials, and all required services
+  before the startup defect can be closed on a device.
+- Real-device aarch64 testing remains `NOT RUN` because hardware is unavailable.
+  The project owner's experimental-release waiver is a deployment risk
+  acceptance, not an aarch64 `PASS`.
+
 ## [2.0.13] - 2026-08-18
 
 ### Fixed

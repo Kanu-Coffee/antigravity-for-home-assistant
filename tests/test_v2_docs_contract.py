@@ -266,7 +266,7 @@ def test_apparmor_docs_describe_discrete_px_profiles() -> None:
         )
 
 
-def test_v213_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> None:
+def test_v214_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> None:
     changelog = re.sub(
         r"\s+",
         " ",
@@ -274,9 +274,14 @@ def test_v213_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> 
     )
     assert changelog.startswith(
         "# Changelog All notable changes to this App are documented in this file. "
-        "## [2.0.13] - 2026-08-18"
+        "## [2.0.14] - 2026-08-18"
     )
     for fragment in (
+        "public 2.0.13 policy allowed descendants",
+        "`/run/s6` and `/run/service`",
+        "exit code 111",
+        "Real-HAOS acceptance of the corrected 2.0.14 image is `NOT RUN`",
+        "## [2.0.13] - 2026-08-18",
         "23 unindented top-level",
         "exactly one `^profile[ ]`",
         "22 independent global profile declarations",
@@ -286,19 +291,20 @@ def test_v213_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> 
         "owner explicitly waived",
         "is not an aarch64 `PASS`",
     ):
-        assert fragment in changelog, f"2.0.13 changelog evidence drift: {fragment}"
+        assert fragment in changelog, f"2.0.14 changelog evidence drift: {fragment}"
 
     plan = re.sub(r"\s+", " ", read(V2 / "test-plan.md"))
     for fragment in (
-        "2.0.13 Supervisor AppArmor primary declaration 호환성",
+        "2.0.13 Supervisor AppArmor primary declaration과 2.0.14 S6 startup",
         "2.0.11→2.0.12 `preserve` update",
         "App restart/reconnect는 `PASS`",
         "`docker-default (enforce)`여서 `FAIL`",
         "aarch64 실기기 결과는 장비 부재로 `NOT RUN`",
         "이 면제를 PASS 증거로 기록하지 않는다",
-        "2.0.13 실기기 AppArmor 결과는 현재 `NOT RUN`",
+        "2.0.13 실기기 AppArmor/S6 startup 결과는 `FAIL`",
+        "2.0.14 실기기 AppArmor 결과는 현재 `NOT RUN`",
     ):
-        assert fragment in plan, f"2.0.13 test-plan evidence drift: {fragment}"
+        assert fragment in plan, f"2.0.14 test-plan evidence drift: {fragment}"
 
 
 def test_telegram_shared_context_inheritance_is_local_and_haos_gate_remains() -> None:
@@ -655,7 +661,7 @@ def test_v210_docs_define_receipt_fallback_multi_choice_and_restart_boundary() -
     assert "## [2.0.10]" in changelog
     assert "full App or broker restart rejects an unstarted in-memory proposal" in changelog
     assert "live Telegram/OAuth E2E" not in changelog
-    assert 'version: "2.0.13"' in documents["migration"]
+    assert 'version: "2.0.14"' in documents["migration"]
 
 
 def test_v209_docs_match_native_sandbox_and_mediated_settings_policy() -> None:
@@ -826,7 +832,7 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
         "telegram_session_delivery",
     }
     template = json.loads(read(V2 / "release-evidence-template.json"))
-    assert template["version"] == "2.0.13"
+    assert template["version"] == "2.0.14"
     assert set(template["gates"]) == expected_gates
     assert "HA-008" not in json.dumps(template, sort_keys=True)
     for gate in template["gates"].values():

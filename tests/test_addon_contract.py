@@ -364,6 +364,75 @@ def test_apparmor_directed_transitions_resolve_to_loaded_top_level_profiles(
     }
 
 
+def test_apparmor_covers_pinned_s6_overlay_3_2_2_runtime_lifecycle(
+    addon_root: Path,
+) -> None:
+    profile_path = addon_root / "apparmor.txt"
+    source = profile_path.read_text(encoding="utf-8")
+    main_profile = _apparmor_profile(source, "antigravity_home_assistant")
+    secondary_profiles = source.split(
+        "profile antigravity_home_assistant-interactive-restricted", maxsplit=1
+    )[1]
+    dockerfile = (addon_root / "Dockerfile").read_text(encoding="utf-8")
+
+    # This immutable Home Assistant base was inspected to contain
+    # s6-overlay 3.2.2.0.  A base refresh must revalidate its /run lifecycle
+    # before updating this binding or the policy below.
+    assert (
+        "ARG BUILD_FROM=ghcr.io/home-assistant/base-debian:bookworm@sha256:"
+        "8c7a9e207425e79b6b2ed1628a2b6727fa6e518d9fdddcbe3b1ac20440e70492"
+    ) in dockerfile
+
+    expected_runtime_rules = {
+        "/run/{s6,s6-rc*,service}/ rw,",
+        "/run/{s6,s6-rc*,service}/** rwkix,",
+        "/run/s6-rc* rw,",
+        "/run/s6-linux-init-container-results/ rw,",
+        "/run/s6-linux-init-container-results/** rwk,",
+        "/run/nginx.pid rwk,",
+    }
+    for rule in expected_runtime_rules:
+        assert rule in main_profile
+        assert source.count(rule) == 1
+        assert rule not in secondary_profiles
+
+    # AppArmor's /** glob requires at least one descendant.  The exact
+    # directory rules are therefore security-significant: without them,
+    # s6-mkdir fails before PID 1 can establish the service tree.
+    assert "/run/{s6,s6-rc*,service}/** rwix," not in main_profile
+    assert "/run/**" not in main_profile
+    assert "/run/{,**}" not in main_profile
+
+    parser = shutil.which("apparmor_parser")
+    if parser is None:
+        return
+
+    parsed = subprocess.run(
+        [
+            parser,
+            "--skip-kernel-load",
+            "--skip-cache",
+            "--dump=rule-exprs",
+            str(profile_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    parser_rules = parsed.stdout + parsed.stderr
+    # Pin the parser expansion that caused the 2.0.13 regression: /** starts
+    # with a non-slash descendant, while the separate trailing-slash rule
+    # covers mkdir of the directory itself.
+    assert (
+        "aare: /run/{s6,s6-rc*,service}/   ->   "
+        "/run/(s6|s6-rc[^/\\x00]*|service)/"
+    ) in parser_rules
+    assert (
+        "aare: /run/{s6,s6-rc*,service}/**   ->   "
+        "/run/(s6|s6-rc[^/\\x00]*|service)/[^/\\x00][^\\x00]*"
+    ) in parser_rules
+
+
 def test_custom_apparmor_profile_protects_home_assistant_secrets(
     addon_root: Path,
 ) -> None:
@@ -441,7 +510,8 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
     assert "  capability," not in profile
     assert "ptrace," not in profile
     assert "/config/** rwklix," in main_profile
-    assert "/run/{s6,s6-rc*,service}/** rwix," in main_profile
+    assert "/run/{s6,s6-rc*,service}/ rw," in main_profile
+    assert "/run/{s6,s6-rc*,service}/** rwkix," in main_profile
     assert "/run/antigravity-ha/** rwk," not in main_profile
     helper_transition = next(
         line

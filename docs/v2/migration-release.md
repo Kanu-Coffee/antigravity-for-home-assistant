@@ -9,7 +9,7 @@ public App은 사용자의 HAOS에서 source build하지 않고 GHCR prebuilt im
 받는다.
 
 ```yaml
-version: "2.0.13"
+version: "2.0.14"
 arch:
   - amd64
   - aarch64
@@ -44,6 +44,16 @@ column 0에 두고 나머지 22개 독립 global profile 선언을 들여써 Sup
 scanner에는 정확히 하나만 보이게 한다. AppArmor parser는 동일한 23개 profile 이름과
 기존 `Px` 전이·제약을 계속 load한다. 이전에 generic profile에서 허용되던 접근이 이제
 거부될 수 있는 보안 경계 변화이므로 2.0.13을 breaking version으로 표시한다.
+
+공개 2.0.13의 실제 HAOS 18.2 amd64 업데이트에서는 이전 컨테이너의 정상 Telegram
+처리와 순차 종료 뒤 새 컨테이너가 `/run/s6`와 `/run/service`를 만들지 못했고,
+`s6-overlay-suexec`가 exit 111로 종료됐다. descendant rule만으로 S6 runtime
+directory entry 자체의 create/traverse를 허용하지 않은 custom AppArmor 결함이다.
+2.0.14는 S6 runtime tree·container exit result와 nginx PID에 필요한 exact access만
+추가하고 기존 credential·민감정보 deny를 유지한다. 이는 2.0.13에서 의도한 보안
+경계를 바꾸는 새 migration이 아니라 startup 회귀를 고치는 patch이므로
+`breaking_versions`에 2.0.14를 추가하지 않는다. 2.0.14의 실제 HAOS 기동·재시작
+수용 결과는 현재 `NOT RUN`이다.
 
 image에 고정한 Antigravity binary는 App runtime에서 자체 갱신하지 않는다. 모든
 native launch와 `env -i` child allowlist는 공식 opt-out
