@@ -162,13 +162,18 @@ def test_enforced_smoke_exercises_ssh_browser_feedback_and_accounting() -> None:
 
     for feedback_token in (
         "tests/fixtures/ha_feedback_bug.json",
-        'docker exec "$container" /usr/bin/env',
         "/usr/local/bin/ha-feedback collect bug",
         "/usr/local/bin/ha-feedback validate",
         "/config/antigravity-workspace/feedback/",
         '.valid == true and .kind == "bug" and .privacy == "PASS"',
     ):
         assert feedback_token in smoke
+
+    feedback_probe = smoke.split("run_feedback_probe() {", 1)[1].split(
+        "\n}", 1
+    )[0]
+    assert feedback_probe.count('docker exec "$container" /usr/bin/env') == 2
+    assert feedback_probe.count("/usr/local/bin/ha-feedback") == 2
 
     assert 'run_confined_feature_probes "$FIRST_CONTAINER"' in smoke
     assert smoke.index('run_confined_feature_probes "$FIRST_CONTAINER"') < smoke.index(
