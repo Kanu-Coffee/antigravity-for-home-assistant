@@ -121,9 +121,18 @@ Antigravity 명령이나 설정을 추정하지 않는다. 문서와 고정 bina
   attach는 `docker-default (enforce)`로 FAIL했다. 2.0.13은 Supervisor-recognized slug
   primary 선언 하나와 AppArmor parser가 독립 global profile로 읽는 22개 들여쓴
   `Px transition` target 선언으로 loader 호환성을 고쳤지만, 공개 image의 다음
-  startup은 `/run/s6`·`/run/service` 생성 거부와 exit 111로 FAIL했다. 2.0.14는 exact
-  S6/nginx runtime access만 복구하며 HAOS 최초 기동·재시작 결과는 `NOT RUN`이다.
-  aarch64 실기기 `NOT RUN`은 owner-waived experimental 배포 결정이지 PASS가 아니다.
+  startup은 `/run/s6`·`/run/service` 생성 거부와 exit 111로 FAIL했다. 공개 2.0.14는
+  이 runtime 지점을 통과했지만 resolved `/usr/lib/bashio/bashio` 실행이 거부되어 init
+  exit 126으로 다시 FAIL했고, init `with-contenv`의 실제 S6 package target에도 exact
+  execute가 필요했다. 전체 cold-start trace로 resolved S6/execline·Bash, init
+  계정/nginx 상태, Telegram pause, SSH accounting/OOM, Chromium child와 feedback
+  subtree까지 bounded runtime closure를 확인했다. 2.0.15는 이를 profile별 exact 경로로
+  보완하고 새 broad library/package/config 권한을 추가하지 않은 채 실제 profile attach, cold
+  start·fresh-container restart와 안전하게 준비한 `/config/secrets.yaml` read-denial
+  canary를 검증하는 kernel-enforced 자동 smoke를 필수화한다. 이 자동 증거는 HAOS
+  증거가 아니므로 2.0.15 최초 기동·재시작은
+  `NOT RUN`이다. aarch64 실기기 `NOT RUN`은 owner-waived experimental 배포 결정이지
+  PASS가 아니며 전체 v2 수용은 `PARTIAL`이다.
 - proposal registration만으로 crash durability를 주장하지 않는다. encrypted
   approval/card sealing 전 bridge crash는 사용자가 원 요청을 반복해야 한다.
 - 명시적 `reset_v2`는 safe parseable settings를 backup하고 ownership state와

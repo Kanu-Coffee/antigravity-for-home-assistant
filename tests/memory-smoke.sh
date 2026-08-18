@@ -46,6 +46,23 @@ fail() {
   exit 1
 }
 
+run_installed_node_test() {
+  local description=$1
+  shift
+  local diagnostics
+  local status
+
+  if diagnostics=$("$@" 2>&1); then
+    return 0
+  else
+    status=$?
+  fi
+  diagnostics=${diagnostics//"${TOKEN_CANARY}"/[REDACTED_SUPERVISOR_TOKEN]}
+  printf 'memory smoke: %s diagnostics (exit %s):\n%s\n' \
+    "${description}" "${status}" "${diagnostics}" >&2
+  fail "${description}"
+}
+
 start_container() {
   local name=$1
   docker run --detach \
@@ -146,19 +163,21 @@ docker cp tests/ha_memory_test.mjs \
   "${FIRST_CONTAINER}:/tmp/ha_memory_test.mjs"
 docker cp tests/ha_change_broker_installed_test.mjs \
   "${FIRST_CONTAINER}:/tmp/ha_change_broker_installed_test.mjs"
-docker exec \
+run_installed_node_test \
+  'Home Assistant WebSocket snapshot completeness tests failed' \
+  docker exec \
   --env HA_MEMORY_INSTALLED_TEST=1 \
   --env HA_MEMORY_TEST_FIXTURE= \
   "${FIRST_CONTAINER}" \
-  node --test /tmp/ha_memory_client_test.mjs >/dev/null \
-  || fail 'Home Assistant WebSocket snapshot completeness tests failed'
-docker exec \
+  node --test /tmp/ha_memory_client_test.mjs
+run_installed_node_test \
+  'installed Home Assistant memory lifecycle and schema tests failed' \
+  docker exec \
   --env HA_MEMORY_INSTALLED_TEST=1 \
   --env HA_MEMORY_TEST_SOURCE_FIXTURE="${FIXTURE_PATH}" \
   --env HA_MEMORY_TEST_FIXTURE= \
   "${FIRST_CONTAINER}" \
-  node --test /tmp/ha_memory_test.mjs >/dev/null \
-  || fail 'installed Home Assistant memory lifecycle and schema tests failed'
+  node --test /tmp/ha_memory_test.mjs
 
 INIT_OUTPUT=$(docker exec "${FIRST_CONTAINER}" ha-memory init) \
   || fail 'ha-memory init failed'

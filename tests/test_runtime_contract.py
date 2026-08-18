@@ -533,6 +533,9 @@ def test_supervisor_credential_is_not_inherited_by_agent_surfaces(rootfs: Path) 
     assert "delete environment.SUPERVISOR_TOKEN" in fd_consumer
     assert "closeSync(descriptor)" in fd_consumer
     assert "info.isFIFO()" in fd_consumer
+    assert "readlinkSync" not in fd_consumer
+    assert "/proc/self/fd" not in fd_consumer
+    assert "The only Px entrypoint is the broker bootstrap" in fd_consumer
     assert "const MAX_CREDENTIAL_BYTES = 4_096" in fd_consumer
 
     for service in ("ttyd", "sshd", "ingress", "ha-memoryd"):

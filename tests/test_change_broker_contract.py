@@ -93,6 +93,9 @@ def test_broker_passes_only_a_validated_supervisor_credential_fd(rootfs: Path) -
     assert "delete environment.SUPERVISOR_TOKEN" in fd_consumer
     assert "closeSync(descriptor)" in fd_consumer
     assert "info.isFIFO()" in fd_consumer
+    assert "readlinkSync" not in fd_consumer
+    assert "/proc/self/fd" not in fd_consumer
+    assert "The only Px entrypoint is the broker bootstrap" in fd_consumer
     assert "antigravity_ha_open_supervisor_credential_pipe" in broker
 
 

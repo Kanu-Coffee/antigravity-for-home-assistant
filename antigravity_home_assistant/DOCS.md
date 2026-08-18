@@ -31,10 +31,17 @@
 Bot 재연결·전달과 App 재시작/재연결이 통과했고 custom AppArmor attach는
 `docker-default (enforce)`로 실패했습니다. 이를 고친 공개 2.0.13은 다음 컨테이너
 기동에서 custom profile이 `/run/s6`와 `/run/service` 생성을 막아
-`s6-overlay-suexec` exit 111로 실패했습니다. 2.0.14는 S6와 nginx의 정확한 runtime
-경로만 허용하고 기존 민감정보 deny를 유지합니다. 2.0.14의 실제 HAOS 기동·재시작
-검증은 아직 `NOT RUN`입니다. aarch64 실기기 시험도 장비 부재로 `NOT RUN`이며,
-소유자가 experimental 배포에 한해 면제했지만 PASS로 간주하지 않습니다.
+`s6-overlay-suexec` exit 111로 실패했습니다. 이 runtime 경로를 고친 공개 2.0.14는
+S6 service graph까지 진행했지만 실제 `/usr/lib/bashio/bashio` 실행이 거부되어
+`antigravity-ha-init`이 exit 126으로 실패했고, init의 `with-contenv`도 실제 S6 package
+경로에 exact execute가 필요합니다. 전체 cold-start trace는 이 두 오류 외에도
+S6/execline·실제 Bash, init 계정/nginx, Telegram pause, SSH accounting/OOM, Chromium
+child와 feedback 보고서 경로를 확인했습니다. 2.0.15는 이 runtime closure를 profile별
+exact 경로로만 허용하고 broad library/package/config 권한은 추가하지 않습니다.
+kernel-enforced cold-start/restart 자동 smoke는 필수지만 HAOS 증거가 아니며 2.0.15
+실제 HAOS는 아직 `NOT RUN`입니다. aarch64 실기기 시험도 장비 부재로 `NOT RUN`이며,
+소유자가 experimental 배포에 한해 면제했지만 PASS로 간주하지 않습니다. 전체 v2
+수용은 `PARTIAL`입니다.
 
 ### 실행 표면
 
@@ -508,7 +515,13 @@ Telegram 명령, migration mode로 AppArmor를 끌 수 없고 HA 보호 모드 �
 2.0.12 amd64 현장 보고에서 `docker-default (enforce)`가 확인된 것은 custom policy
 PASS가 아니라 attach `FAIL`입니다. 공개 2.0.13에서는 custom policy 활성화 뒤 S6가
 필요한 `/run/s6`·`/run/service` 디렉터리 자체를 만들 수 없어 다음 기동이 exit 111로
-실패했습니다. 2.0.14 업데이트 뒤 App terminal과 관련 service 실행 경로의
+실패했습니다. 공개 2.0.14는 이 지점을 통과했지만 symlink가 해석된
+`/usr/lib/bashio/bashio` 실행을 허용하지 않아 init이 exit 126으로 실패했고,
+`/command/with-contenv`가 해석되는 S6 package target도 init profile에 exact execute가
+필요했습니다. 2.0.15는 후속 trace에서 확인된 S6/execline·Bash, 계정/nginx 상태,
+Telegram pause, SSH accounting/OOM, Chromium child와 feedback subtree도 각각 필요한
+profile과 exact 경로에만 허용합니다. 2.0.15 업데이트 뒤 App terminal과 관련 service
+실행 경로의
 `/proc/self/attr/current` 및 Supervisor 상태에서 `antigravity_home_assistant` named
 profile이 enforce인지 확인하고, `s6-mkdir` 오류와 예상하지 않은 `DENIED`를 검토하세요.
 문제를 우회하려고 보호 mode나 AppArmor를 끄지 마세요.
@@ -767,15 +780,18 @@ sync는 계속 보존합니다. refresh 중 비정상 종료로 남은 `running`
 
 ## 검증 상태와 알려진 제한
 
-2026-08-18 저장소 기준으로 정적·component test는 native CLI wrapper, read/change
+2026-08-19 저장소 기준으로 정적·component test는 native CLI wrapper, read/change
 broker, universal action proposal/coordinator/executor, Telegram binding/replay, memory,
-browser 계약, migration과 AppArmor policy parse를 대상으로 합니다. 다음은 generic
-개발 환경의 성공만으로 `VERIFIED`라고
-표시할 수 없습니다.
+browser 계약, migration, AppArmor policy parse와 kernel-enforced startup smoke를
+대상으로 합니다. 이 smoke는 실제 profile을 exact image에 attach해 cold start,
+fresh-container restart, S6 init과 안전한 canary 내용으로 준비한
+`/config/secrets.yaml`의 read denial을 확인하지만 자동 Linux container 증거입니다.
+실제 option file은 이 deny 검사에 사용하지 않습니다. 다음은 generic 개발 환경의
+성공만으로 `VERIFIED`라고 표시할 수 없습니다.
 
 - 실제 HAOS amd64의 clean install과 aarch64의 install·start·update
 - 양쪽 아키텍처의 native Antigravity OAuth와 plugin discovery
-- 2.0.14에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되고 S6가
+- 2.0.15에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되고 S6가
   최초 기동·stop/start·restart를 완료하는지
 - 공개 GHCR generic manifest와 per-arch digest의 실제 pull
 - 실제 dashboard, live Telegram card/callback/command/HA action, migration 세 mode와
@@ -787,8 +803,9 @@ manifest와 HAOS acceptance 기록에서 해당 항목이 통과했는지 확인
 
 현재 좁은 현장 증거는 2.0.12 amd64 Telegram reconcile/reconnect와 App
 restart/reconnect `PASS`, 같은 image의 custom AppArmor attach `FAIL`, 공개 2.0.13의
-S6/AppArmor startup `FAIL`, 2.0.14와 aarch64 실기기 `NOT RUN`입니다. 이 결과를 전체
-HA-001~HA-008 또는 AA-001 PASS로 확대하지 않습니다.
+S6 runtime startup `FAIL`, 공개 2.0.14의 관찰된 resolved Bashio execute startup `FAIL`,
+2.0.15와 aarch64 실기기 `NOT RUN`입니다. aarch64 면제는 PASS가 아니며 전체 v2 수용은
+`PARTIAL`입니다. 이 결과를 전체 HA-001~HA-008 또는 AA-001 PASS로 확대하지 않습니다.
 
 ## 지원 보고서
 

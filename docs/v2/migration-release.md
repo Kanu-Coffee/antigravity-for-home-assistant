@@ -9,7 +9,7 @@ public App은 사용자의 HAOS에서 source build하지 않고 GHCR prebuilt im
 받는다.
 
 ```yaml
-version: "2.0.14"
+version: "2.0.15"
 arch:
   - amd64
   - aarch64
@@ -53,7 +53,24 @@ directory entry 자체의 create/traverse를 허용하지 않은 custom AppArmor
 추가하고 기존 credential·민감정보 deny를 유지한다. 이는 2.0.13에서 의도한 보안
 경계를 바꾸는 새 migration이 아니라 startup 회귀를 고치는 patch이므로
 `breaking_versions`에 2.0.14를 추가하지 않는다. 2.0.14의 실제 HAOS 기동·재시작
-수용 결과는 현재 `NOT RUN`이다.
+수용은 이후 amd64에서 `FAIL`로 확인됐다. S6 service graph가 init까지 진행했지만
+AppArmor가 `/usr/bin/bashio`의 resolved `/usr/lib/bashio/bashio` target 실행을
+거부하여 `antigravity-ha-init`이 exit 126으로 종료됐고, init의
+`/command/with-contenv`도 image-owned S6 package target에 exact execute가 필요했다.
+
+2.0.15는 관찰된 Bashio denial만 완화하지 않고 전체 cold-start trace에서 확인한 exact runtime
+closure를 적용한다. resolved Bashio/S6/execline/Bash와 Telegram pause, shell
+`utempter`, Chromium child 실행은 사용하는 profile에만 열고, interpreted Playwright
+wrapper/runtime과 traced font/config metadata만 browser에서 읽는다. init의 계정/nginx 상태,
+SSH OOM/accounting, HA feedback report subtree와 fontconfig cache는 필요한 mutation 경로만 허용한다.
+새로운 `/usr/lib/**`·`/package/admin/**` 전체 execute, `/etc/**` 전체 write 또는 기존
+credential·민감정보 경계를 넓히지 않는다. 실제 custom profile을 exact image에
+attach하는 kernel-enforced cold start·fresh-container restart와 안전하게 준비한
+`/config/secrets.yaml` read-denial canary 자동 smoke를 일반 CI amd64와 Candidate native
+amd64/aarch64에 필수화한다. 이 자동 Linux-container 증거는 HAOS 증거가 아니다.
+2.0.15 실제 HAOS 수용은 `NOT RUN`, aarch64 장비 부재
+owner waiver는 not a PASS이며 전체 v2 수용은 `PARTIAL`이다. 이 corrective patch도
+새 migration이 아니므로 `breaking_versions`에는 2.0.13만 유지한다.
 
 image에 고정한 Antigravity binary는 App runtime에서 자체 갱신하지 않는다. 모든
 native launch와 `env -i` child allowlist는 공식 opt-out

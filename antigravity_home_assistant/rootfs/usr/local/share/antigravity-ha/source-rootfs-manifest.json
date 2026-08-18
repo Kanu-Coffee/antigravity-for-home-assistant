@@ -759,8 +759,8 @@
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/supervisor-credential-fd.mjs",
-      "sha256": "sha256:f1d83f5b8e16b22f6230ef66e77694e3e9eb36a8d2c227f05870be0c2e1e4568",
-      "size": 1613
+      "sha256": "sha256:b3a835c2a823382966715e4762c1f750f20997b439d356c9a48279873704ddb1",
+      "size": 1780
     },
     {
       "mode": "0644",
@@ -818,5 +818,5 @@
     }
   ],
   "schema": "antigravity-ha-source-rootfs/v1",
-  "source_rootfs_sha256": "sha256:bf8ca4dffe7b28d18931a20be22a86ccc05b4af2fdcd2947e3943ac3ffc947f4"
+  "source_rootfs_sha256": "sha256:bc9996d7cf9435520147e12c93ebba54e73b5bf2b31b19440efbcbcd2605852e"
 }
