@@ -27,6 +27,14 @@ Home Assistant 안에서 antigravity와 대화하며 설정을 살펴보고 대�
 > [!WARNING]
 > 이 앱은 Home Assistant 설정을 직접 바꿀 수 있는 강한 관리자 도구입니다. Telegram도 CLI와 동등한 관리자 채널이므로 bot token, 허용 chat과 Telegram 계정을 보호하세요. 중요한 변경 전에는 backup을 만들고 계획과 diff를 확인하며 SSH 포트를 인터넷에 직접 공개하지 마세요.
 
+**2.0.13 AppArmor 보안 전환:** 2.0.12의 실제 HAOS amd64 업데이트에서는 Telegram
+자동 권한 복구·재연결과 App 재시작/재연결이 통과했지만 custom AppArmor attach는
+실패해 `docker-default (enforce)`가 관찰됐습니다. 2.0.13은 Supervisor가 인식하는
+slug primary 선언 하나와 AppArmor parser가 계속 독립 profile로 읽는 22개 들여쓴
+`Px` target 선언으로 이 보안 경계를 고칩니다. 새 deny가 실제 적용될 수 있는 breaking
+update입니다. 2.0.13 HAOS AppArmor 재시험과 aarch64 실기기 시험은 `NOT RUN`이며,
+aarch64 장비 부재 면제는 experimental 배포 결정일 뿐 PASS가 아닙니다.
+
 ## 빠른 시작
 
 1. 앱을 설치하고 시작합니다. 현재 **amd64와 aarch64 지원**, `stage: experimental`, `boot: manual`입니다.

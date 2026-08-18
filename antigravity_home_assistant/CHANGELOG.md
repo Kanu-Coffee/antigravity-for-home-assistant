@@ -2,6 +2,44 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.0.13] - 2026-08-18
+
+### Fixed
+
+- Make the custom least-privilege AppArmor policy installable by Home Assistant
+  Supervisor 2026.07.5. The 2.0.12 policy contained 23 unindented top-level
+  `profile` declarations, while Supervisor accepts exactly one `^profile[ ]`
+  declaration in an App policy. Supervisor therefore rejected that custom file
+  and the observed amd64 App ran under `docker-default (enforce)`. Version
+  2.0.13 leaves only the slug primary declaration at column zero and indents
+  the other 22 independent global profile declarations so Supervisor's primary
+  scanner sees exactly one declaration. The AppArmor parser still loads the
+  same 23 names, `Px` transitions, and path restrictions; all targets remain
+  independent global profiles rather than nested subprofiles.
+- Mark 2.0.13 as a breaking security-boundary transition. Workloads that were
+  accidentally permitted by the generic Docker profile can now receive the
+  intended project-specific denial, so administrators should review sanitized
+  AppArmor denials after updating instead of disabling protection or granting
+  broader App privileges.
+- Remove package-install-generated SSH host private keys from the immutable
+  image. Runtime SSH continues to create and use its isolated persistent keys
+  under `/data/ssh`; no baked host identity is retained in an image layer.
+
+### Real-device evidence and limitations
+
+- On a real HAOS 18.2 amd64 host, the public 2.0.11 to 2.0.12 `preserve`
+  update passed Telegram permission reconciliation, Bot API reconnection,
+  message delivery, and App restart/reconnect checks. The same observation
+  failed the custom AppArmor attachment check because the active profile was
+  `docker-default (enforce)`, not the App's named least-privilege policy.
+- Real-device aarch64 testing remains `NOT RUN`. The project owner explicitly
+  waived that missing device result for this experimental deployment; the
+  waiver is a recorded risk acceptance and is not an aarch64 `PASS` or
+  evidence-complete release claim.
+- The corrected 2.0.13 AppArmor attachment and positive/negative matrix remain
+  `NOT RUN` on HAOS until the new image is installed and observed. The App
+  remains experimental.
+
 ## [2.0.12] - 2026-08-18
 
 ### Fixed
@@ -34,10 +72,14 @@ All notable changes to this App are documented in this file.
   global MCP configuration, OAuth, plugins, and Home Assistant configuration
   remain preserved. Keep Telegram disabled if those custom native permission
   rules must remain byte-preserved.
-- A sanitized real-HAOS report established the original pre-connection fatal
-  loop and recovery after a manual safe-policy rewrite. The repaired 2.0.12
-  image still requires HAOS update, live Bot API, AppArmor, OAuth, and restart
-  acceptance; those results remain `NOT RUN` until separately observed.
+- A later sanitized real-HAOS amd64 report verified the repaired 2.0.12 public
+  update, automatic permission reconciliation, live Bot API reconnection,
+  delivery, and App restart/reconnect. It also found that Supervisor 2026.07.5
+  had rejected the multi-top-level custom AppArmor file, leaving
+  `docker-default (enforce)` active; custom AppArmor acceptance therefore
+  failed. Real-device aarch64 remained `NOT RUN` under an explicit owner waiver,
+  and OAuth, the complete Telegram matrix, and the unsafe-boundary hold were
+  not promoted to `PASS`.
 
 ## [2.0.11] - 2026-08-18
 

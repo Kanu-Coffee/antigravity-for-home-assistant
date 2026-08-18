@@ -774,5 +774,9 @@ local actual 1.1.11 shared-HOME positive control은 global MCP pre-auth launch�
 positive canary로 전환한다. primary OAuth backend/path를 추정하지 않았고 실제 HAOS
 OAuth, live Telegram session/outbox와 AppArmor enforce는 미검증이므로 최종 수용
 기준은 아직 `PARTIAL`이다.
-2.0.12 repaired image의 실제 HAOS update reconciliation, Bot API 재연결과
-`permission_boundary_blocked` hold E2E도 별도 실기기 증거 전까지 `NOT RUN`이다.
+2.0.12 repaired image의 실제 HAOS amd64 update reconciliation, Bot API 재연결·전달과
+App restart/reconnect는 2026-08-18 `PASS`했다. `permission_boundary_blocked` hold,
+OAuth/unrelated-state 보존과 나머지 HA-004 E2E는 `NOT RUN`이며, aarch64 실기기
+`NOT RUN`은 owner-waived experimental 배포 결정일 뿐 Telegram PASS가 아니다. 같은
+현장 AppArmor 결과는 `docker-default (enforce)`로 custom attach `FAIL`이며 2.0.13
+수정 profile의 실제 enforce도 아직 `NOT RUN`이다.

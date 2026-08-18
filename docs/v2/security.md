@@ -82,6 +82,14 @@ load되는 named profile이다. `antigravity_sensitive_data_access`는 profile�
 bootstrap/runtime 쌍(discrete `Px` transition) 선택 값이다. runtime이 시작하는 일반
 command와 stdio tool executable은 다시 공통 command profile로 전환한다.
 
+Supervisor 2026.07.5의 App policy primary scanner는 column 0의 `^profile[ ]` 선언을
+정확히 하나만 허용한다. 2.0.12처럼 독립 profile 선언 23개를 모두 column 0에 두면
+custom file 자체를 거부해 실제 amd64에서 `docker-default (enforce)` fallback이
+관찰됐다. 2.0.13은 slug primary만 column 0에 두고 다른 22개 선언을 들여쓰지만,
+AppArmor parser에는 계속 별도 global named profile이며 기존 `Px transition`과 deny를
+그대로 유지한다. 들여쓰기는 Supervisor presentation 호환성이지 profile nesting이나
+권한 병합이 아니다.
+
 | profile | 허용 | 주요 deny |
 | --- | --- | --- |
 | init/broker | options 읽기, 제한된 `/data`, Supervisor socket/API | 임의 host path, kernel/admin capability |
@@ -455,5 +463,9 @@ credential 노출이 의심되면 해당 service를 중지하고 token을 revoke
 이 증거 중 하나라도 빠지거나 native OAuth 동일-process 잔여 위험과 실제 HAOS
 OAuth/AppArmor gate가 검증되지 않으면 v2 보안은 `VERIFIED`가 아니다. Telegram은
 기본 OFF이며 사용자가 관리자 주 채널의 잔여 위험을 명시적으로 수용한 뒤 켠다.
-2.0.12 repaired image의 실제 HAOS update reconciliation, live Bot API 재연결과 hold
-동작은 별도 실기기 증거 전까지 `NOT RUN`이다.
+2.0.12 repaired image의 실제 HAOS amd64 update reconciliation, live Bot API
+재연결·전달과 App restart/reconnect는 2026-08-18 `PASS`했다. unsafe-boundary hold,
+OAuth/unrelated-state 보존과 전체 Telegram security matrix는 `NOT RUN`이다. 같은
+현장의 custom AppArmor attach는 `docker-default (enforce)` 관찰로 `FAIL`했고,
+2.0.13 corrected profile의 실기기 enforce는 아직 `NOT RUN`이다. aarch64 실기기
+`NOT RUN`은 experimental 배포에 한해 owner-waived됐지만 PASS가 아니다.

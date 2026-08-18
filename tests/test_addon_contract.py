@@ -8,6 +8,33 @@ from pathlib import Path
 import yaml
 
 
+EXPECTED_APPARMOR_PROFILES = {
+    "antigravity_home_assistant",
+    "antigravity_home_assistant-broker-bootstrap",
+    "antigravity_home_assistant-browser",
+    "antigravity_home_assistant-change-broker",
+    "antigravity_home_assistant-change-proposal-client",
+    "antigravity_home_assistant-command",
+    "antigravity_home_assistant-ha-helper",
+    "antigravity_home_assistant-init",
+    "antigravity_home_assistant-interactive-restricted",
+    "antigravity_home_assistant-interactive-runtime-restricted",
+    "antigravity_home_assistant-interactive-runtime-sensitive-read",
+    "antigravity_home_assistant-interactive-sensitive-read",
+    "antigravity_home_assistant-memory",
+    "antigravity_home_assistant-playwright-bootstrap",
+    "antigravity_home_assistant-read-broker",
+    "antigravity_home_assistant-read-client",
+    "antigravity_home_assistant-settings-update",
+    "antigravity_home_assistant-shell",
+    "antigravity_home_assistant-sshd",
+    "antigravity_home_assistant-telegram",
+    "antigravity_home_assistant-telegram-action-executor",
+    "antigravity_home_assistant-telegram-action-proposal-client",
+    "antigravity_home_assistant-telegram-admin",
+}
+
+
 def _apparmor_profile(source: str, name: str) -> str:
     marker = f"profile {name}"
     assert marker in source
@@ -68,6 +95,7 @@ def test_release_is_multi_arch_with_generic_registry_image(
         "2.0.9",
         "2.0.11",
         "2.0.12",
+        "2.0.13",
     ]
 
 
@@ -240,22 +268,60 @@ def test_forbidden_privilege_settings_are_absent(addon_config: dict) -> None:
     assert "apparmor" not in addon_config
 
 
+def test_supervisor_detects_one_primary_apparmor_profile(
+    addon_root: Path,
+) -> None:
+    source = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
+
+    # Supervisor 2026.07.5 uses this exact start-of-line shape while choosing
+    # the one profile name it rewrites to the installed App slug. AppArmor's
+    # parser still treats the deliberately indented declarations below as
+    # independent top-level profiles, not local child profiles.
+    supervisor_profiles = [
+        match.group(1)
+        for line in source.splitlines()
+        if (match := re.match(r"^profile ([^ ]+).*$", line))
+    ]
+    declarations = re.findall(
+        r"(?m)^([ \t]*)profile\s+(antigravity_home_assistant[^\s{]*)",
+        source,
+    )
+
+    assert supervisor_profiles == ["antigravity_home_assistant"]
+    assert {name for _, name in declarations} == EXPECTED_APPARMOR_PROFILES
+    assert {
+        name for indentation, name in declarations if indentation
+    } == EXPECTED_APPARMOR_PROFILES - {"antigravity_home_assistant"}
+
+
 def test_apparmor_directed_transitions_resolve_to_loaded_top_level_profiles(
     addon_root: Path,
 ) -> None:
     profile_path = addon_root / "apparmor.txt"
     source = profile_path.read_text(encoding="utf-8")
     loaded_profiles = set(
-        re.findall(r"(?m)^profile\s+(antigravity_home_assistant[^\s{]*)", source)
+        re.findall(
+            r"(?m)^[ \t]*profile\s+"
+            r"(antigravity_home_assistant[^\s{]*)",
+            source,
+        )
     )
     directed_transitions = re.findall(
         r"(?m)^\s+\S.*?\s+(r?Px)\s+->\s+"
         r"(antigravity_home_assistant[^\s,]+),\s*$",
         source,
     )
+    transition_modes = re.findall(
+        r"(?m)^\s+\S.*?\s+(r?(?:P|C)x)"
+        r"(?:\s+->\s+[^\s,]+)?,\s*$",
+        source,
+    )
 
-    assert loaded_profiles
-    assert directed_transitions
+    assert loaded_profiles == EXPECTED_APPARMOR_PROFILES
+    assert len(directed_transitions) == 81
+    assert transition_modes.count("Px") == 79
+    assert transition_modes.count("rPx") == 3
+    assert len(transition_modes) == 82
     assert re.search(r"\b(?:c|C)x\b", source) is None
     assert {target for _, target in directed_transitions} <= loaded_profiles
 

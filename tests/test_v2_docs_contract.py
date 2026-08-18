@@ -266,6 +266,41 @@ def test_apparmor_docs_describe_discrete_px_profiles() -> None:
         )
 
 
+def test_v213_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> None:
+    changelog = re.sub(
+        r"\s+",
+        " ",
+        read(ROOT / "antigravity_home_assistant" / "CHANGELOG.md"),
+    )
+    assert changelog.startswith(
+        "# Changelog All notable changes to this App are documented in this file. "
+        "## [2.0.13] - 2026-08-18"
+    )
+    for fragment in (
+        "23 unindented top-level",
+        "exactly one `^profile[ ]`",
+        "22 independent global profile declarations",
+        "`docker-default (enforce)`",
+        "App restart/reconnect",
+        "aarch64 testing remains `NOT RUN`",
+        "owner explicitly waived",
+        "is not an aarch64 `PASS`",
+    ):
+        assert fragment in changelog, f"2.0.13 changelog evidence drift: {fragment}"
+
+    plan = re.sub(r"\s+", " ", read(V2 / "test-plan.md"))
+    for fragment in (
+        "2.0.13 Supervisor AppArmor primary declaration 호환성",
+        "2.0.11→2.0.12 `preserve` update",
+        "App restart/reconnect는 `PASS`",
+        "`docker-default (enforce)`여서 `FAIL`",
+        "aarch64 실기기 결과는 장비 부재로 `NOT RUN`",
+        "이 면제를 PASS 증거로 기록하지 않는다",
+        "2.0.13 실기기 AppArmor 결과는 현재 `NOT RUN`",
+    ):
+        assert fragment in plan, f"2.0.13 test-plan evidence drift: {fragment}"
+
+
 def test_telegram_shared_context_inheritance_is_local_and_haos_gate_remains() -> None:
     documents = {
         name: re.sub(r"\s+", " ", read(V2 / name))
@@ -620,7 +655,7 @@ def test_v210_docs_define_receipt_fallback_multi_choice_and_restart_boundary() -
     assert "## [2.0.10]" in changelog
     assert "full App or broker restart rejects an unstarted in-memory proposal" in changelog
     assert "live Telegram/OAuth E2E" not in changelog
-    assert 'version: "2.0.12"' in documents["migration"]
+    assert 'version: "2.0.13"' in documents["migration"]
 
 
 def test_v209_docs_match_native_sandbox_and_mediated_settings_policy() -> None:
@@ -791,7 +826,7 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
         "telegram_session_delivery",
     }
     template = json.loads(read(V2 / "release-evidence-template.json"))
-    assert template["version"] == "2.0.12"
+    assert template["version"] == "2.0.13"
     assert set(template["gates"]) == expected_gates
     assert "HA-008" not in json.dumps(template, sort_keys=True)
     for gate in template["gates"].values():
@@ -828,6 +863,8 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
     assert "telegram_shared_identity_login" in shared_runtime_checks
     assert "user_global_customization_inherited" in shared_runtime_checks
     assert "user_global_customization_mutable" in shared_runtime_checks
+    assert "cli_version_1_1_13" in gate_checks["native_updater_canary"]
+    assert "cli_version_1_1_11" not in gate_checks["native_updater_canary"]
     assert "telegram_separate_identity_login" not in shared_runtime_checks
     assert "user_global_mcp_absent_before_and_after_auth" not in shared_runtime_checks
     telegram_delivery_checks = gate_checks["telegram_session_delivery"]

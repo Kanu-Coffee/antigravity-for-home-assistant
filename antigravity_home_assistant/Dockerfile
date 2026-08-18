@@ -142,6 +142,7 @@ RUN sed -i \
       "/tmp/${node_archive}" \
       /tmp/npm-cache \
       /tmp/ttyd \
+    && rm -f /etc/ssh/ssh_host_* \
     && apt-get clean \
     && rm -rf \
       /var/lib/apt/lists/* \
@@ -152,7 +153,7 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 
 # Release-only metadata must stay after the dependency layer so routine App
 # updates can reuse its content-addressed layers on Home Assistant hosts.
-ARG BUILD_VERSION=2.0.12
+ARG BUILD_VERSION=2.0.13
 ARG SOURCE_REVISION=""
 ARG SOURCE_ROOTFS_SHA256=""
 

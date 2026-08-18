@@ -116,6 +116,13 @@ Antigravity 명령이나 설정을 추정하지 않는다. 문서와 고정 bina
   않고 `permission_boundary_blocked`를 한 번 기록한 뒤 살아 있는 fail-closed hold에
   머문다. 같은 설정의 fatal/S6 restart loop를 만들지 않으며 안전한 복구 뒤 App을
   재시작해야 한다.
+- 2026-08-18 실제 HAOS 18.2 amd64에서 2.0.12 public `preserve` update의 Telegram
+  reconcile/reconnect/delivery와 App restart/reconnect는 PASS했지만 custom AppArmor
+  attach는 `docker-default (enforce)`로 FAIL했다. 2.0.13은 Supervisor-recognized slug
+  primary 선언 하나와 AppArmor parser가 독립 global profile로 읽는 22개 들여쓴
+  `Px transition` target 선언으로 loader 호환성을 고친다. 2.0.13 HAOS AppArmor는
+  `NOT RUN`이고, aarch64 실기기 `NOT RUN`은 owner-waived experimental 배포 결정이지
+  PASS가 아니다.
 - proposal registration만으로 crash durability를 주장하지 않는다. encrypted
   approval/card sealing 전 bridge crash는 사용자가 원 요청을 반복해야 한다.
 - 명시적 `reset_v2`는 safe parseable settings를 backup하고 ownership state와

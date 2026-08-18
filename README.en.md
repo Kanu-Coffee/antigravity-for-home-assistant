@@ -32,6 +32,19 @@
 > consult each release's evidence for complete install, update, and rollback
 > verification on both real HAOS architectures.
 
+**2.0.13 AppArmor security transition:** On a real HAOS 18.2 amd64 host, the
+2.0.11-to-2.0.12 `preserve` update passed Telegram permission reconciliation,
+Bot reconnection and delivery, and App restart/reconnect. The same host failed
+the project-specific AppArmor attachment check and reported
+`docker-default (enforce)`. Version 2.0.13 leaves only the slug primary
+declaration at column zero for Supervisor's single-primary scanner and indents
+the other independent global `Px` targets while retaining all 23 profile names
+and transitions for the AppArmor parser. Because intended least-privilege
+denials may become active for the first time, this is a breaking update.
+Real-device aarch64 testing is `NOT RUN` due to unavailable hardware and was
+owner-waived only for experimental deployment; it is not a PASS. Real-HAOS
+validation of the corrected 2.0.13 profile is also `NOT RUN`.
+
 ## What v2 provides
 
 - A pinned native Google Antigravity CLI and the `agy` command
@@ -85,9 +98,10 @@ attach OAuth material to an issue.
 > customizations, and can approve device, configuration, terminal, and script
 > actions. OAuth material, App-owned permission settings, and sensitive paths
 > cannot be modified directly. Protect the bot token, authorized chats, and
-> Telegram accounts as Home Assistant administrator credentials. Integrated
-> OAuth, AppArmor, and Bot API E2E on real HAOS remain `NOT RUN` until release
-> evidence records them.
+> Telegram accounts as Home Assistant administrator credentials. Basic amd64
+> Bot API reconnect/delivery and App restart passed on 2.0.12, but OAuth, the
+> complete approval/mutation matrix, corrected 2.0.13 custom AppArmor, and
+> aarch64 real-device E2E remain incomplete.
 
 Complete official native first-run OAuth once with `ha-antigravity-login` in the
 Web UI or SSH, then enable the bot. There is no separate Telegram identity,

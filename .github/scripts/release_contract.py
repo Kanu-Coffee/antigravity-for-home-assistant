@@ -173,7 +173,7 @@ EXPECTED_HAOS_GATE_CHECKS = {
     "native_updater_canary": {
         "auto_update_process_absent",
         "binary_digest_stable_after_restart",
-        "cli_version_1_1_11",
+        "cli_version_1_1_13",
         "disable_environment_all_launchers",
     },
     "telegram_session_delivery": {

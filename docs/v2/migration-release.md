@@ -9,7 +9,7 @@ public App은 사용자의 HAOS에서 source build하지 않고 GHCR prebuilt im
 받는다.
 
 ```yaml
-version: "2.0.12"
+version: "2.0.13"
 arch:
   - amd64
   - aarch64
@@ -20,6 +20,7 @@ breaking_versions:
   - "2.0.9"
   - "2.0.11"
   - "2.0.12"
+  - "2.0.13"
 ```
 
 `apparmor`의 Supervisor 기본값은 `true`다. pinned App linter가 중복 기본값을
@@ -31,8 +32,18 @@ aarch64 manifest가 모두 있을 때만 `config.yaml`에 두 아키텍처를 �
 첫 v2, 2.0.7의 Telegram 관리자 trust-model 전환, 2.0.9의 default-allow managed
 permission 및 persistent mutation 범위 전환, 2.0.11의 proposal-first
 `request-review`/universal managed approval 전환, 2.0.12의 Telegram-enabled
-permission reconciliation 전환은 breaking version으로 표시하고
+permission reconciliation 전환, 2.0.13의 Supervisor-compatible custom AppArmor
+profile 활성화는 breaking version으로 표시하고
 사용자가 release note를 읽고 선택하게 한다.
+
+2.0.12의 `apparmor.txt`에는 들여쓰기 없는 최상위 `profile` 선언이 23개 있었다.
+Supervisor 2026.07.5는 App의 custom policy에서 `^profile[ ]` 선언을 정확히 하나만
+허용하므로 이 파일의 설치를 거부했고, 관찰된 amd64 container는 프로젝트의 세분화된
+policy 대신 `docker-default (enforce)`로 실행됐다. 2.0.13은 slug primary 선언만
+column 0에 두고 나머지 22개 독립 global profile 선언을 들여써 Supervisor의 primary
+scanner에는 정확히 하나만 보이게 한다. AppArmor parser는 동일한 23개 profile 이름과
+기존 `Px` 전이·제약을 계속 load한다. 이전에 generic profile에서 허용되던 접근이 이제
+거부될 수 있는 보안 경계 변화이므로 2.0.13을 breaking version으로 표시한다.
 
 image에 고정한 Antigravity binary는 App runtime에서 자체 갱신하지 않는다. 모든
 native launch와 `env -i` child allowlist는 공식 opt-out
