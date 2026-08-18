@@ -543,3 +543,53 @@ def test_v2_memory_migration_is_identity_and_fail_closed(
     assert "현재 binary는 forward migration을 구현하지 않는다" in migration
     assert "PERSISTED_MCP_RECALL" in smoke
     assert "new MCP process did not recall the MCP-applied fact" in smoke
+
+
+def test_installed_memory_node_failures_preserve_sanitized_tap_diagnostics(
+    repository_root: Path,
+) -> None:
+    smoke = (repository_root / "tests/memory-smoke.sh").read_text(encoding="utf-8")
+
+    assert "run_installed_node_test()" in smoke
+    assert (
+        'diagnostics=${diagnostics//"${TOKEN_CANARY}"/'
+        "[REDACTED_SUPERVISOR_TOKEN]}"
+    ) in smoke
+    assert '"$@" 2>&1' in smoke
+    assert "diagnostics (exit %s)" in smoke
+    invocation_starts = [
+        match.start()
+        for match in re.finditer(
+            r"^run_installed_node_test \\\n",
+            smoke,
+            re.MULTILINE,
+        )
+    ]
+    assert len(invocation_starts) == 2
+    invocation_end = smoke.index("\n\nINIT_OUTPUT=", invocation_starts[-1])
+    invocation_blocks = [
+        smoke[start:end]
+        for start, end in zip(
+            invocation_starts,
+            [invocation_starts[1], invocation_end],
+            strict=True,
+        )
+    ]
+    expected_invocations = (
+        (
+            "Home Assistant WebSocket snapshot completeness tests failed",
+            "/tmp/ha_memory_client_test.mjs",
+        ),
+        (
+            "installed Home Assistant memory lifecycle and schema tests failed",
+            "/tmp/ha_memory_test.mjs",
+        ),
+    )
+    for block, (description, test_path) in zip(
+        invocation_blocks,
+        expected_invocations,
+        strict=True,
+    ):
+        assert description in block
+        assert f"node --test {test_path}" in block
+        assert f"node --test {test_path} >/dev/null" not in smoke

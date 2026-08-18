@@ -702,6 +702,9 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   capability chown,
   capability dac_override,
   capability fowner,
+  # passwd completes the root unlock without CAP_FSETID. Keep its incidental
+  # set-ID preservation probe denied without adding audit noise.
+  deny capability fsetid,
   capability kill,
   capability setgid,
   capability setuid,
@@ -741,6 +744,9 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   # the init entrypoint captures and removes SUPERVISOR_TOKEN.
   /run/s6/container_environment/ r,
   /run/s6/container_environment/* r,
+  # GNU find snapshots its S6 oneshot working directory before traversing the
+  # absolute persistent-data paths normalized by the init script.
+  /run/s6-rc:s6-rc-init:*/servicedirs/s6rc-oneshot-runner/ r,
   /run/nginx.pid rwk,
   /run/sshd/ rw,
   /run/sshd/** rwk,
@@ -1654,6 +1660,7 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   /var/cache/fontconfig/* rwkl,
   /var/tmp/ r,
   /dev/ r,
+  /dev/pts/ r,
   /dev/null rw,
   /dev/random r,
   /dev/urandom r,

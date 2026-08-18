@@ -548,6 +548,27 @@ def test_apparmor_allows_only_resolved_cold_start_executable_targets(
     assert "/run/s6/container_environment/ rw," not in source
     assert "/run/s6/container_environment/* rw," not in source
 
+    # GNU find snapshots the inherited S6 oneshot cwd even when every search
+    # root is absolute. Permit only the randomly suffixed runner directory,
+    # without granting reads across the generated S6 service tree.
+    oneshot_cwd_rule = (
+        "/run/s6-rc:s6-rc-init:*/servicedirs/s6rc-oneshot-runner/ r,"
+    )
+    actual_profiles = {
+        name
+        for name, rules in rules_by_profile.items()
+        if oneshot_cwd_rule in rules
+    }
+    assert actual_profiles == {"antigravity_home_assistant-init"}
+    assert source.count(f"  {oneshot_cwd_rule}\n") == 1
+    for broad_oneshot_read in (
+        "/run/s6-rc:s6-rc-init:*/ r,",
+        "/run/s6-rc:s6-rc-init:*/** r,",
+        "/run/s6-rc:s6-rc-init:*/servicedirs/ r,",
+        "/run/s6-rc:s6-rc-init:*/servicedirs/** r,",
+    ):
+        assert broad_oneshot_read not in source
+
     # Keep each new secondary-profile exception tied to the resolved files.
     # The primary profile's pre-existing /package/** runtime grant is recorded
     # explicitly; this correction must not copy it into a secondary profile or
@@ -597,6 +618,11 @@ def test_apparmor_allows_only_resolved_cold_start_executable_targets(
         "aare: /run/s6/container_environment/*   ->   "
         "/run/s6/container_environment/[^/\\x00][^/\\x00]*"
     ) == 1
+    assert parser_rules.count(
+        "aare: /run/s6-rc:s6-rc-init:*/servicedirs/"
+        "s6rc-oneshot-runner/   ->   /run/s6-rc:s6-rc-init:"
+        "[^/\\x00]*/servicedirs/s6rc-oneshot-runner/"
+    ) == 1
 
 
 def test_apparmor_limits_cold_start_mutations_to_traced_init_paths(
@@ -624,6 +650,7 @@ def test_apparmor_limits_cold_start_mutations_to_traced_init_paths(
         assert command in init_source
 
     expected_profiles_by_rule = {
+        "deny capability fsetid,": {"antigravity_home_assistant-init"},
         "/etc/.pwd.lock rwk,": {"antigravity_home_assistant-init"},
         "/etc/{passwd,shadow}{,+,-,.lock,.[0-9]*} rwkl,": {
             "antigravity_home_assistant-init"
@@ -654,6 +681,9 @@ def test_apparmor_limits_cold_start_mutations_to_traced_init_paths(
         }
         assert actual_profiles == expected_profiles
         assert source.count(f"  {rule}\n") == len(expected_profiles)
+
+    for rules in rules_by_profile.values():
+        assert "capability fsetid," not in rules
 
     # Bash probes /dev/tty even in noninteractive mode. Keep those probes
     # denied without audit noise instead of granting daemon profiles a TTY.
@@ -763,6 +793,15 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
             "antigravity_home_assistant-shell",
             "antigravity_home_assistant-sshd",
         },
+        "/dev/pts/ r,": {
+            "antigravity_home_assistant",
+            "antigravity_home_assistant-browser",
+            "antigravity_home_assistant-command",
+            "antigravity_home_assistant-interactive-runtime-restricted",
+            "antigravity_home_assistant-interactive-runtime-sensitive-read",
+            "antigravity_home_assistant-shell",
+            "antigravity_home_assistant-sshd",
+        },
         "/root/.bashrc r,": {
             "antigravity_home_assistant-shell"
         },
@@ -822,6 +861,8 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
     assert "/var/tmp/** rwkl," not in source
     assert "/var/log/** rwk," not in source
     assert "/dev/** r," not in source
+    assert "/dev/pts/** r," not in source
+    assert "/dev/pts/** rw," not in browser_profile
     assert "/root/** r," not in source
 
 
