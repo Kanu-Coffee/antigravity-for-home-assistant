@@ -31,6 +31,8 @@ PERMISSION_MIGRATION_VOLUME="${TEST_ID}-permission-migration"
 PERMISSION_V208_MIGRATION_VOLUME="${TEST_ID}-permission-v208-migration"
 PERMISSION_V208_AMBIGUOUS_VOLUME="${TEST_ID}-permission-v208-ambiguous"
 PERMISSION_V3_MIGRATION_VOLUME="${TEST_ID}-permission-v3-migration"
+TELEGRAM_RECONCILE_VOLUME="${TEST_ID}-telegram-reconcile"
+TELEGRAM_OVERSIZE_VOLUME="${TEST_ID}-telegram-oversize"
 PERMISSION_UNOWNED_VOLUME="${TEST_ID}-permission-unowned"
 PERMISSION_AMBIGUOUS_VOLUME="${TEST_ID}-permission-ambiguous"
 PUBLIC_V1_VOLUME="${TEST_ID}-public-v1"
@@ -50,6 +52,8 @@ VOLUMES=(
   "${PERMISSION_V208_MIGRATION_VOLUME}"
   "${PERMISSION_V208_AMBIGUOUS_VOLUME}"
   "${PERMISSION_V3_MIGRATION_VOLUME}"
+  "${TELEGRAM_RECONCILE_VOLUME}"
+  "${TELEGRAM_OVERSIZE_VOLUME}"
   "${PERMISSION_UNOWNED_VOLUME}"
   "${PERMISSION_AMBIGUOUS_VOLUME}"
   "${PUBLIC_V1_VOLUME}"
@@ -646,6 +650,7 @@ run_script "${PERMISSION_MIGRATION_VOLUME}" <<'SCRIPT'
     }
   ' /usr/local/share/antigravity-ha/user-files-update.mjs \
     > /tmp/user-files-permission-crash.mjs
+  cp /usr/local/share/antigravity-ha/telegram-permission-policy.mjs /tmp/
   set +e
   node /tmp/user-files-permission-crash.mjs >/tmp/crash-output 2>&1
   status=$?
@@ -1043,6 +1048,428 @@ run_script "${PERMISSION_V3_MIGRATION_VOLUME}" <<'SCRIPT'
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
 SCRIPT
 
+# Reproduce the live Telegram startup incident without importing any device
+# identifiers or credentials. With Telegram enabled, a private root-owned,
+# parseable legacy settings file cannot be left in preserve mode when its
+# effective policy would make the bridge fail before contacting the Bot API.
+# Reconcile the exact managed policy transactionally while preserving
+# non-managed top-level settings and the separate user-owned MCP file.
+run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  umask 077
+  install -d -m 0700 /data/antigravity \
+    /data/home/.gemini/antigravity-cli /data/home/.gemini/config
+  jq -n '{
+    telegram_enabled: true,
+    telegram_allowed_user_ids: [],
+    telegram_allowed_chat_ids: [],
+    antigravity_tool_permission: "strict",
+    antigravity_terminal_sandbox: true,
+    antigravity_user_files_update_mode: "preserve"
+  }' > /data/options.json
+  jq -n '{
+    altScreenMode: "never",
+    artifactReviewPolicy: "never",
+    allowNonWorkspaceAccess: true,
+    enableTerminalSandbox: true,
+    showTips: true,
+    showFeedbackSurvey: true,
+    toolPermission: "strict",
+    synthetic_incident_marker: "preserve-non-managed",
+    synthetic_incident_ui: {theme: "local-only"},
+    permissions: {
+      allow: [
+        "read_file(/config)",
+        "command(*)",
+        "user(synthetic/unsafe-allow)"
+      ],
+      ask: [
+        "mcp(playwright/browser_snapshot)",
+        "user(synthetic/unsafe-ask)"
+      ],
+      deny: ["read_file(/config/secrets.yaml)"]
+    }
+  }' > /data/home/.gemini/antigravity-cli/settings.json
+  jq -n '{
+    synthetic_mcp_marker: "preserve-byte-exact",
+    mcpServers: {
+      synthetic_incident: {
+        command: "/bin/false",
+        args: ["--synthetic-only"]
+      }
+    }
+  }' > /data/home/.gemini/config/mcp_config.json
+  chmod 0600 /data/options.json \
+    /data/home/.gemini/antigravity-cli/settings.json \
+    /data/home/.gemini/config/mcp_config.json
+  test ! -e /data/antigravity-ha/migration/native-files-state.json
+SCRIPT
+TELEGRAM_RECONCILE_SETTINGS_BEFORE=$(path_hash \
+  "${TELEGRAM_RECONCILE_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json)
+TELEGRAM_RECONCILE_MCP_BEFORE=$(path_hash \
+  "${TELEGRAM_RECONCILE_VOLUME}" \
+  /data/home/.gemini/config/mcp_config.json)
+TELEGRAM_RECONCILE_OUTPUT=$(run_helper "${TELEGRAM_RECONCILE_VOLUME}") \
+  || fail 'Telegram-enabled unowned settings were not reconciled safely'
+assert_json "${TELEGRAM_RECONCILE_OUTPUT}" '
+  .mode == "preserve"
+  and .requested_mode == "preserve"
+  and .permission_migration == "telegram_reconciled"
+  and .created == []
+  and .refreshed == ["settings"]
+  and (.backup_directory
+    | startswith("/data/antigravity-ha/backups/native-files/refresh-"))
+  and (.warnings | any(contains("safe Telegram policy")))
+  and (.warnings
+    | all(contains("left settings.json unchanged") | not))
+'
+assert_sanitized "${TELEGRAM_RECONCILE_OUTPUT}"
+TELEGRAM_RECONCILE_BACKUP=$(jq --raw-output '.backup_directory' \
+  <<<"${TELEGRAM_RECONCILE_OUTPUT}")
+[[ $(path_hash "${TELEGRAM_RECONCILE_VOLUME}" \
+  "${TELEGRAM_RECONCILE_BACKUP}/settings.before") == \
+  "${TELEGRAM_RECONCILE_SETTINGS_BEFORE}" ]]
+[[ $(path_hash "${TELEGRAM_RECONCILE_VOLUME}" \
+  /data/home/.gemini/config/mcp_config.json) == \
+  "${TELEGRAM_RECONCILE_MCP_BEFORE}" ]]
+run_script "${TELEGRAM_RECONCILE_VOLUME}" \
+  "${TELEGRAM_RECONCILE_BACKUP}" <<'SCRIPT'
+  set -Eeuo pipefail
+  backup=$1
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  state=/data/antigravity-ha/migration/native-files-state.json
+  test "$(stat -c "%a:%U:%G" "${settings}")" = 600:root:root
+  test "$(stat -c "%a:%U:%G" "${state}")" = 600:root:root
+  test "$(stat -c "%a:%U:%G" "${backup}")" = 700:root:root
+  test ! -e /data/antigravity-ha/migration/native-files.json
+  test ! -e "${backup}/mcp.before"
+  test ! -e "${backup}/mcp.image-default"
+  cmp --silent "${backup}/settings.image-default" "${settings}"
+  cmp --silent "${backup}/state.candidate" "${state}"
+  jq --exit-status '
+    .synthetic_incident_marker == "preserve-non-managed"
+    and .synthetic_incident_ui == {theme: "local-only"}
+    and .showTips == true
+    and .showFeedbackSurvey == true
+    and .allowNonWorkspaceAccess == false
+    and .artifactReviewPolicy == "agent-decides"
+    and .toolPermission == "request-review"
+    and .enableTerminalSandbox == false
+    and .permissions.ask == []
+    and (.permissions.allow | length) == 29
+    and (.permissions.deny | length) == 33
+    and (.permissions.allow | length) == ([.permissions.allow[]] | unique | length)
+    and (.permissions.deny | length) == ([.permissions.deny[]] | unique | length)
+    and (.permissions.allow | index("command(*)") == null)
+    and (.permissions.allow | index("user(synthetic/unsafe-allow)") == null)
+    and (.permissions.ask | index("user(synthetic/unsafe-ask)") == null)
+    and (.permissions.allow
+      | index("mcp(ha_change/ha_change_propose)") != null)
+    and (.permissions.allow
+      | index("mcp(telegram_action/telegram_action_propose)") != null)
+    and (.permissions.deny
+      | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
+    and (.permissions.deny
+      | index("read_file(/data/home/.gemini/config/mcp_config.json)") != null)
+  ' "${settings}" >/dev/null
+  jq --exit-status '
+    .synthetic_mcp_marker == "preserve-byte-exact"
+    and .mcpServers.synthetic_incident.command == "/bin/false"
+    and .mcpServers.synthetic_incident.args == ["--synthetic-only"]
+  ' /data/home/.gemini/config/mcp_config.json >/dev/null
+  jq --exit-status '
+    .scopes == ["settings"]
+    and .state.existed == false
+    and .state.before_sha256 == null
+    and (.state.candidate_sha256 | test("^[0-9a-f]{64}$"))
+    and .files.settings.existed == true
+    and (.files.settings.before_sha256 | test("^[0-9a-f]{64}$"))
+    and (.files.settings.candidate_sha256 | test("^[0-9a-f]{64}$"))
+    and .files.settings.before_sha256 != .files.settings.candidate_sha256
+    and (.files | keys) == ["settings"]
+  ' "${backup}/metadata.json" >/dev/null
+  jq --exit-status '
+    .owner == "antigravity-for-home-assistant"
+    and .kind == "native-files-refresh"
+    and .scopes == ["settings"]
+  ' "${backup}/manifest.json" >/dev/null
+  jq --exit-status '
+    .owner == "antigravity-for-home-assistant"
+    and .kind == "native-files-refresh"
+    and .outcome == "committed"
+  ' "${backup}/completed.json" >/dev/null
+  jq --exit-status '
+    (.applied.settings | length) == 1
+    and (.managed.settings.keys | sort) == ([
+      "allowNonWorkspaceAccess",
+      "artifactReviewPolicy",
+      "enableTerminalSandbox",
+      "permissions",
+      "toolPermission"
+    ] | sort)
+    and (.managed.settings.permission_rules | length) == 62
+  ' "${state}" >/dev/null
+  node --input-type=module <<'NODE'
+import {
+  loadTelegramPermissionBoundary,
+} from "/usr/local/share/antigravity-ha/telegram-bridge.mjs";
+
+const boundary = loadTelegramPermissionBoundary();
+if (boundary.toolPermission !== "request-review" ||
+    boundary.allowCount !== 29 || boundary.denyCount !== 33) {
+  throw new Error("reconciled settings did not satisfy the Telegram policy");
+}
+NODE
+SCRIPT
+TELEGRAM_RECONCILE_SETTINGS_AFTER=$(path_hash \
+  "${TELEGRAM_RECONCILE_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json)
+TELEGRAM_RECONCILE_STATE_AFTER=$(path_hash \
+  "${TELEGRAM_RECONCILE_VOLUME}" \
+  /data/antigravity-ha/migration/native-files-state.json)
+TELEGRAM_RECONCILE_BACKUP_COUNT=$(run_script \
+  "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
+  find /data/antigravity-ha/backups/native-files -mindepth 1 -maxdepth 1 \
+    -type d | wc -l
+SCRIPT
+)
+TELEGRAM_RECONCILE_IDEMPOTENT=$(run_helper \
+  "${TELEGRAM_RECONCILE_VOLUME}") \
+  || fail 'Telegram permission reconciliation was not restart-idempotent'
+assert_json "${TELEGRAM_RECONCILE_IDEMPOTENT}" '
+  .mode == "preserve"
+  and .permission_migration == "already_applied"
+  and .created == []
+  and .refreshed == []
+  and .backup_directory == null
+'
+assert_sanitized "${TELEGRAM_RECONCILE_IDEMPOTENT}"
+[[ $(path_hash "${TELEGRAM_RECONCILE_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json) == \
+  "${TELEGRAM_RECONCILE_SETTINGS_AFTER}" ]]
+[[ $(path_hash "${TELEGRAM_RECONCILE_VOLUME}" \
+  /data/antigravity-ha/migration/native-files-state.json) == \
+  "${TELEGRAM_RECONCILE_STATE_AFTER}" ]]
+[[ $(path_hash "${TELEGRAM_RECONCILE_VOLUME}" \
+  /data/home/.gemini/config/mcp_config.json) == \
+  "${TELEGRAM_RECONCILE_MCP_BEFORE}" ]]
+[[ $(run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
+  find /data/antigravity-ha/backups/native-files -mindepth 1 -maxdepth 1 \
+    -type d | wc -l
+SCRIPT
+) == "${TELEGRAM_RECONCILE_BACKUP_COUNT}" ]]
+
+# Disabling Telegram and returning through ordinary preserve must recognize the
+# five-key ownership record. Repair App-owned sandbox/tool drift without claiming
+# or changing preserved UI/customization keys.
+run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  options=/data/options.json
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  jq '.telegram_enabled = false' "${options}" > "${options}.next"
+  mv "${options}.next" "${options}"
+  chmod 0600 "${options}"
+  jq '
+    .enableTerminalSandbox = true
+    | .toolPermission = "strict"
+  ' "${settings}" > "${settings}.drift"
+  mv "${settings}.drift" "${settings}"
+  chmod 0600 "${settings}"
+SCRIPT
+TELEGRAM_OFF_DRIFT_OUTPUT=$(run_helper "${TELEGRAM_RECONCILE_VOLUME}") \
+  || fail 'Telegram-disabled preserve did not repair boundary drift'
+assert_json "${TELEGRAM_OFF_DRIFT_OUTPUT}" '
+  .mode == "preserve"
+  and .permission_migration == "applied"
+  and .refreshed == ["settings"]
+  and (.backup_directory
+    | startswith("/data/antigravity-ha/backups/native-files/refresh-"))
+  and (.warnings | all(contains("ambiguous") | not))
+  and (.warnings | all(contains("left settings.json unchanged") | not))
+'
+run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  state=/data/antigravity-ha/migration/native-files-state.json
+  jq --exit-status '
+    .enableTerminalSandbox == false
+    and .toolPermission == "request-review"
+    and .showTips == true
+    and .showFeedbackSurvey == true
+  ' "${settings}" >/dev/null
+  jq --exit-status '
+    (.managed.settings.keys | sort) == ([
+      "allowNonWorkspaceAccess",
+      "artifactReviewPolicy",
+      "enableTerminalSandbox",
+      "permissions",
+      "toolPermission"
+    ] | sort)
+  ' "${state}" >/dev/null
+SCRIPT
+TELEGRAM_OFF_PRESERVE_OUTPUT=$(run_helper "${TELEGRAM_RECONCILE_VOLUME}") \
+  || fail 'Telegram-disabled preserve did not remain idempotent'
+assert_json "${TELEGRAM_OFF_PRESERVE_OUTPUT}" '
+  .mode == "preserve"
+  and .permission_migration == "already_applied"
+  and .refreshed == []
+  and .backup_directory == null
+  and (.warnings | all(contains("ambiguous") | not))
+'
+
+# Telegram-only reconciliation must not claim preserved UI/customization keys
+# as App-owned. A later Telegram-disabled refresh may update the five recorded
+# security keys but must leave those unrelated values and their ownership alone.
+run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  options=/data/options.json
+  state=/data/antigravity-ha/migration/native-files-state.json
+  jq '.antigravity_user_files_update_mode = "refresh_managed"' \
+    "${options}" > "${options}.next"
+  mv "${options}.next" "${options}"
+  chmod 0600 "${options}"
+  jq '.applied.settings = []' "${state}" > "${state}.next"
+  mv "${state}.next" "${state}"
+  chmod 0600 "${state}"
+SCRIPT
+TELEGRAM_OFF_REFRESH_OUTPUT=$(run_helper "${TELEGRAM_RECONCILE_VOLUME}") \
+  || fail 'Telegram-disabled refresh after reconciliation failed'
+assert_json "${TELEGRAM_OFF_REFRESH_OUTPUT}" '
+  .mode == "refresh_managed"
+  and .permission_migration == "not_applicable"
+  and .refreshed == ["settings"]
+'
+run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  state=/data/antigravity-ha/migration/native-files-state.json
+  jq --exit-status '
+    .synthetic_incident_marker == "preserve-non-managed"
+    and .synthetic_incident_ui == {theme: "local-only"}
+    and .altScreenMode == "never"
+    and .showTips == true
+    and .showFeedbackSurvey == true
+  ' "${settings}" >/dev/null
+  jq --exit-status '
+    (.managed.settings.keys | sort) == ([
+      "allowNonWorkspaceAccess",
+      "artifactReviewPolicy",
+      "enableTerminalSandbox",
+      "permissions",
+      "toolPermission"
+    ] | sort)
+    and (.managed.settings.permission_rules | length) == 62
+  ' "${state}" >/dev/null
+SCRIPT
+
+# A current ownership record and canonical contents must not hide later drift.
+# Reproduce the older no-permissions layout, non-private metadata, and the
+# refresh_managed/unowned warning path in one bounded fixture. Telegram startup
+# must repair all of them transactionally without claiming the file was kept.
+run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  options=/data/options.json
+  jq '
+    del(.permissions)
+    | .allowNonWorkspaceAccess = true
+    | .artifactReviewPolicy = "never"
+    | .enableTerminalSandbox = true
+    | .toolPermission = "strict"
+  ' "${settings}" > "${settings}.drift"
+  mv "${settings}.drift" "${settings}"
+  chmod 0644 "${settings}"
+  jq '
+    .telegram_enabled = true
+    | .antigravity_user_files_update_mode = "refresh_managed"
+  ' \
+    "${options}" > "${options}.next"
+  mv "${options}.next" "${options}"
+  chmod 0600 "${options}"
+  rm /data/antigravity-ha/migration/native-files-state.json
+SCRIPT
+TELEGRAM_REFRESH_OUTPUT=$(run_helper "${TELEGRAM_RECONCILE_VOLUME}") \
+  || fail 'Telegram refresh_managed drift was not reconciled safely'
+assert_json "${TELEGRAM_REFRESH_OUTPUT}" '
+  .mode == "refresh_managed"
+  and .permission_migration == "telegram_reconciled"
+  and .refreshed == ["settings"]
+  and (.warnings | any(contains("safe Telegram policy")))
+  and (.warnings | all(contains("was preserved") | not))
+  and (.warnings | all(contains("left settings.json unchanged") | not))
+'
+assert_sanitized "${TELEGRAM_REFRESH_OUTPUT}"
+run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  test "$(stat -c "%a:%U:%G" "${settings}")" = 600:root:root
+  jq --exit-status '
+    .allowNonWorkspaceAccess == false
+    and .artifactReviewPolicy == "agent-decides"
+    and .enableTerminalSandbox == false
+    and .toolPermission == "request-review"
+    and (.permissions.allow | length) == 29
+    and .permissions.ask == []
+    and (.permissions.deny | length) == 33
+  ' "${settings}" >/dev/null
+SCRIPT
+
+# A compact, bounded legacy file can expand beyond the bridge limit when an
+# unsafe boundary is serialized canonically. Reject it before any transaction
+# instead of reporting success and leaving the bridge in a fail-closed hold.
+run_script "${TELEGRAM_OVERSIZE_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  umask 077
+  install -d -m 0700 /data/antigravity \
+    /data/home/.gemini/antigravity-cli /data/home/.gemini/config
+  jq -n '{
+    telegram_enabled: true,
+    telegram_allowed_user_ids: [],
+    telegram_allowed_chat_ids: [],
+    antigravity_user_files_update_mode: "preserve"
+  }' > /data/options.json
+  node --input-type=module <<'NODE'
+import { writeFileSync } from "node:fs";
+
+const value = {
+  toolPermission: "strict",
+  syntheticLargeSetting: Array(50_000).fill("x"),
+};
+writeFileSync(
+  "/data/home/.gemini/antigravity-cli/settings.json",
+  JSON.stringify(value),
+  { mode: 0o600 },
+);
+NODE
+  printf '{"mcpServers":{}}\n' > /data/home/.gemini/config/mcp_config.json
+  chmod 0600 /data/options.json \
+    /data/home/.gemini/antigravity-cli/settings.json \
+    /data/home/.gemini/config/mcp_config.json
+  size=$(stat -c %s /data/home/.gemini/antigravity-cli/settings.json)
+  test "${size}" -gt 0
+  test "${size}" -le $((256 * 1024))
+SCRIPT
+TELEGRAM_OVERSIZE_BEFORE=$(path_hash \
+  "${TELEGRAM_OVERSIZE_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json)
+set +e
+TELEGRAM_OVERSIZE_OUTPUT=$(run_helper "${TELEGRAM_OVERSIZE_VOLUME}" 2>&1)
+TELEGRAM_OVERSIZE_STATUS=$?
+set -e
+[[ ${TELEGRAM_OVERSIZE_STATUS} -eq 20 ]] \
+  || fail 'oversized Telegram candidate was not rejected fail-closed'
+grep -Fq 'exceeds the Telegram boundary size limit' \
+  <<<"${TELEGRAM_OVERSIZE_OUTPUT}" \
+  || fail 'oversized Telegram candidate did not report the bounded reason'
+[[ $(path_hash "${TELEGRAM_OVERSIZE_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json) == \
+  "${TELEGRAM_OVERSIZE_BEFORE}" ]]
+run_script "${TELEGRAM_OVERSIZE_VOLUME}" <<'SCRIPT'
+  test ! -e /data/antigravity-ha/migration/native-files.json
+  test ! -e /data/antigravity-ha/migration/native-files-state.json
+SCRIPT
+
 # Matching contents without an ownership record are user-owned. Preserve mode
 # must report the fail-safe decision and leave every byte untouched.
 run_script "${PERMISSION_UNOWNED_VOLUME}" <<'SCRIPT'
@@ -1328,6 +1755,7 @@ run_script "${CRASH_VOLUME}" <<'SCRIPT'
     }
   ' /usr/local/share/antigravity-ha/user-files-update.mjs \
     > /tmp/user-files-prepared-crash.mjs
+  cp /usr/local/share/antigravity-ha/telegram-permission-policy.mjs /tmp/
   set +e
   node /tmp/user-files-prepared-crash.mjs >/tmp/crash-output 2>&1
   status=$?

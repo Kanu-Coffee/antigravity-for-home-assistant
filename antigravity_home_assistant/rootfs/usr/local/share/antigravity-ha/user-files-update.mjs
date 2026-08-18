@@ -11,6 +11,12 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
+import {
+  TELEGRAM_MANAGED_SECURITY_KEYS,
+  TELEGRAM_SETTINGS_MAX_BYTES,
+  assertTelegramPermissionBoundary,
+} from "./telegram-permission-policy.mjs";
+
 const DATA_DIRECTORY = "/data/antigravity";
 const APP_DATA_DIRECTORY = "/data/antigravity-ha";
 const HOME_DIRECTORY = "/data/home";
@@ -1874,6 +1880,10 @@ function parseOptions(value) {
         : requestedMode;
 
   const migrationWarnings = [];
+  const telegramEnabled = value.telegram_enabled ?? false;
+  if (typeof telegramEnabled !== "boolean") {
+    throw new Error("telegram_enabled is invalid");
+  }
   if (requestedMode === "refresh_agents" || requestedMode === "refresh_all") {
     migrationWarnings.push(
       `Legacy ${requestedMode} mode was mapped to refresh_managed`,
@@ -1963,6 +1973,7 @@ function parseOptions(value) {
     migrationWarnings,
     mode,
     requestedMode,
+    telegramEnabled,
     terminalSandbox,
     toolPermission,
   };
@@ -2005,6 +2016,7 @@ function defaultSettings(template, options) {
       ...browserPermissions.ask,
     ],
   };
+  assertTelegramPermissionBoundary(value);
   return Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
@@ -2051,6 +2063,17 @@ function sameStringSet(left, right) {
     new Set(left).size === left.length &&
     new Set(right).size === right.length &&
     left.every((entry) => right.includes(entry))
+  );
+}
+
+function ownsTelegramSettingsBoundary(ownership, desiredOwnership) {
+  return (
+    [...TELEGRAM_MANAGED_SECURITY_KEYS].every((key) =>
+      ownership.keys.includes(key)) &&
+    sameStringSet(
+      ownership.permission_rules,
+      desiredOwnership.permission_rules,
+    )
   );
 }
 
@@ -2208,11 +2231,11 @@ function preparePreservePermissionMigration(
   desiredOwnership,
 ) {
   const currentOwnership =
-    sameStringSet(ownership.keys, desiredOwnership.keys) &&
-    sameStringSet(
-      ownership.permission_rules,
-      desiredOwnership.permission_rules,
-    );
+    (sameStringSet(ownership.keys, desiredOwnership.keys) &&
+      sameStringSet(
+        ownership.permission_rules,
+        desiredOwnership.permission_rules,
+      )) || ownsTelegramSettingsBoundary(ownership, desiredOwnership);
   if (currentOwnership) {
     try {
       const current = parseSettings(currentContent, "Existing settings.json");
@@ -2399,6 +2422,32 @@ function settingsOwnership(defaultContent) {
   };
 }
 
+function telegramSettingsOwnership(currentOwnership, desiredOwnership) {
+  for (const key of TELEGRAM_MANAGED_SECURITY_KEYS) {
+    if (!desiredOwnership.keys.includes(key)) {
+      throw new FatalUpdateError(
+        `The image default settings.json is missing Telegram-managed ${key}`,
+      );
+    }
+  }
+  return {
+    keys: [...new Set([
+      ...currentOwnership.keys,
+      ...TELEGRAM_MANAGED_SECURITY_KEYS,
+    ])],
+    permission_rules: [...desiredOwnership.permission_rules],
+  };
+}
+
+function refreshedSettingsOwnership(currentOwnership, desiredOwnership) {
+  return {
+    keys: [...currentOwnership.keys],
+    permission_rules: currentOwnership.keys.includes("permissions")
+      ? [...desiredOwnership.permission_rules]
+      : [...currentOwnership.permission_rules],
+  };
+}
+
 function mergeManagedSettings(currentContent, defaultContent, ownership) {
   const current = parseSettings(currentContent, "Existing settings.json");
   const desired = parseSettings(defaultContent, "The image default settings.json");
@@ -2454,6 +2503,59 @@ function resetManagedSettings(currentContent, defaultContent, desiredOwnership) 
   return Buffer.from(`${JSON.stringify(reset, null, 2)}\n`, "utf8");
 }
 
+function reconcileTelegramManagedSettings(currentContent, defaultContent) {
+  const current = parseSettings(currentContent, "Existing settings.json");
+  const desired = parseSettings(defaultContent, "The image default settings.json");
+  assertTelegramPermissionBoundary(desired);
+  if (desired.enableTerminalSandbox !== false) {
+    throw new FatalUpdateError(
+      "The image default settings.json enables the unsupported native sandbox",
+    );
+  }
+  let currentIsCanonical = true;
+  try {
+    assertTelegramPermissionBoundary(current);
+  } catch {
+    currentIsCanonical = false;
+  }
+  if (currentIsCanonical) {
+    if (currentContent.length > TELEGRAM_SETTINGS_MAX_BYTES) {
+      throw new Error(
+        "Candidate settings.json exceeds the Telegram boundary size limit",
+      );
+    }
+    return currentContent;
+  }
+  // A settings file that is already canonical stays byte-exact. Any boundary
+  // drift is replaced below while preserving unrelated top-level keys.
+
+  // Enabling Telegram makes the five App-owned security settings part of the
+  // authenticated approval boundary. Unknown allow/ask/deny rules cannot be
+  // carried into a headless session because the bridge could bypass or block
+  // proposal cards. Preserve every unrelated top-level user setting, global
+  // MCP configuration, and OAuth data.
+  const reconciled = {
+    ...current,
+    allowNonWorkspaceAccess: desired.allowNonWorkspaceAccess,
+    artifactReviewPolicy: desired.artifactReviewPolicy,
+    toolPermission: desired.toolPermission,
+    enableTerminalSandbox: desired.enableTerminalSandbox,
+    permissions: {
+      allow: [...desired.permissions.allow],
+      ask: [...desired.permissions.ask],
+      deny: [...desired.permissions.deny],
+    },
+  };
+  assertTelegramPermissionBoundary(reconciled);
+  const content = Buffer.from(`${JSON.stringify(reconciled, null, 2)}\n`, "utf8");
+  if (content.length > TELEGRAM_SETTINGS_MAX_BYTES) {
+    throw new Error(
+      "Reconciled settings.json exceeds the Telegram boundary size limit",
+    );
+  }
+  return content;
+}
+
 function defaultMcpConfig(template) {
   const value = parseTemplate(template, "mcp_config.json");
   if (
@@ -2479,7 +2581,11 @@ async function preflightDefaultTargets() {
       continue;
     }
     assertRootOwnedRegular(target, stats);
-    targets[scope] = { existed: true };
+    targets[scope] = {
+      existed: true,
+      mode: stats.mode & 0o777,
+      size: stats.size,
+    };
   }
 
   if ((await inspectPath(LEGACY_CONFIG_PATH)) || (await inspectPath(LEGACY_AGENTS_PATH))) {
@@ -2562,9 +2668,11 @@ async function main() {
   const candidates = {};
   let backupDirectory = null;
   let permissionMigration = "not_applicable";
+  let permissionMigrationWarning = null;
   let scopes = [];
   const refreshed = [];
 
+  let refreshConflictWarning = null;
   if (
     preflight.targets.settings.existed &&
     options.mode === "refresh_managed" &&
@@ -2573,7 +2681,7 @@ async function main() {
   ) {
     const conflict =
       "Existing settings.json has no App ownership state and was preserved";
-    warnings.push(conflict);
+    refreshConflictWarning = conflict;
   }
 
   if (!preflight.targets.settings.existed) {
@@ -2603,10 +2711,11 @@ async function main() {
         "Existing settings.json disappeared before permission migration",
       );
     }
+    const currentOwnership = state.managed.settings;
     const migration = preparePreservePermissionMigration(
       currentSettings,
       defaults.settings,
-      state.managed.settings,
+      currentOwnership,
       desiredOwnership,
     );
     permissionMigration =
@@ -2614,10 +2723,13 @@ async function main() {
       versionApplied(state, "settings", appVersion)
         ? "already_applied"
         : migration.status;
-    if (migration.warning !== null) warnings.push(migration.warning);
+    permissionMigrationWarning = migration.warning;
     if (migration.candidate !== null) {
       candidates.settings = migration.candidate;
-      state.managed.settings = desiredOwnership;
+      state.managed.settings = refreshedSettingsOwnership(
+        currentOwnership,
+        desiredOwnership,
+      );
       refreshed.push("settings");
     }
   } else if (
@@ -2629,13 +2741,71 @@ async function main() {
     if (currentSettings === undefined) {
       throw new Error("Existing settings.json disappeared before managed merge");
     }
+    const currentOwnership = state.managed.settings;
     candidates.settings = mergeManagedSettings(
       currentSettings,
       defaults.settings,
-      state.managed.settings,
+      currentOwnership,
     );
-    state.managed.settings = desiredOwnership;
+    state.managed.settings = refreshedSettingsOwnership(
+      currentOwnership,
+      desiredOwnership,
+    );
     refreshed.push("settings");
+  }
+
+  if (options.telegramEnabled && preflight.targets.settings.existed) {
+    const currentSettings = await readSafeFile(
+      SETTINGS_PATH,
+      TELEGRAM_SETTINGS_MAX_BYTES,
+    );
+    if (currentSettings === undefined) {
+      throw new Error(
+        "Existing settings.json disappeared before Telegram permission reconciliation",
+      );
+    }
+    const reconciliationBase = candidates.settings ?? currentSettings;
+    const reconciledOwnership = telegramSettingsOwnership(
+      state.managed.settings,
+      desiredOwnership,
+    );
+    const reconciled = reconcileTelegramManagedSettings(
+      reconciliationBase,
+      defaults.settings,
+    );
+    const reconciliationNeeded =
+      Object.hasOwn(candidates, "settings") ||
+      !reconciled.equals(currentSettings) ||
+      preflight.targets.settings.mode !== 0o600 ||
+      !sameStringSet(
+        state.managed.settings.keys,
+        reconciledOwnership.keys,
+      ) ||
+      !sameStringSet(
+        state.managed.settings.permission_rules,
+        reconciledOwnership.permission_rules,
+      );
+    if (reconciliationNeeded) {
+      candidates.settings = reconciled;
+      state.managed.settings = reconciledOwnership;
+      if (!refreshed.includes("settings")) refreshed.push("settings");
+      permissionMigration = "telegram_reconciled";
+      warnings.push(
+        "Telegram-enabled startup reconciled managed security keys and permissions to the safe Telegram policy while preserving unrelated settings",
+      );
+    } else if (options.mode === "preserve") {
+      permissionMigration = "already_applied";
+    }
+    permissionMigrationWarning = null;
+    refreshConflictWarning = null;
+  }
+  if (permissionMigrationWarning !== null &&
+      permissionMigration !== "telegram_reconciled") {
+    warnings.push(permissionMigrationWarning);
+  }
+  if (refreshConflictWarning !== null &&
+      permissionMigration !== "telegram_reconciled") {
+    warnings.push(refreshConflictWarning);
   }
 
   if (!preflight.targets.mcp.existed) {

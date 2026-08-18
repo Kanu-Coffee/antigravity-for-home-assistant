@@ -2,6 +2,43 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.0.12] - 2026-08-18
+
+### Fixed
+
+- Reconcile the effective native permission boundary transactionally before a
+  Telegram-enabled startup. A root-owned, single-link regular, parseable
+  `settings.json` of at most 256 KiB now receives the five canonical App-managed
+  security values and exact 29 allow/0 ask/33 deny policy even when
+  preserve mode cannot prove legacy ownership or a previously current file has
+  drifted. The transaction backs up the prior settings, preserves unrelated
+  top-level settings and the existing global MCP, OAuth, plugins, and `/config`,
+  hardens the file mode to 0600, and is restart-idempotent.
+- Share one permission-boundary validator between the user-file updater and the
+  Telegram bridge so updater output cannot silently diverge from the startup
+  gate. Missing/extra allow/ask/deny rules are not carried into the headless Telegram
+  runtime; the two requester-bound proposal MCPs remain the only managed
+  side-effect entry points.
+- Keep an unrecoverable Telegram permission boundary fail-closed without
+  repeatedly exiting the supervised process. The bridge records one sanitized
+  `permission_boundary_blocked` event, makes no Bot API connection, and waits
+  for an administrator to repair the unsafe or unparsable settings and restart
+  the App.
+
+### Security and limitations
+
+- Enabling Telegram now explicitly claims the managed native permission
+  security keys and permission buckets even in `preserve` mode. This is a breaking
+  compatibility correction: unknown custom allow/ask/deny rules are removed, while
+  native settings outside those five security keys,
+  global MCP configuration, OAuth, plugins, and Home Assistant configuration
+  remain preserved. Keep Telegram disabled if those custom native permission
+  rules must remain byte-preserved.
+- A sanitized real-HAOS report established the original pre-connection fatal
+  loop and recovery after a manual safe-policy rewrite. The repaired 2.0.12
+  image still requires HAOS update, live Bot API, AppArmor, OAuth, and restart
+  acceptance; those results remain `NOT RUN` until separately observed.
+
 ## [2.0.11] - 2026-08-18
 
 ### Added

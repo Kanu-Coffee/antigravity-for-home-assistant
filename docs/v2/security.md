@@ -42,6 +42,7 @@ untrusted data이며 다음 행위를 직접 승인하지 못한다.
 | 민감 파일 직접 접근 | custom AppArmor deny + native permission deny |
 | browser가 token 또는 내부 API 유출 | local read-only identity, loopback gateway, output redaction |
 | migration link/path 공격 | owner/type/link/mode preflight, dirfd, atomic rename |
+| update 뒤 stale permission이 Telegram approval을 우회하거나 bridge를 crash-loop시킴 | Telegram-enabled canonical reconciliation, shared validator, Bot API 전 live fail-closed hold |
 | dependency 또는 artifact 변조 | version+digest pin, lockfile, CI provenance와 image signing |
 | resource exhaustion | bounded queue, payload/output limit, timeout와 concurrency cap |
 
@@ -55,6 +56,16 @@ allow한다. `strict`와 legacy autonomous schema 값은 upgrade 입력 호환�
 `request-review`로 정규화한다. 일반 native write, URL execute, command,
 mutation-capable browser와 arbitrary mutation MCP는 허용하지 않는다. 2.0.9/2.0.10 App-owned broad allow는 안전하게 ownership을 확인한 경우
 migration하며 user-owned rule과 stronger deny는 보존한다.
+
+2.0.12에서 `telegram_enabled=true`인 startup은 위 2.0.11 일반 migration보다 강한
+permission 경계다. root-owned single-link regular·256 KiB 이하의 parse 가능한 existing
+settings를 transaction backup한 뒤 `allowNonWorkspaceAccess=false`,
+`artifactReviewPolicy=agent-decides`, `toolPermission=request-review`,
+`enableTerminalSandbox=false`와 permission 세 bucket(29 allow/0 ask/33 deny)을 shared
+canonical policy로 교체한다. 이때 bucket 안의 user-owned rule과 stronger deny는 보존
+대상이 아니지만 이 다섯 보안 key 밖의 unrelated top-level settings, global MCP/plugin,
+OAuth와 `/config`는 변경하지 않는다. 기존 mode는 0600으로 강화하고 option mode는
+자동으로 `reset_v2`가 되지 않는다.
 
 ## SEC-004 — AppArmor 항상 ON
 
@@ -346,6 +357,15 @@ broker에서 저위험 자동 실행하는 mutation은 없다. `expected_state`/
   schema의 `strict`/autonomous 값은 upgrade input으로만 수용하고 updater가
   `request-review`로 정규화한다. 2.0.9/2.0.10 App-owned `mcp(*)`/`command(*)` broad allow는 safely identified
   migration에서 retire하며 user-owned rule과 stronger deny는 보존한다.
+- 2.0.12에서 Telegram-enabled init은 ownership state나 migration mode에 기대지 않고
+  다섯 App 관리 보안 key와 effective permission 세 bucket을 canonical policy로
+  reconcile한다. 같은 input은 새
+  backup/write 없이 idempotent해야 하며 global MCP는 byte-preserve하고 unrelated
+  settings와 OAuth를 보존한다. preflight·parse·policy validation·transaction 중 하나라도
+  안전하지 않으면 partial write나 permissive fallback을 허용하지 않는다.
+- bridge의 init 후 검증이 실패하면 `permission_boundary_blocked`를 한 번만 정제해
+  기록하고 Bot API에 접촉하지 않는 live hold로 들어간다. 같은 unsafe settings로 fatal
+  exit/S6 restart를 반복하지 않으며 운영자가 안전하게 복구하고 App을 재시작해야 한다.
 - App-managed broker proposal의 승인 transport는 Telegram requester-bound inline
   button이다. 인증된 Web/SSH에서 사용자가 명시한 trusted direct tool 작업은 native
   interactive flow를 사용할 수 있고 Telegram button으로 자동 broker되지 않는다. 두
@@ -423,6 +443,10 @@ credential 노출이 의심되면 해당 service를 중지하고 token을 revoke
 - 실제 1.1.13에서 Telegram이 user global/workspace plugin·agent·rule·MCP와 permission을
   CLI와 동일하게 상속하고 수정할 수 있는 positive canary
 - symlink/hardlink/FIFO/path traversal migration 회귀
+- Telegram-enabled preserve update가 permission boundary만 canonicalize하고 unrelated
+  settings, global MCP와 OAuth를 보존하는 transaction/idempotency test
+- unsafe effective permission의 `permission_boundary_blocked`, Bot API non-contact와
+  no-exit/no-S6-restart negative test
 - Telegram auth, stable conversation, explicit `/new`, same-session approval, sealed outbox
   retry/ack와 cross-chat negative test
 - browser console/network/screenshot redaction test
@@ -431,3 +455,5 @@ credential 노출이 의심되면 해당 service를 중지하고 token을 revoke
 이 증거 중 하나라도 빠지거나 native OAuth 동일-process 잔여 위험과 실제 HAOS
 OAuth/AppArmor gate가 검증되지 않으면 v2 보안은 `VERIFIED`가 아니다. Telegram은
 기본 OFF이며 사용자가 관리자 주 채널의 잔여 위험을 명시적으로 수용한 뒤 켠다.
+2.0.12 repaired image의 실제 HAOS update reconciliation, live Bot API 재연결과 hold
+동작은 별도 실기기 증거 전까지 `NOT RUN`이다.

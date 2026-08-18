@@ -65,6 +65,14 @@ base
 - `sshd`, `ttyd`와 ingress는 init 성공 뒤 시작한다.
 - Telegram은 init, `ha-read-broker`와 `ha-change-broker` 준비 뒤 시작하고
   `telegram_enabled=false`면 pause 상태를 유지한다.
+- `telegram_enabled=true`이면 init은 safe parseable native settings의 Telegram
+  permission 경계를 mode와 ownership state에 관계없이 transaction backup 뒤 canonical
+  policy로 reconcile한다. 이 preflight 또는 transaction이 안전하게 완료되지 않으면
+  partial settings를 남기지 않고 init을 fail closed한다.
+- init 뒤 bridge가 effective permission 경계를 다시 검증해 mismatch를 발견하면
+  `permission_boundary_blocked`를 한 번 기록하고 Bot API에 접촉하지 않는 live hold를
+  유지한다. 같은 설정으로 exit/S6 restart를 반복하지 않으며 복구 뒤 App restart가
+  필요하다.
 - memory와 browser 실패는 상태를 degraded로 표시하되 SSH/Ingress를 죽이지
   않는다.
 - browser gateway는 별도 s6 longrun이 아니다. init이 loopback nginx upstream과
@@ -218,25 +226,31 @@ Telegram token을 파일명, argv 또는 persisted queue에 넣지 않는다. `s
 
 1. init은 native `settings.json`을 schema 검증한다.
 2. migration mode에 따라 사용자 설정을 보존하거나 image-managed key만 merge한다.
-3. global MCP config가 없으면 빈 `mcpServers` 기본본만 만들고, 기존 파일은 모든
+3. `telegram_enabled=true`이면 root-owned single-link regular·256 KiB 이하의 parse
+   가능한 settings에서 `allowNonWorkspaceAccess`, `artifactReviewPolicy`,
+   `toolPermission`, `enableTerminalSandbox`와 permission 세 bucket을 shared canonical
+   Telegram policy로 reconcile한다. 그 다섯 보안 key 밖의 unrelated top-level
+   settings와 option mode는 보존하고 파일 mode를 0600으로 강화하며 transaction state를
+   idempotent하게 기록한다.
+4. global MCP config가 없으면 빈 `mcpServers` 기본본만 만들고, 기존 파일은 모든
    migration mode에서 byte-preserve한다.
-4. App 관리 MCP/rules/skills를 포함한 `home-assistant` plugin source를 검증한다.
+5. App 관리 MCP/rules/skills를 포함한 `home-assistant` plugin source를 검증한다.
    안전한 ownership marker가 있으면 mode와 무관하게 App version당 한 번 canonical
    global plugin 경로에 다시 설치한다. marker 없는 same-name plugin은 fail closed한다.
-5. `agy plugin validate <path>`와 `agy plugin list`가 실패하면 plugin capability를
+6. `agy plugin validate <path>`와 `agy plugin list`가 실패하면 plugin capability를
    시작하지 않는다.
-6. interactive wrapper는 `/config`에서 native binary를 실행한다. 비특권 HAOS에서
+7. interactive wrapper는 `/config`에서 native binary를 실행한다. 비특권 HAOS에서
    namespace clone이 실패하는 native `--sandbox`는 추가하지 않고 enable/disable
    override를 모두 거부한다. legacy `antigravity_terminal_sandbox`는 deprecated/no-op
    compatibility 입력으로 받아 어느 값이든 `false`로 정규화하고 warning을 남긴다.
-7. `antigravity_sensitive_data_access=false`면 `interactive-restricted`, `true`면
+8. `antigravity_sensitive_data_access=false`면 `interactive-restricted`, `true`면
    `interactive-sensitive-read` bootstrap profile로 discrete `Px` transition한다. 이
    bootstrap은 HOME/OAuth를 열지 않고 clean environment copy를 통해 image-owned
    `antigravity-real`로 한 번 더 전환한다. 실제 CLI는 각각
    `interactive-runtime-restricted` 또는 `interactive-runtime-sensitive-read`에서 shared
    HOME/OAuth와 global customization을 로드한다. 두 경우 모두 AppArmor는 enforce이며
    true runtime만 Recorder DB 진단 read를 추가한다.
-8. runtime profile에서 시작하는 `/bin`, `/usr/bin`, `/usr/sbin`, `/config`, `/tmp`와
+9. runtime profile에서 시작하는 `/bin`, `/usr/bin`, `/usr/sbin`, `/config`, `/tmp`와
    executable global customization은 discrete `Px` transition으로
    `antigravity_home_assistant-command` profile에 들어간다. managed helper는 더 좁은
    기존 specialized profile을 유지한다. command descendant는 일반 `/config`, network와
@@ -305,7 +319,11 @@ timeout·5xx처럼 전달 여부가 모호한 send는 `/retry`까지 격리한�
 
 Telegram bridge 시작 전 effective settings gate는 `toolPermission=request-review`만
 수용한다. `strict`, `always-proceed`, `proceed-in-sandbox`는 config schema의 upgrade
-입력 호환 값이며 user-files updater가 모두 `request-review`로 정규화한다.
+입력 호환 값이며 user-files updater가 모두 `request-review`로 정규화한다. 2.0.12는
+Telegram-enabled init에서 같은 shared policy definition으로 다섯 App 관리 보안 key와
+permission 세 bucket까지 canonicalize한다. bridge 재검증이 이 경계를 수용하지 못하면
+`permission_boundary_blocked` 뒤 Bot API를 호출하지 않는 live hold로 들어가며 process
+exit와 S6 restart loop를 만들지 않는다.
 
 승인/선택/거절 callback의 Telegram ACK와 기본 인증, `/new`·`/cancel` 같은 control update는
 즉시 처리한다. 승인된 broker/executor 실행은 같은 requester FIFO에서 session-serialized되며
@@ -482,6 +500,9 @@ transient `device_test`는 persistent `service_call`과 다른 preview 형식을
 - memory corruption은 DB를 삭제하지 않고 memory capability만 중단한다.
 - Telegram API 장애는 queue 상한, 암호화된 reply outbox와 bounded backoff 안에서
   격리하고 완료된 model 응답을 유실하지 않는다.
+- Telegram permission boundary mismatch는 Bot API 접촉 전
+  `permission_boundary_blocked` live hold로 격리하고 같은 설정의 process restart로
+  복구를 시도하지 않는다.
 - browser 실패는 텍스트/API 진단을 막지 않는다.
 - Core/Supervisor 장애는 명확한 unavailable 결과를 반환하며 credential fallback을
   시도하지 않는다.

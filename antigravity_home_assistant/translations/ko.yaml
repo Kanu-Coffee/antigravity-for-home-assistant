@@ -39,7 +39,10 @@ configuration:
   antigravity_user_files_update_mode:
     name: Antigravity 사용자 파일 업데이트 방식
     description: >-
-      preserve는 기존 사용자 파일을 모두 보존합니다. refresh_managed는
+      preserve는 기존 사용자 파일을 보존하지만 Telegram을 켜면 안전한 settings의
+      다섯 App 관리 보안 key와 permission 세 bucket을 시작 전에 exact 정책으로 자동
+      정규화합니다. 이때 그 다섯 보안 key 밖의 설정, global MCP, plugin과 OAuth는
+      보존합니다. refresh_managed는
       이미지가 관리하는 규칙·플러그인·MCP 기본값만 갱신합니다. 명시적
       reset_v2는 안전한 settings를 root 전용 backup에 저장하고 ownership state와
       무관하게 managed key 및 permission 세 bucket을 exact image default로

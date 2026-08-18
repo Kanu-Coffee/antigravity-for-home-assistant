@@ -123,3 +123,31 @@
 - 공유 OAuth가 이미 있으면 지원되는 일반 작업은 Telegram만으로 처리한다. initial OAuth
   controlling TTY, live HAOS AppArmor, Bot API card/callback과 real action E2E는 별도 증거
   전까지 `NOT RUN`이다.
+
+## ADR-007 — Telegram-enabled permission reconciliation과 live fail-closed hold
+
+- 상태: `Accepted`
+- 2.0.12부터 `telegram_enabled=true`는 Bot API를 시작하라는 option인 동시에 exact
+  managed Telegram permission boundary를 적용하라는 관리자 선택이다. 일반
+  `preserve` semantics만으로 stale user-owned permission을 유지한 뒤 bridge startup
+  gate에서 반복 종료하는 상태를 허용하지 않는다.
+- root-owned single-link regular·256 KiB 이하이고 parse 가능한 existing settings는 현재
+  migration mode나 ownership state와 관계없이 transaction backup한다. 그 뒤
+  `allowNonWorkspaceAccess`, `artifactReviewPolicy`, `toolPermission`,
+  `enableTerminalSandbox`와 `permissions.allow`/`ask`/`deny` 전체를 image canonical
+  Telegram policy로 교체하고 mode를 0600으로 강화하며 ownership state를 같은 policy로
+  기록한다. 같은 canonical input의 재실행은 write와 새 backup이 없어야 한다.
+- 이 reconciliation은 다섯 App 관리 보안 key와 permission boundary에 한정한다. 그 밖의
+  사용자 top-level settings, global MCP 파일, 사용자 plugin, native OAuth와 `/config`는
+  보존하고 `antigravity_user_files_update_mode`를 `reset_v2`로 자동 변경하지 않는다.
+  따라서 Telegram-enabled 상태에서는 bucket 안의 user-owned rule과 stronger deny가
+  보존되지 않는다는 breaking boundary를 문서와 release note에 명시한다.
+- updater와 bridge는 같은 canonical policy definition과 validator를 사용한다. file
+  preflight, parse, image default validation 또는 transaction이 실패하면 partial write나
+  permissive fallback을 만들지 않는다. invalid effective settings가 bridge까지
+  도달하면 `permission_boundary_blocked`를 한 번 기록하고 Bot API 요청 없이 process를
+  살아 있는 fail-closed hold에 둔다. 같은 설정의 fatal/S6 restart loop는 금지하며
+  안전한 복구 뒤 App restart가 필요하다.
+- 명시적 `reset_v2`는 Telegram 활성화 여부와 무관한 broader drift recovery로 유지한다.
+  2.0.12 repaired image의 실제 HAOS update, live Bot API 재연결과 hold 동작은 별도
+  실기기 증거 전까지 `NOT RUN`이다.

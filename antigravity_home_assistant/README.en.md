@@ -63,6 +63,13 @@ and all three permission buckets with exact defaults regardless of prior
 ownership state. It preserves user top-level settings outside permissions,
 global MCP, plugins, OAuth, and `/config`, and repairs drift on every startup
 until returned to `preserve`.
+Starting in 2.0.12, a Telegram-enabled startup automatically restores the five
+App-managed security keys and exact 29/0/33 permission policy in a root-owned,
+single-link regular, parseable settings file of at most 256 KiB, so a supported
+update does not require a manual `reset_v2`. Unknown allow/ask/deny rules are
+not retained and an existing mode is hardened to 0600;
+an unrecoverable file remains fail-closed without Bot API contact or a restart
+loop.
 
 If you do not need SSH, leave `authorized_keys` empty. The Web UI will continue to work.
 

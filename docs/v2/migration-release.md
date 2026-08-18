@@ -9,7 +9,7 @@ public App은 사용자의 HAOS에서 source build하지 않고 GHCR prebuilt im
 받는다.
 
 ```yaml
-version: "2.0.11"
+version: "2.0.12"
 arch:
   - amd64
   - aarch64
@@ -19,6 +19,7 @@ breaking_versions:
   - "2.0.7"
   - "2.0.9"
   - "2.0.11"
+  - "2.0.12"
 ```
 
 `apparmor`의 Supervisor 기본값은 `true`다. pinned App linter가 중복 기본값을
@@ -29,7 +30,8 @@ Supervisor는 `version`을 image tag로 사용한다. 같은 numeric tag에 amd6
 aarch64 manifest가 모두 있을 때만 `config.yaml`에 두 아키텍처를 선언한다.
 첫 v2, 2.0.7의 Telegram 관리자 trust-model 전환, 2.0.9의 default-allow managed
 permission 및 persistent mutation 범위 전환, 2.0.11의 proposal-first
-`request-review`/universal managed approval 전환은 breaking version으로 표시하고
+`request-review`/universal managed approval 전환, 2.0.12의 Telegram-enabled
+permission reconciliation 전환은 breaking version으로 표시하고
 사용자가 release note를 읽고 선택하게 한다.
 
 image에 고정한 Antigravity binary는 App runtime에서 자체 갱신하지 않는다. 모든
@@ -85,8 +87,8 @@ version을 marker에 기록한다. 같은 이름의 기존 plugin에 marker가 �
 
 ### `preserve` 기본값
 
-- existing native OAuth, settings, keybindings, conversation, 사용자 MCP/plugin을
-  변경하지 않는다.
+- existing native OAuth, keybindings, conversation, 사용자 MCP/plugin을 변경하지
+  않는다. Telegram이 꺼져 있으면 native settings도 기존 ownership 계약대로 보존한다.
 - native settings와 global MCP 파일이 없을 때만 기본 파일을 만든다. 기존 파일의
   사용자 key와 server는 그대로 보존한다.
 - 위 공통 규칙에 따라 ownership이 확인된 App 관리 plugin은 canonical refresh하고,
@@ -95,6 +97,20 @@ version을 marker에 기록한다. 같은 이름의 기존 plugin에 marker가 �
   broad allow layout은 2.0.11에서 `request-review`, bounded native/HA read와 exact
   `ha_change_propose`/`telegram_action_propose` allow로 version migration한다. 사용자
   소유 rule과 stronger deny, OAuth, global plugin/agent/skill/rule은 보존한다.
+- 2.0.12부터 Telegram이 켜져 있으면 App ownership과 무관하게 root-owned single-link
+  regular·256 KiB 이하의 parse 가능한 settings를 먼저 transaction backup하고
+  `allowNonWorkspaceAccess`, `artifactReviewPolicy`, `toolPermission`, native sandbox와
+  permission 세 bucket을 exact 29/0/33 safe Telegram policy로 정규화한다. unknown
+  custom allow/ask와 stronger deny를 permission bucket 안에는 보존하지 않지만, 이
+  다섯 App 관리 보안 key 밖의 top-level settings, global MCP/plugin/agent/skill/rule,
+  OAuth와 `/config`는 보존한다. 기존 mode는 0600으로 강화한다. 이는 headless startup
+  gate와 updater가 서로 다른 policy를
+  받아들여 bridge가 restart loop에 빠지는 것을 막는 breaking migration이다.
+- symlink/hardlink/non-root owner, 256 KiB 초과 또는 parse 불가능한 settings는 자동
+  수정하지 않는다. 일반 regular file의 non-0600 mode만 안전한 transaction에서
+  0600으로 강화한다. bridge는
+  Bot API에 접속하기 전에 sanitized `permission_boundary_blocked`를 한 번 기록하고
+  supervised process를 종료하지 않은 채 대기한다. 안전한 복구 후 App을 재시작한다.
 - managed Playwright allow는 upstream `readOnly: true`인
   `browser_console_messages`, `browser_network_requests`, `browser_snapshot`,
   `browser_take_screenshot` 네 개로 축소한다. legacy ownership set의 navigate/back,
@@ -122,7 +138,7 @@ version을 marker에 기록한다. 같은 이름의 기존 plugin에 marker가 �
   default로 교체하고 `permissions.allow`/`ask`/`deny` 전체를 exact default로 바꾼다.
   custom permission rule과 permissions의 알 수 없는 bucket은 보존하지 않는다.
 - `permissions` 밖의 사용자 top-level settings와 global MCP/plugin/OAuth는 보존한다.
-  unsafe file metadata 또는 parse 불가능한 JSON은 계속 fail closed한다.
+  symlink/hardlink/non-root owner, 크기 초과 또는 parse 불가능한 JSON은 계속 fail closed한다.
 - plugin 내부 MCP/rules/skills 갱신은 mode가 아니라 위 공통 version별 plugin
   transaction이 담당한다. global MCP 파일은 존재하면 byte-preserve한다.
 - 공식 CLI OAuth 자료, `/config`, SSH host key, authorized keys, browser identity,

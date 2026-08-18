@@ -43,7 +43,10 @@
 ### 특히 주의할 부분
 
 - shell quote로 prompt를 안전하게 만들려고 하지 말고 shell 자체를 사용하지 않는다.
-- settings/plugin JSON merge는 unknown 사용자 key를 보존한다.
+- settings/plugin JSON merge는 unknown 사용자 top-level key를 보존한다. 단,
+  `telegram_enabled=true`의 2.0.12 startup은 다섯 App 관리 보안 key와 permission 세
+  bucket을 canonical policy로 reconcile하므로 해당 key의 drift와 bucket 안
+  unknown/user-owned rule은 보존 대상으로 주장하지 않는다.
 - migration에서 symlink, hardlink, FIFO, device와 unsafe owner/mode를 거부한다.
 - browser read-only user도 모든 state를 볼 수 있으므로 결과는 민감하다.
 - 2.0.11 native default이자 Telegram의 유일한 effective 값은 `request-review`이며
@@ -52,6 +55,11 @@
   nested sandbox는 비특권 HAOS App에서 namespace 생성에 실패하므로 사용하지 않는다.
   command와 stdio tool은 별도 AppArmor command profile로 `Px` 전환하며 host 권한을
   추가하지 않는다.
+- 2.0.12에서 Telegram이 활성화되면 safe parseable existing settings의 permission
+  boundary는 mode와 ownership state에 관계없이 transaction backup 뒤 exact policy로
+  reconcile한다. unrelated settings/OAuth/global MCP는 보존하고 mode를 `reset_v2`로
+  바꾸지 않는다. bridge 재검증 실패는 Bot API 전 `permission_boundary_blocked` live
+  hold이며 fatal/S6 restart loop가 아니다.
 - diagnostics, proposed diff와 command success는 mutation 승인/검증이 아니다.
 - memory 0건은 준비 완료나 검증된 no-result와 같지 않다.
 - 실제 HAOS/AppArmor 결과는 local Docker fixture와 별도 기록한다.
@@ -114,6 +122,18 @@
 - 실제 HAOS AppArmor enforce, initial OAuth, live Telegram Bot API card/callback,
   real HA/config/terminal action은 현재 `NOT RUN`이며 관련 milestone은 `VERIFIED`로
   올리지 않는다.
+
+### 2026-08-18 2.0.12 Telegram permission reconciliation 검증 경계
+
+- source/component targets: shared canonical policy, Telegram-enabled preserve
+  reconciliation, boundary-only transaction backup, ownership/idempotency와
+  `permission_boundary_blocked` live hold.
+- local contract 결과는 실제 실행한 command와 결과만 부모 작업의 최종 test report에
+  기록한다. 이전 2.0.11 policy PASS나 현장 수동 settings 복구를 repaired 2.0.12 image의
+  성공으로 승격하지 않는다.
+- 2.0.12 repaired image의 실제 HAOS update, OAuth/AppArmor, live Bot API reconnect와
+  no-restart hold는 현재 `NOT RUN`이다. M5/M6 또는 release gate를 `VERIFIED`로 올리지
+  않는다.
 
 ### 2026-08-11 local v2 증거 스냅샷
 
@@ -245,6 +265,7 @@
 | M5-09 | `PARTIAL` | encrypted reply outbox, rate limit/backoff/idempotent result와 registration→approval sealing 전 crash 재시도 경계 | pre-send persist/retry/ack component와 live Bot API TODO |
 | M5-10 | `TODO` | 실제 HAOS Telegram E2E | sanitized E2E report |
 | M5-11 | `PARTIAL` | shared Home/cwd와 user customization 상속·수정 | actual 1.1.13 positive canary 재검증; HAOS OAuth/AppArmor TODO |
+| M5-12 | `IN_PROGRESS` | shared Telegram permission validator와 `permission_boundary_blocked` Bot-API-before hold/no-S6-loop | local component contract 및 repaired-image HAOS E2E NOT RUN |
 
 ### M6 — migration과 multi-arch release
 
@@ -260,6 +281,7 @@
 | M6-08 | `PARTIAL` | staged candidate exact-digest smoke, HAOS rehearsal bundle와 rebuild 없는 idempotent promotion | remote PR Builder PASS; Candidate workflow/actual bundle run TODO |
 | M6-09 | `PARTIAL` | leaf SBOM, provenance, exact Cosign identity와 anonymous preflight | local workflow contract; public registry retrieval TODO |
 | M6-10 | `PARTIAL` | candidate-bound local HAOS rehearsal과 post-publish public acceptance | pre-finalize finalizer와 post-publish HA-005/HA-008 validator/uploader implemented; HA-005/006/007/008 NOT RUN |
+| M6-11 | `IN_PROGRESS` | Telegram-enabled preserve의 boundary-only transaction reconciliation, unrelated-state 보존과 restart idempotency | local migration contract 및 repaired-image HAOS update NOT RUN |
 
 ### M7 — 사용자 문서와 최종 감사
 

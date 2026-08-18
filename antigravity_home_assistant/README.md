@@ -56,6 +56,12 @@ proposal 등록 뒤 encrypted approval/card가 봉인되기 전 bridge가 종료
 ownership state와 무관하게 managed key와 permission 세 bucket을 exact default로
 되돌립니다. permissions 밖의 사용자 top-level 설정, global MCP, plugin, OAuth와
 `/config`는 보존하며, `preserve`로 되돌릴 때까지 매 시작 drift를 다시 복구합니다.
+2.0.12부터 Telegram을 켠 상태에서는 root-owned single-link regular·256 KiB 이하의
+parse 가능한 settings에서 다섯 App 관리 보안 key와 exact 29/0/33 permission 정책을
+자동 복구하므로 업데이트 뒤 수동 `reset_v2` 없이 bridge를 시작할 수 있습니다.
+unknown allow/ask/deny는 보존하지 않고 기존 mode는 0600으로 강화합니다. symlink,
+hardlink, non-root owner, 크기 초과 또는 parse 불가능 파일은 Bot API 접속과 재시작
+loop 없이 fail closed합니다.
 
 SSH를 사용하지 않는다면 `authorized_keys`를 비워 둬도 됩니다. Web UI는 그대로 동작합니다.
 

@@ -19,14 +19,26 @@ bridge 시작 조건은 다음을 모두 만족해야 한다.
 
 1. `telegram_enabled=true`
 2. `telegram_bot_token`이 schema와 secret-file preflight를 통과
-3. static allowlist 또는 유효한 local pairing identity가 하나 이상 존재
-4. App init과 readonly/proposal broker가 ready
+3. effective native permission boundary가 shared canonical policy 검증을 통과
+4. static allowlist 또는 유효한 local pairing identity가 하나 이상 존재
+5. App init과 readonly/proposal broker가 ready
 
-1~2가 충족됐지만 3이 아직 충족되지 않으면 bridge는 Bot API에 접속하거나 종료하지
+1~3이 충족됐지만 4가 아직 충족되지 않으면 bridge는 Bot API에 접속하거나 종료하지
 않고 bounded local authorization state만 주기적으로 다시 확인한다. 이 대기 상태는
 한 번만 정제해 기록하며 S6 restart loop를 만들지 않는다. local pairing 생성은 같은
 프로세스에서 감지하고, static option 변경은 App 재시작 뒤 반영한다. authorization
 state의 type/mode/schema가 안전하지 않으면 대기하지 않고 fail closed 한다.
+
+2.0.12 init은 Telegram이 활성화됐고 기존 settings가 root-owned single-link regular,
+256 KiB 이하이며 parse 가능하면 3의 경계를 확인하기 전에
+`allowNonWorkspaceAccess`, `artifactReviewPolicy`, `toolPermission`,
+`enableTerminalSandbox`와 permission 세 bucket을 transaction backup 뒤 canonical
+policy로 reconcile한다. 이 다섯 보안 key 밖의 unrelated top-level settings, global
+MCP, plugin, OAuth와 `/config`는 보존하고 mode를 0600으로 강화하되 migration mode
+option을 바꾸지 않는다. bridge 재검증에서 3이
+실패하면 `permission_boundary_blocked`를 한 번 기록하고 Bot API 요청 없이 process를
+살아 있는 fail-closed hold에 둔다. 같은 설정으로 exit/S6 restart를 반복하지 않으며
+복구 뒤 App restart가 필요하다.
 
 인증 key는 Telegram numeric ID를 decimal string으로 정규화한
 `(user_id, chat_id)` 쌍이다. username, phone, display name, message text와 forwarded
@@ -467,6 +479,14 @@ ask에 넣지 않는다. safely identified 2.0.9/2.0.10 App-owned broad allow는
 migration하며 user-owned rule과 stronger deny는 보존한다. secrets/storage/runtime
 token/options/native MCP config/SSH key exact deny는 항상 우선한다.
 
+2.0.12에서 Telegram-enabled startup은 위 일반 preserve migration을 좁게 재정의한다.
+ownership state와 관계없이 다섯 App 관리 보안 key drift와 permission 세 bucket의
+user-owned rule/stronger deny를 shared canonical policy로 교체한다. 그 밖의 user
+customization과 global MCP/OAuth는 그대로 보존하며, canonical input의 재시작은 새
+backup이나 write가 없는 idempotent 결과여야 한다. `reset_v2`는 여전히 사용자가
+명시적으로 선택하는 broader recovery mode이고 이 reconciliation이 option을 자동
+승격하지 않는다.
+
 Playwright 네 auto-allow는 `browser_console_messages`,
 `browser_network_requests`, `browser_snapshot`, `browser_take_screenshot`이다.
 `browser_navigate`, `browser_navigate_back`, `browser_tabs`, `browser_hover`,
@@ -663,6 +683,10 @@ broker policy와 Home Assistant API precondition을 통과해야 한다. command
   기록하고 bridge process를 살아 있는 fail-closed 대기 상태로 둔다. 같은 설정으로
   Bot API 요청이나 S6 restart를 반복하지 않으며, 운영자가 App 옵션을 고쳐 다시
   시작해야 한다.
+- effective settings gate가 canonical Telegram policy를 충족하지 못하면 Bot API 호출
+  전에 `permission_boundary_blocked`를 한 번 기록하고 같은 live fail-closed hold에
+  들어간다. 설정을 자동 완화하거나 같은 설정으로 fatal exit/S6 restart를 반복하지
+  않으며, safe repair 뒤 App restart가 필요하다.
 - message 전송 실패나 execute 응답 유실이 Antigravity 또는 mutation을 재실행하게
   해서는 안 된다. model terminal은 encrypted journal에 먼저 저장하고 결과는 reply
   outbox로 전환한다. 429는 bounded retry하고 전달 여부가 모호한 send는 `/retry`까지
@@ -675,6 +699,10 @@ broker policy와 Home Assistant API precondition을 통과해야 한다. command
 시작 연결 재시도는 `connect_retry`와 고정 `reason_class`, 다음 대기 시간만 기록한다.
 network 진단은 DNS/socket/TLS/Undici의 사전 허용된 `transport_code` 또는 `unknown`만
 기록하며 token, Bot API URL, 내부 cause message는 기록하지 않는다.
+
+permission gate 실패는 `permission_boundary_blocked` 한 건과 정제된 error만
+기록한다. hold loop는 같은 error를 반복 기록하지 않고 identifier, settings 내용 또는
+permission rule 원문을 metric label에 넣지 않는다.
 
 worker 요청 실패는 `request_failed`와 코드에 고정된 `reason_class`만 기록한다.
 stderr, exit 원문, prompt, OAuth URL/token과 추정 credential path는 log field가
@@ -713,6 +741,13 @@ reason/result/status class만 허용하며 재시작 시 0부터 시작한다. �
 - per-chat serialization, global concurrency와 queue limit이 지켜진다.
 - global permission option이 Web/SSH/Telegram에 동일하게 적용되고 legacy
   `telegram_access_mode`가 권한 source로 사용되지 않는다.
+- Telegram-enabled preserve update가 safe legacy settings의 다섯 App 관리 보안 key와
+  permission boundary를 transaction backup 뒤 canonicalize하고 그 밖의 top-level
+  settings, global MCP와 OAuth를
+  보존하며, 두 번째 실행은 write/backup 없이 idempotent하다.
+- unsafe effective permission fixture는 Bot API 호출 전에
+  `permission_boundary_blocked` 한 건을 만들고 bridge process를 exit시키거나 S6 restart
+  loop를 만들지 않는다.
 - timeout/cancel/restart 뒤 child와 capability가 남지 않는다. bridge-only restart는
   broker가 살아 있을 때 encrypted choice mapping을 복구하고, full App/broker restart는
   미접수 in-memory proposal을 실행하지 않으며 접수된 결과만 durable status로 회수한다.
@@ -739,3 +774,5 @@ local actual 1.1.11 shared-HOME positive control은 global MCP pre-auth launch�
 positive canary로 전환한다. primary OAuth backend/path를 추정하지 않았고 실제 HAOS
 OAuth, live Telegram session/outbox와 AppArmor enforce는 미검증이므로 최종 수용
 기준은 아직 `PARTIAL`이다.
+2.0.12 repaired image의 실제 HAOS update reconciliation, Bot API 재연결과
+`permission_boundary_blocked` hold E2E도 별도 실기기 증거 전까지 `NOT RUN`이다.

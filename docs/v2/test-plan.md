@@ -120,6 +120,27 @@ prompt를 external approval로 resume할 protocol이 없다는 actual-binary neg
 local image 성공은 실제 HAOS AppArmor enforce, initial OAuth, live Telegram Bot API
 card/callback 또는 실제 HA/command E2E가 아니다. 이 항목들은 계속 `NOT RUN`이다.
 
+### 2.0.12 Telegram-enabled permission reconciliation과 startup hold
+
+2.0.12는 `telegram_enabled=true`와 `preserve`인 synthetic legacy settings를 사용해
+다음을 별도 검증한다.
+
+- root-owned single-link regular·256 KiB 이하의 parse 가능한 existing settings를
+  transaction backup한 뒤 다섯 App 관리 보안 key와 permission 세 bucket을 shared
+  canonical policy로 교체하고 mode를 0600으로 강화하며 ownership state를 갱신
+- 그 다섯 보안 key 밖의 unrelated top-level settings의 semantic 보존, global MCP의 byte 보존과
+  OAuth/plugin/`/config` 비대상, update mode가 `reset_v2`로 바뀌지 않음
+- 기존 ownership state의 유무와 관계없는 결과, 두 번째 restart의 no-write/no-backup
+  idempotency, prepared/commit crash recovery
+- image default generator, user-files updater와 bridge가 같은 policy validator를 쓰며
+  canonical output은 bridge gate를 통과
+- invalid effective settings는 Bot API 호출 전 `permission_boundary_blocked` 한 건을
+  만들고 bridge process를 exit시키거나 S6 restart loop를 만들지 않는 live hold
+
+현장 수동 settings 복구는 이 repaired image의 증거가 아니다. 2.0.12 image로 수행한
+실제 HAOS update/restart, live Bot API reconnect, OAuth/AppArmor와 hold E2E는 별도
+실기기 evidence 전까지 `NOT RUN`이다.
+
 ### 2.1 2026-08-11 local v2 working-tree 증거
 
 | 항목 | 결과 | 정확한 범위 |
@@ -326,6 +347,12 @@ current amd64 image와 current-source QEMU aarch64 packaging canary는 이 경�
 - 유일한 effective `request-review`/bounded-read/proposal-only managed permission과 sensitive option 적용,
   `strict`/legacy autonomous option normalization, native sandbox flag 부재/override 거부,
   sandbox true/false 입력의 false 정규화, legacy Telegram mode 무시
+- Telegram-enabled preserve가 safe legacy settings의 boundary key와 permission 세
+  bucket만 transaction backup 뒤 canonicalize하고 unrelated settings/global MCP/OAuth를
+  보존하며, ownership 유무와 두 번째 실행에서 같은 idempotent 결과를 내는지 검증
+- unsafe effective permission은 shared validator에서 거부되고
+  `permission_boundary_blocked` 한 건 뒤 Bot API call과 process exit 없이 live hold하는지
+  검증
 - Playwright upstream read-only 네 도구의 auto-allow와 navigate/back/tabs/hover/wait/
   resize/close fail-closed
 - actual CLI print mode의 native permission/external resume 부재와 unsupported arbitrary
@@ -365,9 +392,9 @@ publish하지 않는다.
 | IM-007 | broker mutation/rollback fixture와 token canary |
 | IM-008 | memory bootstrap/restart/degraded isolation |
 | IM-009 | Playwright desktop/mobile, console/network/WebSocket |
-| IM-010 | Telegram full component smoke with fake Bot API |
+| IM-010 | Telegram full component smoke with fake Bot API, shared permission validator와 `permission_boundary_blocked` no-API/no-exit hold |
 | IM-011 | AppArmor policy compile/static profile coverage |
-| IM-012 | preserve/refresh/reset/update/rollback fixture |
+| IM-012 | preserve/refresh/reset/update/rollback 및 Telegram-enabled boundary reconciliation/idempotency fixture |
 
 QEMU에서 IM suite를 통과하면 image compatibility 증거로 기록하되 native runtime
 증거와 구분한다.
@@ -540,10 +567,14 @@ rehearsal과 numeric tag publish 증거가 아니다. 외부 결과가 없으므
 현재 `tests/managed-plugin-update-smoke.sh`는 기존 App 관리 plugin의 verified backup,
 sibling stage, 실제 1.1.13 validation, activation 직후 SIGKILL restart recovery와
 postcondition failure rollback을 검사한다. `tests/user-files-update-smoke.sh`는 managed
-permission의 unknown user rule 보존, ownership conflict의 preflight-before-write,
-settings/MCP/state transaction과 같은 state digest를 가진 missing-MCP transaction의
-`prepared` SIGKILL recovery를 검사한다. 두 suite는 local amd64에서 PASS했지만 실제
-HAOS update와 이전 image rollback은 실행하지 않았으므로 IM-012는 `PARTIAL`이다.
+permission의 unknown user rule 보존을 Telegram 비활성 일반 merge에서 검사하고,
+Telegram-enabled preserve에서는 permission boundary exact reconciliation, unrelated
+top-level settings/global MCP 보존, backup·ownership·restart idempotency를 별도로
+검사한다. ownership conflict의 preflight-before-write, settings/MCP/state transaction과
+같은 state digest를 가진 missing-MCP transaction의 `prepared` SIGKILL recovery도
+검사한다. 기존 local amd64 PASS는 새 2.0.12 fixture의 실행 결과가 아니므로 새 command
+결과를 별도로 기록해야 한다. 실제 repaired-image HAOS update와 이전 image rollback은
+`NOT RUN`이며 IM-012는 `PARTIAL`이다.
 
 ## 7. 실제 HAOS E2E
 
@@ -582,6 +613,12 @@ HAOS update와 이전 image rollback은 실행하지 않았으므로 IM-012는 `
 - unauthorized user/chat와 pairing probe 거부
 - 조회와 per-chat session continuation, explicit `/new` rotation
 - global native permission 동등 적용과 same-session change confirmation/cancel/expiry
+- 2.0.11 representative legacy permission drift를 가진 safe settings에서 Telegram을 켠
+  `preserve` update가 boundary key만 canonicalize하고 unrelated settings/global MCP와
+  OAuth를 보존한 뒤 `permission_boundary_ready`와 Bot API reconnect에 도달
+- scoped synthetic unsafe boundary에서 `permission_boundary_blocked`가 한 번만 기록되고
+  Bot API 요청과 Telegram service restart가 없으며, verified backup 복구와 App restart
+  뒤 정상 연결
 - `multi_choice_service_call`의 synthetic safe choices, 31-choice layout 경계,
   한 선택 실행과 다른 choice/double-tap/unknown-token 거부, legacy binary card 호환
 - safe fixture entity `device_test`의 test+restore preview, human confirmation과 최종
@@ -613,11 +650,15 @@ numeric v2와 original custom repository metadata가 공개된 뒤, public v1.0.
    published generic/amd64 runtime digest와 `/data` identity 유지 확인
 3. OAuth, SSH, browser identity, memory, `/config`와 사용자 settings 확인
 4. 모든 native launch의 updater 미실행과 restart 전후 binary version/digest 불변 확인
-5. 복원된 별도 public-v1 fixture에서 `refresh_managed`의 1회성, `reset_v2`가 settings
+5. Telegram-enabled safe legacy settings에서 mode를 `preserve`로 유지한 채 다섯 App
+   관리 보안 key와 permission boundary를 exact reconcile하고 그 밖의 top-level
+   settings/global MCP/OAuth를 보존하며
+   재시작이 새 backup/write 없이 idempotent인지 확인
+6. 복원된 별도 public-v1 fixture에서 `refresh_managed`의 1회성, `reset_v2`가 settings
    ownership state와 무관하게 safe parseable file을 backup한 뒤 managed key/permission
    bucket을 exact default로 복구하는지, `preserve`로 되돌리기 전 restart drift 복구와
    unsafe-file conflict를 확인
-6. 기록한 public v1 source/image와 matching managed backup으로 rollback한 뒤
+7. 기록한 public v1 source/image와 matching managed backup으로 rollback한 뒤
    repository/add-on/data identity와 recovery surface 확인
 
 업데이트 직전 Supervisor가 source-build한 v1 image ID, source
@@ -669,8 +710,10 @@ numeric publish 전에 공식 Home Assistant local testing 경로로 candidate m
 2. 같은 directory/slug의 content만 candidate bundle App directory로 교체하고
    local repository를 refresh해 exact prerelease version으로 update
 3. update 전후 local repository/add-on/data identity와 observed candidate digest 확인
-4. `preserve`, `refresh_managed`, ownership state 없는 safe settings의 `reset_v2` exact
-   recovery, 같은-version restart drift 복구와 unsafe-file conflict 확인
+4. Telegram-enabled `preserve`의 boundary-only reconciliation, unrelated settings/global
+   MCP/OAuth 보존과 restart idempotency를 확인하고, 별도 fixture에서
+   `refresh_managed`, ownership state 없는 safe settings의 `reset_v2` exact recovery,
+   같은-version restart drift 복구와 unsafe-file conflict 확인
 5. migration 중 강제 종료/recovery와 기록한 v1 source-build image/managed backup으로
    local migration rollback을 수행한다. rollback report의 installed App postcondition은
    `1.0.4`다.
