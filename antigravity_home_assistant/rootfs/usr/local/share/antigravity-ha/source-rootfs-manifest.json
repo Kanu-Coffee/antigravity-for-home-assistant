@@ -789,14 +789,20 @@
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/telegram-bridge.mjs",
-      "sha256": "sha256:4d9b2397100b5b9341720e4b90fe806efd1f9e81d022bfd8bdf3cfb78e14858f",
-      "size": 154836
+      "sha256": "sha256:17007323ee16a4bd7f42716d70241903bffcedf0b2faa7c581b012a59de2c052",
+      "size": 151457
     },
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/telegram-pairing.mjs",
       "sha256": "sha256:1e96367bb5dc50eb60992370a3a6e893d1b04b417685c755a349977f759edde2",
       "size": 11281
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/telegram-permission-policy.mjs",
+      "sha256": "sha256:ece60f5fb0090c3d2a25d6e991d011945d31333c87ca81f2431c675f7bd16a96",
+      "size": 5055
     },
     {
       "mode": "0644",
@@ -807,10 +813,10 @@
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/user-files-update.mjs",
-      "sha256": "sha256:3bf64e6a866d4085b2653aacfaf7b19f92ffa2c10e38d039523413f369381316",
-      "size": 88230
+      "sha256": "sha256:b7208dcf7b7c56ea4e428eea4ef8ffc6ec50e1ddc82c5bf53b8db90cb8d5c9a8",
+      "size": 94131
     }
   ],
   "schema": "antigravity-ha-source-rootfs/v1",
-  "source_rootfs_sha256": "sha256:d14b3f15f0552647e96efd1ac50303dc16c4eb27c2442b718097e31f4b6a7594"
+  "source_rootfs_sha256": "sha256:bf8ca4dffe7b28d18931a20be22a86ccc05b4af2fdcd2947e3943ac3ffc947f4"
 }

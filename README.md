@@ -154,8 +154,19 @@ sandbox를 사용하지 않고, model이 시작한 command와 stdio tool을 별�
 업그레이드를 시작하기 위한 입력 호환성일 뿐입니다. 2.0.9/2.0.10의 App 소유
 `always-proceed`·`mcp(*)`·`command(*)` broad-allow 설정은 안전하게 식별되는 경우
 bounded native read와 정확한 managed proposal MCP만 허용하는 정책으로
-migration됩니다. 사용자 소유 rule과 더 강한 deny는 보존되지만, Telegram 시작 gate가
-허용하지 않는 drift가 있으면 `reset_v2`로 복구하기 전까지 Bot API에 연결하지 않습니다.
+migration됩니다. Telegram이 꺼져 있으면 기존 `preserve` 소유권 규칙대로 사용자
+permission을 보존합니다. 2.0.12부터 Telegram이 켜져 있으면 시작 전에 root 소유
+single-link regular이고 256 KiB 이하이며 parse 가능한 settings를 transaction backup하고,
+`allowNonWorkspaceAccess=false`, `artifactReviewPolicy=agent-decides`,
+`enableTerminalSandbox=false`, `toolPermission=request-review`와 permission 세 bucket
+(29 allow/0 ask/33 deny)을 exact safe policy로 정규화합니다. unknown custom
+allow/ask/deny는 제거하지만 이 다섯 App 관리 보안 key 밖의 top-level 설정, global MCP,
+plugin, OAuth와 `/config`는 보존합니다. 기존 mode가 0600이 아니면 transaction에서
+0600으로 강화합니다. symlink/hardlink/non-root owner, 크기 초과 또는 parse 불가능한
+JSON은 수정하지 않으며, bridge는 sanitized
+`permission_boundary_blocked`를 한 번 기록하고 Bot API에 접속하거나 재시작 loop를
+만들지 않은 채 대기합니다. 관리자가 `reset_v2` 또는 안전한 파일 복구를 적용한 뒤
+App을 재시작해야 합니다.
 일반 command, native write, URL 실행, interactive browser, 임의 mutation MCP는
 unattended allow 목록에 없습니다. `secrets.yaml`, `.storage`, App runtime/browser/bot
 token, SSH/private key, native MCP 설정과 표준 cloud-auth 경로의 직접 읽기·쓰기는
@@ -280,7 +291,7 @@ VPN을 사용하세요.
 
 | 값 | 동작 |
 | --- | --- |
-| `preserve` | OAuth와 사용자 소유 settings·MCP·plugin을 보존; App 소유 HA plugin은 version당 보안 갱신 |
+| `preserve` | OAuth와 사용자 소유 settings·MCP·plugin을 보존; Telegram enabled이면 안전한 settings의 다섯 App 관리 보안 key와 permission 세 bucket을 exact policy로 자동 정규화; App 소유 HA plugin은 version당 보안 갱신 |
 | `refresh_managed` | 위 보존 원칙과 plugin 갱신에 더해 소유권이 기록된 settings key·permission rule을 backup 후 merge |
 | `reset_v2` | 명시적 복구 mode. 안전하게 parse 가능한 settings를 backup하고 ownership state와 무관하게 managed key와 permission 세 bucket을 image exact default로 교체 |
 
@@ -296,6 +307,11 @@ ownership marker가 있을 때 App version당 한 번 canonical image copy로 �
 전체 backup과 현재 동작 version/image를 기록하고, 실패하면
 `preserve`로 되돌린 뒤 이전 immutable version과 검증된 scoped backup으로
 복구하세요. 자동 HAOS rollback은 보장하지 않습니다.
+
+Telegram-enabled 자동 정규화는 mode를 `reset_v2`로 바꾸지 않습니다. 같은
+journal/backup transaction으로 한 번 적용되며, 다음 재시작에서는 설정과 ownership이
+일치하면 추가 backup 없이 끝납니다. Telegram이 꺼져 있으면 기존 `preserve`의 사용자
+permission 보존 의미가 유지됩니다.
 
 개발용 source image는 `tools/development/build-app`으로만 빌드합니다. 이 helper는
 checkout hash로 분리한 project-owned Buildx builder/cache만 종료 시 제거하고 global

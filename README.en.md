@@ -163,9 +163,20 @@ those three legacy values only so an upgrade can start with previously stored
 Supervisor options. When safely identified,
 the App-owned 2.0.9/2.0.10 `always-proceed`, `mcp(*)`, and `command(*)`
 broad-allow layout is migrated to bounded native reads and the exact managed
-proposal MCPs. User-owned rules and stronger denies remain preserved, but the
-Telegram startup gate does not connect to the Bot API when unsupported drift is
-present; select `reset_v2` to recover it. Ordinary commands, native writes, URL
+proposal MCPs. With Telegram disabled, the existing preserve-mode ownership
+rules continue to retain user permissions. Starting in 2.0.12, enabling
+Telegram transactionally backs up a root-owned, single-link regular, parseable
+settings file of at most 256 KiB. It restores `allowNonWorkspaceAccess=false`,
+`artifactReviewPolicy=agent-decides`, `enableTerminalSandbox=false`,
+`toolPermission=request-review`, and the exact 29 allow/0 ask/33 deny buckets.
+Unknown custom allow/ask/deny rules are removed, while top-level settings outside
+those five App-managed security keys, global MCP, plugins, OAuth, and `/config`
+remain preserved. A non-0600 mode is hardened to 0600 by the transaction.
+Symlinks, hardlinks, non-root ownership, oversized files, or unparsable JSON are
+left untouched; the bridge records one
+sanitized `permission_boundary_blocked` event and waits without contacting the
+Bot API or entering a restart loop. Repair with `reset_v2` or another safe file
+recovery and restart the App. Ordinary commands, native writes, URL
 execution, interactive browser tools, and arbitrary mutation-capable MCPs are
 not on the unattended allow list.
 Exact denies continue to protect `secrets.yaml`, `.storage`, App-owned
@@ -311,7 +322,7 @@ The default `antigravity_user_files_update_mode` is `preserve`.
 
 | Value | Behavior |
 | --- | --- |
-| `preserve` | Preserve OAuth and user-owned settings, MCP, and plugins; refresh the App-owned HA plugin once per version |
+| `preserve` | Preserve OAuth and user-owned settings, MCP, and plugins; when Telegram is enabled, automatically reconcile safe settings' five App-managed security keys and permission buckets to the exact policy; refresh the App-owned HA plugin once per version |
 | `refresh_managed` | Keep those guarantees and plugin refresh, then back up and merge ownership-recorded settings keys and permission rules |
 | `reset_v2` | Explicit recovery mode: back up safely parseable settings and replace managed keys plus all three permission buckets with the exact image defaults, regardless of ownership state |
 
@@ -328,6 +339,11 @@ conflict and stops startup. Before an update, make a full Home Assistant backup
 and record the working version/image. On failure, return to `preserve`, then recover with a
 previous immutable version and a verified scoped backup. Automatic HAOS rollback
 is not guaranteed.
+
+Telegram-enabled automatic reconciliation does not change the selected mode to
+`reset_v2`. It uses the same journaled backup transaction once, then a matching
+restart completes without another backup. With Telegram disabled, the existing
+preserve-mode user-permission behavior remains unchanged.
 
 Build development source images only with `tools/development/build-app`. It
 removes only the project-owned, checkout-hashed Buildx builder/cache on exit,

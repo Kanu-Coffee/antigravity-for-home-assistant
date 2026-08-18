@@ -43,6 +43,7 @@ import {
   telegramTransportErrorCode,
   toolActionWatchdogMs,
   waitForExecution,
+  waitForTelegramPermissionBoundary,
   waitForTelegramAuthorization,
   workerStatusSnapshot,
 } from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs";
@@ -84,6 +85,9 @@ assert.equal(loadRuntimeConfig({
 }).toolPermission, "request-review");
 const safePermissionFixture = {
   toolPermission: "request-review",
+  enableTerminalSandbox: false,
+  allowNonWorkspaceAccess: false,
+  artifactReviewPolicy: "agent-decides",
   permissions: {
     allow: [...TELEGRAM_SAFE_ALLOW_RULES],
     ask: [],
@@ -99,6 +103,64 @@ assert.deepEqual(assertTelegramPermissionBoundary(safePermissionFixture), {
   allowCount: TELEGRAM_SAFE_ALLOW_RULES.size,
   denyCount: TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size,
 });
+const permissionBoundaryEvents = [];
+let permissionBoundaryHolds = 0;
+assert.equal(await waitForTelegramPermissionBoundary(
+  { toolPermission: "request-review" },
+  {
+    load: () => {
+      throw new Error("synthetic unsafe permission boundary");
+    },
+    hold: async () => { permissionBoundaryHolds += 1; },
+    auditEvent: (event, fields) => permissionBoundaryEvents.push({ event, ...fields }),
+  },
+), null);
+assert.equal(permissionBoundaryHolds, 1);
+assert.deepEqual(permissionBoundaryEvents, [{
+  event: "permission_boundary_blocked",
+  error: "synthetic unsafe permission boundary",
+}]);
+let readyBoundaryHeld = false;
+assert.deepEqual(await waitForTelegramPermissionBoundary(
+  { toolPermission: "request-review" },
+  {
+    load: () => ({
+      toolPermission: "request-review",
+      allowCount: 29,
+      denyCount: 33,
+    }),
+    hold: async () => { readyBoundaryHeld = true; },
+    auditEvent: () => {
+      throw new Error("ready permission boundary emitted a blocked event");
+    },
+  },
+), {
+  toolPermission: "request-review",
+  allowCount: 29,
+  denyCount: 33,
+});
+assert.equal(readyBoundaryHeld, false);
+const mismatchedBoundaryEvents = [];
+let mismatchedBoundaryHolds = 0;
+assert.equal(await waitForTelegramPermissionBoundary(
+  { toolPermission: "request-review" },
+  {
+    load: () => ({
+      toolPermission: "always-proceed",
+      allowCount: 29,
+      denyCount: 33,
+    }),
+    hold: async () => { mismatchedBoundaryHolds += 1; },
+    auditEvent: (event, fields) => mismatchedBoundaryEvents.push({
+      event,
+      ...fields,
+    }),
+  },
+), null);
+assert.equal(mismatchedBoundaryHolds, 1);
+assert.equal(mismatchedBoundaryEvents.length, 1);
+assert.equal(mismatchedBoundaryEvents[0].event, "permission_boundary_blocked");
+assert.match(mismatchedBoundaryEvents[0].error, /configured and effective/u);
 for (const unsafeRule of ["command(*)", "mcp(*)", "write_file(/config)"]) {
   assert.throws(() => assertTelegramPermissionBoundary({
     ...safePermissionFixture,
@@ -139,6 +201,36 @@ assert.throws(() => assertTelegramPermissionBoundary({
 assert.throws(() => assertTelegramPermissionBoundary({
   ...safePermissionFixture,
   permissions: { ...safePermissionFixture.permissions, ask: ["command(*)"] },
+}), /bypass or block Telegram approval/u);
+for (const unsafeTopLevel of [
+  { enableTerminalSandbox: true },
+  { allowNonWorkspaceAccess: true },
+  { artifactReviewPolicy: "never" },
+]) {
+  assert.throws(() => assertTelegramPermissionBoundary({
+    ...safePermissionFixture,
+    ...unsafeTopLevel,
+  }), /not safe for Telegram approval/u);
+}
+const missingSandboxFixture = { ...safePermissionFixture };
+delete missingSandboxFixture.enableTerminalSandbox;
+assert.throws(
+  () => assertTelegramPermissionBoundary(missingSandboxFixture),
+  /not safe for Telegram approval/u,
+);
+assert.throws(() => assertTelegramPermissionBoundary({
+  ...safePermissionFixture,
+  permissions: {
+    ...safePermissionFixture.permissions,
+    allow: safePermissionFixture.permissions.allow.slice(1),
+  },
+}), /bypass or block Telegram approval/u);
+assert.throws(() => assertTelegramPermissionBoundary({
+  ...safePermissionFixture,
+  permissions: {
+    ...safePermissionFixture.permissions,
+    deny: [...safePermissionFixture.permissions.deny, "command(*)"],
+  },
 }), /bypass or block Telegram approval/u);
 assert.equal(toolActionWatchdogMs(120_000, null, 5_000), 127_000);
 assert.equal(toolActionWatchdogMs(4_000, 250, 50), 250);

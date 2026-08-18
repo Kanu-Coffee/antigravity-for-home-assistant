@@ -230,5 +230,6 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/telegram-act
 !rootfs/usr/local/share/antigravity-ha/telegram-action-proposal-mcp.mjs
 !rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs
 !rootfs/usr/local/share/antigravity-ha/telegram-pairing.mjs
+!rootfs/usr/local/share/antigravity-ha/telegram-permission-policy.mjs
 !rootfs/usr/local/share/antigravity-ha/telegram-state.mjs
 !rootfs/usr/local/share/antigravity-ha/user-files-update.mjs

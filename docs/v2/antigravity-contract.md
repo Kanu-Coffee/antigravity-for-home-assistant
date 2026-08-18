@@ -126,11 +126,19 @@ workspace plugin은 자동 삭제하지 않는다.
 
 ## 4. settings 계약
 
-`settings.json`은 sparse JSON으로 관리한다. `preserve`/`refresh_managed`는 기존 알 수
-없는 key를 보존하며 App이 소유한 key만 merge한다. 명시적 `reset_v2`만 안전하게 parse
-가능한 settings를 backup한 뒤 ownership state와 무관하게 managed key와 permission
-세 bucket을 exact default로 복구하며, `permissions` 밖의 사용자 top-level key는
-보존한다. 최소 관리 key는 다음과 같다.
+`settings.json`은 sparse JSON으로 관리한다. 일반 update와 Telegram 비활성 상태의
+`preserve`/`refresh_managed`는 기존 알 수 없는 key를 보존하며 App이 소유한 key만
+merge한다. 2.0.12부터 `telegram_enabled=true`이면 안전한 root-owned single-link
+regular file이고 parse 가능한 기존 settings에 한해 migration mode와 ownership state에
+관계없이 Telegram permission 경계를 transaction backup 뒤 reconcile한다. 이 예외는
+`allowNonWorkspaceAccess=false`, `artifactReviewPolicy=agent-decides`,
+`toolPermission=request-review`, `enableTerminalSandbox=false`와
+`permissions.allow`/`ask`/`deny` 전체를 image canonical policy로 맞추며, 이 다섯 App
+관리 보안 key 밖의 사용자 top-level key는 보존한다. 입력과 출력은 256 KiB 이하이며
+안전한 기존 mode drift는 transaction에서 0600으로 강화한다.
+명시적 `reset_v2`는 Telegram 활성화 여부와 무관하게 managed key와 permission 세
+bucket을 exact default로 복구하는 별도 recovery control이다. 최소 관리 key는 다음과
+같다.
 
 ```json
 {
@@ -210,6 +218,21 @@ user plugin MCP를 allowlist에 자동 추가하지 않는다. Telegram side eff
 `ha_change_propose` 또는 `telegram_action_propose`가 표현해야 하며 그렇지 않으면 fail
 closed한다.
 
+2.0.12의 Telegram-enabled reconciliation은 2.0.11의 일반 preserve merge보다 좁고
+강한 startup 불변조건이다. Telegram이 활성화된 동안에는 user-owned permission rule과
+stronger ask/deny도 세 bucket 안에서 보존하지 않고 exact canonical policy로 교체한다.
+또한 App 관리 `allowNonWorkspaceAccess`와 `artifactReviewPolicy` drift도 교체한다. 대신
+이 다섯 보안 key 밖의 unrelated top-level settings, native OAuth, global MCP 파일, 사용자 plugin과
+`/config`는 대상이 아니다. update mode option 자체를 `reset_v2`로 바꾸지 않고,
+ownership state를 canonical policy에 맞춰 기록하며, 같은 파일로 다시 시작할 때 새
+backup이나 write가 없는 idempotent 결과여야 한다.
+
+reconciliation의 file preflight, JSON parse, default-policy validation 또는 transaction이
+실패하면 기존 파일을 추정하거나 부분 write하지 않는다. 이 상태가 bridge의 effective
+settings gate까지 도달하면 bridge는 `permission_boundary_blocked`를 한 번 기록하고 Bot
+API 요청 없이 process 안에서 fail-closed hold한다. fatal exit와 S6 restart loop를 만들지
+않으며 안전한 복구 뒤 App restart가 필요하다.
+
 `antigravity_tool_permission`은 다음처럼 effective `toolPermission`에 매핑한다. 고정
 CLI의 headless 가용성 때문에 `request-review`만 effective 값이고, schema의 나머지
 세 값은 저장된 Supervisor option으로 upgrade를 시작하기 위한 입력 호환성이다.
@@ -273,7 +296,9 @@ stdin으로 `agy-settings patch`에 전달해 원자적으로 수정한다. help
 option과 restart로만 변경한다. Telegram의 지원되는 customization 변경은 exact
 terminal/script proposal과 approval을 통해서만 수행하며 native MCP config는 보호한다.
 user-configured MCP executable은 별도 command profile에서 실행한다.
-기존 user-owned rule과 알 수 없는 settings key는 update merge에서 보존한다.
+기존 user-owned rule은 일반 update와 Telegram 비활성 merge에서 보존한다. 알 수 없는
+top-level settings key는 Telegram-enabled reconciliation에서도 보존하지만, Telegram
+permission 경계인 세 bucket의 user-owned rule은 위 2.0.12 예외를 따른다.
 
 Antigravity 1.1.13의 native `--sandbox`는 비특권 HAOS App에서 namespace clone이
 `operation not permitted`로 실패한다. 2.0.9 Web/SSH/Telegram wrapper는 이 flag를

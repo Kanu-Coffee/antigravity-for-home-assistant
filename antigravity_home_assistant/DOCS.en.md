@@ -168,9 +168,18 @@ the user-files updater normalizes `strict`, `always-proceed`, and
 `proceed-in-sandbox` options to this value. The schema retains those other three
 values only as upgrade-input compatibility for stored Supervisor options. A
 safely identified 2.0.9/2.0.10 App-owned broad allow layout migrates to bounded
-read/proposal-only managed rules. User-owned rules and stronger denies remain
-preserved, but unsupported drift makes the Telegram startup gate fail closed
-before Bot API contact; an administrator can recover with `reset_v2`. The unattended allow set contains safe `/config` and customization
+read/proposal-only managed rules. The Telegram-disabled preserve path continues
+to retain user-owned rules and stronger denies. Starting in 2.0.12, enabling
+Telegram transactionally backs up a root-owned, single-link regular, parseable
+settings file of at most 256 KiB and restores the five App-managed security keys
+plus the exact 29 allow/0 ask/33 deny policy. Unknown custom allow/ask/deny rules
+are removed, while top-level settings outside those keys, global MCP/plugins/
+OAuth, and `/config` remain preserved; an existing mode is hardened to 0600.
+Symlinks, hardlinks, non-root ownership, oversized files, or unparsable JSON are
+left untouched; the startup gate records one
+`permission_boundary_blocked` event and waits without Bot API contact or a
+restart loop. Repair with `reset_v2` or another safe file recovery and restart
+the App. The unattended allow set contains safe `/config` and customization
 reads, HA read/validate/memory reads, `ha_change_propose`, and
 `telegram_action_propose`. It does not contain ordinary commands, native writes,
 URL execution, interactive browser tools, or arbitrary mutation-capable MCPs.
@@ -575,7 +584,7 @@ documented residual risk.
 
 | Mode | Preservation and change scope |
 | --- | --- |
-| `preserve` | Preserve OAuth and user settings/MCP/plugins; canonically security-refresh the App-owned HA plugin once per version |
+| `preserve` | Preserve OAuth and user settings/MCP/plugins; when Telegram is enabled, automatically reconcile safe settings' five App-managed security keys and permission buckets to the exact policy; canonically security-refresh the App-owned HA plugin once per version |
 | `refresh_managed` | Keep that preservation and plugin refresh, then root-only back up and merge ownership-recorded settings keys and permission rules |
 | `reset_v2` | Explicit recovery mode: back up safely parseable settings and replace managed keys plus all three permission buckets with exact image defaults, regardless of ownership state |
 
@@ -599,6 +608,8 @@ Global `mcp_config.json` receives an empty `mcpServers` default only when missin
 an existing file is byte-preserved in every mode. HA MCP servers, rules, and
 skills live inside the App plugin. `refresh_managed` limits re-execution with
 per-App-version transaction state.
+Telegram-enabled permission reconciliation uses the same journaled backup
+transaction and is restart-idempotent once settings and ownership match.
 
 Repository developers build source images with `tools/development/build-app`.
 It removes only the project-owned, checkout-hashed Buildx builder/cache on exit,
@@ -666,6 +677,8 @@ this exception or real semantic-history growth for host image cache.
   current option object back to the fixed Supervisor self-options endpoint with
   only this key changed to `refresh_managed`. An unavailable request leaves the
   legacy value intact and retries on the next App start.
+  Telegram-enabled permission reconciliation is a separate startup boundary
+  exception and does not change the selected mode.
 - Previous provider credentials and App-specific tokens are not imported as
   native authentication. Google OAuth may need to be completed again.
 - Previous non-native settings and guidance files may be preserved, but do not
@@ -730,6 +743,12 @@ without the user's explicit current confirmation.
   allows 1.5 seconds per address attempt without forcibly disabling IPv6.
 - `connect_blocked` means the Bot token or request policy must be corrected in
   App options before restarting. The same 4xx request is not retried.
+- `permission_boundary_blocked` means a symlink, hardlink, non-root owner,
+  oversized/unparsable file, or non-canonical native security boundary prevented
+  automatic reconciliation. The bridge has not contacted
+  the Bot API and remains alive without an S6 restart loop. Apply `reset_v2` or
+  another safe settings recovery, then restart the App; never add broad allow
+  rules to bypass this hold.
 - If `request_failed` has `reason_class=authentication_required`, do not repeat
   Bot pairing. Run `ha-antigravity-login` from a trusted App Web terminal or SSH
   session.

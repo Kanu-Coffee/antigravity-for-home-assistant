@@ -20,6 +20,12 @@ import {
   telegramActionCoordinator,
 } from "./telegram-action-coordinator.mjs";
 import {
+  TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES,
+  TELEGRAM_SAFE_ALLOW_RULES,
+  TELEGRAM_SETTINGS_MAX_BYTES,
+  assertTelegramPermissionBoundary,
+} from "./telegram-permission-policy.mjs";
+import {
   consumePairing,
   hasPairingBootstrap,
   isPaired,
@@ -139,76 +145,6 @@ const TOOL_PERMISSIONS = new Set([
   "proceed-in-sandbox",
   "always-proceed",
   "strict",
-]);
-const TELEGRAM_EFFECTIVE_TOOL_PERMISSIONS = new Set(["request-review"]);
-const TELEGRAM_REQUIRED_PROPOSAL_RULES = Object.freeze([
-  "mcp(ha_change/ha_change_propose)",
-  "mcp(telegram_action/telegram_action_propose)",
-]);
-const TELEGRAM_SAFE_ALLOW_RULES = new Set([
-  "read_file(/config)",
-  "read_file(/data/home/.gemini/config)",
-  "read_file(/data/home/.gemini/antigravity-cli/agents)",
-  "read_file(/data/home/.gemini/antigravity-cli/plugins)",
-  "read_file(/data/home/.gemini/antigravity-cli/skills)",
-  "read_file(/data/home/.gemini/GEMINI.md)",
-  "read_file(/data/home/.gemini/antigravity-cli/settings.json)",
-  ...TELEGRAM_REQUIRED_PROPOSAL_RULES,
-  "mcp(ha_memory/memory_search)",
-  "mcp(ha_memory/memory_show)",
-  "mcp(ha_memory/memory_status)",
-  "mcp(ha_read/ha_read_app_logs)",
-  "mcp(ha_read/ha_read_config)",
-  "mcp(ha_read/ha_read_core_logs)",
-  "mcp(ha_read/ha_read_history)",
-  "mcp(ha_read/ha_read_registry)",
-  "mcp(ha_read/ha_read_services)",
-  "mcp(ha_read/ha_read_state)",
-  "mcp(ha_read/ha_read_states)",
-  "mcp(ha_read/ha_read_storage_usage)",
-  "mcp(ha_read/ha_read_system_info)",
-  "mcp(ha_read/ha_read_traces)",
-  "mcp(ha_validate/ha_validate_config)",
-  "mcp(ha_validate/ha_verify_state)",
-  "mcp(playwright/browser_console_messages)",
-  "mcp(playwright/browser_network_requests)",
-  "mcp(playwright/browser_snapshot)",
-  "mcp(playwright/browser_take_screenshot)",
-]);
-const TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES = new Set([
-  "write_file(/data/home/.gemini/antigravity-cli/settings.json)",
-  "read_file(/data/home/.gemini/config/mcp_config.json)",
-  "write_file(/data/home/.gemini/config/mcp_config.json)",
-  "read_file(/data/options.json)",
-  "write_file(/data/options.json)",
-  "read_file(/run/antigravity-ha/supervisor.token)",
-  "write_file(/run/antigravity-ha/supervisor.token)",
-  "read_file(/run/antigravity-ha/home-assistant-browser.token)",
-  "write_file(/run/antigravity-ha/home-assistant-browser.token)",
-  "read_file(/config/secrets.yaml)",
-  "write_file(/config/secrets.yaml)",
-  "read_file(/config/.storage)",
-  "write_file(/config/.storage)",
-  "read_file(/config/.ssh)",
-  "write_file(/config/.ssh)",
-  "read_file(/data/home/.ssh)",
-  "write_file(/data/home/.ssh)",
-  "read_file(/data/home/.aws)",
-  "write_file(/data/home/.aws)",
-  "read_file(/data/home/.azure)",
-  "write_file(/data/home/.azure)",
-  "read_file(/data/home/.config/gcloud)",
-  "write_file(/data/home/.config/gcloud)",
-  "read_file(/data/home/.kube)",
-  "write_file(/data/home/.kube)",
-  "read_file(/data/home/.docker/config.json)",
-  "write_file(/data/home/.docker/config.json)",
-  "read_file(/data/home/.netrc)",
-  "write_file(/data/home/.netrc)",
-  "read_file(/data/home/.npmrc)",
-  "write_file(/data/home/.npmrc)",
-  "read_file(/root/.ssh)",
-  "write_file(/root/.ssh)",
 ]);
 const pendingApprovals = new Map();
 const chatQueues = new Map();
@@ -601,35 +537,6 @@ function loadRuntimeConfig(options) {
   return { enabled, botToken, toolPermission, allowedUsers, allowedChats };
 }
 
-function assertTelegramPermissionBoundary(value) {
-  if (!isPlainObject(value) ||
-      !TELEGRAM_EFFECTIVE_TOOL_PERMISSIONS.has(value.toolPermission) ||
-      !isPlainObject(value.permissions) ||
-      Object.keys(value.permissions).length !== 3 ||
-      !["allow", "ask", "deny"].every((bucket) =>
-        Array.isArray(value.permissions[bucket]) &&
-        value.permissions[bucket].every((rule) => typeof rule === "string"))) {
-    throw new Error(
-      "effective Antigravity permissions are not safe for Telegram approval; select reset_v2 in the App user-file update option and restart",
-    );
-  }
-  const { allow, ask, deny } = value.permissions;
-  const allRules = [...allow, ...ask, ...deny];
-  if (new Set(allRules).size !== allRules.length || ask.length !== 0 ||
-      allow.some((rule) => !TELEGRAM_SAFE_ALLOW_RULES.has(rule)) ||
-      TELEGRAM_REQUIRED_PROPOSAL_RULES.some((rule) => !allow.includes(rule)) ||
-      [...TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES].some((rule) => !deny.includes(rule))) {
-    throw new Error(
-      "effective Antigravity permissions would bypass or block Telegram approval; select reset_v2 in the App user-file update option and restart",
-    );
-  }
-  return {
-    toolPermission: value.toolPermission,
-    allowCount: allow.length,
-    denyCount: deny.length,
-  };
-}
-
 function loadTelegramPermissionBoundary(path = ANTIGRAVITY_SETTINGS_PATH) {
   let descriptor;
   try {
@@ -640,7 +547,7 @@ function loadTelegramPermissionBoundary(path = ANTIGRAVITY_SETTINGS_PATH) {
     const before = fstatSync(descriptor);
     if (!before.isFile() || before.uid !== 0 || before.nlink !== 1 ||
         (before.mode & 0o777) !== 0o600 || before.size <= 0 ||
-        before.size > 256 * 1024) {
+        before.size > TELEGRAM_SETTINGS_MAX_BYTES) {
       throw new Error("effective Antigravity settings file is not a private root-owned file");
     }
     const value = JSON.parse(readFileSync(descriptor, "utf8"));
@@ -4174,18 +4081,35 @@ async function pollUpdateBatches(config, {
   return offset;
 }
 
+async function waitForTelegramPermissionBoundary(config, {
+  load = loadTelegramPermissionBoundary,
+  hold = holdTelegramFailClosed,
+  auditEvent = audit,
+} = {}) {
+  try {
+    const effectivePermissionBoundary = load();
+    if (config.toolPermission !== effectivePermissionBoundary.toolPermission) {
+      throw new Error(
+        "configured and effective Antigravity permissions differ for Telegram; select reset_v2 in the App user-file update option and restart",
+      );
+    }
+    return effectivePermissionBoundary;
+  } catch (error) {
+    auditEvent("permission_boundary_blocked", { error: safeError(error) });
+    await hold();
+    return null;
+  }
+}
+
 async function main() {
   const config = loadRuntimeConfig(readOptions());
   if (!config.enabled) {
     audit("disabled");
     return;
   }
-  const effectivePermissionBoundary = loadTelegramPermissionBoundary();
-  if (config.toolPermission !== effectivePermissionBoundary.toolPermission) {
-    throw new Error(
-      "configured and effective Antigravity permissions differ for Telegram; select reset_v2 in the App user-file update option and restart",
-    );
-  }
+  const effectivePermissionBoundary =
+    await waitForTelegramPermissionBoundary(config);
+  if (effectivePermissionBoundary === null) return;
   audit("permission_boundary_ready", {
     tool_permission: effectivePermissionBoundary.toolPermission,
     allow_count: effectivePermissionBoundary.allowCount,
@@ -4273,6 +4197,7 @@ export {
   terminalExecutionResult,
   telegramTransportErrorCode,
   toolActionWatchdogMs,
+  waitForTelegramPermissionBoundary,
   waitForExecution,
   waitForTelegramAuthorization,
   workerStatusSnapshot,

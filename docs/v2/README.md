@@ -104,6 +104,18 @@ Antigravity 명령이나 설정을 추정하지 않는다. 문서와 고정 bina
 - Telegram effective native permission은 `request-review` 하나이고 schema의 다른
   값은 upgrade 입력 호환용으로 정규화된다. Playwright auto-allow는 upstream
   read-only console/network/snapshot/screenshot 네 도구뿐이다.
+- 2.0.12에서 `telegram_enabled=true`이면 안전하게 읽고 parse할 수 있는 기존
+  `settings.json`의 Telegram permission 경계를 migration mode와 무관하게 transaction
+  backup 뒤 canonical policy로 reconcile한다. `allowNonWorkspaceAccess`,
+  `artifactReviewPolicy`, `toolPermission`, `enableTerminalSandbox`와
+  `permissions.allow`/`ask`/`deny`가 이 예외의 대상이며, 그 밖의 top-level settings,
+  OAuth, global MCP, plugin과 `/config`는 보존한다. 안전한 기존 mode drift는
+  transaction에서 0600으로 강화한다.
+  mode를 `reset_v2`로 자동 변경하지 않으며 같은 입력의 재시작은 idempotent해야 한다.
+- init 뒤 effective permission 재검증도 통과하지 못하면 bridge는 Bot API에 접촉하지
+  않고 `permission_boundary_blocked`를 한 번 기록한 뒤 살아 있는 fail-closed hold에
+  머문다. 같은 설정의 fatal/S6 restart loop를 만들지 않으며 안전한 복구 뒤 App을
+  재시작해야 한다.
 - proposal registration만으로 crash durability를 주장하지 않는다. encrypted
   approval/card sealing 전 bridge crash는 사용자가 원 요청을 반복해야 한다.
 - 명시적 `reset_v2`는 safe parseable settings를 backup하고 ownership state와

@@ -62,7 +62,13 @@ def test_release_is_multi_arch_with_generic_registry_image(
     )
     assert "{arch}" not in addon_config["image"]
     assert addon_config["stage"] == "experimental"
-    assert addon_config["breaking_versions"] == ["2.0.0", "2.0.7", "2.0.9", "2.0.11"]
+    assert addon_config["breaking_versions"] == [
+        "2.0.0",
+        "2.0.7",
+        "2.0.9",
+        "2.0.11",
+        "2.0.12",
+    ]
 
 
 def test_registry_release_workflow_is_tag_gated(repository_root: Path) -> None:

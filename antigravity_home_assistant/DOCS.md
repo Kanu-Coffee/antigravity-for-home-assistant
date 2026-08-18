@@ -164,9 +164,16 @@ transition으로 `antigravity_home_assistant-command` AppArmor 프로필에 들�
 `proceed-in-sandbox` option은 user-files updater가 모두 이 값으로 정규화합니다.
 schema가 다른 세 값을 계속 받는 것은 저장된 Supervisor option으로 upgrade를 시작하기
 위한 입력 호환성입니다. safely identified 2.0.9/2.0.10 App-owned broad allow도 bounded
-read/proposal-only managed rule로 migration됩니다. user-owned rule과 더 강한 deny는
-보존되지만 허용되지 않는 drift가 있으면 Telegram startup gate가 Bot API 연결 전에
-fail closed하며, 관리자는 `reset_v2`로 복구할 수 있습니다. unattended allow에는 안전한 `/config`·customization
+read/proposal-only managed rule로 migration됩니다. Telegram이 꺼진 preserve 경로는
+기존 user-owned rule과 stronger deny를 계속 보존합니다. 2.0.12부터 Telegram이 켜지면
+root-owned single-link regular·256 KiB 이하·parse 가능한 settings를 시작 transaction으로
+backup하고 다섯 App 관리 보안 key 및 permission 세 bucket을 exact 29/0/33 safe policy로
+정규화합니다. unknown custom allow/ask/deny는 제거하지만 그 다섯 key 밖의 top-level
+설정, global MCP/plugin/OAuth와 `/config`는 보존하고 기존 mode는 0600으로 강화합니다.
+symlink/hardlink/non-root owner, 크기 초과나 parse 불가능한 JSON은 수정하지 않고 gate가
+`permission_boundary_blocked`를 한 번 기록한 뒤 Bot API 연결과 재시작 loop 없이
+대기합니다. 관리자가 `reset_v2` 또는 안전한 파일 복구를 적용하고 App을 재시작해야
+합니다. unattended allow에는 안전한 `/config`·customization
 read, HA read/validate/memory read, `ha_change_propose`,
 `telegram_action_propose`만 들어갑니다. 일반 command, native write, URL execute,
 interactive browser와 임의 mutation MCP는 포함하지 않습니다. `secrets.yaml`,
@@ -538,7 +545,7 @@ primary OAuth backend의 실제 경로와 same-process built-in read 비유출�
 
 | mode | 보존·변경 범위 |
 | --- | --- |
-| `preserve` | OAuth·사용자 settings/MCP/plugin 보존; App 소유 HA plugin은 version당 canonical 보안 갱신 |
+| `preserve` | OAuth·사용자 settings/MCP/plugin 보존; 단, Telegram enabled이면 안전한 settings의 다섯 App 관리 보안 key와 permission 세 bucket을 exact policy로 자동 정규화; App 소유 HA plugin은 version당 canonical 보안 갱신 |
 | `refresh_managed` | 위 보존·plugin 갱신에 더해 소유권이 기록된 settings key·permission rule을 root-only backup 후 merge |
 | `reset_v2` | 명시적 복구 mode. 안전하게 parse 가능한 settings를 backup하고 ownership state와 무관하게 managed key와 permission 세 bucket을 image exact default로 교체 |
 
@@ -558,6 +565,8 @@ image의 canonical copy로 갱신됩니다. 새 설치는 현재 version marker�
 global `mcp_config.json`은 없을 때 빈 `mcpServers` 기본본만 생성하며 기존 파일은
 모든 mode에서 byte-preserve합니다. HA MCP·rules·skills는 App plugin 내부에
 있습니다. `refresh_managed`는 App version별 transaction 상태로 재실행을 제한합니다.
+Telegram-enabled permission reconciliation도 같은 journal/backup transaction을 사용하고
+같은 설정으로 재시작하면 추가 backup 없이 idempotent하게 끝납니다.
 
 저장소 개발자가 source image를 만들 때는 `tools/development/build-app`을 사용합니다.
 이 helper는 checkout hash로 분리한 project-owned Buildx builder/cache만 종료 시
@@ -616,6 +625,8 @@ sync는 계속 보존합니다. refresh 중 비정상 종료로 남은 `running`
   Supervisor self-options endpoint에 현재 option 전체를 보내되 이 key만
   `refresh_managed`로 바꿉니다. 요청을 사용할 수 없으면 legacy 값을 유지하고
   다음 App 시작에서 재시도합니다.
+  Telegram-enabled permission reconciliation은 별도 startup boundary 예외이며 선택한
+  mode를 바꾸지 않습니다.
 - 이전 provider credential이나 App 전용 token을 native 인증으로 import하지
   않습니다. Google OAuth를 다시 완료해야 할 수 있습니다.
 - 이전 비-native 설정과 guidance 파일은 보존될 수 있지만 Antigravity 1.1.13의
@@ -678,6 +689,11 @@ sync는 계속 보존합니다. refresh 중 비정상 종료로 남은 `running`
   강제로 끄지는 않습니다.
 - `connect_blocked`이면 Bot token 또는 요청 정책을 확인하고 App 옵션을 고친 뒤
   다시 시작합니다. 같은 4xx 요청은 자동 반복하지 않습니다.
+- `permission_boundary_blocked`이면 symlink/hardlink/non-root owner, 256 KiB 초과,
+  parse 불가능 또는 canonical 보안 경계를 만족하지 않는 native settings 때문에 자동
+  정규화를 적용하지 못한 것입니다. bridge는 Bot API에 접속하지
+  않았고 S6 재시작 loop 없이 살아서 대기합니다. broad allow를 추가하지 말고
+  `reset_v2` 또는 다른 안전한 settings 복구를 적용한 뒤 App을 재시작합니다.
 - `request_failed`의 `reason_class=authentication_required`이면 Bot pairing을
   반복하지 말고 신뢰하는 App 웹 터미널 또는 SSH에서 `ha-antigravity-login`을
   실행합니다.

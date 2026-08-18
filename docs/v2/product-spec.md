@@ -229,7 +229,7 @@ log_level: info
 
 | 옵션 | 허용값과 의미 |
 | --- | --- |
-| `telegram_enabled` | bridge 시작 여부. 기본 `false` |
+| `telegram_enabled` | bridge 시작 여부. 기본 `false`; `true`는 startup 전 exact managed Telegram permission reconciliation을 함께 활성화 |
 | `telegram_bot_token` | secret App option. 로그나 진단 payload에서 제외 |
 | `telegram_allowed_user_ids` | Telegram numeric user ID allowlist |
 | `telegram_allowed_chat_ids` | Telegram numeric chat ID allowlist |
@@ -263,6 +263,17 @@ settings를 backup하고 기존 ownership state와 무관하게 managed key와
 `permissions` 밖의 사용자 top-level settings, global MCP/plugin/OAuth와 `/config`는
 보존한다. option을 `preserve`로 되돌릴 때까지 매 시작 drift를 다시 복구한다.
 
+2.0.12부터 `telegram_enabled=true`이면 이 option이 `preserve` 또는
+`refresh_managed`여도 root-owned single-link regular·256 KiB 이하의 parse 가능한 existing
+settings에서 `allowNonWorkspaceAccess`, `artifactReviewPolicy`, `toolPermission`,
+`enableTerminalSandbox`와 permission 세 bucket을 transaction backup 뒤 exact Telegram
+policy로 reconcile한다. 이 다섯 보안 key 밖의 unrelated top-level settings, global MCP,
+plugin, OAuth와 `/config`는 보존하고 mode를 0600으로 강화하되 update mode 자체를
+`reset_v2`로 바꾸지 않는다.
+같은 canonical input의 재시작은 write와 새 backup이 없는 idempotent 결과여야 한다.
+unsafe file, invalid JSON, invalid image default 또는 transaction failure는 partial
+recovery 없이 fail closed한다.
+
 2.0.6 이하의 `telegram_access_mode`는 Supervisor update migration이 발견할 수 있는
 legacy 입력이지만 2.0.7 runtime 권한 결정에는 사용하지 않는다. 안전한 bootstrap은
 이를 제거하고 Telegram도 global Antigravity 권한 option만 사용한다. Supervisor가
@@ -286,6 +297,12 @@ write deny는 option 값과 무관한 불변조건이다.
   stronger deny는 보존한다. native headless permission prompt는 Telegram에서 resume하지
   않는다. 관리형 HA·terminal·script·question proposal이 App-managed approval 경계이고,
   표현할 수 없는 side effect는 direct fallback 없이 fail closed한다.
+- 2.0.12에서 Telegram이 활성화되면 위 effective policy는 일반 preserve merge보다
+  우선하는 startup 경계다. 다섯 App 관리 보안 key drift와 permission 세 bucket의
+  user-owned rule/stronger deny도 canonical policy로 교체하되 그 밖의 customization과
+  별도 global MCP/OAuth는 보존한다. bridge가 init 뒤 이 경계를 재검증하지 못하면
+  `permission_boundary_blocked`를 한 번 기록하고 Bot API 요청과 S6 restart 없이 살아
+  있는 fail-closed hold에 머문다. 복구한 설정은 App restart 뒤 다시 검증한다.
 - Telegram auto-allow의 Playwright는 upstream `readOnly: true`인
   `browser_console_messages`, `browser_network_requests`, `browser_snapshot`,
   `browser_take_screenshot`만 포함한다. navigate/back, tabs, hover, wait, resize, close는
@@ -316,6 +333,8 @@ write deny는 option 값과 무관한 불변조건이다.
 - bridge queue와 API 요청에는 상한, timeout, 취소와 backpressure가 있다.
 - 서비스 하나의 실패가 복구용 Ingress와 SSH를 불필요하게 중단하지 않는다.
 - update와 migration은 crash-safe, idempotent, recoverable해야 한다.
+- Telegram permission mismatch는 Bot API 전에 차단하고 반복 fatal restart로 서비스
+  supervisor를 소모하지 않아야 한다.
 - image build는 network artifact와 dependency를 version과 digest로 고정한다.
 - 한국어 문서를 canonical로 하고 사용자 문서는 한국어·영어를 함께 제공한다.
 - 지원을 주장하는 각 아키텍처에서 같은 acceptance suite를 통과한다.

@@ -152,7 +152,7 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 
 # Release-only metadata must stay after the dependency layer so routine App
 # updates can reuse its content-addressed layers on Home Assistant hosts.
-ARG BUILD_VERSION=2.0.11
+ARG BUILD_VERSION=2.0.12
 ARG SOURCE_REVISION=""
 ARG SOURCE_ROOTFS_SHA256=""
 
@@ -268,6 +268,7 @@ RUN manifest=/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
       /usr/local/share/antigravity-ha/telegram-action-executor.mjs \
       /usr/local/share/antigravity-ha/telegram-action-proposal-mcp.mjs \
       /usr/local/share/antigravity-ha/telegram-bridge.mjs \
+      /usr/local/share/antigravity-ha/telegram-permission-policy.mjs \
       /usr/local/share/antigravity-ha/telegram-pairing.mjs \
       /usr/local/share/antigravity-ha/telegram-state.mjs \
       /usr/local/share/antigravity-ha/user-files-update.mjs \
@@ -284,6 +285,7 @@ RUN install -d -m 0700 /data/home /data/antigravity /data/github-cli \
     && node --check /usr/local/share/antigravity-ha/telegram-action-coordinator.mjs \
     && node --check /usr/local/share/antigravity-ha/telegram-action-executor.mjs \
     && node --check /usr/local/share/antigravity-ha/telegram-action-proposal-mcp.mjs \
+    && node --check /usr/local/share/antigravity-ha/telegram-permission-policy.mjs \
     && node /usr/local/share/antigravity-ha/ha-feedback.mjs --help \
       | grep -Fq 'ha-feedback github submit'
 

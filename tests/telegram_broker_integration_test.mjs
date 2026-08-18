@@ -227,6 +227,7 @@ try {
     "ha-change-broker.mjs",
     "telegram-action-coordinator.mjs",
     "telegram-action-proposal-mcp.mjs",
+    "telegram-permission-policy.mjs",
     "telegram-pairing.mjs",
     "telegram-state.mjs",
   ]) {
