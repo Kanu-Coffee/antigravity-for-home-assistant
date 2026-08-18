@@ -65,7 +65,7 @@ def test_enforced_smoke_requires_two_clean_startups_and_a_denial_canary() -> Non
         "/usr/bin/node /usr/local/share/antigravity-ha/ha-read-broker.mjs",
         "bash /usr/bin/bashio ./run ha-memoryd",
         "nginx: master process",
-        "/usr/local/bin/ttyd",
+        "ttyd --interface 127.0.0.1 --port 7682",
         "s6-pause",
         'docker top "$container" -eo pid,args',
     ):

@@ -404,7 +404,8 @@ assert_enforced_container_ready() {
     '/usr/bin/node /usr/local/share/antigravity-ha/ha-read-broker.mjs'
   wait_for_process "$container" 'bash /usr/bin/bashio ./run ha-memoryd'
   wait_for_process "$container" 'nginx: master process'
-  wait_for_process "$container" '/usr/local/bin/ttyd'
+  wait_for_process "$container" \
+    'ttyd --interface 127.0.0.1 --port 7682'
   wait_for_process "$container" 's6-pause'
 
   sleep 2
