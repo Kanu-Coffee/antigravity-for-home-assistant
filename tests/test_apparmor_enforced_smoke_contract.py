@@ -117,6 +117,12 @@ def test_enforced_smoke_requires_two_clean_startups_and_a_denial_canary() -> Non
     assert "apparmor-enforced-smoke-token-do-not-use" in smoke
     assert "[REDACTED_HOME_ASSISTANT_TOKEN]" in smoke
     assert '--env "SUPERVISOR_TOKEN=${SUPERVISOR_TOKEN}"' in smoke
+    assert "run_helper_credential_boundary_probe" in smoke
+    assert "--security-opt apparmor=antigravity_home_assistant-ha-helper" in smoke
+    assert "the ha-helper Supervisor credential read-only boundary failed" in smoke
+    assert "the ha-helper write-denial canary" in smoke
+    assert 'name="/run/antigravity-ha/supervisor.token"' in smoke
+    assert 'denied_mask="w"' in smoke
 
 
 def test_enforced_smoke_exercises_ssh_browser_feedback_and_accounting() -> None:

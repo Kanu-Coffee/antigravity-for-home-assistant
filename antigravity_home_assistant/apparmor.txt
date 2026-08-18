@@ -910,7 +910,8 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   /sys/** r,
 
   /run/antigravity-ha/supervisor.token r,
-  deny /run/antigravity-ha/supervisor.token wklm,
+  # Keep one exact read rule; write, lock, link and executable-map access stay
+  # default-denied and are exercised by the kernel-enforced helper canary.
   deny /run/antigravity-ha/ha-feedback-options.json wklm,
   deny /data/options.json rwklm,
   deny /run/antigravity-ha/change-broker.sock rwklm,
@@ -1653,6 +1654,7 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   /var/cache/fontconfig/ rw,
   /var/cache/fontconfig/* rwkl,
   /var/tmp/ r,
+  /dev/ r,
   /dev/null rw,
   /dev/random r,
   /dev/urandom r,
@@ -1728,6 +1730,7 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   /config/ rw,
   /config/** rwklix,
   /root/ r,
+  /root/.bashrc r,
   /run/ r,
   /run/antigravity-ha/ r,
   /run/antigravity-ha/ha-feedback-options.json r,

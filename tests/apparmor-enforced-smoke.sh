@@ -16,6 +16,7 @@ readonly FIRST_CONTAINER="${TEST_ID}-cold"
 readonly RESTART_CONTAINER="${TEST_ID}-restart"
 readonly DATA_VOLUME="${TEST_ID}-data"
 readonly CONFIG_VOLUME="${TEST_ID}-config"
+readonly HELPER_RUNTIME_VOLUME="${TEST_ID}-helper-runtime"
 readonly SUPERVISOR_TOKEN=apparmor-enforced-smoke-token-do-not-use
 WORK_DIR=$(mktemp -d)
 readonly WORK_DIR
@@ -96,6 +97,7 @@ cleanup() {
   docker rm --force "$FIRST_CONTAINER" "$RESTART_CONTAINER" \
     >/dev/null 2>&1 || true
   docker volume rm --force "$DATA_VOLUME" "$CONFIG_VOLUME" \
+    "$HELPER_RUNTIME_VOLUME" \
     >/dev/null 2>&1 || true
   if [[ $PROFILE_LOADED == true ]]; then
     sudo -n apparmor_parser --remove --skip-cache "$RENDERED_PROFILE" \
@@ -204,6 +206,7 @@ load_and_verify_profiles() {
 seed_volumes() {
   docker volume create "$DATA_VOLUME" >/dev/null
   docker volume create "$CONFIG_VOLUME" >/dev/null
+  docker volume create "$HELPER_RUNTIME_VOLUME" >/dev/null
 
   python3 - "$SSH_PUBLIC_KEY" <<'PY' \
     | docker run --rm --interactive \
@@ -250,6 +253,40 @@ PY
     "$IMAGE" /config/secrets.yaml \
     | grep -Fqx 'apparmor-denial-canary-no-secret' \
     || fail 'the unconfined control could not read the safe denial canary'
+
+  printf '%s' "$SUPERVISOR_TOKEN" \
+    | docker run --rm --interactive \
+      --platform "$TEST_PLATFORM" \
+      --entrypoint /bin/sh \
+      --volume "${HELPER_RUNTIME_VOLUME}:/run/antigravity-ha" \
+      "$IMAGE" \
+      -c 'umask 077; cat > /run/antigravity-ha/supervisor.token; chmod 0600 /run/antigravity-ha/supervisor.token'
+}
+
+run_helper_credential_boundary_probe() {
+  local output
+
+  if ! output=$(docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --security-opt apparmor=antigravity_home_assistant-ha-helper \
+    --entrypoint /bin/bash \
+    --env "EXPECTED_TOKEN=${SUPERVISOR_TOKEN}" \
+    --volume "${HELPER_RUNTIME_VOLUME}:/run/antigravity-ha" \
+    "$IMAGE" -p -c '
+      set -Eeuo pipefail
+      token=$(< /run/antigravity-ha/supervisor.token)
+      [[ $token == "$EXPECTED_TOKEN" ]]
+      if { printf tampered > /run/antigravity-ha/supervisor.token; } 2>/dev/null; then
+        exit 97
+      fi
+      [[ $(< /run/antigravity-ha/supervisor.token) == "$token" ]]
+    ' 2>&1); then
+    printf '%s\n' "$output" | redact_probe_output >&2
+    fail 'the ha-helper Supervisor credential read-only boundary failed'
+  fi
+  if grep -Fq "$SUPERVISOR_TOKEN" <<< "$output"; then
+    fail 'the ha-helper credential boundary probe exposed the fake token'
+  fi
 }
 
 run_ssh_and_accounting_probe() {
@@ -490,6 +527,7 @@ assert_relevant_audit_denials() {
   local audit_log="${WORK_DIR}/kernel-audit.log"
   local relevant_log="${WORK_DIR}/relevant-denials.log"
   local canary_seen=false
+  local helper_write_canary_seen=false
   local line
 
   if ! capture_relevant_audit_denials "$audit_log" "$relevant_log"; then
@@ -503,12 +541,20 @@ assert_relevant_audit_denials() {
       canary_seen=true
       continue
     fi
+    if [[ $line == *'profile="antigravity_home_assistant-ha-helper"'* \
+      && $line == *'name="/run/antigravity-ha/supervisor.token"'* \
+      && $line == *'denied_mask="w"'* ]]; then
+      helper_write_canary_seen=true
+      continue
+    fi
     printf 'unexpected AppArmor audit denial: %s\n' "$line" >&2
     fail 'kernel audit contains a non-canary denial for the enforced profile set'
   done < "$relevant_log"
 
   [[ $canary_seen == true ]] \
     || fail 'kernel audit did not capture the AppArmor denial positive control'
+  [[ $helper_write_canary_seen == true ]] \
+    || fail 'kernel audit did not capture the ha-helper write-denial canary'
 }
 
 require_enforcement_host
@@ -526,6 +572,7 @@ AUDIT_START_EPOCH=$(date --utc +%s)
 load_and_verify_profiles
 generate_disposable_ssh_key
 seed_volumes
+run_helper_credential_boundary_probe
 
 start_container "$FIRST_CONTAINER"
 assert_enforced_container_ready "$FIRST_CONTAINER"

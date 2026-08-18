@@ -752,6 +752,20 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
         "/var/tmp/ r,": {
             "antigravity_home_assistant-browser"
         },
+        "/dev/ r,": {
+            "antigravity_home_assistant",
+            "antigravity_home_assistant-browser",
+            "antigravity_home_assistant-command",
+            "antigravity_home_assistant-init",
+            "antigravity_home_assistant-interactive-runtime-restricted",
+            "antigravity_home_assistant-interactive-runtime-sensitive-read",
+            "antigravity_home_assistant-settings-update",
+            "antigravity_home_assistant-shell",
+            "antigravity_home_assistant-sshd",
+        },
+        "/root/.bashrc r,": {
+            "antigravity_home_assistant-shell"
+        },
         "/run/utmp rwk,": {
             "antigravity_home_assistant-shell",
             "antigravity_home_assistant-sshd",
@@ -807,6 +821,8 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
     assert "/var/tmp/** rwk," not in source
     assert "/var/tmp/** rwkl," not in source
     assert "/var/log/** rwk," not in source
+    assert "/dev/** r," not in source
+    assert "/root/** r," not in source
 
 
 def test_apparmor_uses_resolved_owner_proc_paths_for_runtime_self_access(
@@ -1066,9 +1082,17 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
         main_profile
     )
     assert "/run/antigravity-ha/supervisor.token r," in helper_profile
-    assert "deny /run/antigravity-ha/supervisor.token wklm," in (
+    assert "/run/antigravity-ha/supervisor.token rw," not in helper_profile
+    assert "deny /run/antigravity-ha/supervisor.token wklm," not in (
         helper_profile
     )
+    for broad_runtime_write in (
+        "/run/antigravity-ha/** w,",
+        "/run/antigravity-ha/** rw,",
+        "/run/antigravity-ha/** rwk,",
+        "/run/antigravity-ha/** rwkl,",
+    ):
+        assert broad_runtime_write not in helper_profile
     assert "deny /data/options.json rwklm," in helper_profile
     assert "/run/antigravity-ha/ha-feedback-options.json r," in helper_profile
     assert "deny /data/options.json rwklm," in playwright_bootstrap_profile
