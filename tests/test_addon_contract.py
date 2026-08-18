@@ -713,6 +713,42 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
         "/usr/lib/chromium/chromium rix,": {
             "antigravity_home_assistant-browser"
         },
+        "/usr/local/libexec/ha-playwright-runtime r,": {
+            "antigravity_home_assistant-browser"
+        },
+        "/usr/local/share/fonts/ r,": {
+            "antigravity_home_assistant-browser"
+        },
+        "/usr/local/share/fonts/** r,": {
+            "antigravity_home_assistant-browser"
+        },
+        "/usr/share/fontconfig/ r,": {
+            "antigravity_home_assistant-browser"
+        },
+        "/usr/share/fontconfig/** r,": {
+            "antigravity_home_assistant-browser"
+        },
+        "/usr/share/fonts/ r,": {
+            "antigravity_home_assistant-browser"
+        },
+        "/usr/share/fonts/** r,": {
+            "antigravity_home_assistant-browser"
+        },
+        "/usr/share/glib-2.0/schemas/gschemas.compiled r,": {
+            "antigravity_home_assistant-browser"
+        },
+        "/usr/share/mime/mime.cache r,": {
+            "antigravity_home_assistant-browser"
+        },
+        "/var/cache/fontconfig/ rw,": {
+            "antigravity_home_assistant-browser"
+        },
+        "/var/cache/fontconfig/* rwkl,": {
+            "antigravity_home_assistant-browser"
+        },
+        "/var/tmp/ r,": {
+            "antigravity_home_assistant-browser"
+        },
         "/run/utmp rwk,": {
             "antigravity_home_assistant-shell",
             "antigravity_home_assistant-sshd",
@@ -743,6 +779,7 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
 
     sshd_profile = profiles["antigravity_home_assistant-sshd"]
     helper_profile = profiles["antigravity_home_assistant-ha-helper"]
+    browser_profile = profiles["antigravity_home_assistant-browser"]
     assert "/proc/self/oom_score_adj rw," not in source
     assert "/proc/** rw," not in sshd_profile
     assert "/config/** r," in helper_profile
@@ -757,6 +794,12 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
     ):
         assert shadowing_deny not in helper_profile
     assert "/usr/lib/chromium/** rix," not in source
+    assert "/usr/local/libexec/** r," not in browser_profile
+    assert "/usr/share/** r," not in browser_profile
+    assert "/var/cache/** rwkl," not in source
+    assert "/var/cache/fontconfig/** rwkl," not in source
+    assert "/var/tmp/** rwk," not in source
+    assert "/var/tmp/** rwkl," not in source
     assert "/var/log/** rwk," not in source
 
 

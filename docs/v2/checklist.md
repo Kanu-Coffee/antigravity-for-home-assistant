@@ -164,8 +164,9 @@
   필요하다.
 - 2.0.15는 관찰된 Bashio denial만 완화하지 않고 전체 cold-start trace-derived closure를
   profile별로 적용한다. resolved Bashio/S6/execline/Bash, Telegram pause, shell
-  `utempter`, Chromium child의 exact execute와 init 계정/nginx, SSH OOM/accounting,
-  feedback report subtree의 narrow mutation만 허용한다. 새로운 `/usr/lib/**`와
+  `utempter`, Chromium child의 exact execute, interpreted Playwright runtime 및 traced
+  font/config metadata read와 init 계정/nginx, SSH OOM/accounting, feedback report subtree,
+  fontconfig cache의 narrow mutation만 허용한다. 새로운 `/usr/lib/**`와
   `/package/admin/**` 전체 execute, `/etc/**` 전체 write는 추가하지 않고 기존
   credential·민감정보 deny를 유지한다.
 - `Kernel-enforced AppArmor startup smoke`는 실제 custom profile을 exact image에

@@ -87,6 +87,24 @@ def test_enforced_smoke_requires_two_clean_startups_and_a_denial_canary() -> Non
     assert "/usr/lib/bashio/bashio" in smoke
     assert "/package/admin/s6-overlay-3.2.2.0/command/with-contenv" in smoke
     assert "assert_relevant_audit_denials" in smoke
+    assert "capture_relevant_audit_denials" in smoke
+    assert "print_failure_audit_denials" in smoke
+    failure_body = smoke.split("fail() {", 1)[1].split("\n}", 1)[0]
+    assert failure_body.index("print_failure_audit_denials") < failure_body.index(
+        "exit 1"
+    )
+    failure_audit_body = smoke.split("print_failure_audit_denials() {", 1)[1].split(
+        "\n}", 1
+    )[0]
+    assert "Relevant AppArmor audit denials captured before profile cleanup" in (
+        failure_audit_body
+    )
+    assert 'redact_probe_output < "$relevant_log"' in failure_audit_body
+    capture_body = smoke.split("capture_relevant_audit_denials() {", 1)[1].split(
+        "\n}", 1
+    )[0]
+    assert 'journalctl --dmesg --since "@${AUDIT_START_EPOCH}"' in capture_body
+    assert 'grep -F "profile=\\"${name}\\""' in capture_body
     assert (
         "kernel journal unavailable; cannot prove the absence of unexpected "
         "AppArmor denials" in smoke

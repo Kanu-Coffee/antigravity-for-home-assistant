@@ -102,10 +102,12 @@ cold-start trace는 다음 profile-scoped closure를 요구한다.
   `execline`·`s6-envdir`·`with-contenv`, narrow shell 기반 profile의 resolved
   `/usr/bin/bash`, Telegram의 resolved `s6-pause`, shell의 architecture-bound
   `utempter`, browser의 `/usr/lib/chromium/chromium`과
-  `chrome_crashpad_handler`만 execute한다.
+  `chrome_crashpad_handler`만 execute한다. browser profile 전환 뒤 interpreted
+  Playwright runtime과 traced font/config metadata만 읽는다.
 - init은 passwd/shadow lock·교체 파일과 nginx PID/temp state만 갱신하고, sshd는
   `owner @{PROC}@{pid}/oom_score_adj`, shell은 `/run/utmp`·`/var/log/wtmp`, HA feedback helper는
-  `/config/antigravity-workspace/feedback/**`만 해당 기능에 맞게 갱신한다.
+  `/config/antigravity-workspace/feedback/**`, browser는
+  `/var/cache/fontconfig/*`만 해당 기능에 맞게 갱신한다.
 - 새로운 `/run/**`, `/usr/lib/**`, `/package/admin/**` 전체 execute, `/etc/**` 전체 write나
   credential·민감정보 경계를 넓히는 우회는 추가하지 않는다.
 
@@ -127,7 +129,7 @@ enforce 수용은 `NOT RUN`이다.
 | Telegram runtime | exact resolved `s6-pause`와 bridge runtime | settings write, Supervisor credential, direct mutation fallback |
 | sshd daemon | public-key 인증용 exact key read와 own OOM-score/accounting state | `/config`, key write/exec, App credential와 broker socket |
 | HA feedback helper | sanitized report의 exact `/config/antigravity-workspace/feedback/**` subtree | 그 밖의 `/config` write, runtime credential와 broker socket |
-| browser | exact Chromium/crashpad runtime, loopback gateway, `/run` profile | `/data`, `/config`, Supervisor network/credential |
+| browser | interpreted Playwright runtime read, exact Chromium/crashpad runtime, traced font/config read·cache, loopback gateway, `/run` profile | `/data`, `/config`, Supervisor network/credential |
 | memory | memory DB, readonly catalog endpoint | OAuth, Telegram/SSH/browser credential, `/config` write |
 
 두 interactive runtime profile 사이에서 달라지는 경로는 Recorder DB 진단 read뿐이다.

@@ -245,8 +245,29 @@ class StdioMcpClient {
     this.nextId = 1;
     this.pending = new Map();
     this.stderr = "";
+    this.stdinError = null;
+    this.childFailure = null;
+    this.childClosed = null;
+    this.fatalError = null;
     this.transcript = [];
     this.child = null;
+  }
+
+  redactSupervisorToken(value) {
+    const token = process.env.SUPERVISOR_TOKEN;
+    return token
+      ? value.split(token).join("[REDACTED_HOME_ASSISTANT_TOKEN]")
+      : value;
+  }
+
+  childExitError(code, signal) {
+    const stdinCode = this.stdinError?.code ?? "none";
+    const stderr = this.redactSupervisorToken(this.stderr).trimEnd();
+    return new Error(
+      `MCP server exited early (code=${code}, signal=${signal}, stdin=${stdinCode})${
+        stderr ? `\n${stderr}` : ""
+      }`,
+    );
   }
 
   async start() {
@@ -266,19 +287,33 @@ class StdioMcpClient {
 
     this.child.stderr.setEncoding("utf8");
     this.child.stderr.on("data", (chunk) => {
-      this.stderr += chunk;
       const token = process.env.SUPERVISOR_TOKEN;
-      assert(!token || !chunk.includes(token), "MCP stderr disclosed SUPERVISOR_TOKEN");
+      this.stderr += chunk;
+      const disclosed = Boolean(token && this.stderr.includes(token));
+      if (disclosed) {
+        this.fatalError ??= new Error(
+          `MCP stderr disclosed SUPERVISOR_TOKEN\n${this.redactSupervisorToken(
+            this.stderr,
+          ).trimEnd()}`,
+        );
+        this.rejectAll(this.fatalError);
+      }
+    });
+    this.child.stdin.on("error", (error) => {
+      // A process can exit before Node observes the ChildProcess close event.
+      // Retain the pipe error without allowing EPIPE to hide the exit status and
+      // fully drained stderr reported by the close handler below.
+      this.stdinError ??= error;
     });
     this.child.once("error", (error) => this.rejectAll(error));
-    this.child.once("exit", (code, signal) => {
-      if (this.pending.size) {
-        this.rejectAll(
-          new Error(
-            `MCP server exited early (code=${code}, signal=${signal})\n${this.stderr}`,
-          ),
-        );
-      }
+    this.childClosed = new Promise((resolve) => {
+      this.child.once("close", (code, signal) => {
+        this.childFailure = this.childExitError(code, signal);
+        if (this.pending.size) {
+          this.rejectAll(this.childFailure);
+        }
+        resolve({ code, signal });
+      });
     });
 
     const lines = createInterface({ input: this.child.stdout });
@@ -359,6 +394,8 @@ class StdioMcpClient {
   }
 
   write(message) {
+    if (this.fatalError) throw this.fatalError;
+    if (this.childFailure) throw this.childFailure;
     assert(this.child?.stdin.writable, "MCP stdin is not writable");
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
   }
@@ -368,6 +405,7 @@ class StdioMcpClient {
   }
 
   request(method, params = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+    if (this.fatalError) return Promise.reject(this.fatalError);
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -397,23 +435,33 @@ class StdioMcpClient {
 
   async close(closeTool) {
     if (!this.child) return;
-    if (closeTool && this.child.exitCode === null) {
+    const isRunning = () =>
+      this.child.exitCode === null && this.child.signalCode === null;
+    if (closeTool && isRunning()) {
       try {
         await this.callTool(closeTool, {});
       } catch {
         // Process shutdown below still guarantees cleanup.
       }
     }
-    if (this.child.exitCode !== null) return;
-
-    this.child.stdin.end();
-    const exited = new Promise((resolve) => this.child.once("exit", resolve));
-    await Promise.race([exited, delay(SHUTDOWN_TIMEOUT_MS)]);
-    if (this.child.exitCode === null) {
-      this.child.kill("SIGTERM");
-      await Promise.race([exited, delay(1_000)]);
+    if (!isRunning()) {
+      await this.childClosed;
+    } else {
+      this.child.stdin.end();
+      await Promise.race([
+        this.childClosed,
+        delay(SHUTDOWN_TIMEOUT_MS, undefined, { ref: false }),
+      ]);
+      if (isRunning()) {
+        this.child.kill("SIGTERM");
+        await Promise.race([
+          this.childClosed,
+          delay(1_000, undefined, { ref: false }),
+        ]);
+      }
+      if (isRunning()) this.child.kill("SIGKILL");
     }
-    if (this.child.exitCode === null) this.child.kill("SIGKILL");
+    if (this.fatalError) throw this.fatalError;
   }
 }
 
@@ -813,10 +861,13 @@ async function main() {
       }),
     );
   } finally {
-    await client.close(closeTool);
-    await new Promise((resolve, reject) => {
-      fixture.server.close((error) => (error ? reject(error) : resolve()));
-    });
+    try {
+      await client.close(closeTool);
+    } finally {
+      await new Promise((resolve, reject) => {
+        fixture.server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
   }
 }
 

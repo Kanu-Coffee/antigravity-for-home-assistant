@@ -27,6 +27,56 @@ readonly WTMP_FIXTURE="${WORK_DIR}/wtmp"
 PROFILE_LOADED=false
 AUDIT_START_EPOCH=0
 
+redact_probe_output() {
+  sed "s/${SUPERVISOR_TOKEN}/[REDACTED_HOME_ASSISTANT_TOKEN]/g"
+}
+
+profile_names() {
+  sed -n -E 's/^[[:space:]]*profile ([^[:space:]]+).*/\1/p' \
+    "$RENDERED_PROFILE"
+}
+
+capture_relevant_audit_denials() {
+  local audit_log=$1
+  local relevant_log=$2
+  local name
+
+  if ! sudo -n journalctl --dmesg --since "@${AUDIT_START_EPOCH}" \
+    --no-pager --output=cat 2>/dev/null \
+    | tee "$audit_log" >/dev/null; then
+    return 1
+  fi
+
+  : > "$relevant_log"
+  while IFS= read -r name; do
+    grep -F 'apparmor="DENIED"' "$audit_log" \
+      | grep -F "profile=\"${name}\"" >> "$relevant_log" \
+      || true
+  done < <(profile_names)
+  sort --unique --output="$relevant_log" "$relevant_log"
+}
+
+print_failure_audit_denials() {
+  local audit_log="${WORK_DIR}/failure-kernel-audit.log"
+  local relevant_log="${WORK_DIR}/failure-relevant-denials.log"
+
+  [[ $PROFILE_LOADED == true && $AUDIT_START_EPOCH -gt 0 \
+    && -s $RENDERED_PROFILE ]] || return 0
+
+  printf '%s\n' \
+    'Relevant AppArmor audit denials captured before profile cleanup:' >&2
+  if ! capture_relevant_audit_denials "$audit_log" "$relevant_log"; then
+    printf '%s\n' \
+      '(kernel journal unavailable while collecting failure diagnostics)' >&2
+    return 0
+  fi
+  if [[ ! -s $relevant_log ]]; then
+    printf '%s\n' '(no relevant AppArmor denial records found)' >&2
+    return 0
+  fi
+  redact_probe_output < "$relevant_log" >&2
+}
+
 fail() {
   printf 'AppArmor enforced smoke: %s\n' "$*" >&2
   for container in "$FIRST_CONTAINER" "$RESTART_CONTAINER"; do
@@ -36,6 +86,7 @@ fail() {
         || true
     fi
   done
+  print_failure_audit_denials || true
   exit 1
 }
 
@@ -128,11 +179,6 @@ output_path.chmod(0o600)
 PY
 }
 
-profile_names() {
-  sed -n -E 's/^[[:space:]]*profile ([^[:space:]]+).*/\1/p' \
-    "$RENDERED_PROFILE"
-}
-
 assert_profiles_absent() {
   local name
   while IFS= read -r name; do
@@ -204,10 +250,6 @@ PY
     "$IMAGE" /config/secrets.yaml \
     | grep -Fqx 'apparmor-denial-canary-no-secret' \
     || fail 'the unconfined control could not read the safe denial canary'
-}
-
-redact_probe_output() {
-  sed "s/${SUPERVISOR_TOKEN}/[REDACTED_HOME_ASSISTANT_TOKEN]/g"
 }
 
 run_ssh_and_accounting_probe() {
@@ -448,21 +490,11 @@ assert_relevant_audit_denials() {
   local audit_log="${WORK_DIR}/kernel-audit.log"
   local relevant_log="${WORK_DIR}/relevant-denials.log"
   local canary_seen=false
-  local name line
+  local line
 
-  if ! sudo -n journalctl --dmesg --since "@${AUDIT_START_EPOCH}" \
-    --no-pager --output=cat 2>/dev/null \
-    | tee "$audit_log" >/dev/null; then
+  if ! capture_relevant_audit_denials "$audit_log" "$relevant_log"; then
     fail 'kernel journal unavailable; cannot prove the absence of unexpected AppArmor denials'
   fi
-
-  : > "$relevant_log"
-  while IFS= read -r name; do
-    grep -F 'apparmor="DENIED"' "$audit_log" \
-      | grep -F "profile=\"${name}\"" >> "$relevant_log" \
-      || true
-  done < <(profile_names)
-  sort --unique --output="$relevant_log" "$relevant_log"
 
   while IFS= read -r line; do
     [[ -n $line ]] || continue

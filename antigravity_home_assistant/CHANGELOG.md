@@ -17,12 +17,14 @@ All notable changes to this App are documented in this file.
   Bashio denial. Exact, profile-scoped execute rules cover resolved Bashio,
   S6/execline (`execline`, `s6-envdir`, `with-contenv`, and Telegram's
   `s6-pause`), Debian's resolved `/usr/bin/bash`, the shell's architecture-bound
-  `utempter`, and Chromium's main and crashpad child binaries. Narrow mutation
-  rules cover only init's passwd/shadow locks and nginx PID/temp state, sshd's
-  own OOM score plus shell login accounting, and the HA feedback report
-  subtree. The change adds no new broad `/usr/lib/**` or `/package/admin/**`
-  execute, no new broad `/etc/**` write, and preserves the existing credential and
-  sensitive-data denies.
+  `utempter`, Chromium's main and crashpad child binaries, and the interpreted
+  Playwright runtime after its profile transition. Browser reads are limited to
+  the traced font/config metadata, and its fontconfig lock/temp/replace lifecycle
+  is limited to `/var/cache/fontconfig`. Other narrow mutation rules cover only
+  init's passwd/shadow locks and nginx PID/temp state, sshd's own OOM score plus
+  shell login accounting, and the HA feedback report subtree. The change adds no
+  new broad `/usr/lib/**` or `/package/admin/**` execute, no new broad `/etc/**`
+  write, and preserves the existing credential and sensitive-data denies.
 - Keep 2.0.13 as the sole breaking AppArmor security-boundary transition.
   Versions 2.0.14 and 2.0.15 are corrective patches inside that boundary and
   are not added to `breaking_versions`.
@@ -35,7 +37,7 @@ All notable changes to this App are documented in this file.
   profile and full S6 init, exercises cold start and fresh-container restart,
   rejects a safely seeded `/config/secrets.yaml` read-denial canary, and fails
   on S6 mkdir/exec fatals or an unexpected kernel denial. Source contracts
-  separately pin every trace-derived execute and mutation exception to its
+  separately pin every trace-derived read, execute, and mutation exception to its
   intended profile. The normal CI amd64 image and exact Candidate amd64/aarch64
   images must pass this automated Linux-container gate.
 - A sanitized real-HAOS 18.2 amd64 report records public 2.0.14 startup as
