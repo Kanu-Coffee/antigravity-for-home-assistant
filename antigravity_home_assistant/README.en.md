@@ -27,16 +27,19 @@ Use antigravity inside Home Assistant to inspect your setup and improve dashboar
 > [!WARNING]
 > This app is a powerful administrative tool that can directly change your Home Assistant configuration. Telegram is equivalent to the CLI as an administrator channel, so protect the bot token, authorized chats, and Telegram accounts. Back up important data, review plans and diffs, and never expose the SSH port directly to the internet.
 
-**2.0.14 S6/AppArmor startup recovery:** On real HAOS amd64, the public 2.0.13
-update's custom AppArmor policy blocked creation of `/run/s6` and
-`/run/service`, so the new container failed to start with
-`s6-overlay-suexec` exit 111. Earlier Telegram metrics and the orderly stop
-belong to the previous healthy container and do not show a Telegram failure.
-Version 2.0.14 permits only the exact S6 and nginx runtime paths while retaining
-sensitive-data denials. Real-HAOS 2.0.14 startup/restart validation and
-real-device aarch64 testing are `NOT RUN`; the unavailable-device waiver is not
-a PASS. Version 2.0.13 remains the breaking security transition, and 2.0.14 is
-a corrective patch.
+**2.0.15 Bashio/AppArmor init recovery:** On real HAOS amd64, the public 2.0.14
+image reached the S6 service graph but custom AppArmor denied execution of the
+resolved `/usr/lib/bashio/bashio` target, so init exited 126.
+`/command/with-contenv` in the init path also resolves to an image-owned S6
+package target. Full cold-start tracing then identified the bounded runtime
+closure for resolved S6/execline and Bash execution, init account/nginx state,
+Telegram pause, SSH accounting/OOM, Chromium children, and the feedback-report
+subtree. Version 2.0.15 permits only those profile-scoped exact paths, without
+adding new broad execute or write access to `/usr/lib/**`, `/package/admin/**`, or
+`/etc/**`. A required kernel-enforced cold-start and fresh-container restart
+smoke is automated Linux evidence, not HAOS evidence. Real-HAOS 2.0.15 remains
+`NOT RUN`, the unavailable aarch64-device waiver is not a PASS, and overall
+acceptance is `PARTIAL`. Only 2.0.13 remains the breaking security transition.
 
 ## Quick start
 

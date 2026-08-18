@@ -146,7 +146,7 @@ restart/reconnect는 `PASS`했다. 이 좁은 결과는 unrelated settings/globa
 `FAIL`이고, aarch64 실기기 결과는 장비 부재로 `NOT RUN`이다. 소유자가 experimental
 배포에서 aarch64 결과를 면제했지만 이 면제를 PASS 증거로 기록하지 않는다.
 
-### 2.0.13 Supervisor AppArmor primary declaration과 2.0.14 S6 startup
+### 2.0.13~2.0.15 Supervisor AppArmor와 startup 회귀
 
 2.0.12 `apparmor.txt`의 들여쓰기 없는 최상위 `profile` 선언 23개는 Supervisor
 2026.07.5의 App policy primary scanner가 요구하는 정확히 한 개의 `^profile[ ]` 선언과
@@ -162,10 +162,37 @@ restart/reconnect는 `PASS`했다. 이 좁은 결과는 unrelated settings/globa
 결과는 `FAIL`이며 Telegram 연결 실패로 분류하지 않는다.
 
 2.0.14는 S6 runtime directory entry와 container exit result, nginx PID에 필요한
-접근만 추가하고 기존 credential·민감정보 deny를 유지해야 한다. 실제 HAOS에서는
-2.0.14 설치 뒤 최초 기동, stop/start와 restart, root와 각 서비스 경로의 named profile
-enforce, option false/true positive/negative AA-001 matrix, `s6-mkdir`/exit 111 및 예상
-밖 `DENIED` 0건을 새로 관찰한다. 2.0.14 실기기 AppArmor 결과는 현재 `NOT RUN`이다.
+접근만 추가했지만 실제 HAOS amd64에서 S6 service graph가 init까지 진행한 뒤
+`/usr/bin/bashio`의 resolved `/usr/lib/bashio/bashio` 실행이 거부되어 exit 126으로
+다시 `FAIL`했다. init의 `/command/with-contenv`도 실제
+`/package/admin/s6-overlay-3.2.2.0/command/with-contenv` target에 exact execute가
+필요하다.
+
+2.0.15 정적 수용은 관찰된 Bashio denial만 검사하지 않고 cold-start trace-derived closure 전체를
+다음처럼 고정한다.
+
+- primary/init의 `/usr/lib/bashio/bashio`, init의 pinned
+  `execline`·`s6-envdir`·`with-contenv`, narrow profile의 resolved `/usr/bin/bash`,
+  Telegram의 resolved `s6-pause`, shell의 architecture-bound `utempter`, browser의
+  `/usr/lib/chromium/chromium`·`chrome_crashpad_handler` exact execute와 profile 집합
+- init passwd/shadow lock·교체 파일과 nginx PID/temp state, sshd의
+  `owner @{PROC}@{pid}/oom_score_adj`, shell의 `/run/utmp`·`/var/log/wtmp`, HA helper의
+  `/config/antigravity-workspace/feedback/**` narrow mutation과 profile 집합
+- 새로 추가된 `/usr/lib/**`·`/package/admin/**` broad execute와 `/etc/**` broad write 부재, 기존
+  credential·민감정보 deny 보존
+
+`Kernel-enforced AppArmor startup smoke`는 unique profile을 실제 kernel에 load하고
+exact built/Candidate image를 그 profile로 실행하여 PID 1 enforce, runtime ready와 full
+S6 service, cold start, 동일 data를 쓴 fresh-container restart, S6 mkdir/exec fatal 부재,
+안전한 canary 내용으로 준비한 `/config/secrets.yaml` read denial과 예상 밖 kernel
+denial 부재를 검사한 뒤 profile을 unload한다. 실제 `/data/options.json`을 denial
+canary로 사용하지 않는다. 일반 CI amd64와 Candidate native amd64/aarch64에서
+필수지만 HAOS 증거로 승격하지 않는다.
+
+실제 HAOS에서는 2.0.15 설치 뒤 최초 기동, stop/start와 restart, root와 각 서비스
+경로의 named profile enforce, option false/true positive/negative AA-001 matrix와 예상
+밖 `DENIED` 0건을 새로 관찰한다. 2.0.15 실기기 AppArmor 결과는 현재 `NOT RUN`이다.
+aarch64 장비 부재 owner waiver는 PASS가 아니며 전체 v2 수용은 `PARTIAL`이다.
 
 ### 2.1 2026-08-11 local v2 working-tree 증거
 

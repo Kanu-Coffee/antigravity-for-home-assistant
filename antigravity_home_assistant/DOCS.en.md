@@ -33,11 +33,19 @@ permission reconciliation, Bot reconnect/delivery, and App restart/reconnect,
 while custom AppArmor attachment failed with `docker-default (enforce)`. Public
 2.0.13 corrected attachment presentation but then failed the next container
 start because its custom profile blocked creation of `/run/s6` and
-`/run/service`; `s6-overlay-suexec` exited 111. Version 2.0.14 grants only the
-exact S6 and nginx runtime paths while retaining the sensitive-data denials.
-Real-HAOS 2.0.14 startup/restart acceptance is still `NOT RUN`. Real-device
-aarch64 testing is also `NOT RUN` because hardware is unavailable; its owner
-waiver covers experimental deployment only and is not a PASS.
+`/run/service`; `s6-overlay-suexec` exited 111. Public 2.0.14 corrected those
+runtime paths and reached the S6 service graph, but execution of the resolved
+`/usr/lib/bashio/bashio` target was denied and `antigravity-ha-init` exited 126;
+init's `with-contenv` also needs exact execute access on its resolved S6 package
+target. Full cold-start tracing also identified the bounded S6/execline and
+Bash, init account/nginx, Telegram pause, SSH accounting/OOM, Chromium-child,
+and feedback-report paths. Version 2.0.15 permits that runtime closure only in
+the exact profiles and paths that use it, without adding new broad library, package, or
+configuration access. It also requires a kernel-enforced cold-start/restart
+smoke. That automation is not HAOS evidence, so real-HAOS 2.0.15 remains
+`NOT RUN`. Real-device aarch64 testing is also `NOT RUN`; its owner waiver covers
+experimental deployment only and is not a PASS. Overall v2 acceptance remains
+`PARTIAL`.
 
 ### Runtime surfaces
 
@@ -545,8 +553,14 @@ profile attach must not fall back to broader permissions.
 The `docker-default (enforce)` result in the 2.0.12 amd64 field report is a
 custom-policy attachment `FAIL`, not an AppArmor PASS. Public 2.0.13 then
 activated the custom policy but omitted the `/run/s6` and `/run/service`
-directory entries required by S6, causing exit 111 on the next start. After
-updating to 2.0.14, check `/proc/self/attr/current` from the App terminal and
+directory entries required by S6, causing exit 111 on the next start. Public
+2.0.14 passed that point but did not permit the resolved
+`/usr/lib/bashio/bashio` execution target, so init exited 126; the S6 package
+target resolved from `/command/with-contenv` also needs an exact init-profile
+execute rule. Version 2.0.15 also confines the subsequently traced S6/execline
+and Bash, account/nginx, Telegram pause, SSH accounting/OOM, Chromium-child,
+and feedback-subtree accesses to their exact profiles and paths. After updating
+to 2.0.15, check `/proc/self/attr/current` from the App terminal and
 relevant service paths plus Supervisor state for an enforced
 `antigravity_home_assistant` named profile, and review `s6-mkdir` failures and
 unexpected `DENIED` events. Do not disable protection mode or AppArmor as a
@@ -829,15 +843,19 @@ without the user's explicit current confirmation.
 
 ## Verification status and known limitations
 
-As of the repository state on 2026-08-18, static and component tests cover the
+As of the repository state on 2026-08-19, static and component tests cover the
 native CLI wrapper, read/change brokers, universal action
 proposal/coordinator/executor, Telegram binding and replay, memory, browser
-contracts, migration, and AppArmor policy parsing. Success in a generic
-development environment cannot mark these items `VERIFIED`:
+contracts, migration, AppArmor policy parsing, and a kernel-enforced startup
+smoke. That smoke attaches the actual profile to the exact image and checks
+cold start, fresh-container restart, S6 init, and read denial of a safely seeded
+`/config/secrets.yaml` canary. It does not use the real options file for that
+denial check, and it remains automated Linux-container evidence. It cannot mark
+these items `VERIFIED`:
 
 - Clean install on real HAOS amd64, and install/start/update on aarch64
 - Native Antigravity OAuth and plugin discovery on both architectures
-- Corrected 2.0.14 custom AppArmor execution profiles attached in enforce mode
+- Corrected 2.0.15 custom AppArmor execution profiles attached in enforce mode
   with successful first start, stop/start, and restart on HAOS
 - Actual pull of the public GHCR generic manifest and per-architecture digests
 - End-to-end dashboard, live Telegram cards/callbacks/commands/HA actions, all
@@ -849,9 +867,11 @@ unit tests in these documents as validation on a real device.
 
 The current narrow field record is: 2.0.12 amd64 Telegram reconcile/reconnect
 and App restart/reconnect `PASS`, custom AppArmor attachment on that image
-`FAIL`, public 2.0.13 S6/AppArmor startup `FAIL`, and 2.0.14 plus aarch64
-real-device acceptance `NOT RUN`. It is not a PASS for the complete HA-001
-through HA-008 or AA-001 matrices.
+`FAIL`, public 2.0.13 S6 runtime startup `FAIL`, public 2.0.14 resolved
+observed resolved Bashio execute startup `FAIL`, and 2.0.15 plus aarch64 real-device
+acceptance `NOT RUN`. The aarch64 waiver is not a PASS and overall v2 acceptance
+is `PARTIAL`. This does not pass the complete HA-001 through HA-008 or AA-001
+matrices.
 
 ## Support reports
 

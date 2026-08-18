@@ -177,3 +177,18 @@
   유지한다. 이 수정은 2.0.13 보안 경계를 바꾸는 새 migration이 아니므로 2.0.14를
   `breaking_versions`에 추가하지 않으며, 실제 HAOS 기동·재시작 수용은 `NOT RUN`으로
   유지한다.
+- 공개 2.0.14의 실제 HAOS amd64 startup은 S6가 init service까지 진행한 뒤 resolved
+  `/usr/lib/bashio/bashio` execute denial과 exit 126으로 다시 `FAIL`했다. init의
+  `/command/with-contenv` 역시 image-owned S6 package target으로 resolve된다.
+- 2.0.15는 관찰된 Bashio denial만 완화하지 않고 전체 cold-start trace의 exact runtime
+  closure를 적용한다. resolved Bashio/S6/execline/Bash, Telegram pause, shell
+  `utempter`, Chromium child는 사용하는 profile에만 execute를 주고, init 계정/nginx,
+  SSH OOM/accounting, feedback report subtree는 필요한 mutation 경로만 연다. broad
+  `/usr/lib/**`·`/package/admin/**` execute 또는 `/etc/**` write는 새로 추가하지 않고 기존
+  credential·민감정보 deny를 유지한다.
+- 2.0.15는 실제 custom profile을 exact image에 attach하는 kernel-enforced cold-start·
+  fresh-container restart와 안전한 `/config/secrets.yaml` read-denial canary smoke를
+  CI/Candidate 필수 gate로 추가한다. 이는 automated Linux-container 증거이지 HAOS
+  증거가 아니므로 2.0.15 실기기 수용은 `NOT RUN`,
+  aarch64 owner waiver는 not a PASS, 전체 v2 수용은 `PARTIAL`이다. 2.0.15도 새 migration이
+  아니므로 `breaking_versions`에는 2.0.13만 유지한다.

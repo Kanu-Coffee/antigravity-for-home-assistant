@@ -106,4 +106,5 @@ exec /usr/bin/env -i \
       await rm(fixture.root, { recursive: true, force: true });
     }
   });
+
 }

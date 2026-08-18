@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, readFileSync, readlinkSync } from "node:fs";
+import { closeSync, fstatSync, readFileSync } from "node:fs";
 
 const CREDENTIAL_FD_ENV = "ANTIGRAVITY_HA_SUPERVISOR_FD";
 // Keep the payload at or below one Linux pipe page. The bootstrap fills the
@@ -20,14 +20,16 @@ export function consumeSupervisorCredentialFromInheritedFd({
   let token;
   try {
     const info = fstatSync(descriptor);
-    const descriptorTarget = readlinkSync(`/proc/self/fd/${descriptor}`);
+    // The only Px entrypoint is the broker bootstrap, which validates the
+    // source file and anonymous pipe target before constructing this sanitized
+    // environment. Revalidate the stable descriptor properties here without
+    // granting the long-running broker access to any numeric /proc fd path.
     if (
       !info.isFIFO() ||
       info.uid !== requiredUid ||
       info.nlink !== 1 ||
       (info.mode & 0o777) !== 0o600 ||
-      info.size !== 0 ||
-      !/^pipe:\[[0-9]+\]$/u.test(descriptorTarget)
+      info.size !== 0
     ) {
       throw new Error("Supervisor credential descriptor is unsafe");
     }

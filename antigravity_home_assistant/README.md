@@ -27,14 +27,17 @@ Home Assistant 안에서 antigravity와 대화하며 설정을 살펴보고 대�
 > [!WARNING]
 > 이 앱은 Home Assistant 설정을 직접 바꿀 수 있는 강한 관리자 도구입니다. Telegram도 CLI와 동등한 관리자 채널이므로 bot token, 허용 chat과 Telegram 계정을 보호하세요. 중요한 변경 전에는 backup을 만들고 계획과 diff를 확인하며 SSH 포트를 인터넷에 직접 공개하지 마세요.
 
-**2.0.14 S6/AppArmor 기동 복구:** 실제 HAOS amd64에서 공개 2.0.13 업데이트 뒤
-custom AppArmor가 `/run/s6`와 `/run/service` 디렉터리 생성을 막아 새 컨테이너가
-`s6-overlay-suexec` exit 111로 기동하지 못했습니다. 앞선 Telegram metrics와 순차
-종료는 이전 컨테이너의 정상 기록이며 Telegram 장애가 아닙니다. 2.0.14는 S6와 nginx의
-정확한 runtime 경로만 허용하고 민감정보 deny를 유지합니다. 2.0.14 실제 HAOS
-기동·재시작 검증과 aarch64 실기기 시험은 `NOT RUN`이며, 장비 부재 면제는 PASS가
-아닙니다. 2.0.13은 breaking 보안 전환으로 유지하고 2.0.14는 corrective patch로
-취급합니다.
+**2.0.15 Bashio/AppArmor init 복구:** 실제 HAOS amd64에서 공개 2.0.14의 S6가
+service graph까지 진행했지만, `/usr/bin/bashio`의 실제 target
+`/usr/lib/bashio/bashio` 실행이 custom AppArmor에 거부되어 init이 exit 126으로
+실패했습니다. init의 `/command/with-contenv`도 image-owned S6 package 경로로
+해석됩니다. 전체 cold-start trace로 S6/execline·실제 Bash 실행, init 계정/nginx 상태,
+Telegram pause, SSH accounting/OOM, Chromium child와 feedback 보고서 하위 경로까지
+필요한 runtime closure를 확인했습니다. 2.0.15는 이를 profile별 exact 경로로만
+허용하며 넓은 `/usr/lib/**`, `/package/admin/**`, `/etc/**` 실행·쓰기 권한은 추가하지
+않습니다. kernel-enforced cold-start와 fresh-container restart 자동 smoke는 필수지만
+HAOS 증거는 아닙니다. 2.0.15 실제 HAOS는 `NOT RUN`, aarch64 장비 부재 면제는 PASS가
+아니며 전체 수용은 `PARTIAL`입니다. breaking 보안 전환은 계속 2.0.13뿐입니다.
 
 ## 빠른 시작
 

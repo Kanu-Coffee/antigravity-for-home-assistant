@@ -780,4 +780,9 @@ OAuth/unrelated-state 보존과 나머지 HA-004 E2E는 `NOT RUN`이며, aarch64
 `NOT RUN`은 owner-waived experimental 배포 결정일 뿐 Telegram PASS가 아니다. 같은
 현장 AppArmor 결과는 `docker-default (enforce)`로 custom attach `FAIL`이며 2.0.13
 수정 profile은 다음 startup에서 `/run/s6`·`/run/service` 생성 거부와 exit 111로
-`FAIL`했다. 2.0.14 corrective profile의 실제 HAOS enforce·재시작은 `NOT RUN`이다.
+`FAIL`했다. 공개 2.0.14도 관찰된 resolved Bashio execute 거부와 exit 126으로 startup
+`FAIL`했고, 후속 trace는 init의 resolved `with-contenv` target도 확인했다. 2.0.15는
+전체 trace-derived runtime closure 중 Telegram의 resolved
+`s6-pause`를 Telegram profile에만 exact execute로 추가하며 새 broad package execute나
+mutation fallback을 열지 않는다. corrected profile의 실제 HAOS enforce·재시작은
+`NOT RUN`이며, kernel-enforced 자동 smoke는 HAOS 증거가 아니다.

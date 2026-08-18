@@ -153,7 +153,7 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 
 # Release-only metadata must stay after the dependency layer so routine App
 # updates can reuse its content-addressed layers on Home Assistant hosts.
-ARG BUILD_VERSION=2.0.14
+ARG BUILD_VERSION=2.0.15
 ARG SOURCE_REVISION=""
 ARG SOURCE_ROOTFS_SHA256=""
 

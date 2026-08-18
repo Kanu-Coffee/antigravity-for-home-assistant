@@ -32,17 +32,21 @@
 > consult each release's evidence for complete install, update, and rollback
 > verification on both real HAOS architectures.
 
-**2.0.14 S6/AppArmor startup recovery:** After a public 2.0.13 update on a real
-HAOS 18.2 amd64 host, healthy Telegram activity and the old container's orderly
-shutdown were followed by a new-container startup failure: S6 could not create
-`/run/s6` or `/run/service`, and `s6-overlay-suexec` exited 111. This is a
-custom-AppArmor S6 runtime-directory defect, not a Telegram connection failure.
-Version 2.0.14 adds only the exact S6 and nginx runtime paths while retaining
-the existing sensitive-data denials. Real-HAOS 2.0.14 first-start and restart
-acceptance is still `NOT RUN`. Real-device aarch64 testing is also `NOT RUN`
-because hardware is unavailable; its experimental-release waiver is not a
-PASS. Version 2.0.13 remains the breaking security-boundary transition, while
-2.0.14 is a corrective patch within that boundary.
+**2.0.15 Bashio/AppArmor init recovery:** On real HAOS 18.2 amd64, the public
+2.0.14 image reached the S6 service graph but `antigravity-ha-init` failed with
+`unable to exec bashio: Permission denied` and exit 126. AppArmor checks the
+resolved `/usr/lib/bashio/bashio` target rather than its `/usr/bin/bashio`
+symlink, and init's `/command/with-contenv` resolves to the image-owned S6
+package path. Follow-up cold-start tracing found a bounded runtime closure beyond
+that observed Bashio denial: resolved S6/execline and Bash executables, init
+account/nginx state, Telegram pause, SSH accounting/OOM, Chromium children, and
+the feedback-report subtree. Version 2.0.15 grants only those profile-scoped
+exact paths; it does not add new broad execute or write access to `/usr/lib/**`,
+`/package/admin/**`, or `/etc/**`. A kernel-enforced cold-start and
+fresh-container restart smoke is now a required automated gate, but it is not
+HAOS evidence. Real-HAOS 2.0.15 remains `NOT RUN`, the unavailable
+aarch64-device waiver is not a PASS, and overall v2 acceptance is `PARTIAL`.
+Only 2.0.13 remains the breaking security-boundary transition.
 
 ## What v2 provides
 
@@ -99,7 +103,7 @@ attach OAuth material to an issue.
 > cannot be modified directly. Protect the bot token, authorized chats, and
 > Telegram accounts as Home Assistant administrator credentials. Basic amd64
 > Bot API reconnect/delivery and App restart passed on 2.0.12, but OAuth, the
-> complete approval/mutation matrix, corrected 2.0.14 custom AppArmor, and
+> complete approval/mutation matrix, corrected 2.0.15 custom AppArmor, and
 > aarch64 real-device E2E remain incomplete.
 
 Complete official native first-run OAuth once with `ha-antigravity-login` in the

@@ -393,6 +393,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: apparmor-enforced}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: browser-approval}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: container}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: feedback}
@@ -405,6 +406,7 @@ jobs:
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: update}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: user-files}
           - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: browser-approval}
+          - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: apparmor-enforced}
           - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: container}
           - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: feedback}
           - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: managed-auth}
@@ -455,6 +457,12 @@ jobs:
           docker tag "${IMAGE}@${CANDIDATE_DIGEST}" \
             antigravity-for-home-assistant:candidate-test
 
+      - name: Install AppArmor enforcement tooling
+        if: matrix.suite == 'apparmor-enforced'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes apparmor
+
       - name: Run full feasible suite against exact digest
         env:
           HA_ARCH: ${{ matrix.ha_arch }}
@@ -464,6 +472,7 @@ jobs:
           set -Eeuo pipefail
           image=antigravity-for-home-assistant:candidate-test
           case "$SUITE" in
+            apparmor-enforced) exec bash tests/apparmor-enforced-smoke.sh "$image" ;;
             browser-approval) exec bash tests/browser-approval-smoke.sh "$image" ;;
             container) exec bash tests/docker-smoke.sh "$image" ;;
             feedback) exec bash tests/feedback-smoke.sh "$image" ;;

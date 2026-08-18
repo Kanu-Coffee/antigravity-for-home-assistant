@@ -2,6 +2,52 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.0.15] - 2026-08-19
+
+### Fixed
+
+- Correct App initialization under the project custom AppArmor policy after the
+  public 2.0.14 amd64 HAOS update failed at `antigravity-ha-init`. AppArmor
+  evaluates the resolved `/usr/bin/bashio` target `/usr/lib/bashio/bashio`, so
+  the prior `/usr/bin/**` execute permission did not cover it and S6 reported
+  `unable to exec bashio: Permission denied` before the init service exited
+  126. The init transition also resolves `/command/with-contenv` to
+  `/package/admin/s6-overlay-3.2.2.0/command/with-contenv`.
+- Close the complete cold-start trace rather than stopping at the observed
+  Bashio denial. Exact, profile-scoped execute rules cover resolved Bashio,
+  S6/execline (`execline`, `s6-envdir`, `with-contenv`, and Telegram's
+  `s6-pause`), Debian's resolved `/usr/bin/bash`, the shell's architecture-bound
+  `utempter`, and Chromium's main and crashpad child binaries. Narrow mutation
+  rules cover only init's passwd/shadow locks and nginx PID/temp state, sshd's
+  own OOM score plus shell login accounting, and the HA feedback report
+  subtree. The change adds no new broad `/usr/lib/**` or `/package/admin/**`
+  execute, no new broad `/etc/**` write, and preserves the existing credential and
+  sensitive-data denies.
+- Keep 2.0.13 as the sole breaking AppArmor security-boundary transition.
+  Versions 2.0.14 and 2.0.15 are corrective patches inside that boundary and
+  are not added to `breaking_versions`.
+
+### Verification and limitations
+
+- Add a kernel-enforced AppArmor startup smoke instead of relying only on policy
+  parsing or a container running under `docker-default`. It loads the custom
+  profile, attaches the exact built or Candidate image, verifies the PID 1
+  profile and full S6 init, exercises cold start and fresh-container restart,
+  rejects a safely seeded `/config/secrets.yaml` read-denial canary, and fails
+  on S6 mkdir/exec fatals or an unexpected kernel denial. Source contracts
+  separately pin every trace-derived execute and mutation exception to its
+  intended profile. The normal CI amd64 image and exact Candidate amd64/aarch64
+  images must pass this automated Linux-container gate.
+- A sanitized real-HAOS 18.2 amd64 report records public 2.0.14 startup as
+  `FAIL`: after S6 reached `antigravity-ha-init`, the resolved Bashio execution
+  was denied, the service exited 126, and the container stopped. This is an
+  AppArmor startup failure, not a Telegram transport failure.
+- Real-HAOS acceptance of the corrected 2.0.15 image is `NOT RUN` at this source
+  cutoff. The automated kernel-enforced smoke is not HAOS evidence. Real-device
+  aarch64 testing also remains `NOT RUN`; the project owner's experimental
+  deployment waiver is a risk acceptance, not an aarch64 `PASS`. Overall v2
+  acceptance therefore remains `PARTIAL`.
+
 ## [2.0.14] - 2026-08-18
 
 ### Fixed

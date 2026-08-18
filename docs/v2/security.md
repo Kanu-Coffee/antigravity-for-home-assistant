@@ -93,21 +93,41 @@ AppArmor parser에는 계속 별도 global named profile이며 기존 `Px transi
 공개 2.0.13의 실제 HAOS amd64 startup에서는 이 custom 경계가 S6보다 먼저 적용됐지만
 descendant-only `/run` rule이 `/run/s6`와 `/run/service` directory entry의 생성을
 허용하지 않아 exit 111로 실패했다. 2.0.14는 S6 runtime directory·container exit
-result와 nginx PID의 exact access만 허용한다. `/run/**` 전체나 credential·민감정보
-경계를 넓히는 우회는 허용하지 않으며, 2.0.14 HAOS enforce 수용은 `NOT RUN`이다.
+result와 nginx PID의 exact access만 허용했지만, 실제 amd64 HAOS에서 다음 init의
+resolved `/usr/lib/bashio/bashio` execute가 거부되어 exit 126으로 `FAIL`했다.
+`/command/with-contenv`도 실제 S6 package target으로 resolve된다. 2.0.15의 후속
+cold-start trace는 다음 profile-scoped closure를 요구한다.
+
+- primary/init의 `/usr/lib/bashio/bashio`, init의 exact
+  `execline`·`s6-envdir`·`with-contenv`, narrow shell 기반 profile의 resolved
+  `/usr/bin/bash`, Telegram의 resolved `s6-pause`, shell의 architecture-bound
+  `utempter`, browser의 `/usr/lib/chromium/chromium`과
+  `chrome_crashpad_handler`만 execute한다.
+- init은 passwd/shadow lock·교체 파일과 nginx PID/temp state만 갱신하고, sshd는
+  `owner @{PROC}@{pid}/oom_score_adj`, shell은 `/run/utmp`·`/var/log/wtmp`, HA feedback helper는
+  `/config/antigravity-workspace/feedback/**`만 해당 기능에 맞게 갱신한다.
+- 새로운 `/run/**`, `/usr/lib/**`, `/package/admin/**` 전체 execute, `/etc/**` 전체 write나
+  credential·민감정보 경계를 넓히는 우회는 추가하지 않는다.
+
+kernel-enforced 자동 startup/restart smoke는 실제 profile attach와 안전하게 준비한
+`/config/secrets.yaml` read-denial canary를 검사하지만 HAOS 증거가 아니며, 2.0.15 HAOS
+enforce 수용은 `NOT RUN`이다.
 
 | profile | 허용 | 주요 deny |
 | --- | --- | --- |
-| init/broker | options 읽기, 제한된 `/data`, Supervisor socket/API | 임의 host path, kernel/admin capability |
-| ordinary shell | 일반 `/config` 프로젝트 파일과 shell 도구 | native OAuth Home, SSH/App credential, broker state, 다른 PID의 env/fd/root |
+| init | options, exact resolved startup executable, passwd/shadow lock·nginx runtime state | broad library/package execute, broad `/etc` write, 임의 host path |
+| broker | 제한된 `/data`, Supervisor socket/API | 임의 host path, kernel/admin capability |
+| ordinary shell | 일반 `/config`, shell 도구, exact `utempter`와 login accounting | native OAuth Home, SSH/App credential, broker state, 다른 PID의 env/fd/root |
 | interactive bootstrap | clean environment copy와 image-owned `antigravity-real`로 단일 전환 | HOME/OAuth, `/config` data, runtime credential |
 | interactive-runtime-restricted | Web/SSH/Telegram의 `/config` 일반 프로젝트 파일, native CLI/OAuth Home read, 사용자 customization, plugin socket, 매개 settings update helper 실행 | raw settings direct write; secrets/storage/Recorder read/write; runtime token/options, SSH/private key, broker state |
 | interactive-runtime-sensitive-read | restricted runtime 허용 범위 + Recorder DB 진단용 read | raw settings direct write; secrets/storage read/write; Recorder write, runtime token/options, SSH/private key, broker state |
 | `antigravity_home_assistant-command` | 일반 `/config`, network, user plugin/agent/rule/skill과 scoped helper | OAuth backend, App 관리 settings/MCP config, token, secrets/storage/Recorder, broker state |
 | Telegram action proposal client | active run-bound private proposal socket write | `/config`/`/data` content, token, OAuth, final executor |
 | Telegram action executor | exact committed action envelope와 fixed shell transition | Supervisor/bot token, OAuth, App settings/MCP config, proposal socket |
-| sshd daemon | public-key 인증에 필요한 exact `/data/ssh` host key와 `authorized_keys` read | `/config`, key write/exec, App credential와 broker socket |
-| browser | Chromium runtime, loopback gateway, `/run` profile | `/data`, `/config`, Supervisor network/credential |
+| Telegram runtime | exact resolved `s6-pause`와 bridge runtime | settings write, Supervisor credential, direct mutation fallback |
+| sshd daemon | public-key 인증용 exact key read와 own OOM-score/accounting state | `/config`, key write/exec, App credential와 broker socket |
+| HA feedback helper | sanitized report의 exact `/config/antigravity-workspace/feedback/**` subtree | 그 밖의 `/config` write, runtime credential와 broker socket |
+| browser | exact Chromium/crashpad runtime, loopback gateway, `/run` profile | `/data`, `/config`, Supervisor network/credential |
 | memory | memory DB, readonly catalog endpoint | OAuth, Telegram/SSH/browser credential, `/config` write |
 
 두 interactive runtime profile 사이에서 달라지는 경로는 Recorder DB 진단 read뿐이다.
@@ -474,5 +494,8 @@ OAuth/AppArmor gate가 검증되지 않으면 v2 보안은 `VERIFIED`가 아니�
 OAuth/unrelated-state 보존과 전체 Telegram security matrix는 `NOT RUN`이다. 같은
 현장의 custom AppArmor attach는 `docker-default (enforce)` 관찰로 `FAIL`했고,
 공개 2.0.13은 S6 runtime directory 생성 거부와 exit 111로 startup `FAIL`했다.
-2.0.14 corrected profile의 실기기 enforce·재시작은 아직 `NOT RUN`이다. aarch64
-실기기 `NOT RUN`은 experimental 배포에 한해 owner-waived됐지만 PASS가 아니다.
+공개 2.0.14는 관찰된 resolved Bashio execute 거부와 exit 126으로 startup `FAIL`했다.
+후속 trace는 init의 resolved `with-contenv` target도 별도 exact execute가 필요함을 확인했다.
+2.0.15 corrected profile의 실기기 enforce·재시작은 아직 `NOT RUN`이다. aarch64
+실기기 `NOT RUN`은 experimental 배포에 한해 owner-waived됐지만 PASS가 아니며 전체
+v2 수용은 `PARTIAL`이다.

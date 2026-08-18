@@ -297,6 +297,7 @@ jobs:
       fail-fast: false
       matrix:
         suite:
+          - apparmor-enforced
           - browser-approval
           - container
           - feedback
@@ -317,9 +318,15 @@ jobs:
           name: antigravity-for-home-assistant-amd64-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Load the workflow image
+        env:
+          SUITE: ${{ matrix.suite }}
         run: |
           sudo apt-get update
-          sudo apt-get install --yes zstd
+          packages=(zstd)
+          if [[ "$SUITE" == apparmor-enforced ]]; then
+            packages+=(apparmor)
+          fi
+          sudo apt-get install --yes "${packages[@]}"
           zstd --decompress --stdout \
             antigravity-for-home-assistant-amd64.tar.zst | docker load
 
@@ -328,6 +335,9 @@ jobs:
           SUITE: ${{ matrix.suite }}
         run: |
           case "$SUITE" in
+            apparmor-enforced)
+              exec bash tests/apparmor-enforced-smoke.sh antigravity-for-home-assistant:test
+              ;;
             browser-approval)
               exec bash tests/browser-approval-smoke.sh antigravity-for-home-assistant:test
               ;;

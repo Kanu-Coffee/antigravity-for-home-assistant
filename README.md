@@ -31,15 +31,21 @@
 > 확인하세요. 현재 `experimental`이며 실제 HAOS 양쪽 아키텍처의 전체 설치·업데이트·
 > rollback 검증은 릴리스별 증거를 확인해야 합니다.
 
-**2.0.14 S6/AppArmor 기동 복구:** 공개 2.0.13으로 업데이트한 실제 HAOS 18.2
-amd64에서 이전 컨테이너의 정상 Telegram 처리와 순차 종료 뒤, 새 컨테이너가
-`/run/s6`와 `/run/service`를 만들지 못해 `s6-overlay-suexec` exit 111로 기동에
-실패했습니다. 이는 Telegram 연결 장애가 아니라 custom AppArmor가 S6 runtime
-디렉터리 자체를 허용하지 않은 startup 결함입니다. 2.0.14는 S6와 nginx에 필요한
-정확한 runtime 경로만 추가하고 기존 민감정보 deny를 유지합니다. 실제 HAOS 2.0.14
-기동·재시작 수용 시험은 아직 `NOT RUN`입니다. aarch64 실기기 시험도 장비 부재로
-`NOT RUN`이며 experimental 배포 면제는 PASS가 아닙니다. 2.0.13은 보안 경계 전환
-버전으로 계속 breaking 목록에 남고, 2.0.14는 그 경계 안의 corrective patch입니다.
+**2.0.15 Bashio/AppArmor init 복구:** 공개 2.0.14를 설치한 실제 HAOS 18.2
+amd64에서 S6는 service graph까지 진행했지만 `antigravity-ha-init`이
+`unable to exec bashio: Permission denied`와 exit 126으로 실패했습니다. AppArmor는
+`/usr/bin/bashio` symlink가 아니라 실제 `/usr/lib/bashio/bashio` 실행 경로를
+검사하며, 후속 cold-start trace는 init의 `/command/with-contenv`도 실제 S6 package
+경로로 해석됨을 확인했습니다. 이 trace는 관찰된 Bashio denial을 넘어
+S6/execline·실제 Bash 실행,
+init의 계정/nginx 상태, Telegram pause, SSH accounting/OOM, Chromium child와 feedback
+보고서 하위 경로까지 필요한 범위가 확인됐습니다. 2.0.15는 이 trace-derived runtime
+closure를 각 profile의 exact 경로로만 허용하며 새로운 `/usr/lib/**`, `/package/admin/**`,
+`/etc/**` 같은 broad 실행·쓰기 권한을 추가하지 않습니다. 실제 profile을 kernel에
+attach한 cold-start·fresh-container restart 자동 smoke도 필수 gate로 추가하지만 이는
+HAOS 증거가 아닙니다. 실제 HAOS 2.0.15는 `NOT RUN`, aarch64 장비 부재 면제는 PASS가
+아니며 전체 v2 수용은 `PARTIAL`입니다. breaking 목록은 보안 경계를 활성화한
+2.0.13만 유지합니다.
 
 ## v2가 제공하는 것
 
@@ -95,7 +101,7 @@ amd64에서 이전 컨테이너의 정상 Telegram 처리와 순차 종료 뒤, 
 > 설정과 민감 경로는 직접 수정할 수 없습니다. bot token, 허용된 chat과 Telegram
 > 계정을 HA 관리자 credential처럼 보호하세요. amd64의 기본 Bot API 재연결·전달과
 > App 재시작은 2.0.12에서 확인됐지만, OAuth, 전체 승인/mutation 행렬, corrected
-> 2.0.14 custom AppArmor와 aarch64 실기기 E2E는 아직 완료되지 않았습니다.
+> 2.0.15 custom AppArmor와 aarch64 실기기 E2E는 아직 완료되지 않았습니다.
 
 Web UI 또는 SSH에서 `ha-antigravity-login`으로 공식 native first-run OAuth를 한 번
 완료한 뒤 bot을 활성화합니다. 별도 Telegram identity, `ha-telegram-login`, 전용 HOME
