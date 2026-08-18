@@ -1083,7 +1083,7 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
     )
     assert "/run/antigravity-ha/supervisor.token r," in helper_profile
     assert "/run/antigravity-ha/supervisor.token rw," not in helper_profile
-    assert "deny /run/antigravity-ha/supervisor.token wklm," not in (
+    assert "deny /run/antigravity-ha/supervisor.token wklm," in (
         helper_profile
     )
     for broad_runtime_write in (

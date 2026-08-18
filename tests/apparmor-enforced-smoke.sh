@@ -374,7 +374,10 @@ run_feedback_probe() {
   docker exec "$container" /bin/chown 0:0 /tmp/ha_feedback_bug.json
   docker exec "$container" /bin/chmod 0600 /tmp/ha_feedback_bug.json
 
-  if ! collect_output=$(docker exec "$container" \
+  # Docker applies the container's primary profile to the first exec process.
+  # Start with env so its child exec follows the same Px transition used by a
+  # real App shell before ha-feedback enters the dedicated helper profile.
+  if ! collect_output=$(docker exec "$container" /usr/bin/env \
     /usr/local/bin/ha-feedback collect bug \
       --input /tmp/ha_feedback_bug.json 2>&1); then
     printf '%s\n' "$collect_output" | redact_probe_output >&2
@@ -390,7 +393,7 @@ run_feedback_probe() {
   [[ $report_directory == /config/antigravity-workspace/feedback/* ]] \
     || fail 'ha-feedback wrote outside its managed report root'
 
-  if ! validate_output=$(docker exec "$container" \
+  if ! validate_output=$(docker exec "$container" /usr/bin/env \
     /usr/local/bin/ha-feedback validate "$report_directory" 2>&1); then
     printf '%s\n' "$validate_output" | redact_probe_output >&2
     fail 'the collected ha-feedback report did not validate'
@@ -527,7 +530,6 @@ assert_relevant_audit_denials() {
   local audit_log="${WORK_DIR}/kernel-audit.log"
   local relevant_log="${WORK_DIR}/relevant-denials.log"
   local canary_seen=false
-  local helper_write_canary_seen=false
   local line
 
   if ! capture_relevant_audit_denials "$audit_log" "$relevant_log"; then
@@ -541,20 +543,12 @@ assert_relevant_audit_denials() {
       canary_seen=true
       continue
     fi
-    if [[ $line == *'profile="antigravity_home_assistant-ha-helper"'* \
-      && $line == *'name="/run/antigravity-ha/supervisor.token"'* \
-      && $line == *'denied_mask="w"'* ]]; then
-      helper_write_canary_seen=true
-      continue
-    fi
     printf 'unexpected AppArmor audit denial: %s\n' "$line" >&2
     fail 'kernel audit contains a non-canary denial for the enforced profile set'
   done < "$relevant_log"
 
   [[ $canary_seen == true ]] \
     || fail 'kernel audit did not capture the AppArmor denial positive control'
-  [[ $helper_write_canary_seen == true ]] \
-    || fail 'kernel audit did not capture the ha-helper write-denial canary'
 }
 
 require_enforcement_host
