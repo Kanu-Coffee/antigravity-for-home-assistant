@@ -44,15 +44,20 @@ SIGSEGV/status 139 and Telegram workers failed with the same native crash. An
 exact public-2.0.16-image/custom-AppArmor reproduction recorded a kernel-audit
 `file_mmap` permission `m` denial on `/usr/local/libexec/antigravity-real` under
 `interactive-runtime-restricted`; `interactive-runtime-sensitive-read` had the
-same `r`-only rule. Version 2.0.17 changes those two exact
-native-binary rules from `r` to `rm` and adds only trace-derived bootstrap
-nsswitch/passwd identity reads and runtime `/usr/share/ca-certificates/**` TLS
-trust-store reads to the two transition chains. It adds no new broad `/etc/**`
-or `/usr/share/**` rule; existing runtime `/etc/** r`, required system-library
-mappings, and proc/settings/credential denies are unchanged. Local kernel-enforced status 0
-for `--version` is not HAOS evidence. Real-HAOS 2.0.17 and real-device aarch64
-testing remain `NOT RUN`; the owner waiver is not a PASS. Overall v2 acceptance
-remains `PARTIAL`.
+same `r`-only rule. Version 2.0.17 fixed that native mmap fault. On real amd64 it
+passed App startup, the Web terminal, native basic conversation, Telegram
+transport, and a no-tool reply. A managed MCP request still failed because
+AppArmor denied `change-proposal-client` the exact image-owned transitive
+`supervisor-credential-fd.mjs` module read. Both confined launchers also
+discarded the five requester/run binding values required by
+`telegram_action_propose`, so no approval card was created and approved write
+execution was `NOT RUN`. Public 2.0.17 acceptance is therefore `FAIL` overall.
+Version 2.0.18 adds only the exact proposal-client module read and complete
+five-value validation and propagation through both launchers. It adds no broad
+AppArmor/native-tool permission or unapproved direct-write/command path.
+Automated regressions are not HAOS evidence; real-device 2.0.18 testing on
+amd64 and aarch64 is `NOT RUN` before release. The owner waiver is not a PASS,
+and overall v2 acceptance remains `PARTIAL`.
 
 ### Runtime surfaces
 
@@ -580,7 +585,12 @@ denied `file_mmap` permission `m`. Version 2.0.17 changes those two rules from
 and runtime `/usr/share/ca-certificates/**` TLS trust-store reads to the two
 transition chains. It adds no new broad `/etc/**` or `/usr/share/**` rule while
 leaving existing runtime `/etc/** r`, required system-library mappings, and
-proc/settings/credential denies unchanged. After updating, check `/proc/self/attr/current` from the App terminal and
+proc/settings/credential denies unchanged. The next real-2.0.17 boundary showed
+managed MCP failing because `change-proposal-client` could not read the exact
+image-owned `supervisor-credential-fd.mjs` module. Version 2.0.18 grants only
+that module read, not a directory-wide rule. Its two interactive launchers
+preserve a complete five-value requester/run binding and reject a partial one;
+no broad native-tool permission is added. After updating, check `/proc/self/attr/current` from the App terminal and
 relevant service paths plus Supervisor state for an enforced
 `antigravity_home_assistant` named profile, and review `s6-mkdir` failures and
 unexpected `DENIED` events. Do not disable protection mode or AppArmor as a
@@ -833,6 +843,12 @@ contingency.
   class to distinguish a CLI crash from an ordinary exit. Never share stderr,
   prompts, OAuth material, or token text. The public-2.0.16 SIGSEGV cannot be
   repaired with `/new`, pairing, or reconnect.
+- On public 2.0.17, when no-tool chat works but managed MCP or approval-card
+  requests fail, do not classify it as prompt length, Bot API, or pairing.
+  Update to 2.0.18 or later for the exact module-read and complete run-binding
+  correction, then retest one read MCP, approval-card creation, and one approved
+  bounded write in that order. Do not add broad `mcp(*)`, `command(*)`, or direct
+  write permissions.
 - `reason_class=headless_read_denied` means a non-allowlisted headless file read
   was blocked. If it repeats for an ordinary question, do not edit user settings
   or add `read_file(*)`; update to the latest App version and restart.
@@ -901,9 +917,10 @@ these items `VERIFIED`:
 
 - Clean install on real HAOS amd64, and install/start/update on aarch64
 - Native Antigravity OAuth and plugin discovery on both architectures
-- Corrected 2.0.17 custom AppArmor profiles attached in enforce mode with
+- Corrected 2.0.18 custom AppArmor profiles attached in enforce mode with
   successful native `--version`/conversation, first start, stop/start, restart,
-  Web-terminal PTY/reconnect, and Telegram worker completion on HAOS
+  Web-terminal PTY/reconnect, managed read MCP, Telegram approval-card creation,
+  and an approved bounded write on HAOS
 - Actual pull of the public GHCR generic manifest and per-architecture digests
 - End-to-end dashboard, live Telegram cards/callbacks/commands/HA actions, all
   migration modes, and rollback
@@ -917,7 +934,8 @@ and App restart/reconnect `PASS`, custom AppArmor attachment on that image
 `FAIL`, public 2.0.13 S6 runtime startup `FAIL`, public 2.0.14 resolved Bashio
 execute startup `FAIL`, public 2.0.15 Web-terminal PTY EACCES plus Telegram
 `refresh_managed` ordering `FAIL`, public 2.0.16 native `file_mmap` denial plus
-SIGSEGV/status 139 `FAIL`, and 2.0.17 plus aarch64 real-device acceptance
+SIGSEGV/status 139 `FAIL`, public 2.0.17 managed-MCP/Telegram-proposal `FAIL`
+with approved write `NOT RUN`, and 2.0.18 amd64/aarch64 real-device acceptance
 `NOT RUN`. The aarch64 waiver is not a PASS and overall v2 acceptance is
 `PARTIAL`. This does not pass the complete HA-001 through HA-008 or AA-001
 matrices.

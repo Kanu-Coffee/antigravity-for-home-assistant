@@ -150,7 +150,7 @@ restart/reconnect는 `PASS`했다. 이 좁은 결과는 unrelated settings/globa
 `FAIL`이고, aarch64 실기기 결과는 장비 부재로 `NOT RUN`이다. 소유자가 experimental
 배포에서 aarch64 결과를 면제했지만 이 면제를 PASS 증거로 기록하지 않는다.
 
-### 2.0.13~2.0.17 Supervisor AppArmor와 startup 회귀
+### 2.0.13~2.0.18 Supervisor AppArmor와 startup 회귀
 
 2.0.12 `apparmor.txt`의 들여쓰기 없는 최상위 `profile` 선언 23개는 Supervisor
 2026.07.5의 App policy primary scanner가 요구하는 정확히 한 개의 `^profile[ ]` 선언과
@@ -224,12 +224,29 @@ TLS trust-store 도달, PTY와 fresh-container restart를 실행하고,
 fixture는 child SIGSEGV를 generic `worker_failed`로만 숨기지 않고 bounded signal class로
 기록하되 stderr, prompt, OAuth, token과 사용자 content가 없는지 검증한다.
 
-실제 HAOS에서는 2.0.17 설치 뒤 최초 기동, stop/start와 restart, Web terminal
-`antigravity --version` status 0과 실제 대화, Telegram
-`permission_boundary_ready`/`connected` 뒤 worker 성공, root와 각 서비스 경로의 named
-profile enforce 및 예상 밖 `DENIED` 0건을 관찰한다. 2.0.17 실기기 결과는 현재
-`NOT RUN`이다. aarch64 장비 부재 owner waiver는 PASS가 아니며 전체 v2 수용은
-`PARTIAL`이다. automated Linux-container result는 HAOS 증거로 승격하지 않는다.
+실제 HAOS 2.0.17 amd64에서는 최초 기동, Ingress/Web terminal,
+`antigravity --version`과 기본 대화, Telegram `permission_boundary_ready`/`connected`,
+도구 없는 답변이 `PASS`했다. 단일 managed MCP와 `telegram_action_propose`는 `FAIL`,
+승인된 쓰기는 카드 생성 전에 막혀 `NOT RUN`이므로 2.0.17 전체 수용은 `FAIL`이다.
+kernel audit는 `change-proposal-client`가 exact image-owned
+`/usr/local/share/antigravity-ha/supervisor-credential-fd.mjs` 전이 module을 읽지 못한
+denial을 기록했다. 별도로 restricted/sensitive-read launcher는 승인 제안에 필요한
+requester/run binding 다섯 값을 버렸다.
+
+2.0.18 정적·component 수용은 다음을 모두 검사한다.
+
+- `change-proposal-client`에는 exact `supervisor-credential-fd.mjs r`만 있고 상위
+  `/usr/local/share/antigravity-ha/** r` 같은 broad 대체 rule은 없다.
+- restricted와 sensitive-read launcher는 다섯 binding 모두가 있을 때만 함께 전달하고,
+  일부 binding은 native child 시작 전에 실패하며 환경 전체를 상속하지 않는다.
+- managed read MCP와 `telegram_action_propose` coordinator fixture가 성공하고 direct
+  unapproved write/command와 기존 민감정보 deny negative canary는 그대로다.
+
+실제 HAOS 2.0.18 amd64에서는 최초 기동·stop/start·restart 뒤 단일 read MCP,
+Telegram 승인카드, requester-bound callback과 승인된 bounded `/config` 쓰기를 순서대로
+검증하고 예상 밖 `DENIED`가 없어야 한다. 2.0.18 amd64와 aarch64 실기기 결과는 릴리스
+전 `NOT RUN`이다. aarch64 owner waiver는 PASS가 아니며 전체 v2 수용은 `PARTIAL`이다.
+automated Linux-container result는 HAOS 증거로 승격하지 않는다.
 
 2.0.12 rollback rehearsal은 Supervisor direct downgrade가 지원된다고 가정하지 않는다.
 exact 2.0.12 App backup이 있는 경우에만 backup restore가 App image와 `/data`를 함께

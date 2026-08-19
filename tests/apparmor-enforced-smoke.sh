@@ -517,6 +517,54 @@ run_native_cli_probe() {
     || fail "the ${access_mode} blank-auth native worker omitted its exact stream result"
 }
 
+run_managed_change_proposal_mcp_probe() {
+  local container=$1
+  local output
+
+  # Attach the native runtime profile to the real managed MCP entrypoint so
+  # its Px transition and complete ESM import graph are exercised by the
+  # kernel. The proposal socket is intentionally unnecessary for initialize
+  # and tools/list; this probe remains isolated from any Home Assistant change.
+  # Docker/runc applies the requested profile to the first exec. Start with
+  # env so its child exec follows the runtime profile's Px rule into the real
+  # change-proposal-client profile instead of masking that file transition on
+  # the container entrypoint itself.
+  if ! output=$(printf '%s\n' \
+      '{"jsonrpc":"2.0","id":"init","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"apparmor-smoke","version":"1"}}}' \
+      '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
+      '{"jsonrpc":"2.0","id":"list","method":"tools/list","params":{}}' \
+    | docker run --rm --interactive \
+      --platform "$TEST_PLATFORM" \
+      --security-opt \
+        apparmor=antigravity_home_assistant-interactive-runtime-restricted \
+      --entrypoint /usr/bin/env \
+      --env ANTIGRAVITY_HA_CHANNEL=telegram \
+      --env HA_TELEGRAM_USER_ID=10001 \
+      --env HA_TELEGRAM_CHAT_ID=-10001 \
+      --volume "${DATA_VOLUME}:/data" \
+      --volume "${CONFIG_VOLUME}:/config" \
+      --workdir /config \
+      "$IMAGE" /usr/local/bin/ha-change-proposal-mcp 2>&1); then
+    printf '%s\n' "$output" | redact_probe_output >&2
+    fail 'the managed Home Assistant change proposal MCP failed under AppArmor enforcement'
+  fi
+  if ! printf '%s\n' "$output" \
+    | docker exec --interactive "$container" /usr/bin/jq \
+      --exit-status --slurp '
+        length == 2
+        and .[0].id == "init"
+        and .[0].result.serverInfo.name == "antigravity-ha-change-proposal"
+        and .[1].id == "list"
+        and ([.[1].result.tools[].name] | index("ha_change_propose")) != null
+      ' >/dev/null; then
+    printf '%s\n' "$output" | redact_probe_output >&2
+    fail 'the managed Home Assistant change proposal MCP returned an invalid handshake'
+  fi
+  if grep -Fq "$SUPERVISOR_TOKEN" <<< "$output"; then
+    fail 'the managed Home Assistant change proposal MCP exposed the fake Supervisor token'
+  fi
+}
+
 enable_sensitive_data_access_fixture() {
   local output
 
@@ -702,6 +750,7 @@ run_helper_credential_boundary_probe
 start_container "$FIRST_CONTAINER"
 assert_enforced_container_ready "$FIRST_CONTAINER"
 run_native_cli_probe "$FIRST_CONTAINER" restricted
+run_managed_change_proposal_mcp_probe "$FIRST_CONTAINER"
 run_ttyd_websocket_probe "$FIRST_CONTAINER"
 run_confined_feature_probes "$FIRST_CONTAINER"
 

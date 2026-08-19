@@ -1255,6 +1255,7 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   /usr/local/bin/ha-change-proposal-mcp rix,
   /usr/local/share/antigravity-ha/ha-change-broker.mjs r,
   /usr/local/share/antigravity-ha/ha-change-proposal-mcp.mjs r,
+  /usr/local/share/antigravity-ha/supervisor-credential-fd.mjs r,
   /lib/** rm,
   /lib64/** rm,
   /etc/** r,

@@ -232,9 +232,32 @@
 - Telegram bridge는 native child의 bounded termination signal을 `worker_failed` 진단에
   포함하지만 stderr, prompt, OAuth, token이나 사용자 content는 기록하지 않는다.
 - local kernel-enforced `antigravity --version` status 0과 negative canary 보존은
-  Candidate evidence일 뿐 HAOS evidence가 아니다. 2.0.17 actual HAOS와 aarch64는
-  `NOT RUN`, 전체 v2 수용은 `PARTIAL`이다.
+  Candidate evidence일 뿐 HAOS evidence가 아니다. 2.0.17 publication 시점 actual HAOS와
+  aarch64는 `NOT RUN`이었고, 이후 결과는 ADR-011에 기록한다.
 - 2.0.17도 2.0.13 security boundary 내부 corrective patch이므로
   `breaking_versions`를 확장하지 않는다. 2.0.12 fallback은 direct downgrade가 아니며,
   exact App backup restore의 post-backup `/data` 손실과 custom-attach 보안 저하를
   명시한 `NOT RUN` contingency로만 유지한다.
+
+## ADR-011 — managed MCP exact module read와 complete Telegram run binding
+
+- 상태: `Accepted`
+- 공개 2.0.17 실제 HAOS 18.2 amd64에서 App startup, Ingress/Web terminal, native CLI와
+  기본 대화, Telegram transport와 도구 없는 답변은 통과했지만 managed MCP 요청과
+  `telegram_action_propose`는 실패했다. 이는 prompt 길이, Bot API, pairing 또는
+  conversation reset 장애로 분류하지 않는다. 승인카드가 만들어지지 않아 승인된 쓰기는
+  `NOT RUN`이고 2.0.17 수용은 전체 `FAIL`이다.
+- kernel audit가 확인한 `change-proposal-client`의
+  `/usr/local/share/antigravity-ha/supervisor-credential-fd.mjs` read denial은 그
+  image-owned transitive module의 exact read 하나로 닫는다. 상위 directory나
+  application-library 전체 read, 다른 client profile의 권한 복사는 금지한다.
+- Telegram action proposal의 requester/run binding은 다섯 값이 전부 있거나 전부 없는
+  closed tuple이다. restricted와 sensitive-read launcher는 일부 binding을 거부하고,
+  완전히 검증한 다섯 값을 함께 보존한다. 개별 값의 선택적 전달이나 환경 전체 상속은
+  허용하지 않는다.
+- 이 교정은 proposal-first 쓰기 요건을 복구하지만 unapproved direct write/command를
+  허용하지 않고 AppArmor/native permission 범위를 넓히지 않는다. 2.0.18은 2.0.13
+  security boundary 내부 corrective patch이므로 `breaking_versions`는 확장하지 않는다.
+- exact module/broad-rule negative와 두 launcher complete/partial binding 자동 회귀는
+  HAOS 증거가 아니다. 2.0.18 amd64의 managed read MCP, 승인카드와 승인된 bounded write,
+  그리고 aarch64 실기기 수용은 릴리스 전 `NOT RUN`이며 전체 v2 수용은 `PARTIAL`이다.

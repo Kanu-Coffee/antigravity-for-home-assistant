@@ -85,6 +85,7 @@ const MAX_STREAM_BYTES = 4 * 1024 * 1024;
 const MAX_STREAM_LINE_BYTES = 256 * 1024;
 const MAX_TELEGRAM_RESPONSE_BYTES = 256 * 1024;
 const RUN_TIMEOUT_MS = 5 * 60 * 1000;
+const STREAM_CONTRACT_EXIT_GRACE_MS = 100;
 const EXECUTION_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 const EXECUTION_POLL_INTERVAL_MS = 250;
 const APPROVAL_TTL_MS = 2 * 60 * 1000;
@@ -127,6 +128,7 @@ const WORKER_PROCESS_FAILURE_KINDS = new Set([
   "exit_code",
   "signal",
   "spawn_error",
+  "terminal_status",
   "timeout",
 ]);
 const WORKER_PROCESS_SIGNALS = new Set([
@@ -177,6 +179,9 @@ const WORKER_PROCESS_FLAGS = new Set([
   "signal_unrecognized",
   "stderr_seen",
   "stdout_seen",
+]);
+const WORKER_TERMINAL_STATUS_FLAGS = new Set([
+  "tool_error_seen",
 ]);
 const TELEGRAM_TRANSPORT_ERROR_CODES = Object.freeze([
   "CERT_HAS_EXPIRED",
@@ -317,27 +322,30 @@ function normalizeWorkerFailureTelemetry({
   if (!WORKER_PROCESS_FAILURE_KINDS.has(failureKind)) {
     throw new Error("Antigravity worker process failure kind is not allowlisted");
   }
+  const allowedFlags = failureKind === "terminal_status"
+    ? WORKER_TERMINAL_STATUS_FLAGS
+    : WORKER_PROCESS_FLAGS;
   const safeFlags = new Set(
     Array.isArray(flags)
-      ? flags.filter((flag) => WORKER_PROCESS_FLAGS.has(flag))
+      ? flags.filter((flag) => allowedFlags.has(flag))
       : [],
   );
   const telemetry = { failure_kind: failureKind };
-  if (signal !== null) {
+  if (failureKind !== "terminal_status" && signal !== null) {
     if (typeof signal === "string" && WORKER_PROCESS_SIGNALS.has(signal)) {
       telemetry.signal = signal;
     } else {
       safeFlags.add("signal_unrecognized");
     }
   }
-  if (errno !== null) {
+  if (failureKind !== "terminal_status" && errno !== null) {
     if (typeof errno === "string" && WORKER_PROCESS_ERRNOS.has(errno)) {
       telemetry.errno = errno;
     } else {
       safeFlags.add("errno_unrecognized");
     }
   }
-  if (exitCode !== null) {
+  if (failureKind !== "terminal_status" && exitCode !== null) {
     if (Number.isSafeInteger(exitCode) && WORKER_PROCESS_EXIT_CODES.has(exitCode)) {
       telemetry.exit_code = exitCode;
     } else {
@@ -1059,8 +1067,8 @@ function buildAgyArgs(_mode = null, _sandboxEnabled = null, conversationId = nul
   return args;
 }
 
-function streamFailure(reasonClass) {
-  return new AntigravityWorkerError(reasonClass);
+function streamFailure(reasonClass, workerFailure = null) {
+  return new AntigravityWorkerError(reasonClass, workerFailure);
 }
 
 function isPlainObject(value) {
@@ -1174,12 +1182,14 @@ function parseStreamResult(stream) {
   let resultEvents = 0;
   let initEvents = 0;
   let terminalSeen = false;
+  let terminalStatusFailed = false;
   let conversationId = null;
   const proposalIds = [];
   const proposalReceipts = [];
   const proposalCallSteps = new Set();
   let proposalKind = null;
   let headlessPermissionDenied = false;
+  let toolErrorSeen = false;
   for (const line of stdout.split("\n")) {
     if (!line.trim()) continue;
     if (Buffer.byteLength(line) > MAX_STREAM_LINE_BYTES) {
@@ -1224,23 +1234,31 @@ function parseStreamResult(stream) {
           Array.isArray(event.result)) {
         throw streamFailure("stream_contract_failed");
       }
-      if (event.result.status !== "SUCCESS") {
-        throw streamFailure("terminal_status_failed");
-      }
       if (event.result.conversation_id !== conversationId) {
         throw streamFailure("conversation_mismatch");
+      }
+      terminalSeen = true;
+      resultEvents += 1;
+      if (event.result.status === "ERROR") {
+        terminalStatusFailed = true;
+        continue;
+      }
+      if (event.result.status !== "SUCCESS") {
+        throw streamFailure("stream_contract_failed");
       }
       if (typeof event.result.response !== "string") {
         throw streamFailure("terminal_response_invalid");
       }
-      terminalSeen = true;
-      resultEvents += 1;
       response = event.result.response.replace(/\u0000/gu, "");
     } else if (event?.event === "step_update") {
       if (initEvents !== 1) throw streamFailure("stream_contract_failed");
       const step = event.step_update;
-      if (isPlainObject(step) && step.step_type === "tool" && step.state === "ERROR" &&
-          isPlainObject(step.tool_info)) {
+      const isToolError = isPlainObject(step) &&
+        step.step_type === "tool" && step.state === "ERROR";
+      if (isToolError) {
+        toolErrorSeen = true;
+      }
+      if (isToolError && isPlainObject(step.tool_info)) {
         const diagnostics = [step.tool_info.output, step.tool_info.error?.message]
           .filter((value) => typeof value === "string" &&
             Buffer.byteLength(value, "utf8") <= 4 * 1024)
@@ -1264,17 +1282,23 @@ function parseStreamResult(stream) {
       }
     }
   }
-  if (initEvents !== 1 || resultEvents !== 1 || response === null) {
+  if (initEvents !== 1 || resultEvents !== 1) {
     throw streamFailure("terminal_missing");
   }
-  if (Buffer.byteLength(response, "utf8") > MAX_RESULT_BYTES) {
+  if (headlessPermissionDenied && proposalIds.length === 0) {
+    throw streamFailure("headless_permission_denied");
+  }
+  if (terminalStatusFailed) {
+    throw streamFailure("terminal_status_failed", {
+      failure_kind: "terminal_status",
+      flags: toolErrorSeen ? ["tool_error_seen"] : [],
+    });
+  }
+  if (response === null || Buffer.byteLength(response, "utf8") > MAX_RESULT_BYTES) {
     throw streamFailure("terminal_response_invalid");
   }
   if (proposalIds.length > 1 || proposalIds.length !== proposalCallSteps.size) {
     throw streamFailure("proposal_result_invalid");
-  }
-  if (headlessPermissionDenied && proposalIds.length === 0) {
-    throw streamFailure("headless_permission_denied");
   }
   if (response.trim().length === 0) {
     if (proposalIds.length !== 1 || proposalCallSteps.size !== 1) {
@@ -1476,6 +1500,7 @@ async function runAntigravityPrompt(prompt, {
     let initProbe = Buffer.alloc(0);
     let initConversationId = null;
     let initError = null;
+    let streamContractExitTimer = null;
     let stderrSeen = false;
     const authRequiredMatcher = new BoundedByteMatcher(ANTIGRAVITY_AUTH_REQUIRED_MARKER);
     const headlessPermissionMatcher = new BoundedByteMatcher(
@@ -1525,7 +1550,16 @@ async function runAntigravityPrompt(prompt, {
             }
           } catch (error) {
             initError = error;
-            terminateChildWithGrace(child, hardKillGraceMs);
+            if (error instanceof AntigravityWorkerError &&
+                error.reasonClass === "stream_contract_failed") {
+              streamContractExitTimer = setTimeout(() => {
+                streamContractExitTimer = null;
+                terminateChildWithGrace(child, hardKillGraceMs);
+              }, STREAM_CONTRACT_EXIT_GRACE_MS);
+              streamContractExitTimer.unref();
+            } else {
+              terminateChildWithGrace(child, hardKillGraceMs);
+            }
             break;
           }
         }
@@ -1554,14 +1588,11 @@ async function runAntigravityPrompt(prompt, {
       }
     } finally {
       clearTimeout(timer);
+      if (streamContractExitTimer !== null) clearTimeout(streamContractExitTimer);
     }
     const { code, signal: exitSignal } = closeResult;
     activeChildren.delete(runId);
     throwIfSignalCancelled(signal);
-    if (initError !== null) {
-      workerRuntimeStatus = requestFailureReason(initError);
-      throw initError;
-    }
     if (oversized) {
       workerRuntimeStatus = "stream_contract_failed";
       throw streamFailure("stream_contract_failed");
@@ -1587,6 +1618,20 @@ async function runAntigravityPrompt(prompt, {
       ...(authRequiredMatcher.matched ? ["auth_marker_seen"] : []),
       ...(headlessPermissionMatcher.matched ? ["permission_marker_seen"] : []),
     ];
+    if (code === 1 && authRequiredMatcher.matched) {
+      workerRuntimeStatus = "authentication_required";
+      throw new AntigravityWorkerError("authentication_required", {
+        failure_kind: "exit_code",
+        exit_code: code,
+        flags: processFlags,
+      });
+    }
+    if (initError !== null && !(code !== 0 &&
+        initError instanceof AntigravityWorkerError &&
+        initError.reasonClass === "stream_contract_failed")) {
+      workerRuntimeStatus = requestFailureReason(initError);
+      throw initError;
+    }
     if (exitSignal !== null) {
       workerRuntimeStatus = "worker_failed";
       throw new AntigravityWorkerError("worker_failed", {
@@ -1596,11 +1641,20 @@ async function runAntigravityPrompt(prompt, {
       });
     }
     if (code !== 0) {
-      const reasonClass = code === 1 && authRequiredMatcher.matched
-          ? "authentication_required"
-          : "worker_failed";
-      workerRuntimeStatus = reasonClass;
-      throw new AntigravityWorkerError(reasonClass, {
+      if (stdoutBytes > 0 && initError === null) {
+        try {
+          parseStreamResult(Buffer.concat(stdoutChunks, stdoutBytes));
+        } catch (error) {
+          if (error instanceof AntigravityWorkerError &&
+              ["headless_permission_denied", "terminal_status_failed"]
+                .includes(error.reasonClass)) {
+            workerRuntimeStatus = error.reasonClass;
+            throw error;
+          }
+        }
+      }
+      workerRuntimeStatus = "worker_failed";
+      throw new AntigravityWorkerError("worker_failed", {
         failure_kind: Number.isSafeInteger(code) ? "exit_code" : "close_unknown",
         exit_code: code,
         flags: processFlags,

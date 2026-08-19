@@ -266,7 +266,7 @@ def test_apparmor_docs_describe_discrete_px_profiles() -> None:
         )
 
 
-def test_v217_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> None:
+def test_v218_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> None:
     changelog = re.sub(
         r"\s+",
         " ",
@@ -274,9 +274,23 @@ def test_v217_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> 
     )
     assert changelog.startswith(
         "# Changelog All notable changes to this App are documented in this file. "
-        "## [2.0.17] - 2026-08-19"
+        "## [2.0.18] - 2026-08-19"
     )
     for fragment in (
+        "Restore the image-managed MCP boundary found broken by public 2.0.17",
+        "App startup, Ingress/Web terminal, the native CLI and basic conversation",
+        "managed MCP request failed",
+        "`change-proposal-client` profile denying read access",
+        "`/usr/local/share/antigravity-ha/supervisor-credential-fd.mjs`",
+        "grants only that exact module read",
+        "complete five-variable requester/run binding",
+        "rejects a partial binding",
+        "Direct unapproved native writes and commands remain blocked",
+        "Version 2.0.18 is a corrective patch within that boundary",
+        "Public 2.0.17 real-HAOS amd64 acceptance is `FAIL` overall",
+        "approved write execution is `NOT RUN`",
+        "Real-HAOS amd64 acceptance of 2.0.18 is `NOT RUN`",
+        "## [2.0.17] - 2026-08-19",
         "Public 2.0.16 on real HAOS 18.2 amd64",
         "`agy` and `antigravity --version` immediately exited with SIGSEGV/status 139",
         "`file_mmap` permission `m` denied",
@@ -294,7 +308,9 @@ def test_v217_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> 
         "status 0 for `antigravity --version`",
         "Real-HAOS acceptance of 2.0.16 is `FAIL`",
         "Real-HAOS 2.0.17 first start",
-        "are `NOT RUN` at publication",
+        "were `NOT RUN` at publication",
+        "Subsequent real-HAOS 18.2 amd64 evidence passed startup",
+        "public 2.0.17 acceptance `FAIL` overall",
         "Public 2.0.12 is not an automatic or issue-free rollback",
         "Supervisor direct downgrade is unsupported",
         "loses post-backup OAuth, memory, approvals, outbox, and identities",
@@ -345,11 +361,11 @@ def test_v217_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> 
         "owner explicitly waived",
         "is not an aarch64 `PASS`",
     ):
-        assert fragment in changelog, f"2.0.17 changelog evidence drift: {fragment}"
+        assert fragment in changelog, f"2.0.18 changelog evidence drift: {fragment}"
 
     plan = re.sub(r"\s+", " ", read(V2 / "test-plan.md"))
     for fragment in (
-        "2.0.13~2.0.17 Supervisor AppArmor와 startup 회귀",
+        "2.0.13~2.0.18 Supervisor AppArmor와 startup 회귀",
         "2.0.11→2.0.12 `preserve` update",
         "App restart/reconnect는 `PASS`",
         "`docker-default (enforce)`여서 `FAIL`",
@@ -383,12 +399,20 @@ def test_v217_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> 
         "새로운 broad `/etc/**`·",
         "runtime의 기존 `/etc/** r`, 필수 system-library mapping",
         "실제 `antigravity --version` status 0",
-        "2.0.17 실기기 결과는 현재 `NOT RUN`",
+        "단일 managed MCP와 `telegram_action_propose`는 `FAIL`",
+        "승인된 쓰기는 카드 생성 전에 막혀 `NOT RUN`",
+        "`change-proposal-client`가 exact image-owned",
+        "`/usr/local/share/antigravity-ha/supervisor-credential-fd.mjs`",
+        "restricted/sensitive-read launcher는 승인 제안에 필요한 requester/run binding 다섯 값을 버렸다",
+        "2.0.18 정적·component 수용",
+        "일부 binding은 native child 시작 전에 실패",
+        "direct unapproved write/command",
+        "2.0.18 amd64와 aarch64 실기기 결과는 릴리스 전 `NOT RUN`",
         "2.0.12 rollback rehearsal은 Supervisor direct downgrade가 지원된다고 가정하지 않는다",
         "higher-version security-degraded compatibility fallback",
-        "aarch64 장비 부재 owner waiver는 PASS가 아니며 전체 v2 수용은 `PARTIAL`",
+        "aarch64 owner waiver는 PASS가 아니며 전체 v2 수용은 `PARTIAL`",
     ):
-        assert fragment in plan, f"2.0.17 test-plan evidence drift: {fragment}"
+        assert fragment in plan, f"2.0.18 test-plan evidence drift: {fragment}"
 
     security = re.sub(r"\s+", " ", read(V2 / "security.md"))
     for fragment in (
@@ -409,10 +433,14 @@ def test_v217_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> 
         "실제 HAOS native `file_mmap` denial과 SIGSEGV/status 139로 수용은 `FAIL`",
         "2.0.17의 두 exact `antigravity-real rm` rule",
         "trace-derived exact bootstrap identity/TLS trust-store reads",
-        "2.0.17 실기기 enforce·재시작은 `NOT RUN`",
+        "managed MCP와 `telegram_action_propose`가 `FAIL`",
+        "승인된 쓰기는 `NOT RUN`",
+        "exact proposal-client module read denial",
+        "2.0.18에서 exact read 하나와 complete-tuple",
+        "2.0.18 amd64와 aarch64 실기기 수용은 릴리스 전 `NOT RUN`",
         "higher-version fallback은 명시적 security-degraded `NOT RUN` contingency",
     ):
-        assert fragment in security, f"2.0.17 security scope drift: {fragment}"
+        assert fragment in security, f"2.0.18 security scope drift: {fragment}"
 
 
 def test_telegram_shared_context_inheritance_is_local_and_haos_gate_remains() -> None:
@@ -769,7 +797,7 @@ def test_v210_docs_define_receipt_fallback_multi_choice_and_restart_boundary() -
     assert "## [2.0.10]" in changelog
     assert "full App or broker restart rejects an unstarted in-memory proposal" in changelog
     assert "live Telegram/OAuth E2E" not in changelog
-    assert 'version: "2.0.17"' in documents["migration"]
+    assert 'version: "2.0.18"' in documents["migration"]
 
 
 def test_v209_docs_match_native_sandbox_and_mediated_settings_policy() -> None:
@@ -940,7 +968,7 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
         "telegram_session_delivery",
     }
     template = json.loads(read(V2 / "release-evidence-template.json"))
-    assert template["version"] == "2.0.17"
+    assert template["version"] == "2.0.18"
     assert set(template["gates"]) == expected_gates
     assert "HA-008" not in json.dumps(template, sort_keys=True)
     for gate in template["gates"].values():

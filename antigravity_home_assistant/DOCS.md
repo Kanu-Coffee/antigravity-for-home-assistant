@@ -42,14 +42,17 @@ API 연결까지 기동했지만 `agy`와 `antigravity --version`이 SIGSEGV/sta
 image/custom AppArmor 재현의 kernel audit는 `interactive-runtime-restricted`에서
 `/usr/local/libexec/antigravity-real`의 `file_mmap` permission `m` 거부를 확인했고,
 `interactive-runtime-sensitive-read`에도 동일한 `r`-only rule이 있었습니다.
-2.0.17은 두 exact native-binary rule을 `r`에서 `rm`으로 바꾸고 full blank-auth worker
-trace의 exact bootstrap nsswitch/passwd identity read와 runtime
-`/usr/share/ca-certificates/**` TLS trust-store read만 두 transition chain에 추가합니다.
-새로운 broad `/etc/**`·`/usr/share/**` rule은 추가하지 않고, runtime의 기존
-`/etc/** r`와 필수 system-library mapping 및 proc/settings/credential deny는 그대로입니다.
-local kernel-enforced `--version` status
-0은 HAOS 증거가 아니며 2.0.17 실제 HAOS와 aarch64 시험은 `NOT RUN`입니다. 소유자의
-experimental 배포 면제는 PASS가 아니며 전체 v2 수용은 `PARTIAL`입니다.
+2.0.17은 native mmap 결함을 고쳤고 실제 amd64에서 App, Web terminal, native 기본 대화,
+Telegram transport와 도구 없는 답변은 통과했습니다. 그러나 managed MCP 요청은
+`change-proposal-client`가 exact image-owned `supervisor-credential-fd.mjs` 전이 module을
+읽지 못한 AppArmor 거부로 실패했습니다. 두 confined launcher도
+`telegram_action_propose`에 필요한 requester/run binding 다섯 값을 버려 승인카드를
+만들지 못했고 승인된 쓰기는 `NOT RUN`입니다. 따라서 2.0.17 전체 수용은 `FAIL`입니다.
+2.0.18은 proposal client의 exact module read와 두 launcher의 완전한 다섯 값
+검증·보존만 추가합니다. broad AppArmor/native-tool 권한과 승인 없는 직접 쓰기·명령은
+열지 않습니다. 자동 회귀는 HAOS 증거가 아니며 2.0.18 amd64와 aarch64 실기기 시험은
+릴리스 전 `NOT RUN`입니다. 소유자의 experimental 배포 면제는 PASS가 아니며 전체 v2
+수용은 `PARTIAL`입니다.
 
 ### 실행 표면
 
@@ -538,9 +541,13 @@ runtime profile의 exact native-binary rule에는 executable `mmap` 권한이 �
 `file_mmap` permission `m` 거부를 기록했습니다. 2.0.17은 두 rule의 `r`을 `rm`으로
 바꾸고 trace-derived bootstrap nsswitch/passwd identity와 runtime
 `/usr/share/ca-certificates/**` TLS trust-store exact read만 두 transition chain에
-추가합니다. 새로운 broad `/etc/**`·`/usr/share/**` rule은 추가하지 않고, runtime의
-기존 `/etc/** r`와 필수 system-library mapping 및 proc/settings/credential deny는
-유지합니다. 업데이트 뒤 App terminal과 관련 service 실행 경로의
+추가합니다. 실제 2.0.17의 다음 경계에서는 `change-proposal-client`가 image-owned
+`supervisor-credential-fd.mjs`를 읽지 못해 managed MCP가 실패했습니다. 2.0.18은 이
+client에 해당 exact module read만 추가하며 directory-wide grant는 추가하지 않습니다.
+두 interactive launcher의 다섯 requester/run binding 보존도 완전한 묶음에만 적용되고
+일부 binding은 거부됩니다. 새로운 broad `/etc/**`·`/usr/share/**` rule이나 native-tool
+권한은 추가하지 않고, runtime의 기존 `/etc/** r`와 필수 system-library mapping 및
+proc/settings/credential deny는 유지합니다. 업데이트 뒤 App terminal과 관련 service 실행 경로의
 `/proc/self/attr/current` 및 Supervisor 상태에서 `antigravity_home_assistant` named
 profile이 enforce인지 확인하고, `s6-mkdir` 오류와 예상하지 않은 `DENIED`를 검토하세요.
 문제를 우회하려고 보호 mode나 AppArmor를 끄지 마세요.
@@ -768,6 +775,11 @@ downgrade는 지원되지 않습니다. exact 2.0.12 시점 App backup을 복원
 - `request_failed`가 native termination signal을 포함하면 그 제한된 signal class로
   CLI crash와 일반 exit를 구분합니다. stderr, prompt, OAuth 또는 token 원문을 공유하지
   마세요. 2.0.16의 SIGSEGV는 `/new`나 pairing 재설정으로 복구되지 않습니다.
+- 공개 2.0.17에서 도구 없는 대화는 되지만 managed MCP 또는 승인카드 요청이 실패하면
+  장문·Bot API·pairing 문제로 분류하지 마세요. exact AppArmor module read와 launcher
+  run binding을 고친 2.0.18 이상으로 업데이트한 뒤 단일 read MCP, 승인카드 생성,
+  승인된 bounded 쓰기를 순서대로 다시 검증합니다. broad `mcp(*)`, `command(*)` 또는
+  직접 쓰기 허용을 추가하지 않습니다.
 - `reason_class=headless_read_denied`이면 headless AI의 비허용 파일 읽기가 차단된
   것입니다. 정상 질문에서 반복되면 사용자 settings를 편집하거나 `read_file(*)`를
   추가하지 말고 App을 최신 버전으로 업데이트한 뒤 재시작합니다.
@@ -832,9 +844,9 @@ fresh-container restart, S6 init과 안전한 canary 내용으로 준비한
 
 - 실제 HAOS amd64의 clean install과 aarch64의 install·start·update
 - 양쪽 아키텍처의 native Antigravity OAuth와 plugin discovery
-- 2.0.17에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되고 S6,
-  native `--version`/대화, Web terminal PTY·reconnect와 Telegram worker가 최초
-  기동·stop/start·restart를 완료하는지
+- 2.0.18에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되고 S6,
+  native `--version`/대화, Web terminal PTY·reconnect, managed read MCP,
+  Telegram 승인카드와 승인된 bounded 쓰기가 최초 기동·stop/start·restart를 완료하는지
 - 공개 GHCR generic manifest와 per-arch digest의 실제 pull
 - 실제 dashboard, live Telegram card/callback/command/HA action, migration 세 mode와
   rollback E2E
@@ -847,7 +859,8 @@ manifest와 HAOS acceptance 기록에서 해당 항목이 통과했는지 확인
 restart/reconnect `PASS`, 같은 image의 custom AppArmor attach `FAIL`, 공개 2.0.13의
 S6 runtime startup `FAIL`, 공개 2.0.14의 resolved Bashio execute startup `FAIL`, 공개
 2.0.15의 Web terminal PTY EACCES와 Telegram `refresh_managed` ordering `FAIL`, 공개
-2.0.16의 native `file_mmap` denial·SIGSEGV/status 139 `FAIL`, 그리고 2.0.17·aarch64
+2.0.16의 native `file_mmap` denial·SIGSEGV/status 139 `FAIL`, 공개 2.0.17의 managed
+MCP·Telegram 승인 제안 `FAIL`과 승인된 쓰기 `NOT RUN`, 그리고 2.0.18 amd64·aarch64
 실기기 `NOT RUN`입니다. aarch64 면제는 PASS가 아니며 전체 v2 수용은
 `PARTIAL`입니다. 이 결과를 전체 HA-001~HA-008 또는 AA-001 PASS로 확대하지 않습니다.
 

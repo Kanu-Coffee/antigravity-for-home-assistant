@@ -1228,11 +1228,28 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
     assert "/run/antigravity-ha/change-proposal.sock rw," in (
         proposal_client_profile
     )
+    assert (
+        "/usr/local/share/antigravity-ha/supervisor-credential-fd.mjs r,"
+        in proposal_client_profile
+    )
+    for broad_module_grant in (
+        "/usr/local/share/antigravity-ha/** r,",
+        "/usr/local/share/** r,",
+    ):
+        assert broad_module_grant not in proposal_client_profile
     assert "Px -> antigravity_home_assistant-ha-helper" not in (
+        proposal_client_profile
+    )
+    assert "/run/antigravity-ha/supervisor.token r," not in (
+        proposal_client_profile
+    )
+    assert "deny /run/antigravity-ha/supervisor.token rwklm," in (
         proposal_client_profile
     )
     assert "deny /config/ rwklm," in proposal_client_profile
     assert "deny /config/** rwklm," in proposal_client_profile
+    assert "deny /data/home/** rwklm," in proposal_client_profile
+    assert "deny @{PROC}@{pid}/fd/** rwklm," in proposal_client_profile
     assert "deny /run/antigravity-ha/change-broker.sock rwklm," in (
         proposal_client_profile
     )

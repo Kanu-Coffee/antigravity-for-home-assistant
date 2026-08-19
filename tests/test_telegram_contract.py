@@ -274,6 +274,41 @@ def test_telegram_metrics_have_bounded_privacy_safe_labels(addon_root: Path) -> 
     assert 'setInterval(() => audit("metrics", metricsSnapshot()), 60_000)' in bridge
 
 
+def test_telegram_terminal_failure_telemetry_is_bounded(addon_root: Path) -> None:
+    bridge = (
+        addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
+    ).read_text(encoding="utf-8")
+
+    failure_kinds = bridge.split(
+        "const WORKER_PROCESS_FAILURE_KINDS", maxsplit=1
+    )[1].split(");", maxsplit=1)[0]
+    terminal_flags = bridge.split(
+        "const WORKER_TERMINAL_STATUS_FLAGS", maxsplit=1
+    )[1].split(");", maxsplit=1)[0]
+    assert '"terminal_status"' in failure_kinds
+    assert '"tool_error_seen"' in terminal_flags
+
+    normalizer = bridge.split(
+        "function normalizeWorkerFailureTelemetry", maxsplit=1
+    )[1].split("function attachWorkerFailureTelemetry", maxsplit=1)[0]
+    assert 'failureKind === "terminal_status"' in normalizer
+    assert "WORKER_TERMINAL_STATUS_FLAGS" in normalizer
+
+    parser = bridge.split("function parseStreamResult", maxsplit=1)[1].split(
+        "function parseInitEventLine", maxsplit=1
+    )[0]
+    assert 'failure_kind: "terminal_status"' in parser
+    assert 'flags: toolErrorSeen ? ["tool_error_seen"] : []' in parser
+
+    runner = bridge.split("async function runAntigravityPrompt", maxsplit=1)[1].split(
+        "function terminateChildWithGrace", maxsplit=1
+    )[0]
+    assert runner.index('code === 1 && authRequiredMatcher.matched') < runner.index(
+        "if (code !== 0)"
+    )
+    assert '["headless_permission_denied", "terminal_status_failed"]' in runner
+
+
 def test_telegram_uses_shared_native_home_and_interactive_policy(
     addon_root: Path,
     repository_root: Path,
@@ -317,6 +352,22 @@ def test_telegram_uses_shared_native_home_and_interactive_policy(
         assert "ANTIGRAVITY_HA_CHANNEL=telegram" in confined_launcher
         assert '"HA_TELEGRAM_USER_ID=${HA_TELEGRAM_USER_ID}"' in confined_launcher
         assert '"HA_TELEGRAM_CHAT_ID=${HA_TELEGRAM_CHAT_ID}"' in confined_launcher
+        for binding_assignment in (
+            '"HA_TELEGRAM_SESSION_GENERATION=${HA_TELEGRAM_SESSION_GENERATION}"',
+            '"HA_TELEGRAM_UPDATE_ID=${HA_TELEGRAM_UPDATE_ID}"',
+            '"HA_TELEGRAM_RUN_NONCE=${HA_TELEGRAM_RUN_NONCE}"',
+            '"HA_ANTIGRAVITY_CONVERSATION_ID=${HA_ANTIGRAVITY_CONVERSATION_ID:-}"',
+            '"HA_TELEGRAM_ACTION_PROPOSAL_SOCKET=${HA_TELEGRAM_ACTION_PROPOSAL_SOCKET}"',
+        ):
+            assert confined_launcher.count(binding_assignment) == 1
+        assert "^[1-9][0-9]{0,15}$" in confined_launcher
+        assert "^[A-Za-z0-9_-]{24,128}$" in confined_launcher
+        assert "^/run/antigravity-ha/" in confined_launcher
+        for output_line in (
+            line for line in confined_launcher.splitlines() if "printf " in line
+        ):
+            assert "HA_TELEGRAM_" not in output_line
+            assert "HA_ANTIGRAVITY_CONVERSATION_ID" not in output_line
         assert '"${requester_environment[@]}"' in confined_launcher
 
     telegram_profile = apparmor.split(

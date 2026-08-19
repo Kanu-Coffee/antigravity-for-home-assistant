@@ -27,24 +27,19 @@ Use antigravity inside Home Assistant to inspect your setup and improve dashboar
 > [!WARNING]
 > This app is a powerful administrative tool that can directly change your Home Assistant configuration. Telegram is equivalent to the CLI as an administrator channel, so protect the bot token, authorized chats, and Telegram accounts. Back up important data, review plans and diffs, and never expose the SSH port directly to the internet.
 
-**2.0.17 native-CLI recovery:** On public 2.0.16 on real HAOS 18.2 amd64, the
-App, Ingress, Web terminal, and Telegram Bot API connection started, but `agy`
-and `antigravity --version` immediately exited with `Segmentation fault`/status
-139, and Telegram workers failed with the same native crash. An exact-image,
-custom-AppArmor reproduction showed a kernel-audit `file_mmap` permission `m`
-denial on `/usr/local/libexec/antigravity-real` under
-`interactive-runtime-restricted`; `interactive-runtime-sensitive-read` had the
-same `r`-only rule. Version 2.0.17 changes those two exact native-binary rules from `r` to
-`rm` and adds only trace-derived bootstrap nsswitch/passwd identity reads plus
-runtime `/usr/share/ca-certificates/**` TLS trust-store reads to the two
-transition chains. It adds no new broad `/etc/**` or `/usr/share/**` rule;
-existing runtime `/etc/** r`, required system-library mappings, and
-proc/settings/credential denies are unchanged.
-The local kernel-enforced `--version` regression reaches status 0, but real-HAOS
-2.0.17 is `NOT RUN`, the aarch64 waiver is not a PASS, and overall acceptance is
-`PARTIAL`. Only 2.0.13 remains the breaking security transition. Direct 2.0.12
-downgrade is unsupported, and restoring an exact App backup can lose newer App
-`/data`, so it is not a lossless fallback.
+**2.0.18 Telegram MCP and approval-path correction:** On public 2.0.17 on real
+HAOS 18.2 amd64, the App, Web terminal, native basic conversation, Telegram
+connection, and a no-tool reply passed, but managed MCP and
+`telegram_action_propose` failed. Kernel audit identified an exact image-owned
+`supervisor-credential-fd.mjs` module-read denial in `change-proposal-client`,
+while both confined launchers discarded the five requester/run binding values
+needed for an approval proposal. Approved writes were `NOT RUN`, so 2.0.17
+acceptance is `FAIL` overall. Version 2.0.18 grants only the exact module read and
+makes both launchers validate and preserve only a complete five-value binding.
+It adds no broad AppArmor/native-tool permission or unapproved direct write or
+command path. Real-device 2.0.18 acceptance on amd64 and aarch64 is `NOT RUN`
+before release and overall v2 acceptance remains `PARTIAL`. Only 2.0.13 remains
+breaking; a 2.0.12 backup restore is not a lossless fallback.
 
 ## Quick start
 
