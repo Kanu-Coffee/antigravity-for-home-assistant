@@ -706,10 +706,22 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
     jq --exit-status "
       .toolPermission == \"request-review\"
       and .enableTerminalSandbox == false
+      and .allowNonWorkspaceAccess == true
       and (.permissions.allow | index(\"command(*)\") == null)
       and (.permissions.allow | index(\"mcp(*)\") == null)
-      and (.permissions.ask | index(\"command(*)\") == null)
+      and (.permissions.allow | index(\"read_file(*)\") == null)
+      and (.permissions.allow | index(\"read_url(*)\") != null)
+      and (.permissions.ask | index(\"command(*)\") != null)
       and (.permissions.ask | index(\"write_file(*)\") == null)
+      and (.permissions.ask | index(\"execute_url(*)\") != null)
+      and (.permissions.allow
+        | index(\"mcp(ha_files/ha_files_list)\") != null)
+      and (.permissions.allow
+        | index(\"mcp(ha_files/ha_files_read_text)\") != null)
+      and (.permissions.ask
+        | index(\"mcp(ha_files/ha_files_write_text)\") != null)
+      and (.permissions.deny | index(\"read_file(*)\") != null)
+      and (.permissions.deny | index(\"write_file(*)\") != null)
       and (.permissions.allow
         | index(\"mcp(ha_change/ha_change_propose)\") != null)
       and (.permissions.allow
@@ -718,6 +730,7 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
         | index(\"write_file(/data/home/.gemini/antigravity-cli/settings.json)\") == null)
       and (.permissions.deny
         | index(\"write_file(/data/home/.gemini/antigravity-cli/settings.json)\") != null)
+      and (.permissions.deny | index(\"read_file(/data/home/.gemini)\") != null)
       and (.permissions.deny | index(\"read_file(/data/home/.aws)\") != null)
       and (.permissions.deny | index(\"write_file(/data/home/.aws)\") != null)
     " /data/home/.gemini/antigravity-cli/settings.json >/dev/null

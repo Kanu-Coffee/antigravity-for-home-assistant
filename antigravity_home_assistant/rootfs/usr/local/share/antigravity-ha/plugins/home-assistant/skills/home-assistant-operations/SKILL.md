@@ -20,17 +20,17 @@ with Supervisor update/cleanup logs. Never mount or query the Docker socket,
 run a host-wide Docker prune, or invoke Supervisor repair automatically;
 repair is a broad administrator recovery action, not per-update maintenance.
 
-Keep diagnosis observational. Telegram, Web terminal, and SSH use the same
-native HOME, global customization, permission policy, and mandatory AppArmor
-runtime/command boundary; only their approval transport differs. In a
-requester-bound Telegram session, route every
+Keep diagnosis observational unless the user explicitly requests a change.
+Telegram, Web terminal, and SSH use the same native HOME, global customization,
+permission policy, and mandatory AppArmor blacklist. In a requester-bound
+Telegram session using `request-review`, route every
 Home Assistant service call and YAML configuration mutation through
 `ha_change_propose`, so the bound user receives the broker preview and
 confirmation card. Do not bypass that path with `ha-api`, `supervisor-api`, a
 shell command, or a direct file write; the broker owns config checks, backup,
 rollback, reload, and supported memory verification.
 
-For any other requester-bound Telegram side effect, including a terminal
+For any other `request-review` Telegram side effect, including a terminal
 command, inline shell script, or a choice among prevalidated commands, use
 `telegram_action_propose`. Use its `question` operation for a finite choice that
 does not itself execute a Home Assistant change. A successful MCP response only
@@ -67,9 +67,14 @@ request to change global Antigravity settings, obtain the current digest with
 `enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`, and
 `artifactReviewPolicy` keys and commits other settings atomically.
 
-If a Telegram side effect cannot be represented by `ha_change_propose` or
-`telegram_action_propose`, report that limitation and stop. Never bypass the
-inline approval path with a generic Supervisor helper or another direct tool.
+If a `request-review` Telegram side effect cannot be represented by
+`ha_change_propose` or `telegram_action_propose`, report that limitation and
+stop. Never bypass its inline approval path with a generic Supervisor helper or
+another direct tool. When the App is explicitly configured for
+`always-proceed`, ordinary requested reads, writes, commands, URL operations,
+and installed MCP tools may run directly; protected credential/policy paths and
+`.storage` remain unavailable, and high-risk actions still require an explicit
+current request.
 
 Never expose secrets or directly edit `.storage`. Ask for explicit current
 confirmation before safety-critical, destructive, restart, restore, update, or

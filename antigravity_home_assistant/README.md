@@ -27,17 +27,26 @@ Home Assistant 안에서 antigravity와 대화하며 설정을 살펴보고 대�
 > [!WARNING]
 > 이 앱은 Home Assistant 설정을 직접 바꿀 수 있는 강한 관리자 도구입니다. Telegram도 CLI와 동등한 관리자 채널이므로 bot token, 허용 chat과 Telegram 계정을 보호하세요. 중요한 변경 전에는 backup을 만들고 계획과 diff를 확인하며 SSH 포트를 인터넷에 직접 공개하지 마세요.
 
-**2.0.18 Telegram MCP·승인 경로 교정:** 공개 2.0.17의 실제 HAOS 18.2 amd64에서
-App, Web terminal, native 기본 대화, Telegram 연결과 도구 없는 답변은 통과했지만
-managed MCP와 `telegram_action_propose`는 실패했습니다. kernel audit는
-`change-proposal-client`의 exact image-owned
-`supervisor-credential-fd.mjs` module read 거부를 확인했고, 두 confined launcher는
-승인 제안에 필요한 requester/run binding 다섯 값을 버렸습니다. 승인된 쓰기는
-`NOT RUN`이므로 2.0.17 수용은 전체 `FAIL`입니다. 2.0.18은 exact module read만 열고
-두 launcher가 완전한 다섯 값 묶음만 검증·보존합니다. broad AppArmor/native-tool 권한,
-승인 없는 직접 쓰기나 명령은 추가하지 않습니다. 2.0.18 amd64와 aarch64 실기기
-수용은 릴리스 전 `NOT RUN`, 전체 v2 수용은 `PARTIAL`입니다. breaking 목록은 2.0.13까지만
-유지하며 2.0.12 backup restore는 무손실 fallback이 아닙니다.
+**2.1.0 운영 권한 재설계:** 공개 2.0.18 실제 HAOS 18.2 amd64는 App startup,
+native `antigravity --version` status 0, Telegram transport와 no-tool chat을
+`PASS`했습니다. 그러나 Web `agy`/`antigravity` interactive I/O와 첫 managed Telegram
+tool은 `FAIL`했고, kernel audit는 `/dev/pts/0` inherited/open `rw` denial을 기록했습니다.
+후속 3~7은 failed conversation을 재사용했으므로 독립 tool 결과가 아니며 approved
+write는 `NOT RUN`입니다. 공개 2.0.18 수용은 전체 `FAIL`입니다.
+
+2.1.0은 supported mount·manager API·installed MCP·command와 bounded Host/Supervisor
+log projection을 operational blacklist 아래 엽니다. raw log는 제공하지 않고 exact App
+token과 known credential-shaped line/block을 제거하지만 arbitrary unkeyed application
+text의 완전한 secret 판별은 보장하지 않습니다. native `read_file`/`write_file`은 symlink
+alias 우회를 막기 위해 두 mode에서 전역 deny하며 ordinary file은 confined `ha_files`의
+`ha_files_list`, `ha_files_read_text`, `ha_files_write_text`만 사용합니다. secrets,
+`.storage`, OAuth/token/key, policy, credential `/proc`, Recorder write와 raw host/Docker
+경계는 계속 막습니다. `request-review`가 기본이고 explicit `always-proceed`는 blacklist
+밖 installed MCP·command·URL·Playwright interaction의 autonomous-admin mode입니다.
+`strict`/`proceed-in-sandbox`는 `request-review`로 정규화합니다. 이 breaking 전환은
+`breaking_versions`에 2.1.0을 추가합니다. 2.1.0 amd64/aarch64 실기기 수용은 배포 시점
+`NOT RUN`, 전체 v2 수용은 `PARTIAL`입니다. 2.0.12 downgrade는 clean/safe/lossless
+fallback이 아닙니다.
 
 ## 빠른 시작
 
@@ -56,11 +65,13 @@ Telegram 카드로 처리합니다. 최대 31개 선택지와 취소를 지원�
 임의의 미래/plugin MCP를 투명하게 가로채지는 않으며 지원하지 않는 side effect는
 fail closed합니다. 최초 OAuth가 없으면 Web/SSH에서 한 번 로그인해야 합니다.
 
-Telegram의 effective native 권한은 고정 CLI 제약 때문에 `request-review` 하나입니다.
-schema의 `strict`, `always-proceed`, `proceed-in-sandbox`는 upgrade 입력 호환용이며
-user-files updater가 모두 `request-review`로 정규화합니다. Playwright 자동 허용은
-upstream `readOnly: true`인 console/network/snapshot/screenshot 네 도구뿐이고
+Telegram의 기본 effective native 권한은 `request-review`이고 explicit
+`always-proceed`도 지원합니다. `strict`와 `proceed-in-sandbox`는 legacy upgrade 입력으로
+`request-review`에 정규화합니다. request-review의 Playwright 자동 허용은 upstream
+`readOnly: true`인 console/network/snapshot/screenshot 네 도구뿐이고
 navigate/tabs/hover/wait/resize/close 등은 typed adapter 전까지 fail closed합니다.
+always-proceed는 current authenticated user request 범위의 installed Playwright
+interaction을 허용하지만 mandatory blacklist를 열지는 않습니다.
 proposal 등록 뒤 encrypted approval/card가 봉인되기 전 bridge가 종료되면 등록 자체를
 복구할 수 없으므로 원래 요청을 다시 보내야 합니다.
 

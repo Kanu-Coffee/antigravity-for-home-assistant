@@ -2,6 +2,71 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.1.0] - 2026-08-19
+
+### Changed
+
+- Replace the narrow operational allowlist with an explicit operational
+  blacklist. Supported ordinary work now includes `/config`, `/share`,
+  `/media`, non-credential persistent HOME paths, temporary workspaces,
+  ordinary system commands, installed MCP servers, the supported Core and
+  Supervisor manager APIs, and bounded Host/Supervisor log projections. Raw
+  logs remain unavailable; the broker removes the exact App token and known
+  credential-shaped lines/blocks without claiming that arbitrary unkeyed
+  application text can always be classified as non-secret.
+  This is a breaking permission-policy change and `2.1.0` is added to
+  `breaking_versions`.
+- Keep `request-review` as the safe default: ordinary reads and managed read,
+  validation, memory, and proposal tools may proceed, while writes, commands,
+  URL execution, and mutation-capable tools require native review or a
+  requester-bound Telegram proposal. Restore explicitly selected
+  `always-proceed` as an autonomous-administrator mode for ordinary operational
+  read/write/command/URL and installed-MCP work. `strict` and
+  `proceed-in-sandbox` remain legacy upgrade inputs and normalize to
+  `request-review`.
+- Retain mandatory native and AppArmor denies in both modes for
+  `secrets.yaml`, `.storage`, OAuth and cloud credentials, App/Supervisor/
+  Telegram/browser/SSH tokens and keys, App-owned permission and MCP policy,
+  credential-bearing process introspection, Recorder writes, raw backup/SSL/
+  other-App configuration mounts, and other protected credential stores.
+  Optional sensitive-data access grants Recorder diagnostics read-only; it
+  never grants Recorder writes or protected credential access.
+- Deny the native `read_file` and `write_file` tools globally in both modes;
+  their lexical-path decision can be bypassed by a symlink alias. Route
+  ordinary file work through the confined `ha_files` MCP tools
+  `ha_files_list`, `ha_files_read_text`, and `ha_files_write_text`. They serve
+  only `/config`, `/share`, `/media`, ordinary `/data/home`, `/tmp`, and
+  `/var/tmp`, bound UTF-8 files to 1 MiB and listings to 200 entries, reject
+  symbolic or multiply linked files, and use same-directory atomic writes with
+  optional `expected_sha256` conflict detection.
+- Keep the App inside the Supervisor-supported container boundary. Version
+  2.1.0 does not request `full_access`, `docker_api`, the Docker socket, a host
+  root or host PID mount, privileged capabilities, or protection-mode disablement.
+- Quarantine a native Telegram conversation after a worker failure before the
+  next request, and durably acknowledge the failed update. This prevents later
+  prompts from reusing a failed conversation and prevents replay of a mutation
+  request whose delivery outcome is already terminal.
+
+### Field evidence and limitations
+
+- Public 2.0.18 on real HAOS 18.2 amd64 passed App startup, native
+  `antigravity --version` with status 0, Telegram transport, and a no-tool chat.
+  Web `agy`/`antigravity` interactive I/O failed: current kernel audit records
+  the confined interactive profile denying inherited/open read-write access to
+  `/dev/pts/0`. The first managed Telegram tool request ended in a terminal
+  error. Tests 3 through 7 then reused that failed conversation and are not
+  independent PASS/FAIL evidence. Approved write execution remained `NOT RUN`.
+  Public 2.0.18 acceptance is therefore `FAIL` overall.
+- Source, component, container, and kernel-enforced regression results for
+  2.1.0 are automated evidence, not real HAOS evidence. Real-device 2.1.0
+  acceptance on amd64 and aarch64 is `NOT RUN` before field testing; overall v2
+  acceptance remains `PARTIAL` at publication.
+- Version 2.0.12 is not a clean, automatic, or lossless fallback. Its custom
+  AppArmor attachment failed, Supervisor does not support a direct downgrade,
+  and restoring an exact 2.0.12 App backup replaces newer App `/data`, including
+  later OAuth, memory, approval, outbox, and identity state. Do not present it
+  as the normal repair for the 2.0.18 permission failure.
+
 ## [2.0.18] - 2026-08-19
 
 ### Fixed

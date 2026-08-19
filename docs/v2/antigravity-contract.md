@@ -130,43 +130,31 @@ workspace plugin은 자동 삭제하지 않는다.
 `preserve`/`refresh_managed`는 기존 알 수 없는 key를 보존하며 App이 소유한 key만
 merge한다. 2.0.12부터 `telegram_enabled=true`이면 안전한 root-owned single-link
 regular file이고 parse 가능한 기존 settings에 한해 migration mode와 ownership state에
-관계없이 Telegram permission 경계를 transaction backup 뒤 reconcile한다. 이 예외는
-`allowNonWorkspaceAccess=false`, `artifactReviewPolicy=agent-decides`,
-`toolPermission=request-review`, `enableTerminalSandbox=false`와
+관계없이 Telegram permission 경계를 transaction backup 뒤 reconcile한다. 2.1.0은
+`allowNonWorkspaceAccess=true`, `artifactReviewPolicy=agent-decides`,
+선택된 effective `toolPermission`, `enableTerminalSandbox=false`와
 `permissions.allow`/`ask`/`deny` 전체를 image canonical policy로 맞추며, 이 다섯 App
 관리 보안 key 밖의 사용자 top-level key는 보존한다. 입력과 출력은 256 KiB 이하이며
 안전한 기존 mode drift는 transaction에서 0600으로 강화한다.
 명시적 `reset_v2`는 Telegram 활성화 여부와 무관하게 managed key와 permission 세
-bucket을 exact default로 복구하는 별도 recovery control이다. 최소 관리 key는 다음과
-같다.
+bucket을 exact default로 복구하는 별도 recovery control이다. 2.1.0의 두 canonical
+mode는 다음과 같다. 두 mode의 `deny`에는 아래 mandatory sensitive-path set 전체가
+동일하게 들어간다.
 
 ```json
 {
   "toolPermission": "request-review",
   "permissions": {
     "allow": [
-      "read_file(/config)",
-      "read_file(/data/home/.gemini/config)",
-      "read_file(/data/home/.gemini/antigravity-cli/agents)",
-      "read_file(/data/home/.gemini/antigravity-cli/plugins)",
-      "read_file(/data/home/.gemini/antigravity-cli/skills)",
-      "read_file(/data/home/.gemini/GEMINI.md)",
-      "read_file(/data/home/.gemini/antigravity-cli/settings.json)",
+      "read_url(*)",
       "mcp(ha_change/ha_change_propose)",
       "mcp(telegram_action/telegram_action_propose)",
+      "mcp(ha_files/ha_files_list)",
+      "mcp(ha_files/ha_files_read_text)",
       "mcp(ha_memory/memory_search)",
       "mcp(ha_memory/memory_show)",
       "mcp(ha_memory/memory_status)",
-      "mcp(ha_read/ha_read_app_logs)",
-      "mcp(ha_read/ha_read_config)",
-      "mcp(ha_read/ha_read_core_logs)",
-      "mcp(ha_read/ha_read_history)",
-      "mcp(ha_read/ha_read_registry)",
-      "mcp(ha_read/ha_read_services)",
-      "mcp(ha_read/ha_read_state)",
-      "mcp(ha_read/ha_read_states)",
-      "mcp(ha_read/ha_read_system_info)",
-      "mcp(ha_read/ha_read_traces)",
+      "mcp(ha_read/<each exact managed read tool>)",
       "mcp(ha_validate/ha_validate_config)",
       "mcp(ha_validate/ha_verify_state)",
       "mcp(playwright/browser_console_messages)",
@@ -174,49 +162,92 @@ bucket을 exact default로 복구하는 별도 recovery control이다. 최소 �
       "mcp(playwright/browser_snapshot)",
       "mcp(playwright/browser_take_screenshot)"
     ],
-    "ask": [],
+    "ask": [
+      "mcp(ha_files/ha_files_write_text)",
+      "execute_url(*)",
+      "command(*)"
+    ],
     "deny": [
-      "read_file(/data/options.json)",
-      "write_file(/data/options.json)",
-      "read_file(/run/antigravity-ha/supervisor.token)",
-      "write_file(/run/antigravity-ha/supervisor.token)",
-      "read_file(/run/antigravity-ha/home-assistant-browser.token)",
-      "write_file(/run/antigravity-ha/home-assistant-browser.token)",
-      "write_file(/data/home/.gemini/antigravity-cli/settings.json)",
-      "read_file(/data/home/.gemini/config/mcp_config.json)",
-      "write_file(/data/home/.gemini/config/mcp_config.json)",
+      "read_file(*)",
+      "write_file(*)",
       "read_file(/config/secrets.yaml)",
       "write_file(/config/secrets.yaml)",
       "read_file(/config/.storage)",
       "write_file(/config/.storage)",
-      "read_file(/config/.ssh)",
-      "write_file(/config/.ssh)",
-      "read_file(/data/home/.ssh)",
-      "write_file(/data/home/.ssh)",
-      "read_file(/root/.ssh)",
-      "write_file(/root/.ssh)"
+      "read_file(/data/home/.gemini)",
+      "write_file(/data/home/.gemini)",
+      "read_file(/data/home/.gemini/antigravity-cli/settings.json)",
+      "write_file(/data/home/.gemini/antigravity-cli/settings.json)",
+      "<all exact App/OAuth/cloud/SSH/proc credential-path denies>"
     ]
   }
 }
 ```
 
-1.1.13의 directory target은 재귀이며 deny가 ask와 allow보다 우선한다. 2.0.11은
-bounded native read와 exact HA read/validate/memory-read, 두 non-executing proposal
-MCP 및 upstream `readOnly: true` Playwright 네 도구만 unattended allow에 둔다.
+`always-proceed`는 같은 mandatory `deny`를 쓰며 allow/ask만 다음처럼 바뀐다.
+
+```json
+{
+  "toolPermission": "always-proceed",
+  "permissions": {
+    "allow": [
+      "read_url(*)",
+      "execute_url(*)",
+      "command(*)",
+      "mcp(*)"
+    ],
+    "ask": [],
+    "deny": [
+      "read_file(*)",
+      "write_file(*)",
+      "<same mandatory exact sensitive-path deny set>"
+    ]
+  }
+}
+```
+
+placeholder는 user-facing native rule이 아니라 문서 축약이다. 실제 exact deny 목록은
+image-managed `telegram-permission-policy.mjs`의 canonical set이며 source contract가
+누락·중복·mode 차이를 검증한다. 여기에는 전체 `.gemini` credential enclave,
+App/Supervisor/browser/Telegram token, native settings/MCP policy, SSH/cloud credential,
+`secrets.yaml`, `.storage`, SSL private material과 self credential-bearing `/proc` surface가
+포함된다. deny precedence와 AppArmor가 두 mode에서 이를 강제한다.
+
+1.1.13의 directory target은 재귀이며 deny가 ask와 allow보다 우선한다. 그러나 native
+file 도구는 lexical path 승인 뒤 symlink target이 OAuth 또는 `.storage`로 바뀔 수 있어
+2.1.0 두 mode의 deny에 `read_file(*)`와 `write_file(*)`를 항상 둔다. ordinary file
+access는 image-managed `ha_files` MCP만 담당한다. server name은 `ha_files`, MCP
+`serverInfo.name`은 `antigravity-ha-files`이고 tool은 `ha_files_list`,
+`ha_files_read_text`, `ha_files_write_text`다. `/config`, `/share`, `/media`, ordinary
+`/data/home`, `/tmp`, `/var/tmp`만 허용하며 UTF-8 file은 최대 1 MiB, directory listing은
+최대 200개다. symlink·non-regular·multi-hardlink와 path/TOCTOU swap을 fail closed하고,
+write는 target directory 안의 atomic replace와 optional `expected_sha256` 비교를 사용한다.
+`.gemini`, secrets/storage/SSH/cloud/browser/Supervisor/policy-integrity 경계와 Recorder
+write는 항상 거부하며 Recorder read는 sensitive-data marker가 있을 때만 허용한다.
+
+2.1.0 `request-review`는 `read_url(*)`, exact `ha_files` list/read와 HA
+read/validate/memory-read, 두 non-executing proposal MCP 및 upstream `readOnly: true`
+Playwright 네 도구를 allow에 둔다. `ha_files_write_text`, `execute_url(*)`, `command(*)`는
+ask에 둔다.
 그 네 도구는 `browser_console_messages`, `browser_network_requests`,
 `browser_snapshot`, `browser_take_screenshot`이다. 일반 native write, command, URL
 execution, `browser_navigate`/`browser_navigate_back`/`browser_tabs`/`browser_hover`/
 `browser_wait_for`/`browser_resize`/`browser_close` 등 mutation-capable browser와
-arbitrary MCP wildcard는 allow/ask에 두지 않으며 typed adapter 전까지 fail closed한다. secrets, storage,
+arbitrary MCP wildcard는 `request-review` allow에 두지 않으며 typed adapter 전까지 fail closed한다.
+explicit `always-proceed`는 `mcp(*)`를 포함한 ordinary managed file/URL/command와 installed
+Playwright navigation/interaction을 allow하고 ask를 비우지만 같은 mandatory deny를 쓴다.
+따라서 이 mode에서도 native raw file tool은 사용할 수 없고 `ha_files`가 file 경계를
+강제한다. secrets, storage,
 runtime option/token, native MCP config와 SSH/cloud credential 경로는 exact native
-deny와 AppArmor deny를 함께 유지한다. 사용자 소유 rule은 merge 중 보존되며 stronger
-ask/deny는 계속 managed allow보다 우선한다.
+deny와 AppArmor deny를 함께 유지한다. Telegram이 비활성인 일반 preserve merge에서는
+사용자 소유 rule과 stronger ask/deny를 보존한다. Telegram-enabled startup은 아래의 더
+강한 canonical replacement 계약을 적용한다.
 
-안전하게 ownership이 확인된 2.0.9/2.0.10 App-owned `command(*)`/`mcp(*)`/write broad
-allow는 2.0.11 preserve migration에서도 위 policy로 원자 교체한다. 임의 future 또는
-user plugin MCP를 allowlist에 자동 추가하지 않는다. Telegram side effect는
+안전하게 ownership이 확인된 2.0.11~2.0.18 App-owned bounded layout은 2.1.0의 선택
+mode로 원자 교체한다. `request-review` Telegram side effect는
 `ha_change_propose` 또는 `telegram_action_propose`가 표현해야 하며 그렇지 않으면 fail
-closed한다.
+closed한다. explicit `always-proceed`는 current user request 범위에서 installed MCP를
+자율 실행할 수 있지만 mandatory deny와 broker가 분류한 고위험 불변조건을 낮추지 않는다.
 
 2.0.12의 Telegram-enabled reconciliation은 2.0.11의 일반 preserve merge보다 좁고
 강한 startup 불변조건이다. Telegram이 활성화된 동안에는 user-owned permission rule과
@@ -233,15 +264,15 @@ settings gate까지 도달하면 bridge는 `permission_boundary_blocked`를 한 
 API 요청 없이 process 안에서 fail-closed hold한다. fatal exit와 S6 restart loop를 만들지
 않으며 안전한 복구 뒤 App restart가 필요하다.
 
-`antigravity_tool_permission`은 다음처럼 effective `toolPermission`에 매핑한다. 고정
-CLI의 headless 가용성 때문에 `request-review`만 effective 값이고, schema의 나머지
-세 값은 저장된 Supervisor option으로 upgrade를 시작하기 위한 입력 호환성이다.
+`antigravity_tool_permission`은 다음처럼 effective `toolPermission`에 매핑한다.
+`request-review`와 `always-proceed`가 effective 값이며 나머지 두 값은 저장된 Supervisor
+option으로 upgrade를 시작하기 위한 legacy 입력 호환성이다.
 
 | App option | native value | App 의미 |
 | --- | --- | --- |
-| `request-review` | `request-review` | 새 설치 기본값. interactive write/command를 TUI에서 검토하고 Telegram은 proposal-first 처리 |
+| `request-review` | `request-review` | 새 설치 기본값. URL·managed read 및 `ha_files` list/read allow, `ha_files` write/command/URL ask, Telegram mutation proposal-first |
 | `proceed-in-sandbox` | `request-review` | deprecated autonomous 입력. warning 후 보수적으로 정규화 |
-| `always-proceed` | `request-review` | deprecated autonomous 입력. warning 후 보수적으로 정규화 |
+| `always-proceed` | `always-proceed` | 명시적 autonomous-admin. mandatory blacklist 밖 command/URL/installed MCP 허용; file은 계속 `ha_files`, native raw file deny |
 | `strict` | `request-review` | legacy upgrade 입력. warning 후 headless-compatible 값으로 정규화 |
 
 1.1.13 `--print --output-format stream-json`은 native permission request를 외부
@@ -258,8 +289,8 @@ proposal MCP가 private coordinator에 등록한 사실 자체는 crash-durable�
 종료되면 원 요청을 다시 보내 새 proposal을 만들어야 한다. durable approval이라는
 보장은 봉인 이후 decision/result와 broker가 이미 접수한 실행에만 적용한다.
 
-임의 future/user plugin MCP에 native prompt interception을 확장할 수 없으므로 이런
-side effect는 Telegram에서 fail closed한다. headless permission denial 때 한 번
+`request-review`에서 임의 future/user plugin MCP에 native prompt interception을 확장할
+수 없으므로 이런 side effect는 Telegram에서 fail closed한다. headless permission denial 때 한 번
 proposal-first 재계획을 요청할 수 있지만 거부된 invocation을 승인 또는 resume하지
 않는다. authenticated Web/SSH는 native interactive review 아래 direct tool을 쓸 수 있고
 Telegram card로 자동 변환되지 않는다.
@@ -288,7 +319,7 @@ permission precedence는 native 규칙대로 deny > ask > allow다. AppArmor den
 App-managed proposal approval은 native option으로 완화되지 않는다.
 
 App 관리 permission enforcement의 self-bypass를 막기 위해 raw file tool의
-`settings.json` 직접 write는 exact deny다. interactive Web/SSH의 일반 전역 설정은 먼저
+`settings.json` 직접 read/write는 exact deny다. interactive Web/SSH의 일반 전역 설정은 먼저
 `agy-settings sha256`으로 현재 digest를 얻고 `expected_sha256`과 JSON merge `patch`를
 stdin으로 `agy-settings patch`에 전달해 원자적으로 수정한다. helper는
 `permissions`, `enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`,
@@ -460,8 +491,10 @@ first-run OAuth가 가능한 controlling TTY에서 `agy`를 실행하고 안내�
 - exit code 0과 terminal `result` event가 모두 있어야 성공이다.
 - `--continue`는 다른 대화를 잘못 선택할 수 있어 bridge에서 사용하지 않는다.
 - 최초 prompt 전에 검증된 per-user/per-chat conversation ID를 영속 결합하며 모든
-  후속 요청과 승인 callback에 `--conversation <id>`로 전달한다. 실행 실패는 새
-  ID를 만들지 않으며 `/new`만 rotation을 허용한다.
+  후속 요청과 승인 callback에 `--conversation <id>`로 전달한다. 정상 conversation은
+  `/new`만 rotation을 허용한다. terminal/native worker failure는 failed conversation을
+  quarantine하고 update를 durable ACK한 뒤 다음 user request에 새 generation/ID를
+  결합한다. 실패한 prompt나 mutation을 자동 replay하지 않는다.
 - 권한은 별도 Telegram mode가 아니라 native global `toolPermission`과 민감정보
   option에서 온다. native nested sandbox 대신 세 채널에 동일한 AppArmor command
   경계를 적용하고 broker형 변경의 사람 확인은 같은 conversation에 묶는다.

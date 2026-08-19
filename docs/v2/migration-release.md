@@ -9,7 +9,7 @@ public App은 사용자의 HAOS에서 source build하지 않고 GHCR prebuilt im
 받는다.
 
 ```yaml
-version: "2.0.18"
+version: "2.1.0"
 arch:
   - amd64
   - aarch64
@@ -21,6 +21,7 @@ breaking_versions:
   - "2.0.11"
   - "2.0.12"
   - "2.0.13"
+  - "2.1.0"
 ```
 
 `apparmor`의 Supervisor 기본값은 `true`다. pinned App linter가 중복 기본값을
@@ -33,7 +34,7 @@ aarch64 manifest가 모두 있을 때만 `config.yaml`에 두 아키텍처를 �
 permission 및 persistent mutation 범위 전환, 2.0.11의 proposal-first
 `request-review`/universal managed approval 전환, 2.0.12의 Telegram-enabled
 permission reconciliation 전환, 2.0.13의 Supervisor-compatible custom AppArmor
-profile 활성화는 breaking version으로 표시하고
+profile 활성화와 2.1.0의 dual-mode operational-blacklist 전환은 breaking version으로 표시하고
 사용자가 release note를 읽고 선택하게 한다.
 
 2.0.12의 `apparmor.txt`에는 들여쓰기 없는 최상위 `profile` 선언이 23개 있었다.
@@ -98,13 +99,43 @@ managed MCP와 `telegram_action_propose`는 실패했다. kernel audit는
 거부를 확인했고, 두 confined launcher는 승인 제안에 필요한 requester/run binding
 다섯 값을 버렸다. 승인된 쓰기는 `NOT RUN`이고 2.0.17 전체 수용은 `FAIL`이다.
 
-2.0.18은 proposal client에 그 exact module read만 추가하고 restricted/sensitive-read
+2.0.18은 proposal client에 그 exact module read를 추가하고 restricted/sensitive-read
 launcher가 완전한 다섯 값 binding만 검증·보존하며 일부 binding은 거부하게 한다. broad
 AppArmor/native-tool 권한, 환경 전체 상속이나 승인 없는 direct write/command는 추가하지
-않는다. 2.0.18 automated regression은 HAOS 증거가 아니며 amd64/aarch64 실기기 수용은
-릴리스 전 `NOT RUN`, 전체 v2 수용은 `PARTIAL`이다. 2.0.16~2.0.18 corrective patch는 새
-migration이 아니므로 `breaking_versions`에는 2.0.13까지만 유지한다. 2.0.18 뒤 추가
-배포 변경이 필요하면 이미 사용한 tag를 재사용하지 않고 최소 `2.0.19`를 사용한다.
+않았다. 이후 실제 공개 2.0.18 amd64는 startup, `antigravity --version` status 0,
+Telegram transport/no-tool chat을 `PASS`했지만 Web `agy`/`antigravity` interactive I/O와
+첫 managed Telegram tool이 `FAIL`했다. current kernel audit는 `/dev/pts/0`
+inherited/open `rw` denial을 기록한다. 후속 3~7은 failed conversation을 재사용했으므로
+독립 tool 결과가 아니고 approved write는 `NOT RUN`이다. 공개 2.0.18 수용은 `FAIL`이다.
+
+2.1.0은 narrow operational allowlist를 supported mount/API의 broad operational grant와
+explicit blacklist로 교체한다. ordinary `/config`, `/share`, `/media`, non-credential
+persistent HOME/temp, system command, installed MCP, supported Core/Supervisor manager API와
+known credential-shaped/exact-token redaction을 거친 bounded Host/Supervisor log를
+지원한다. raw logs는 노출하지 않으며 arbitrary unkeyed application text의 secret 여부를
+완전 판별한다고 주장하지 않는다. mandatory deny는 secrets/storage/OAuth/token/key,
+App-owned permission/MCP policy, credential-bearing `/proc`, Recorder write와 raw
+backup/SSL/other-App config에 적용된다. raw host root/PID/journal, Docker socket,
+`full_access`, `docker_api`와 보호 mode 해제는 추가하지 않는다.
+
+기본 `request-review`는 URL read, confined `ha_files` list/read와 managed
+read/validate/memory/proposal을 허용하고 `ha_files` write/command/URL execute를
+ask/proposal-first로 보낸다. explicit `always-proceed`는 mandatory blacklist 밖의 command/URL,
+`mcp(*)`와 installed Playwright interaction을 autonomous-admin으로 허용한다. `strict`와
+`proceed-in-sandbox`는 `request-review`로 정규화한다. failed native worker conversation은
+quarantine하고 failed update를 durable ACK한 뒤 다음 user request에 새 generation을
+결합하며 mutation을 replay하지 않는다. 이 trust/permission 변화 때문에 2.1.0을
+`breaking_versions`에 추가한다. 2.1.0 automated regression은 HAOS 증거가 아니며
+amd64/aarch64 실기기 수용은 배포 시점 `NOT RUN`, 전체 v2 수용은 `PARTIAL`이다.
+
+native `read_file(*)`/`write_file(*)`는 symlink alias 우회를 막기 위해 두 mode에서
+mandatory deny한다. ordinary file access는 server `ha_files`의
+`ha_files_list`, `ha_files_read_text`, `ha_files_write_text`로 이관한다. 허용 root는
+`/config`, `/share`, `/media`, ordinary `/data/home`, `/tmp`, `/var/tmp`이며 UTF-8
+1 MiB·listing 200개 상한, no-link regular-file, same-directory atomic write와 optional
+`expected_sha256`를 강제한다. legacy permission bucket에서 raw file allow/ask를
+보존하지 않으며 `.gemini`, secrets/storage/credential/policy/Recorder-write 및 alias는
+fail closed한다.
 
 image에 고정한 Antigravity binary는 App runtime에서 자체 갱신하지 않는다. 모든
 native launch와 `env -i` child allowlist는 공식 opt-out
@@ -169,10 +200,15 @@ version을 marker에 기록한다. 같은 이름의 기존 plugin에 marker가 �
   broad allow layout은 2.0.11에서 `request-review`, bounded native/HA read와 exact
   `ha_change_propose`/`telegram_action_propose` allow로 version migration한다. 사용자
   소유 rule과 stronger deny, OAuth, global plugin/agent/skill/rule은 보존한다.
+- App ownership이 확인된 2.0.11~2.0.18 bounded layout은 2.1.0에서 선택된
+  `request-review` 또는 explicit `always-proceed` canonical policy로 version migration한다.
+  legacy `strict`/`proceed-in-sandbox`는 `request-review`로 정규화하고 기존 native
+  `read_file`/`write_file` allow/ask는 보존하지 않는다. ordinary file은 설치된
+  `ha_files` MCP로만 접근한다.
 - 2.0.12부터 Telegram이 켜져 있으면 App ownership과 무관하게 root-owned single-link
   regular·256 KiB 이하의 parse 가능한 settings를 먼저 transaction backup하고
   `allowNonWorkspaceAccess`, `artifactReviewPolicy`, `toolPermission`, native sandbox와
-  permission 세 bucket을 exact 29/0/33 safe Telegram policy로 정규화한다. unknown
+  permission 세 bucket을 선택된 2.1.0 mode의 exact Telegram policy로 정규화한다. unknown
   custom allow/ask와 stronger deny를 permission bucket 안에는 보존하지 않지만, 이
   다섯 App 관리 보안 key 밖의 top-level settings, global MCP/plugin/agent/skill/rule,
   OAuth와 `/config`는 보존한다. 기존 mode는 0600으로 강화한다. 이는 headless startup
@@ -183,11 +219,13 @@ version을 marker에 기록한다. 같은 이름의 기존 plugin에 marker가 �
   0600으로 강화한다. bridge는
   Bot API에 접속하기 전에 sanitized `permission_boundary_blocked`를 한 번 기록하고
   supervised process를 종료하지 않은 채 대기한다. 안전한 복구 후 App을 재시작한다.
-- managed Playwright allow는 upstream `readOnly: true`인
+- `request-review`의 managed Playwright allow는 upstream `readOnly: true`인
   `browser_console_messages`, `browser_network_requests`, `browser_snapshot`,
   `browser_take_screenshot` 네 개로 축소한다. legacy ownership set의 navigate/back,
   tabs, hover, wait, resize, close rule은 ownership 인식에만 사용하고 새 default에서는
   제거한다. typed adapter 전까지 이 mutation-capable 도구는 Telegram에서 fail closed한다.
+  explicit `always-proceed`는 installed Playwright interaction을 autonomous-admin
+  `mcp(*)` 범위에 포함한다.
 - unsafe legacy Codex식 설정은 실행하지 않으며 경고와 `refresh_managed` 안내를
   제공한다.
 
@@ -230,7 +268,8 @@ v2.0.x는 update input을 읽기 위해 deprecated v1 key와 enum을 migration-o
 | `antigravity_approval_policy=untrusted` | warning 후 effective `request-review` |
 | `antigravity_approval_policy=on-request` | `antigravity_tool_permission=request-review` |
 | `antigravity_approval_policy=never` | `request-review`로 낮추고 명시적 경고. auto-approve를 승계하지 않음 |
-| `antigravity_tool_permission=strict\|always-proceed\|proceed-in-sandbox` | 2.0.11부터 warning 후 `request-review`로 정규화; Telegram side effect는 proposal card 필요 |
+| `antigravity_tool_permission=strict\|proceed-in-sandbox` | warning 후 `request-review`로 정규화 |
+| `antigravity_tool_permission=always-proceed` | 2.1.0에서 explicit autonomous-admin 선택으로 보존; mandatory blacklist는 계속 적용 |
 | `antigravity_sandbox_mode=*` | 폐기. `antigravity_terminal_sandbox=false`로 정규화 |
 | `antigravity_terminal_sandbox=true\|false` | 2.0.9부터 deprecated/no-op. warning 후 `false`로 정규화; AppArmor command 경계는 항상 유지 |
 | `browser_approval_policy=*` | 제거. v2 browser MCP allowlist 사용 |
@@ -243,10 +282,10 @@ v2.0.x는 update input을 읽기 위해 deprecated v1 key와 enum을 migration-o
 | legacy Telegram pairing/session | `/data/antigravity-ha/quarantine/v1-telegram/`으로 root-only 원자 격리하고 v2에서 재사용하지 않음 |
 | `home_assistant_browser_token` | 새 secret으로 복사하지 않음. 관리 identity 재검증 또는 setup 안내 |
 
-`request-review`가 2.0.11의 유일한 effective native 값이다. config schema가
-`strict`, `always-proceed`, `proceed-in-sandbox`를 계속 수용하는 이유는 기존
-Supervisor option으로 update container를 시작하기 위한 입력 호환성뿐이며,
-user-files updater는 native settings를 쓰기 전에 모두 `request-review`로 정규화한다.
+2.1.0의 effective native 값은 기본 `request-review`와 explicit `always-proceed`다.
+config schema가 `strict`, `proceed-in-sandbox`를 계속 수용하는 이유는 기존 Supervisor
+option으로 update container를 시작하기 위한 입력 호환성뿐이며 user-files updater는
+native settings를 쓰기 전에 둘을 `request-review`로 정규화한다.
 
 Supervisor의 manual update는 새 App config를 저장한 뒤 기존 실행 상태를
 복원하는 `start()`에서 `write_options()` schema 검증을 먼저 수행하고, 검증이
@@ -394,7 +433,8 @@ backup 복원까지만 확인했다. Supervisor의 이전 immutable image 선택
 OAuth/SSH/browser/memory 보존과 schema downgrade restore는 실행하지 않았으므로
 MIG-007은 `PARTIAL`이다.
 
-2.0.12는 자동 또는 무손실 rollback target이 아니다. exact public image/tag는 있지만
+2.0.12는 2.0.18 permission failure의 clean/safe fix도, 자동 또는 무손실 rollback
+target도 아니다. exact public image/tag는 있지만
 custom 23-profile policy attach가 거부됐고, 실제 성공은 amd64 `docker-default`에서의
 제한된 update/reconnect 범위뿐이며 aarch64는 `NOT RUN`이다. Supervisor direct
 downgrade는 지원되지 않는다. 사용자가 보유한 exact 2.0.12 App backup을 복원하는
@@ -402,10 +442,11 @@ downgrade는 지원되지 않는다. 사용자가 보유한 exact 2.0.12 App bac
 approval/outbox·identity state는 소실된다. 그러한 backup 없이 uninstall 또는 Docker
 상태 수동 조작을 복구 절차로 사용하지 않는다.
 
-backup이 없고 2.0.18도 실기기 수용에 실패한다면 fallback은 현재 `/data`를 보존하는
-새로운 더 높은 numeric compatibility patch, 최소 `2.0.19`여야 한다. custom attachment를 의도적으로
-되돌리는 선택은 명시적 security degradation이며, 별도 candidate/HAOS 검증 전에는
-감사된 contingency `NOT RUN`일 뿐 정상 복구나 PASS로 기록하지 않는다. 문제 분석 중
+backup이 없고 2.1.0도 실기기 수용에 실패한다면 fallback은 현재 `/data`를 보존하는
+새로운 더 높은 numeric compatibility patch, 최소 `2.1.1`이어야 한다. custom attachment나
+mandatory blacklist를 의도적으로 되돌리는 선택은 명시적 security degradation이며,
+별도 candidate/HAOS 검증 전에는 감사된 contingency `NOT RUN`일 뿐 정상 복구나 PASS로
+기록하지 않는다. 문제 분석 중
 사용한 `reset_v2` mode는 정상화 뒤 반드시 `preserve`로 되돌린다.
 
 ## MIG-008 — multi-arch build

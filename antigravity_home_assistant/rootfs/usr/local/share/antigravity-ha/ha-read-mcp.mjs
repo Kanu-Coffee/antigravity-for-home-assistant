@@ -127,12 +127,12 @@ const tools = [
   },
   {
     name: "ha_read_system_info",
-    title: "Read projected Core or Supervisor information",
-    description: "Return a fixed safe projection of Core or Supervisor runtime information.",
+    title: "Read projected Core, Supervisor, or host information",
+    description: "Return a fixed safe projection of Core, Supervisor, or HAOS host runtime information.",
     inputSchema: {
       type: "object",
       properties: {
-        scope: { type: "string", enum: ["core", "supervisor"] },
+        scope: { type: "string", enum: ["core", "supervisor", "host"] },
       },
       required: ["scope"],
       additionalProperties: false,
@@ -150,7 +150,8 @@ const tools = [
   {
     name: "ha_read_core_logs",
     title: "Read a bounded tail of sanitized Home Assistant Core logs",
-    description: "Return at most 500 sanitized log lines with per-line and total response limits.",
+    description:
+      "Return at most 500 bounded log lines after known credential-shaped content is redacted; raw logs are unavailable through this tool.",
     inputSchema: {
       type: "object",
       properties: {
@@ -163,7 +164,8 @@ const tools = [
   {
     name: "ha_read_app_logs",
     title: "Read a bounded tail of sanitized Antigravity App logs",
-    description: "Return at most 500 sanitized log lines for this Home Assistant App.",
+    description:
+      "Return at most 500 bounded lines for this App after known credential-shaped content is redacted; raw logs are unavailable through this tool.",
     inputSchema: {
       type: "object",
       properties: {
@@ -172,6 +174,55 @@ const tools = [
       additionalProperties: false,
     },
     action: "app_logs",
+  },
+  {
+    name: "ha_read_addon_logs",
+    title: "Read a bounded tail of sanitized logs for one installed App",
+    description:
+      "Return at most 500 bounded lines for one exact App slug after known credential-shaped content is redacted; raw logs are unavailable through this tool.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string", pattern: "^[a-z0-9_-]+$", maxLength: 128 },
+        lines: { type: "integer", minimum: 1, maximum: 500, default: 200 },
+      },
+      required: ["slug"],
+      additionalProperties: false,
+    },
+    action: "addon_logs",
+  },
+  {
+    name: "ha_read_supervisor_logs",
+    title: "Read a bounded tail of sanitized Supervisor logs",
+    description:
+      "Return at most 500 bounded Supervisor lines after known credential-shaped content is redacted; raw logs are unavailable through this tool.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        lines: { type: "integer", minimum: 1, maximum: 500, default: 200 },
+      },
+      additionalProperties: false,
+    },
+    action: "supervisor_logs",
+  },
+  {
+    name: "ha_read_host_logs",
+    title: "Read a bounded tail of sanitized HAOS host logs",
+    description:
+      "Return at most 500 bounded host journal lines after known credential-shaped content is redacted, optionally for one validated syslog identifier such as audit; raw journal access is unavailable.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        identifier: {
+          type: "string",
+          pattern: "^[A-Za-z0-9_.@:-]+$",
+          maxLength: 128,
+        },
+        lines: { type: "integer", minimum: 1, maximum: 500, default: 200 },
+      },
+      additionalProperties: false,
+    },
+    action: "host_logs",
   },
 ].map((tool) => ({
   ...tool,
@@ -260,8 +311,11 @@ export function createHaReadMcpHandler({
     ) {
       return jsonRpcResult(id, errorContent(new HaReadError("invalid_request", "scope is invalid")));
     }
-    const action = tool.action ?? (arguments_.scope === "core" ? "core_info" :
-      arguments_.scope === "supervisor" ? "supervisor_info" : null);
+    const action = tool.action ?? ({
+      core: "core_info",
+      supervisor: "supervisor_info",
+      host: "host_info",
+    }[arguments_.scope] ?? null);
     if (action === null) return jsonRpcResult(id, errorContent(new HaReadError("invalid_request", "scope is invalid")));
     const payload = tool.action === null ? {} : arguments_;
     try {

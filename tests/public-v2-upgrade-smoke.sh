@@ -458,26 +458,29 @@ CANDIDATE_STATE
 run_bounded docker exec "${CANDIDATE_CONTAINER}" jq --exit-status \
   --arg marker "${SHARED_HOME_MARKER}" '
     .user_upgrade_marker == $marker
+    and .toolPermission == "request-review"
+    and .allowNonWorkspaceAccess == true
+    and .enableTerminalSandbox == false
     and (.permissions.allow | index("user(custom/global)") != null)
-    and (.permissions.allow | index("read_file(/config)") != null)
+    and (.permissions.allow | index("read_file(/config)") == null)
     and (.permissions.allow | index("write_file(/config)") == null)
-    and (.permissions.allow | index("read_file(/data/home/.gemini/config)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/config)") == null)
-    and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/agents)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/agents)") == null)
-    and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/plugins)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/plugins)") == null)
-    and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") == null)
+    and (.permissions.allow | index("read_url(*)") != null)
+    and (.permissions.allow | index("mcp(ha_files/ha_files_list)") != null)
+    and (.permissions.allow | index("mcp(ha_files/ha_files_read_text)") != null)
+    and (.permissions.allow | index("mcp(ha_read/ha_read_addon_logs)") != null)
     and (.permissions.allow | index("command(*)") == null)
     and (.permissions.allow | index("mcp(*)") == null)
-    and (.permissions.ask | index("command(*)") == null)
+    and (.permissions.ask | index("command(*)") != null)
+    and (.permissions.ask | index("execute_url(*)") != null)
+    and (.permissions.ask | index("mcp(ha_files/ha_files_write_text)") != null)
     and (.permissions.ask | index("write_file(*)") == null)
     and (.permissions.allow | index("mcp(ha_change/ha_change_propose)") != null)
     and (.permissions.allow
       | index("mcp(ha_read/ha_read_storage_usage)") != null)
     and (.permissions.allow
       | index("mcp(telegram_action/telegram_action_propose)") != null)
+    and (.permissions.deny | index("read_file(*)") != null)
+    and (.permissions.deny | index("write_file(*)") != null)
     and (.permissions.deny | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
     and (.permissions.deny | index("read_file(/data)") == null)
     and (.permissions.deny | index("write_file(/data)") == null)

@@ -266,7 +266,7 @@ def test_apparmor_docs_describe_discrete_px_profiles() -> None:
         )
 
 
-def test_v218_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> None:
+def test_v210_docs_preserve_history_and_bind_current_field_evidence() -> None:
     changelog = re.sub(
         r"\s+",
         " ",
@@ -274,8 +274,23 @@ def test_v218_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> 
     )
     assert changelog.startswith(
         "# Changelog All notable changes to this App are documented in this file. "
-        "## [2.0.18] - 2026-08-19"
+        "## [2.1.0] - 2026-08-19"
     )
+    for fragment in (
+        "Public 2.0.18 on real HAOS 18.2 amd64 passed App startup",
+        "Web `agy`/`antigravity` interactive I/O failed",
+        "Tests 3 through 7 then reused that failed conversation",
+        "Approved write execution remained `NOT RUN`",
+        "Public 2.0.18 acceptance is therefore `FAIL` overall",
+        "Deny the native `read_file` and `write_file` tools globally in both modes",
+        "`ha_files_list`, `ha_files_read_text`, and `ha_files_write_text`",
+        "Raw logs remain unavailable",
+        "arbitrary unkeyed application text",
+        "Real-device 2.1.0 acceptance on amd64 and aarch64 is `NOT RUN`",
+        "overall v2 acceptance remains `PARTIAL`",
+        "Version 2.0.12 is not a clean, automatic, or lossless fallback",
+    ):
+        assert fragment in changelog, f"2.1.0 changelog evidence drift: {fragment}"
     for fragment in (
         "Restore the image-managed MCP boundary found broken by public 2.0.17",
         "App startup, Ingress/Web terminal, the native CLI and basic conversation",
@@ -407,10 +422,12 @@ def test_v218_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> 
         "2.0.18 정적·component 수용",
         "일부 binding은 native child 시작 전에 실패",
         "direct unapproved write/command",
-        "2.0.18 amd64와 aarch64 실기기 결과는 릴리스 전 `NOT RUN`",
-        "2.0.12 rollback rehearsal은 Supervisor direct downgrade가 지원된다고 가정하지 않는다",
-        "higher-version security-degraded compatibility fallback",
-        "aarch64 owner waiver는 PASS가 아니며 전체 v2 수용은 `PARTIAL`",
+        "따라서 2.0.18 amd64 수용은 `FAIL`",
+        "aarch64는 `NOT RUN`이며 owner waiver는 PASS가 아니다",
+        "2.0.12 rollback rehearsal은 이를 2.0.18 permission failure의 clean/safe fix로 간주",
+        "Supervisor direct downgrade가 지원된다고 가정하지 않는다",
+        "최소 2.1.1 higher-version compatibility fallback",
+        "배포 시점 두 architecture는 `NOT RUN`이고 전체 v2 수용은 `PARTIAL`",
     ):
         assert fragment in plan, f"2.0.18 test-plan evidence drift: {fragment}"
 
@@ -437,10 +454,22 @@ def test_v218_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> 
         "승인된 쓰기는 `NOT RUN`",
         "exact proposal-client module read denial",
         "2.0.18에서 exact read 하나와 complete-tuple",
-        "2.0.18 amd64와 aarch64 실기기 수용은 릴리스 전 `NOT RUN`",
+        "공개 2.0.18 실제 amd64는 startup",
+        "후속 3~7은 failed conversation reuse라 독립 판정할 수 없고",
+        "approved write는 `NOT RUN`",
+        "2.1.0 amd64/aarch64 실기기 수용은 배포 시점 `NOT RUN`",
         "higher-version fallback은 명시적 security-degraded `NOT RUN` contingency",
     ):
         assert fragment in security, f"2.0.18 security scope drift: {fragment}"
+
+    plan_raw = read(V2 / "test-plan.md")
+    readme_raw = read(V2 / "README.md")
+    for text in (plan_raw, readme_raw):
+        normalized = re.sub(r"\s+", " ", text)
+        assert "ha-feedback-development" in normalized
+        assert "tools/development/ha-feedback" in normalized
+        assert "test mode" in normalized
+        assert "NOT RUN" in normalized
 
 
 def test_telegram_shared_context_inheritance_is_local_and_haos_gate_remains() -> None:
@@ -604,14 +633,39 @@ def test_v211_docs_define_proposal_first_managed_approval_boundary() -> None:
         assert "telegram_action_propose" in documents[name], (
             f"{name} omits the managed action routing boundary"
         )
+        for file_tool in (
+            "ha_files_list",
+            "ha_files_read_text",
+            "ha_files_write_text",
+        ):
+            assert file_tool in documents[name], f"{name} omits {file_tool}"
+        assert "read_file" in documents[name] and "write_file" in documents[name]
+        if name.endswith("-ko"):
+            assert "보장하지" in documents[name] or "완전 판별" in documents[name]
+        else:
+            assert "arbitrary unkeyed" in documents[name]
         assert "fail closed" in documents[name] or "fail-closed" in documents[name]
         assert "OAuth" in documents[name] and "NOT RUN" in documents[name]
 
     assert '"ask": []' in documents["contract"]
-    managed_allow = documents["contract"].split('"allow": [', 1)[1].split('"ask": []', 1)[0]
+    request_review = documents["contract"].split(
+        '"toolPermission": "request-review"', 1
+    )[1].split('`always-proceed`', 1)[0]
+    managed_allow = request_review.split('"allow": [', 1)[1].split('"ask": [', 1)[0]
     assert '"mcp(*)"' not in managed_allow
     assert '"command(*)"' not in managed_allow
     assert "mcp(telegram_action/telegram_action_propose)" in managed_allow
+    assert "mcp(ha_files/ha_files_list)" in managed_allow
+    assert "mcp(ha_files/ha_files_read_text)" in managed_allow
+    assert "mcp(ha_files/ha_files_write_text)" in request_review.split(
+        '"ask": [', 1
+    )[1]
+    always_proceed = documents["contract"].split(
+        '"toolPermission": "always-proceed"', 1
+    )[1]
+    assert '"mcp(*)"' in always_proceed
+    assert '"read_file(*)"' in always_proceed.split('"deny": [', 1)[1]
+    assert '"write_file(*)"' in always_proceed.split('"deny": [', 1)[1]
     assert "resume" in documents["telegram"]
     assert "requester FIFO" in documents["telegram"]
     assert "exactly" in documents["telegram"] or "정확히 한 번" in documents["telegram"]
@@ -626,7 +680,7 @@ def test_v211_docs_define_proposal_first_managed_approval_boundary() -> None:
     assert "effective native argv contains no native sandbox flag" in documents["contract"]
     assert "antigravity_home_assistant-command" in documents["contract"]
     assert "full_access" in documents["contract"] and "SYS_ADMIN" in documents["contract"]
-    assert "`settings.json` 직접 write는 exact deny" in documents["contract"]
+    assert "`settings.json` 직접 read/write는 exact deny" in documents["contract"]
     assert "`agy-settings sha256`" in documents["contract"]
     assert "`agy-settings patch`" in documents["contract"]
     for protected_key in (
@@ -655,7 +709,8 @@ def test_v211_docs_define_proposal_first_managed_approval_boundary() -> None:
     for name in ("readme-ko", "readme-en", "docs-ko", "docs-en", "contract"):
         text = documents[name]
         assert "strict" in text and "request-review" in text
-        assert "upgrade" in text and ("입력 호환" in text or "input compatibility" in text)
+        assert "legacy" in text
+        assert "upgrade" in text or "업그레이드" in text
 
     for rule in (
         "mcp(playwright/browser_console_messages)",
@@ -690,12 +745,24 @@ def test_v211_docs_define_proposal_first_managed_approval_boundary() -> None:
         assert "exact" in text
         assert "preserve" in text
 
-    translation_ko = read(ROOT / "antigravity_home_assistant" / "translations" / "ko.yaml")
-    translation_en = read(ROOT / "antigravity_home_assistant" / "translations" / "en.yaml")
-    assert "effective 값은 request-review 하나" in translation_ko
-    assert "request-review is the only effective value" in translation_en
-    assert "strict, always-proceed, proceed-in-sandbox" in translation_ko
-    assert "strict, always-proceed, and proceed-in-sandbox" in translation_en
+    translation_ko = re.sub(
+        r"\s+",
+        " ",
+        read(ROOT / "antigravity_home_assistant" / "translations" / "ko.yaml"),
+    )
+    translation_en = re.sub(
+        r"\s+",
+        " ",
+        read(ROOT / "antigravity_home_assistant" / "translations" / "en.yaml"),
+    )
+    assert "request-review는 기본값" in translation_ko
+    assert "always-proceed를 명시적으로 선택" in translation_ko
+    assert "request-review is the default" in translation_en
+    assert "always-proceed enables" in translation_en
+    assert "strict와 proceed-in-sandbox" in translation_ko
+    assert "strict and proceed-in-sandbox" in translation_en
+    assert "native read_file/write_file" in translation_ko
+    assert "Native read_file/write_file" in translation_en
     assert "ownership state와" in translation_ko
     assert "regardless of ownership" in translation_en
     assert "터미널 샌드박스(폐기 예정)" in translation_ko
@@ -760,7 +827,8 @@ def test_v210_docs_define_receipt_fallback_multi_choice_and_restart_boundary() -
         assert "v3c" in text and "v3d" in text
         assert "v2a" in text and "v2d" in text
         assert "toolAction" in text and "toolSummary" in text
-        assert "mcp(*)" in text
+        assert "always-proceed" in text
+        assert "installed MCP" in text
 
     telegram = documents["telegram"]
     for fragment in (
@@ -782,6 +850,7 @@ def test_v210_docs_define_receipt_fallback_multi_choice_and_restart_boundary() -
         assert "bridge" in text and "broker" in text
 
     contract = documents["contract"]
+    assert "mcp(*)" in contract
     assert "`Arguments`, `ServerName`, `ToolName`" in contract
     assert "optional `toolAction`/`toolSummary`" in contract
     assert "NUL·비공백 control character" in contract
@@ -797,7 +866,7 @@ def test_v210_docs_define_receipt_fallback_multi_choice_and_restart_boundary() -
     assert "## [2.0.10]" in changelog
     assert "full App or broker restart rejects an unstarted in-memory proposal" in changelog
     assert "live Telegram/OAuth E2E" not in changelog
-    assert 'version: "2.0.18"' in documents["migration"]
+    assert 'version: "2.1.0"' in documents["migration"]
 
 
 def test_v209_docs_match_native_sandbox_and_mediated_settings_policy() -> None:
@@ -835,11 +904,15 @@ def test_v209_docs_match_native_sandbox_and_mediated_settings_policy() -> None:
             )
 
     contract = read(V2 / "antigravity-contract.md")
-    assert '"write_file(/data/home/.gemini/antigravity-cli/settings.json)"' in (
-        contract.split('"deny": [', 1)[1]
-    )
+    request_review = contract.split(
+        '"toolPermission": "request-review"', 1
+    )[1].split('`always-proceed`', 1)[0]
+    deny = request_review.split('"deny": [', 1)[1]
+    allow = request_review.split('"allow": [', 1)[1].split('"ask": [', 1)[0]
+    assert '"write_file(/data/home/.gemini/antigravity-cli/settings.json)"' in deny
+    assert '"read_file(*)"' in deny and '"write_file(*)"' in deny
     assert '"write_file(/data/home/.gemini/antigravity-cli/settings.json)"' not in (
-        contract.split('"allow": [', 1)[1].split('"ask": []', 1)[0]
+        allow
     )
     assert "raw file tool" in contract
     assert "`agy-settings sha256`" in contract
@@ -968,7 +1041,7 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
         "telegram_session_delivery",
     }
     template = json.loads(read(V2 / "release-evidence-template.json"))
-    assert template["version"] == "2.0.18"
+    assert template["version"] == "2.1.0"
     assert set(template["gates"]) == expected_gates
     assert "HA-008" not in json.dumps(template, sort_keys=True)
     for gate in template["gates"].values():

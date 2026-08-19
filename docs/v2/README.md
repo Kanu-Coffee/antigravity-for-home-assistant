@@ -24,6 +24,11 @@
 않는다. 아키텍처별 이미지와 실제 HAOS/AppArmor 같은 요구는 같은 범위의
 증거로만 완료할 수 있다.
 
+host source checkout의 `ha-feedback-development`/`tools/development/ha-feedback` test
+mode는 sanitized report 형식의 local collect/validate/render만 검증한다. live Supervisor
+credential이나 HAOS App state를 받지 않으므로 그 결과를 실기기 증거로 승격하지 않고,
+재현하지 않은 HAOS 항목은 `NOT RUN`으로 둔다.
+
 ## 읽는 순서
 
 | 문서 | 역할 |
@@ -101,9 +106,13 @@ Antigravity 명령이나 설정을 추정하지 않는다. 문서와 고정 bina
   호환한다. 관리형 runtime rule은 일반 HA service/config 변경을 이 broker로
   라우팅한다. 신뢰된 사용자 전역 native tool과 direct command/API helper는 관리자
   권한을 상속하며 broker가 투명하게 가로채지 않는다.
-- Telegram effective native permission은 `request-review` 하나이고 schema의 다른
-  값은 upgrade 입력 호환용으로 정규화된다. Playwright auto-allow는 upstream
-  read-only console/network/snapshot/screenshot 네 도구뿐이다.
+- native 기본 permission은 `request-review`다. 이 모드의 Playwright auto-allow는
+  upstream read-only console/network/snapshot/screenshot 네 도구뿐이고 mutation 도구는
+  typed adapter 전까지 fail closed한다. 명시적 `always-proceed`는 mandatory blacklist
+  밖의 일반 운영과 installed MCP/Playwright interaction을 자율 관리자 권한으로
+  실행한다. `strict`와 `proceed-in-sandbox`만 legacy 입력으로 `request-review`에
+  정규화된다. native `read_file`/`write_file`은 두 mode 모두 deny되며 ordinary file은
+  confined `ha_files`만 사용한다.
 - 2.0.12에서 `telegram_enabled=true`이면 안전하게 읽고 parse할 수 있는 기존
   `settings.json`의 Telegram permission 경계를 migration mode와 무관하게 transaction
   backup 뒤 canonical policy로 reconcile한다. `allowNonWorkspaceAccess`,
@@ -148,8 +157,20 @@ Antigravity 명령이나 설정을 추정하지 않는다. 문서와 고정 bina
   read 거부를 확인했고, restricted/sensitive-read 두 launcher는 승인 제안에 필요한
   requester/run binding 다섯 값을 버렸다. 승인된 쓰기는 `NOT RUN`이며 공개 2.0.17
   수용은 전체 `FAIL`이다. 2.0.18은 exact module read와 두 launcher의 완전한 다섯 값
-  검증·보존만 추가하고 broad AppArmor/native-tool 권한이나 승인 없는 직접 쓰기·명령을
-  열지 않는다. 자동 회귀는 HAOS 증거가 아니며 2.0.18 amd64/aarch64 실기기는 릴리스 전
+  검증·보존을 추가했다. 이후 실제 공개 2.0.18 amd64는 App startup,
+  `antigravity --version` status 0, Telegram transport와 no-tool chat을 `PASS`했지만
+  Web `agy`/`antigravity` interactive I/O가 실패했다. 현재 kernel audit는 interactive
+  profile의 `/dev/pts/0` inherited/open `rw` denial을 기록한다. 첫 managed Telegram
+  tool 요청은 terminal error였고, 후속 3~7은 failed conversation reuse 때문에 독립
+  결과가 아니며 approved write는 `NOT RUN`이다. 공개 2.0.18 수용은 `FAIL`이다.
+  2.1.0은 supported operational mount/API에 broad grant와 explicit credential/storage/
+  policy/process-integrity blacklist를 적용하고 failed native conversation을 다음 요청 전
+  격리한다. native `read_file`/`write_file`은 symlink alias 우회를 막기 위해 두 mode에서
+  전역 deny하며, ordinary file은 confined `ha_files`의 `ha_files_list`,
+  `ha_files_read_text`, `ha_files_write_text`만 사용한다. Host/Supervisor log는 raw를
+  노출하지 않고 exact token과 known credential-shaped line/block을 제거한 bounded
+  projection만 제공하며 arbitrary unkeyed text의 완전한 secret 판별은 보장하지 않는다.
+  자동 회귀는 HAOS 증거가 아니며 2.1.0 amd64/aarch64 실기기는 배포 시점
   `NOT RUN`이다. aarch64 면제는 PASS가 아니며 전체 v2 수용은 `PARTIAL`이다.
 - proposal registration만으로 crash durability를 주장하지 않는다. encrypted
   approval/card sealing 전 bridge crash는 사용자가 원 요청을 반복해야 한다.

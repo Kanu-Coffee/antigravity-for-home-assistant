@@ -7,7 +7,7 @@ name: Main release
       version:
         description: Numeric App version already present on main
         required: true
-        default: "2.0.18"
+        default: "2.1.0"
         type: string
       candidate_run_id:
         description: Successful Candidate build run ID
@@ -197,13 +197,14 @@ jobs:
               "$RUN_ID" "$RUN_ATTEMPT"
             printf -- '- Multi-arch OCI digest: `%s`\n' \
               "$(jq --raw-output .images.generic.digest "$candidate")"
-            printf -- '- Public 2.0.17 real amd64 HAOS acceptance: `FAIL` overall. App startup, Ingress/Web terminal, native CLI/basic conversation, Telegram transport, and a no-tool Telegram reply passed; managed MCP requests and the Telegram approval-proposal path failed.\n'
-            printf -- '- Exact field root causes: AppArmor denied the change-proposal client reading the exact image-owned `supervisor-credential-fd.mjs` module, while both confined interactive launchers discarded five required requester/run bindings before `telegram_action_propose`; approved write execution was therefore `NOT RUN`.\n'
-            printf -- '- 2.0.18 correction: grant only the exact image-owned module read to the change-proposal client and strictly validate and preserve the complete five-variable run binding through both confined launchers. No broad AppArmor or native-tool permission expansion is added.\n'
-            printf -- '- 2.0.18 automated AppArmor/module and complete-run-binding regression gates: `PASS` for this exact Candidate; this is not HAOS evidence.\n'
+            printf -- '- Public 2.0.18 real amd64 HAOS evidence: startup, native bootstrap, Telegram transport, and no-tool chat passed; Web `agy`/`antigravity` interactive I/O failed and the first managed Telegram tool ended in a terminal error. Kernel audit tied Web I/O to denied inherited PTY access. Tests 3-7 reused the failed conversation and are not independent tool results; approved write was `NOT RUN`.\n'
+            printf -- '- 2.1.0 breaking operational-policy change: ordinary supported `/config`, `/share`, `/media`, persistent-HOME, command, URL, installed-MCP, Core/Supervisor manager API, and bounded Host/Supervisor log operations move to broad operational grants with explicit credential, `.storage`, policy, process-introspection, and database-integrity denies. Raw logs remain unavailable; exact App tokens and known credential-shaped lines/blocks are redacted, without claiming complete detection of arbitrary unkeyed application text. Docker socket, host-root/PID mounts, `full_access`, and protection disablement remain absent.\n'
+            printf -- '- Native `read_file`/`write_file` remain denied in both modes; ordinary files use the confined `ha_files_list`, `ha_files_read_text`, and `ha_files_write_text` MCP tools with fixed roots, no-link checks, bounded UTF-8/listing sizes, and atomic digest-aware writes.\n'
+            printf -- '- `request-review` remains the safe default with requester-bound mutation proposals; explicit `always-proceed` is restored as an autonomous-administrator mode. Failed native worker conversations are quarantined before the next request.\n'
+            printf -- '- 2.1.0 automated policy, PTY, managed-tool, read/write, denial, session-quarantine, multi-arch and exact-digest gates: `PASS` for this exact Candidate; this is not HAOS evidence.\n'
             printf -- '- Rollback warning: 2.0.12 is not a direct or lossless downgrade; its custom AppArmor attachment failed, Supervisor direct downgrade is unsupported, and restoring an exact old App backup replaces newer App `/data`.\n'
             printf -- '- Status: experimental prerelease; real-device acceptance continues after publication.\n'
-            printf -- '- amd64 2.0.18 HAOS acceptance at publication: `NOT RUN`.\n'
+            printf -- '- amd64 2.1.0 HAOS acceptance at publication: `NOT RUN`.\n'
             printf -- '- aarch64 HAOS acceptance at publication: `NOT RUN`; owner-waived for experimental deployment, not a PASS.\n'
             printf -- '- Overall v2 acceptance at publication: `PARTIAL`.'
           } > main-release-notes.md

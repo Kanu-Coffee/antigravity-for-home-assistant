@@ -41,6 +41,7 @@ docker run --rm --platform linux/arm64 \
     test -f /etc/antigravity/mcp_config.json
     jq --exit-status '\''
       .mcpServers.ha_read.command == "/usr/local/bin/ha-read-mcp"
+      and .mcpServers.ha_files.command == "/usr/local/bin/ha-files-mcp"
       and .mcpServers.ha_validate.command == "/usr/local/bin/ha-validate-mcp"
     '\'' /usr/local/share/antigravity-ha/plugins/home-assistant/mcp_config.json >/dev/null
   '

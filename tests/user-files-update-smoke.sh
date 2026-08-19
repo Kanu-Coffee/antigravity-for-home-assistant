@@ -31,6 +31,7 @@ PERMISSION_MIGRATION_VOLUME="${TEST_ID}-permission-migration"
 PERMISSION_V208_MIGRATION_VOLUME="${TEST_ID}-permission-v208-migration"
 PERMISSION_V208_AMBIGUOUS_VOLUME="${TEST_ID}-permission-v208-ambiguous"
 PERMISSION_V3_MIGRATION_VOLUME="${TEST_ID}-permission-v3-migration"
+PERMISSION_V2018_MIGRATION_VOLUME="${TEST_ID}-permission-v2018-migration"
 TELEGRAM_RECONCILE_VOLUME="${TEST_ID}-telegram-reconcile"
 TELEGRAM_MALFORMED_REFRESH_VOLUME="${TEST_ID}-telegram-malformed-refresh"
 TELEGRAM_MALFORMED_MATRIX_CASES=(
@@ -68,6 +69,7 @@ VOLUMES=(
   "${PERMISSION_V208_MIGRATION_VOLUME}"
   "${PERMISSION_V208_AMBIGUOUS_VOLUME}"
   "${PERMISSION_V3_MIGRATION_VOLUME}"
+  "${PERMISSION_V2018_MIGRATION_VOLUME}"
   "${TELEGRAM_RECONCILE_VOLUME}"
   "${TELEGRAM_MALFORMED_REFRESH_VOLUME}"
   "${TELEGRAM_MALFORMED_MATRIX_VOLUMES[@]}"
@@ -217,28 +219,23 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
   jq --exit-status '
     .toolPermission == "request-review"
     and .enableTerminalSandbox == false
+    and .allowNonWorkspaceAccess == true
     and .altScreenMode == "never"
     and (.permissions.allow | index("command(*)") == null)
     and (.permissions.allow | index("mcp(*)") == null)
-    and (.permissions.ask | index("command(*)") == null)
+    and (.permissions.allow | index("read_file(*)") == null)
+    and (.permissions.allow | index("read_url(*)") != null)
+    and (.permissions.ask | index("command(*)") != null)
     and (.permissions.ask | index("write_file(*)") == null)
-    and (.permissions.ask | index("read_url(*)") == null)
-    and (.permissions.ask | index("execute_url(*)") == null)
+    and (.permissions.allow | index("mcp(ha_files/ha_files_read_text)") != null)
+    and (.permissions.allow | index("mcp(ha_files/ha_files_list)") != null)
+    and (.permissions.ask | index("mcp(ha_files/ha_files_write_text)") != null)
+    and (.permissions.deny | index("read_file(*)") != null)
+    and (.permissions.deny | index("write_file(*)") != null)
+    and (.permissions.ask | index("execute_url(*)") != null)
     and (.permissions.deny | index("read_file(/config/secrets.yaml)") != null)
-    and (.permissions.allow | index("read_file(/config)") != null)
-    and (.permissions.allow | index("write_file(/config)") == null)
-    and (.permissions.allow | index("read_file(/data/home/.gemini/config)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/config)") == null)
-    and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/agents)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/agents)") == null)
-    and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/plugins)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/plugins)") == null)
-    and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/skills)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/skills)") == null)
-    and (.permissions.allow | index("read_file(/data/home/.gemini/GEMINI.md)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/GEMINI.md)") == null)
-    and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") == null)
+    and (.permissions.allow | index("read_file(/config)") == null)
+    and (.permissions.deny | index("read_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
     and (.permissions.deny | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
     and (([
       "read_file(/data/home/.aws)",
@@ -272,7 +269,7 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
   jq --exit-status '
     (.managed.settings.keys | index("toolPermission") != null)
     and (.managed.settings.keys | index("permissions") != null)
-    and (.managed.settings.permission_rules | index("command(*)") == null)
+    and (.managed.settings.permission_rules | index("command(*)") != null)
     and (.managed.settings.permission_rules | index("mcp(*)") == null)
     and (.managed.settings.permission_rules
       | index("mcp(telegram_action/telegram_action_propose)") != null)
@@ -442,8 +439,15 @@ run_script "${MAIN_VOLUME}" "${SETTINGS_SECRET}" "${MANAGED_BACKUP_DIRECTORY}" <
     and (.permissions.ask | index("mcp(playwright/browser_snapshot)") == null)
     and (.permissions.allow | index("command(*)") == null)
     and (.permissions.allow | index("mcp(*)") == null)
-    and (.permissions.ask | index("command(*)") == null)
+    and (.permissions.allow | index("read_file(*)") == null)
+    and (.permissions.allow | index("read_url(*)") != null)
+    and (.permissions.ask | index("command(*)") != null)
     and (.permissions.ask | index("write_file(*)") == null)
+    and (.permissions.allow | index("mcp(ha_files/ha_files_read_text)") != null)
+    and (.permissions.ask | index("mcp(ha_files/ha_files_write_text)") != null)
+    and (.permissions.deny | index("read_file(*)") != null)
+    and (.permissions.deny | index("write_file(*)") != null)
+    and (.permissions.ask | index("execute_url(*)") != null)
     and (.permissions.deny
       | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
     and (.permissions.deny
@@ -478,7 +482,10 @@ run_script "${MAIN_VOLUME}" "${SETTINGS_SECRET}" <<'SCRIPT'
   jq --arg marker "$1" --exit-status '
     .user_marker == $marker
     and .toolPermission == "request-review"
-    and .permissions.ask == []
+    and ((["mcp(ha_files/ha_files_write_text)", "execute_url(*)", "command(*)"]
+      - .permissions.ask) | length == 0)
+    and (.permissions.deny | index("read_file(*)") != null)
+    and (.permissions.deny | index("write_file(*)") != null)
     and (.permissions.allow | index("user(custom/read)") == null)
     and (.permissions | has("user_bucket") | not)
     and (.permissions.allow
@@ -645,6 +652,10 @@ PERMISSION_OUTER_HASH_BEFORE=$(run_script \
       print "  \"enableTerminalSandbox\": <managed-value>,"
       next
     }
+    /^  "allowNonWorkspaceAccess": (true|false),$/ {
+      print "  \"allowNonWorkspaceAccess\": <managed-value>,"
+      next
+    }
     /^  "toolPermission": "[^"]+",$/ {
       print "  \"toolPermission\": <managed-value>,"
       next
@@ -731,6 +742,10 @@ PERMISSION_OUTER_HASH_AFTER=$(run_script \
       print "  \"enableTerminalSandbox\": <managed-value>,"
       next
     }
+    /^  "allowNonWorkspaceAccess": (true|false),$/ {
+      print "  \"allowNonWorkspaceAccess\": <managed-value>,"
+      next
+    }
     /^  "toolPermission": "[^"]+",$/ {
       print "  \"toolPermission\": <managed-value>,"
       next
@@ -754,20 +769,17 @@ run_script "${PERMISSION_MIGRATION_VOLUME}" <<'SCRIPT'
     and (.permissions.allow | index("user(custom/allow)") != null)
     and (.permissions.ask | index("user(custom/ask)") != null)
     and (.permissions.deny | index("user(custom/deny)") != null)
-    and (.permissions.allow | index("read_file(/config)") != null)
-    and (.permissions.allow | index("write_file(/config)") == null)
-    and (.permissions.allow | index("read_file(/data/home/.gemini/config)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/config)") == null)
-    and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/agents)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/agents)") == null)
-    and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/plugins)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/plugins)") == null)
-    and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/skills)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/skills)") == null)
-    and (.permissions.allow | index("read_file(/data/home/.gemini/GEMINI.md)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/GEMINI.md)") == null)
-    and (.permissions.allow | index("read_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
-    and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") == null)
+    and .allowNonWorkspaceAccess == true
+    and (.permissions.allow | index("read_file(*)") == null)
+    and (.permissions.allow | index("read_url(*)") != null)
+    and (.permissions.ask | index("write_file(*)") == null)
+    and (.permissions.allow | index("mcp(ha_files/ha_files_read_text)") != null)
+    and (.permissions.ask | index("mcp(ha_files/ha_files_write_text)") != null)
+    and (.permissions.deny | index("read_file(*)") != null)
+    and (.permissions.deny | index("write_file(*)") != null)
+    and (.permissions.ask | index("execute_url(*)") != null)
+    and (.permissions.ask | index("command(*)") != null)
+    and (.permissions.deny | index("read_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
     and (.permissions.allow
       | index("mcp(ha_read/ha_read_storage_usage)") != null)
     and (.permissions.deny | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
@@ -798,7 +810,7 @@ run_script "${PERMISSION_MIGRATION_VOLUME}" <<'SCRIPT'
     (.applied.settings | length) == 1
     and (.managed.settings.permission_rules | index("read_file(/data)") == null)
     and (.managed.settings.permission_rules | index("write_file(/data)") == null)
-    and (.managed.settings.permission_rules | index("read_file(/config)") != null)
+    and (.managed.settings.permission_rules | index("read_file(*)") != null)
     and (.managed.settings.permission_rules
       | index("mcp(ha_read/ha_read_storage_usage)") != null)
   ' /data/antigravity-ha/migration/native-files-state.json >/dev/null
@@ -887,9 +899,9 @@ run_script "${PERMISSION_V208_MIGRATION_VOLUME}" <<'SCRIPT'
     and (.permissions.allow | index("user(v208/allow)") != null)
     and (.permissions.ask | index("user(v208/ask)") != null)
     and (.permissions.deny | index("user(v208/deny)") != null)
-    and (.permissions.allow | index("read_file(/config)") != null)
-    and (.permissions.allow | index("write_file(/config)") == null)
-    and (.permissions.allow | index("read_url(*)") == null)
+    and .allowNonWorkspaceAccess == true
+    and (.permissions.allow | index("read_file(*)") == null)
+    and (.permissions.allow | index("read_url(*)") != null)
     and (.permissions.allow | index("execute_url(*)") == null)
     and (.permissions.allow | index("command(*)") == null)
     and (.permissions.allow | index("mcp(*)") == null)
@@ -897,9 +909,11 @@ run_script "${PERMISSION_V208_MIGRATION_VOLUME}" <<'SCRIPT'
     and (.permissions.ask | index("mcp(home-assistant/*)") == null)
     and (.permissions.ask | index("mcp(playwright/browser_click)") == null)
     and (.permissions.ask | index("write_file(*)") == null)
+    and (.permissions.allow | index("mcp(ha_files/ha_files_read_text)") != null)
+    and (.permissions.ask | index("mcp(ha_files/ha_files_write_text)") != null)
     and (.permissions.ask | index("read_url(*)") == null)
-    and (.permissions.ask | index("execute_url(*)") == null)
-    and (.permissions.ask | index("command(*)") == null)
+    and (.permissions.ask | index("execute_url(*)") != null)
+    and (.permissions.ask | index("command(*)") != null)
     and (.permissions.allow | index("mcp(ha_change/ha_change_propose)") != null)
     and (.permissions.allow
       | index("mcp(ha_read/ha_read_storage_usage)") != null)
@@ -912,6 +926,8 @@ run_script "${PERMISSION_V208_MIGRATION_VOLUME}" <<'SCRIPT'
     and (.permissions.deny | index("read_file(/data/home/.ssh)") != null)
     and (.permissions.allow | index("read_file(*)") == null)
     and (.permissions.allow | index("write_file(*)") == null)
+    and (.permissions.deny | index("read_file(*)") != null)
+    and (.permissions.deny | index("write_file(*)") != null)
     and (.permissions.allow | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") == null)
     and (.permissions.deny | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
     and (([
@@ -934,7 +950,7 @@ run_script "${PERMISSION_V208_MIGRATION_VOLUME}" <<'SCRIPT'
     and (.permissions.deny | length == (unique | length))
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
   jq --exit-status '
-    (.managed.settings.permission_rules | index("command(*)") == null)
+    (.managed.settings.permission_rules | index("command(*)") != null)
     and (.managed.settings.permission_rules | index("mcp(*)") == null)
     and (.managed.settings.permission_rules | index("mcp(home-assistant/*)") == null)
     and (.managed.settings.permission_rules
@@ -997,8 +1013,8 @@ run_script "${PERMISSION_V208_AMBIGUOUS_VOLUME}" <<'SCRIPT'
 SCRIPT
 
 # Reconstruct the exact 2.0.9/2.0.10 broad App-owned layout from immutable
-# 2.0.8 source lists plus this image's sensitive deny set. Preserve mode must
-# retire its native writes and wildcards, normalize always-proceed, and retain
+# 2.0.8 source lists plus the published v3 sensitive deny set. Preserve mode must
+# replace its broad autonomous policy with request-review, and retain
 # a user-added stronger command deny.
 run_script "${PERMISSION_V3_MIGRATION_VOLUME}" <<'SCRIPT'
   set -Eeuo pipefail
@@ -1023,10 +1039,39 @@ run_script "${PERMISSION_V3_MIGRATION_VOLUME}" <<'SCRIPT'
           | select(startswith("mcp(playwright/"))]
       )
     | .permissions.ask = []
-    | .permissions.deny |= map(select(
-        . != "read_file(/data/home/.gemini/config/mcp_config.json)"
-        and . != "write_file(/data/home/.gemini/config/mcp_config.json)"
-      ))
+    | .permissions.deny = [
+        "write_file(/data/home/.gemini/antigravity-cli/settings.json)",
+        "read_file(/data/options.json)",
+        "write_file(/data/options.json)",
+        "read_file(/run/antigravity-ha/supervisor.token)",
+        "write_file(/run/antigravity-ha/supervisor.token)",
+        "read_file(/run/antigravity-ha/home-assistant-browser.token)",
+        "write_file(/run/antigravity-ha/home-assistant-browser.token)",
+        "read_file(/config/secrets.yaml)",
+        "write_file(/config/secrets.yaml)",
+        "read_file(/config/.storage)",
+        "write_file(/config/.storage)",
+        "read_file(/config/.ssh)",
+        "write_file(/config/.ssh)",
+        "read_file(/data/home/.ssh)",
+        "write_file(/data/home/.ssh)",
+        "read_file(/data/home/.aws)",
+        "write_file(/data/home/.aws)",
+        "read_file(/data/home/.azure)",
+        "write_file(/data/home/.azure)",
+        "read_file(/data/home/.config/gcloud)",
+        "write_file(/data/home/.config/gcloud)",
+        "read_file(/data/home/.kube)",
+        "write_file(/data/home/.kube)",
+        "read_file(/data/home/.docker/config.json)",
+        "write_file(/data/home/.docker/config.json)",
+        "read_file(/data/home/.netrc)",
+        "write_file(/data/home/.netrc)",
+        "read_file(/data/home/.npmrc)",
+        "write_file(/data/home/.npmrc)",
+        "read_file(/root/.ssh)",
+        "write_file(/root/.ssh)"
+      ]
     | .permissions.deny += ["command(*)", "user(v3/deny)"]
   ' /data/home/.gemini/antigravity-cli/settings.json > /tmp/settings.json
   mv /tmp/settings.json /data/home/.gemini/antigravity-cli/settings.json
@@ -1053,11 +1098,17 @@ run_script "${PERMISSION_V3_MIGRATION_VOLUME}" <<'SCRIPT'
     .toolPermission == "request-review"
     and (.permissions.allow | index("command(*)") == null)
     and (.permissions.allow | index("mcp(*)") == null)
-    and (.permissions.allow | index("read_url(*)") == null)
+    and (.permissions.allow | index("read_file(*)") == null)
+    and (.permissions.allow | index("read_url(*)") != null)
     and (.permissions.allow | index("execute_url(*)") == null)
     and (.permissions.allow | index("write_file(/config)") == null)
     and (.permissions.ask | index("command(*)") == null)
     and (.permissions.ask | index("write_file(*)") == null)
+    and (.permissions.allow | index("mcp(ha_files/ha_files_read_text)") != null)
+    and (.permissions.ask | index("mcp(ha_files/ha_files_write_text)") != null)
+    and (.permissions.deny | index("read_file(*)") != null)
+    and (.permissions.deny | index("write_file(*)") != null)
+    and (.permissions.ask | index("execute_url(*)") != null)
     and (.permissions.deny | index("command(*)") != null)
     and (.permissions.deny | index("user(v3/deny)") != null)
     and (.permissions.allow | index("mcp(ha_change/ha_change_propose)") != null)
@@ -1065,6 +1116,182 @@ run_script "${PERMISSION_V3_MIGRATION_VOLUME}" <<'SCRIPT'
       | index("mcp(telegram_action/telegram_action_propose)") != null)
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
 SCRIPT
+
+# Reconstruct the exact 2.0.11-2.0.18 managed permission ownership, then prove
+# that preserve mode retires it transactionally. The same fixture also proves
+# that an explicit always-proceed option is effective and restart-idempotent.
+run_script "${PERMISSION_V2018_MIGRATION_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  umask 077
+  install -d -m 0700 /data/antigravity /run/antigravity-ha
+  jq -n '{
+    antigravity_tool_permission: "request-review",
+    antigravity_terminal_sandbox: false,
+    antigravity_user_files_update_mode: "preserve"
+  }' > /data/options.json
+  /usr/local/bin/antigravity-user-files-update >/dev/null
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  state=/data/antigravity-ha/migration/native-files-state.json
+  jq '
+    .legacy_2018_marker = "preserved"
+    | .allowNonWorkspaceAccess = false
+    | .permissions.allow = (
+        [.permissions.allow[]
+          | select(. != "read_file(*)" and . != "read_url(*)")
+          | select(. != "mcp(ha_files/ha_files_list)")
+          | select(. != "mcp(ha_files/ha_files_read_text)")
+          | select(. != "mcp(ha_read/ha_read_addon_logs)")
+          | select(. != "mcp(ha_read/ha_read_host_logs)")
+          | select(. != "mcp(ha_read/ha_read_supervisor_logs)")]
+        + [
+          "read_file(/config)",
+          "read_file(/data/home/.gemini/config)",
+          "read_file(/data/home/.gemini/antigravity-cli/agents)",
+          "read_file(/data/home/.gemini/antigravity-cli/plugins)",
+          "read_file(/data/home/.gemini/antigravity-cli/skills)",
+          "read_file(/data/home/.gemini/GEMINI.md)",
+          "read_file(/data/home/.gemini/antigravity-cli/settings.json)"
+        ]
+      )
+    | .permissions.ask = []
+    | .permissions.deny = [
+        "write_file(/data/home/.gemini/antigravity-cli/settings.json)",
+        "read_file(/data/options.json)",
+        "write_file(/data/options.json)",
+        "read_file(/run/antigravity-ha/supervisor.token)",
+        "write_file(/run/antigravity-ha/supervisor.token)",
+        "read_file(/run/antigravity-ha/home-assistant-browser.token)",
+        "write_file(/run/antigravity-ha/home-assistant-browser.token)",
+        "read_file(/config/secrets.yaml)",
+        "write_file(/config/secrets.yaml)",
+        "read_file(/config/.storage)",
+        "write_file(/config/.storage)",
+        "read_file(/config/.ssh)",
+        "write_file(/config/.ssh)",
+        "read_file(/data/home/.ssh)",
+        "write_file(/data/home/.ssh)",
+        "read_file(/data/home/.aws)",
+        "write_file(/data/home/.aws)",
+        "read_file(/data/home/.azure)",
+        "write_file(/data/home/.azure)",
+        "read_file(/data/home/.config/gcloud)",
+        "write_file(/data/home/.config/gcloud)",
+        "read_file(/data/home/.kube)",
+        "write_file(/data/home/.kube)",
+        "read_file(/data/home/.docker/config.json)",
+        "write_file(/data/home/.docker/config.json)",
+        "read_file(/data/home/.netrc)",
+        "write_file(/data/home/.netrc)",
+        "read_file(/data/home/.npmrc)",
+        "write_file(/data/home/.npmrc)",
+        "read_file(/root/.ssh)",
+        "write_file(/root/.ssh)",
+        "read_file(/data/home/.gemini/config/mcp_config.json)",
+        "write_file(/data/home/.gemini/config/mcp_config.json)"
+      ]
+  ' "${settings}" > "${settings}.next"
+  mv "${settings}.next" "${settings}"
+  jq --slurpfile settings "${settings}" '
+    .applied.settings = ["2.0.18"]
+    | .managed.settings.permission_rules = (
+        $settings[0].permissions.allow
+        + $settings[0].permissions.ask
+        + $settings[0].permissions.deny
+      )
+  ' "${state}" > "${state}.next"
+  mv "${state}.next" "${state}"
+  chmod 0600 "${settings}" "${state}" /data/options.json
+SCRIPT
+PERMISSION_V2018_OUTPUT=$(run_helper "${PERMISSION_V2018_MIGRATION_VOLUME}") \
+  || fail '2.0.18 request-review permission migration failed'
+assert_json "${PERMISSION_V2018_OUTPUT}" '
+  .permission_migration == "applied"
+  and .refreshed == ["settings"]
+  and (.backup_directory
+    | startswith("/data/antigravity-ha/backups/native-files/refresh-"))
+'
+run_script "${PERMISSION_V2018_MIGRATION_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  jq --exit-status '
+    .legacy_2018_marker == "preserved"
+    and .toolPermission == "request-review"
+    and .allowNonWorkspaceAccess == true
+    and (.permissions.allow | index("read_file(*)") == null)
+    and (.permissions.allow | index("read_url(*)") != null)
+    and ((["mcp(ha_files/ha_files_write_text)", "execute_url(*)", "command(*)"]
+      - .permissions.ask) | length == 0)
+    and (.permissions.allow | index("mcp(ha_files/ha_files_read_text)") != null)
+    and (.permissions.deny | index("read_file(*)") != null)
+    and (.permissions.deny | index("write_file(*)") != null)
+    and (.permissions.allow
+      | index("mcp(ha_read/ha_read_addon_logs)") != null)
+    and (.permissions.allow
+      | index("mcp(ha_read/ha_read_host_logs)") != null)
+    and (.permissions.allow
+      | index("mcp(ha_read/ha_read_supervisor_logs)") != null)
+    and (.permissions.deny
+      | index("read_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
+  ' "${settings}" >/dev/null
+  jq '.antigravity_tool_permission = "always-proceed"' \
+    /data/options.json > /data/options.next
+  mv /data/options.next /data/options.json
+  chmod 0600 /data/options.json
+SCRIPT
+PERMISSION_ALWAYS_OUTPUT=$(run_helper "${PERMISSION_V2018_MIGRATION_VOLUME}") \
+  || fail 'explicit always-proceed mode was not applied'
+assert_json "${PERMISSION_ALWAYS_OUTPUT}" '
+  .permission_migration == "applied"
+  and .refreshed == ["settings"]
+'
+run_script "${PERMISSION_V2018_MIGRATION_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  jq --exit-status '
+    .legacy_2018_marker == "preserved"
+    and .toolPermission == "always-proceed"
+    and .allowNonWorkspaceAccess == true
+    and .permissions.ask == []
+    and (([
+      "read_url(*)",
+      "execute_url(*)",
+      "command(*)",
+      "mcp(*)"
+    ] - .permissions.allow) | length == 0)
+    and (.permissions.allow | length == 4)
+    and (.permissions.allow | index("read_file(*)") == null)
+    and (.permissions.allow | index("write_file(*)") == null)
+    and (.permissions.deny | index("read_file(*)") != null)
+    and (.permissions.deny | index("write_file(*)") != null)
+    and (.permissions.deny | index("read_file(/config/secrets.yaml)") != null)
+    and (.permissions.deny | index("write_file(/config/.storage)") != null)
+    and (.permissions.deny | index("read_file(/proc/self/environ)") != null)
+  ' "${settings}" >/dev/null
+  node --input-type=module <<'NODE'
+import {
+  TELEGRAM_ALWAYS_PROCEED_ALLOW_RULES,
+  TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES,
+} from "/usr/local/share/antigravity-ha/telegram-permission-policy.mjs";
+import {
+  loadTelegramPermissionBoundary,
+} from "/usr/local/share/antigravity-ha/telegram-bridge.mjs";
+
+const boundary = loadTelegramPermissionBoundary();
+if (boundary.toolPermission !== "always-proceed" ||
+    boundary.allowCount !== TELEGRAM_ALWAYS_PROCEED_ALLOW_RULES.size ||
+    boundary.denyCount !== TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size) {
+  throw new Error("always-proceed settings did not satisfy the bridge policy");
+}
+NODE
+SCRIPT
+PERMISSION_ALWAYS_IDEMPOTENT=$(run_helper \
+  "${PERMISSION_V2018_MIGRATION_VOLUME}") \
+  || fail 'always-proceed migration was not restart-idempotent'
+assert_json "${PERMISSION_ALWAYS_IDEMPOTENT}" '
+  .permission_migration == "already_applied"
+  and .refreshed == []
+  and .backup_directory == null
+'
 
 # Reproduce the live Telegram startup incident without importing any device
 # identifiers or credentials. With Telegram enabled, a private root-owned,
@@ -1170,16 +1397,20 @@ run_script "${TELEGRAM_RECONCILE_VOLUME}" \
     and .synthetic_incident_ui == {theme: "local-only"}
     and .showTips == true
     and .showFeedbackSurvey == true
-    and .allowNonWorkspaceAccess == false
+    and .allowNonWorkspaceAccess == true
     and .artifactReviewPolicy == "agent-decides"
     and .toolPermission == "request-review"
     and .enableTerminalSandbox == false
-    and .permissions.ask == []
-    and (.permissions.allow | length) == 29
-    and (.permissions.deny | length) == 33
+    and ((["mcp(ha_files/ha_files_write_text)", "execute_url(*)", "command(*)"]
+      - .permissions.ask) | length == 0)
     and (.permissions.allow | length) == ([.permissions.allow[]] | unique | length)
     and (.permissions.deny | length) == ([.permissions.deny[]] | unique | length)
     and (.permissions.allow | index("command(*)") == null)
+    and (.permissions.allow | index("read_file(*)") == null)
+    and (.permissions.allow | index("read_url(*)") != null)
+    and (.permissions.allow | index("mcp(ha_files/ha_files_read_text)") != null)
+    and (.permissions.deny | index("read_file(*)") != null)
+    and (.permissions.deny | index("write_file(*)") != null)
     and (.permissions.allow | index("user(synthetic/unsafe-allow)") == null)
     and (.permissions.ask | index("user(synthetic/unsafe-ask)") == null)
     and (.permissions.allow
@@ -1226,16 +1457,22 @@ run_script "${TELEGRAM_RECONCILE_VOLUME}" \
       "permissions",
       "toolPermission"
     ] | sort)
-    and (.managed.settings.permission_rules | length) == 62
+    and (.managed.settings.permission_rules | index("read_file(*)") != null)
+    and (.managed.settings.permission_rules | index("command(*)") != null)
   ' "${state}" >/dev/null
   node --input-type=module <<'NODE'
 import {
   loadTelegramPermissionBoundary,
 } from "/usr/local/share/antigravity-ha/telegram-bridge.mjs";
+import {
+  TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES,
+  TELEGRAM_SAFE_ALLOW_RULES,
+} from "/usr/local/share/antigravity-ha/telegram-permission-policy.mjs";
 
 const boundary = loadTelegramPermissionBoundary();
 if (boundary.toolPermission !== "request-review" ||
-    boundary.allowCount !== 29 || boundary.denyCount !== 33) {
+    boundary.allowCount !== TELEGRAM_SAFE_ALLOW_RULES.size ||
+    boundary.denyCount !== TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size) {
   throw new Error("reconciled settings did not satisfy the Telegram policy");
 }
 NODE
@@ -1377,7 +1614,8 @@ run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
       "permissions",
       "toolPermission"
     ] | sort)
-    and (.managed.settings.permission_rules | length) == 62
+    and (.managed.settings.permission_rules | index("read_file(*)") != null)
+    and (.managed.settings.permission_rules | index("command(*)") != null)
   ' "${state}" >/dev/null
 SCRIPT
 
@@ -1423,13 +1661,18 @@ run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
   settings=/data/home/.gemini/antigravity-cli/settings.json
   test "$(stat -c "%a:%U:%G" "${settings}")" = 600:root:root
   jq --exit-status '
-    .allowNonWorkspaceAccess == false
+    .allowNonWorkspaceAccess == true
     and .artifactReviewPolicy == "agent-decides"
     and .enableTerminalSandbox == false
     and .toolPermission == "request-review"
-    and (.permissions.allow | length) == 29
-    and .permissions.ask == []
-    and (.permissions.deny | length) == 33
+    and (.permissions.allow | index("read_file(*)") == null)
+    and (.permissions.allow | index("read_url(*)") != null)
+    and ((["mcp(ha_files/ha_files_write_text)", "execute_url(*)", "command(*)"]
+      - .permissions.ask) | length == 0)
+    and (.permissions.allow | index("mcp(ha_files/ha_files_read_text)") != null)
+    and (.permissions.deny | index("read_file(*)") != null)
+    and (.permissions.deny | index("write_file(*)") != null)
+    and (.permissions.deny | index("read_file(/config/secrets.yaml)") != null)
   ' "${settings}" >/dev/null
 SCRIPT
 
@@ -1541,13 +1784,18 @@ run_script "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
   jq --exit-status '
     .synthetic_refresh_marker == "preserve-unrelated-setting"
     and .synthetic_refresh_ui == {theme: "local-only"}
-    and .allowNonWorkspaceAccess == false
+    and .allowNonWorkspaceAccess == true
     and .artifactReviewPolicy == "agent-decides"
     and .toolPermission == "request-review"
     and .enableTerminalSandbox == false
-    and (.permissions.allow | length) == 29
-    and .permissions.ask == []
-    and (.permissions.deny | length) == 33
+    and (.permissions.allow | index("read_file(*)") == null)
+    and (.permissions.allow | index("read_url(*)") != null)
+    and ((["mcp(ha_files/ha_files_write_text)", "execute_url(*)", "command(*)"]
+      - .permissions.ask) | length == 0)
+    and (.permissions.allow | index("mcp(ha_files/ha_files_read_text)") != null)
+    and (.permissions.deny | index("read_file(*)") != null)
+    and (.permissions.deny | index("write_file(*)") != null)
+    and (.permissions.deny | index("read_file(/config/secrets.yaml)") != null)
     and (.permissions.allow | length) == ([.permissions.allow[]] | unique | length)
     and (.permissions.deny | length) == ([.permissions.deny[]] | unique | length)
   ' "${settings}" >/dev/null
@@ -1571,16 +1819,22 @@ run_script "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
   jq --exit-status '
     (.applied.settings | index("9.9.9-telegramold")) != null
     and (.applied.settings | index("9.9.9-telegramnew")) != null
-    and (.managed.settings.permission_rules | length) == 62
+    and (.managed.settings.permission_rules | index("read_file(*)") != null)
+    and (.managed.settings.permission_rules | index("command(*)") != null)
   ' "${state}" >/dev/null
   node --input-type=module <<'NODE'
 import {
   loadTelegramPermissionBoundary,
 } from "/usr/local/share/antigravity-ha/telegram-bridge.mjs";
+import {
+  TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES,
+  TELEGRAM_SAFE_ALLOW_RULES,
+} from "/usr/local/share/antigravity-ha/telegram-permission-policy.mjs";
 
 const boundary = loadTelegramPermissionBoundary();
 if (boundary.toolPermission !== "request-review" ||
-    boundary.allowCount !== 29 || boundary.denyCount !== 33) {
+    boundary.allowCount !== TELEGRAM_SAFE_ALLOW_RULES.size ||
+    boundary.denyCount !== TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size) {
   throw new Error("malformed-refresh settings did not load in the bridge");
 }
 NODE
@@ -1812,13 +2066,18 @@ SCRIPT
         theme: "local-only",
         nested: {preserve: true}
       }
-      and .allowNonWorkspaceAccess == false
+      and .allowNonWorkspaceAccess == true
       and .artifactReviewPolicy == "agent-decides"
       and .toolPermission == "request-review"
       and .enableTerminalSandbox == false
-      and (.permissions.allow | length) == 29
-      and .permissions.ask == []
-      and (.permissions.deny | length) == 33
+      and (.permissions.allow | index("read_file(*)") == null)
+      and (.permissions.allow | index("read_url(*)") != null)
+      and ((["mcp(ha_files/ha_files_write_text)", "execute_url(*)", "command(*)"]
+        - .permissions.ask) | length == 0)
+      and (.permissions.allow | index("mcp(ha_files/ha_files_read_text)") != null)
+      and (.permissions.deny | index("read_file(*)") != null)
+      and (.permissions.deny | index("write_file(*)") != null)
+      and (.permissions.deny | index("read_file(/config/secrets.yaml)") != null)
       and (.permissions.allow | length)
         == ([.permissions.allow[]] | unique | length)
       and (.permissions.deny | length)
@@ -1832,16 +2091,22 @@ SCRIPT
     jq --exit-status '
       (.applied.settings | index("9.9.9-matrixold")) != null
       and (.applied.settings | index("9.9.9-matrixnew")) != null
-      and (.managed.settings.permission_rules | length) == 62
+      and (.managed.settings.permission_rules | index("read_file(*)") != null)
+      and (.managed.settings.permission_rules | index("command(*)") != null)
     ' "${state}" >/dev/null
     node --input-type=module <<'NODE'
 import {
   loadTelegramPermissionBoundary,
 } from "/usr/local/share/antigravity-ha/telegram-bridge.mjs";
+import {
+  TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES,
+  TELEGRAM_SAFE_ALLOW_RULES,
+} from "/usr/local/share/antigravity-ha/telegram-permission-policy.mjs";
 
 const boundary = loadTelegramPermissionBoundary();
 if (boundary.toolPermission !== "request-review" ||
-    boundary.allowCount !== 29 || boundary.denyCount !== 33) {
+    boundary.allowCount !== TELEGRAM_SAFE_ALLOW_RULES.size ||
+    boundary.denyCount !== TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size) {
   throw new Error("malformed matrix settings did not load in the bridge");
 }
 NODE
@@ -2067,6 +2332,9 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
     and .mcpServers.ha_memory.command == "/usr/local/bin/ha-memory-mcp"
     and .mcpServers.ha_memory.args == []
     and .mcpServers.ha_read.command == "/usr/local/bin/ha-read-mcp"
+    and .mcpServers.ha_files.command == "/usr/local/bin/ha-files-mcp"
+    and .mcpServers.ha_files.args == []
+    and .mcpServers.ha_files.cwd == "/config"
     and .mcpServers.playwright.command == "/usr/local/bin/ha-playwright-mcp"
     and .mcpServers.playwright.args == []
     and .mcpServers.playwright.cwd == "/config"
@@ -2169,7 +2437,8 @@ run_script "${CONFLICT_VOLUME}" <<'SCRIPT'
   jq --exit-status '
     .user_owned_key == "preserve"
     and .toolPermission == "request-review"
-    and .permissions.ask == []
+    and ((["mcp(ha_files/ha_files_write_text)", "execute_url(*)", "command(*)"]
+      - .permissions.ask) | length == 0)
     and (.permissions.allow
       | index("mcp(telegram_action/telegram_action_propose)") != null)
   ' \
@@ -2205,7 +2474,8 @@ run_script "${PARTIAL_CONFLICT_VOLUME}" <<'SCRIPT'
   jq --exit-status '
     .user_owned_key == "preserve"
     and .toolPermission == "request-review"
-    and .permissions.ask == []
+    and ((["mcp(ha_files/ha_files_write_text)", "execute_url(*)", "command(*)"]
+      - .permissions.ask) | length == 0)
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
   jq --exit-status '.mcpServers == {}' \
     /data/home/.gemini/config/mcp_config.json >/dev/null

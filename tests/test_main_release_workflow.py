@@ -22,7 +22,7 @@ def test_main_release_is_manual_main_only_and_minimally_authorized() -> None:
         "candidate_run_attempt",
         "confirm",
     }
-    assert inputs["version"]["default"] == "2.0.18"
+    assert inputs["version"]["default"] == "2.1.0"
     assert workflow["permissions"] == {"contents": "read"}
     publish = workflow["jobs"]["publish"]
     assert publish["if"] == "github.ref == 'refs/heads/main'"
@@ -105,29 +105,29 @@ def test_main_release_creates_annotated_tag_and_prerelease_without_fake_evidence
         "continues after publication.\\n'" in text
     )
     assert (
-        "Public 2.0.17 real amd64 HAOS acceptance: `FAIL` overall. App startup, "
-        "Ingress/Web terminal, native CLI/basic conversation, Telegram "
-        "transport, and a no-tool Telegram reply passed; managed MCP requests "
-        "and the Telegram approval-proposal path failed" in text
+        "Public 2.0.18 real amd64 HAOS evidence: startup, native bootstrap, "
+        "Telegram transport, and no-tool chat passed; Web `agy`/`antigravity` "
+        "interactive I/O failed and the first managed Telegram tool ended in a "
+        "terminal error" in text
     )
     assert (
-        "Exact field root causes: AppArmor denied the change-proposal client "
-        "reading the exact image-owned `supervisor-credential-fd.mjs` module, "
-        "while both confined interactive launchers discarded five required "
-        "requester/run bindings before `telegram_action_propose`; approved "
-        "write execution was therefore `NOT RUN`" in text
+        "Tests 3-7 reused the failed conversation and are not independent tool "
+        "results; approved write was `NOT RUN`" in text
     )
     assert (
-        "2.0.18 correction: grant only the exact image-owned module read to the "
-        "change-proposal client and strictly validate and preserve the complete "
-        "five-variable run binding through both confined launchers. No broad "
-        "AppArmor or native-tool permission expansion is added"
-        in text
+        "2.1.0 breaking operational-policy change" in text
+        and "bounded Host/Supervisor log operations" in text
+        and "arbitrary unkeyed application text" in text
     )
     assert (
-        "2.0.18 automated AppArmor/module and complete-run-binding regression "
-        "gates: "
-        "`PASS` for this exact Candidate; this is not HAOS evidence" in text
+        "Native `read_file`/`write_file` remain denied in both modes" in text
+        and "`ha_files_list`, `ha_files_read_text`, and "
+        "`ha_files_write_text`" in text
+    )
+    assert (
+        "2.1.0 automated policy, PTY, managed-tool, read/write, denial, "
+        "session-quarantine, multi-arch and exact-digest gates: `PASS` for this "
+        "exact Candidate; this is not HAOS evidence" in text
     )
     assert (
         "Rollback warning: 2.0.12 is not a direct or lossless downgrade; its "
@@ -135,7 +135,7 @@ def test_main_release_creates_annotated_tag_and_prerelease_without_fake_evidence
         "unsupported, and restoring an exact old App backup replaces newer App "
         "`/data`" in text
     )
-    assert "amd64 2.0.18 HAOS acceptance at publication: `NOT RUN`" in text
+    assert "amd64 2.1.0 HAOS acceptance at publication: `NOT RUN`" in text
     assert (
         "aarch64 HAOS acceptance at publication: `NOT RUN`; owner-waived for "
         "experimental deployment, not a PASS" in text
@@ -154,7 +154,7 @@ def test_repository_advertises_the_numeric_tag_published_by_main_release() -> No
         )
     )
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
-    assert config["version"] == inputs["version"]["default"] == "2.0.18"
+    assert config["version"] == inputs["version"]["default"] == "2.1.0"
     assert (
         config["image"]
         == "ghcr.io/kanu-coffee/antigravity-for-home-assistant"

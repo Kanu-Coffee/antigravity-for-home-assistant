@@ -411,6 +411,9 @@ docker exec "${PUBLIC_CONTAINER}" /bin/sh -c '
     and .mcpServers.ha_memory.args == []
     and .mcpServers.ha_read.command == "/usr/local/bin/ha-read-mcp"
     and .mcpServers.ha_read.args == []
+    and .mcpServers.ha_files.command == "/usr/local/bin/ha-files-mcp"
+    and .mcpServers.ha_files.cwd == "/config"
+    and .mcpServers.ha_files.args == []
     and .mcpServers.ha_validate.command == "/usr/local/bin/ha-validate-mcp"
     and .mcpServers.ha_validate.args == []
     and .mcpServers.ha_change.command == "/usr/local/bin/ha-change-proposal-mcp"

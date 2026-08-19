@@ -147,9 +147,11 @@ type NormalizedUpdate =
   수 있다. App 전체 또는 broker 재시작으로 아직 접수하지 않은 in-memory proposal이
   사라지면 기존 approval은 실행하지 않고 새 요청을 요구한다.
 - conversation binding은 opaque Antigravity conversation ID만 `/data`에 저장하고
-  idle timeout으로 만료하거나 worker 실패 시 교체하지 않는다. response는 delivery가
-  끝날 때까지만 sealed reply outbox에 저장하고 처리 완료 prompt는 저장하지 않는다.
-- `/new`만 새 binding을 생성하며 Antigravity 내부 history 파일을 임의 삭제하지 않는다.
+  idle timeout으로 만료하지 않는다. healthy conversation은 `/new`만 교체한다. native
+  worker terminal failure는 binding을 quarantine하고 failed update를 durable ACK한다.
+  다음 사용자 요청은 새 generation/binding을 생성하며 failed prompt를 replay하지 않는다.
+  response는 delivery가 끝날 때까지만 sealed reply outbox에 저장하고 처리 완료 prompt는
+  저장하지 않는다. Antigravity 내부 history 파일을 임의 삭제하지 않는다.
 - approval callback ACK와 기본 인증/control 처리는 즉시 수행한다. 승인된 broker 실행은
   같은 requester FIFO에서 session-serialized되고 실행 직전 현재 generation/conversation을
   durable binding과 다시 비교하므로 `/new`,
@@ -209,15 +211,17 @@ Antigravity 1.1.13은 non-TTY stdin이 pipe되면 print mode를 자동 선택한
 
 첫 실행 전에 App이 생성·보관한 conversation ID를 결합하고 항상
 `--conversation <opaque-id>`로 전달한다. prompt에서 CLI flag, environment, model,
-conversation 또는 path를 추출하지 않는다. worker 실패·timeout·App 재시작은 binding을
-바꾸지 않으며 `/new`만 새 ID를 만든다.
+conversation 또는 path를 추출하지 않는다. timeout이나 App 재시작만으로 healthy
+binding을 바꾸지는 않는다. terminal worker failure는 위 quarantine state transition을
+거쳐 다음 user request에 새 ID를 만들며 `/new`는 사용자가 즉시 회전하는 유일한 command다.
 
 worker environment는 Web/SSH wrapper와 같은 HOME, PATH, locale, native permission,
 AppArmor runtime/command profile 선택과 requester binding을 사용한다. Supervisor,
 Telegram, browser raw credential과 shell startup 변수는 environment value로 전달하지
 않는다. HOME은 `/data/home`, cwd는 `/config`이며 OAuth와 user global/workspace
-plugin·agent·rule·MCP를 의도적으로 상속한다. mutation은 approved proposal을 통해서만
-수행한다. 별도 Telegram settings,
+plugin·agent·rule·MCP를 의도적으로 상속한다. `request-review` mutation은 approved
+proposal을 통해 수행하고 explicit `always-proceed`는 current user request 범위의
+ordinary mutation을 자율 실행한다. 별도 Telegram settings,
 plugin copy, safe cwd, HOME bootstrap 또는 login helper는 없다.
 
 actual Antigravity 1.1.11 shared-HOME canary는 user global stdio MCP가 OAuth 인증 완료
@@ -469,15 +473,26 @@ legacy `antigravity_terminal_sandbox`는 deprecated/no-op compatibility 입력�
 늘리지 않는다. 2.0.6 이하의 `telegram_access_mode`는 무시하는 migration 입력이며 권한
 source가 아니다.
 
-2.0.11 새 설치와 Telegram effective global managed policy는 유일하게
-`request-review`, bounded native/HA reads, exact
-`ha_change_propose`/`telegram_action_propose`와 upstream `readOnly: true` Playwright 네
-도구 allow를 사용한다. `strict`, `always-proceed`, `proceed-in-sandbox` schema 값은
-upgrade input 호환용이며 user-files updater가 모두 `request-review`로 정규화한다.
-ordinary write, URL execute, command, mutation-capable browser와 arbitrary mutation MCP는 unattended allow와
-ask에 넣지 않는다. safely identified 2.0.9/2.0.10 App-owned broad allow는 이 policy로
-migration하며 user-owned rule과 stronger deny는 보존한다. secrets/storage/runtime
-token/options/native MCP config/SSH key exact deny는 항상 우선한다.
+2.1.0 기본 global managed policy는 `request-review`다. URL read, confined
+`ha_files_list`/`ha_files_read_text`, exact `ha_change_propose`/
+`telegram_action_propose`, managed HA read/validate/memory와 upstream
+`readOnly: true` Playwright 네 도구를 allow하고 `ha_files_write_text`/URL execute/command는
+ask로 보낸다. mutation-capable browser와 arbitrary MCP는
+typed adapter 전까지 fail closed한다. explicit `always-proceed`는 current authenticated
+user request 범위에서 mandatory blacklist 밖의 ordinary command/URL,
+`mcp(*)`와 installed Playwright interaction을 autonomous-admin으로 허용한다. `strict`와
+`proceed-in-sandbox`는 legacy upgrade input이며 user-files updater가
+`request-review`로 정규화한다. secrets/storage/OAuth/runtime token/App-owned
+permission-MCP policy/SSH-cloud key/credential `/proc`/Recorder-write exact deny는 항상
+우선한다.
+
+native `read_file(*)`/`write_file(*)`는 symlink alias 우회를 막기 위해 두 mode에서 전역
+deny한다. ordinary file은 server `ha_files`(`serverInfo.name=antigravity-ha-files`)의
+`ha_files_list`, `ha_files_read_text`, `ha_files_write_text`만 사용한다. 허용 root는
+`/config`, `/share`, `/media`, ordinary `/data/home`, `/tmp`, `/var/tmp`이고 UTF-8
+1 MiB·listing 200개, no-symlink/non-regular/multi-hardlink, same-directory atomic write와
+optional `expected_sha256`를 강제한다. secrets/storage/.gemini/credential/policy 및
+Recorder write는 fail closed하며 sensitive-data marker 없이 Recorder read도 거부한다.
 
 2.0.12에서 Telegram-enabled startup은 위 일반 preserve migration을 좁게 재정의한다.
 ownership state와 관계없이 다섯 App 관리 보안 key drift와 permission 세 bucket의
@@ -487,15 +502,16 @@ backup이나 write가 없는 idempotent 결과여야 한다. `reset_v2`는 여�
 명시적으로 선택하는 broader recovery mode이고 이 reconciliation이 option을 자동
 승격하지 않는다.
 
-Playwright 네 auto-allow는 `browser_console_messages`,
+`request-review`의 Playwright 네 auto-allow는 `browser_console_messages`,
 `browser_network_requests`, `browser_snapshot`, `browser_take_screenshot`이다.
 `browser_navigate`, `browser_navigate_back`, `browser_tabs`, `browser_hover`,
 `browser_wait_for`, `browser_resize`, `browser_close` 등 upstream `readOnly: false` 도구는
-typed adapter 전까지 Telegram에서 fail closed한다.
+typed adapter 전까지 Telegram에서 fail closed한다. explicit `always-proceed`에서는
+current request의 installed Playwright navigation/interaction도 허용한다.
 
 1.1.13 `--print --output-format stream-json`은 native interactive permission request를
 외부 transport에 노출하거나 승인 뒤 같은 tool 지점에서 재개하는 protocol을 제공하지
-않는다. 따라서 Telegram callback은 native prompt resume가 아니다. HA service/config
+않는다. 따라서 Telegram callback은 native prompt resume가 아니다. `request-review`의 HA service/config
 mutation은 `ha_change_propose`, terminal command·bounded inline script·command choices·
 finite question은 `telegram_action_propose`로 먼저 등록한다. 둘 다 실행하지 않고 exact
 digest/public preview만 broker/coordinator에 등록한다. native permission denial을
@@ -746,7 +762,7 @@ reason/result/status class만 허용하며 재시작 시 0부터 시작한다. �
   settings, global MCP와 OAuth를
   보존하며, 두 번째 실행은 write/backup 없이 idempotent하다.
 - 2.0.16 `refresh_managed`는 safe parseable settings의 기존 allow/ask/deny bucket이
-  malformed여도 managed 세 bucket을 typed merge validation 전에 exact 29/0/33으로
+  malformed여도 managed 세 bucket을 typed merge validation 전에 canonical policy로
   canonicalize한다. unsafe-file preflight와 unrelated-state 보존 범위는 바꾸지 않는다.
 - unsafe effective permission fixture는 Bot API 호출 전에
   `permission_boundary_blocked` 한 건을 만들고 bridge process를 exit시키거나 S6 restart
@@ -759,8 +775,12 @@ reason/result/status class만 허용하며 재시작 시 0부터 시작한다. �
 - token/prompt/raw output canary가 App log, Telegram reply와 artifact에 없다.
 - split stderr marker와 대용량 stderr에서도 matcher state가 bounded이고 원문을
   남기지 않으며 exit 1+exact marker, exit 70, 나머지 실패가 서로 오인되지 않는다.
-- 첫 요청 전에 binding이 저장되고 후속 prompt/approval/reply가 같은 conversation을
-  사용하며 오직 `/new`만 새 ID를 만든다.
+- 첫 요청 전에 binding이 저장되고 healthy 후속 prompt/approval/reply가 같은
+  conversation을 사용한다. `/new`는 명시적 회전 command다. terminal worker failure는
+  failed conversation을 quarantine하고 update를 durable ACK하며 다음 user request에
+  새 generation을 결합하고 failed mutation을 replay하지 않는다.
+- `request-review`와 explicit `always-proceed` canonical policy가 각각 Web/SSH/Telegram에
+  동일하게 적용되고, 두 mode 모두 mandatory sensitive deny를 유지한다.
 - model 성공 뒤 Telegram 실패·process crash에서도 encrypted outbox가 같은 reply를
   재전송하고 ack 뒤에만 제거한다.
 - optional bounded `toolAction`/`toolSummary` receipt와 단일 유효 proposal 뒤의 빈
@@ -802,10 +822,13 @@ OAuth, token과 사용자 content를 기록하지 않는다. `/new`나 reconnect
 버렸다. 승인카드 전 실패했으므로 approved write는 `NOT RUN`이고 2.0.17 전체 수용은
 `FAIL`이다.
 
-2.0.18은 proposal client에 해당 exact module read만 추가한다. restricted와
+2.0.18은 proposal client에 해당 exact module read를 추가했다. restricted와
 sensitive-read launcher는 다섯 run binding이 전부 있거나 전부 없는지만 허용하고,
-일부 binding은 fail closed하며 완전한 tuple만 함께 전달한다. 환경 전체 상속, broad
-`mcp(*)`/`command(*)`, 승인 없는 direct write/command는 허용하지 않는다. exact
-module/broad-rule negative와 complete/partial tuple 자동 회귀는 HAOS 증거가 아니며,
-2.0.18 amd64의 single read MCP→approval card→approved bounded write와 aarch64
-실기기 수용은 릴리스 전 `NOT RUN`이다.
+일부 binding은 fail closed하며 완전한 tuple만 함께 전달한다. 이후 실제 공개 2.0.18
+amd64는 Telegram transport/no-tool chat을 `PASS`했지만 첫 managed tool은 terminal
+error로 `FAIL`했다. 후속 3~7은 같은 failed conversation reuse라 각 tool의 독립 결과가
+아니며 approved write는 `NOT RUN`이다. 2.1.0은 request-review/always-proceed dual mode,
+raw native file deny, confined `ha_files`와 failed-conversation quarantine을 적용한다.
+자동 회귀는 HAOS 증거가 아니며, 2.1.0 amd64/aarch64의 single read→proposal/approved
+`ha_files` write 및 autonomous ordinary MCP work는
+배포 시점 `NOT RUN`이다.

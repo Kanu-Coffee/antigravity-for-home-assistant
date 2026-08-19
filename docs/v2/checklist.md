@@ -49,9 +49,12 @@
   unknown/user-owned rule은 보존 대상으로 주장하지 않는다.
 - migration에서 symlink, hardlink, FIFO, device와 unsafe owner/mode를 거부한다.
 - browser read-only user도 모든 state를 볼 수 있으므로 결과는 민감하다.
-- 2.0.11 native default이자 Telegram의 유일한 effective 값은 `request-review`이며
-  `strict`와 legacy autonomous schema 입력도 updater가 이 값으로 정규화한다. 다른
-  schema 값은 upgrade input 호환용이다. AppArmor와 App-managed proposal approval은 option으로 완화하지 않는다. native
+- 2.1.0 native 기본값은 `request-review`이며 mutation을 ask/proposal-first로 보낸다.
+  explicit `always-proceed`는 mandatory blacklist 밖의 ordinary operational
+  command/URL, installed MCP와 Playwright interaction을 autonomous-admin으로
+  허용한다. `strict`와 `proceed-in-sandbox`만 legacy upgrade 입력으로
+  `request-review`에 정규화한다. AppArmor mandatory deny와 App-managed broker의
+  high-risk 판정은 option으로 완화하지 않는다. native
   nested sandbox는 비특권 HAOS App에서 namespace 생성에 실패하므로 사용하지 않는다.
   command와 stdio tool은 별도 AppArmor command profile로 `Px` 전환하며 host 권한을
   추가하지 않는다.
@@ -63,8 +66,9 @@
 - diagnostics, proposed diff와 command success는 mutation 승인/검증이 아니다.
 - memory 0건은 준비 완료나 검증된 no-result와 같지 않다.
 - 실제 HAOS/AppArmor 결과는 local Docker fixture와 별도 기록한다.
-- Telegram Playwright auto-allow는 upstream read-only 네 도구뿐이다. navigate/back,
+- `request-review` Telegram Playwright auto-allow는 upstream read-only 네 도구뿐이다. navigate/back,
   tabs, hover, wait, resize, close는 typed adapter 전까지 fail closed한다.
+  explicit `always-proceed`는 current request의 installed Playwright interaction을 허용한다.
 - proposal registration은 approval/card sealing 전에는 crash-durable하지 않다. 이
   구간의 bridge crash는 사용자 재시도를 요구한다.
 - GAP-007의 장시간 성능·내구성 진단은 수동 advisory이며 Candidate, finalize,
@@ -73,14 +77,23 @@
   plugin·agent·rule·MCP와 native permission을 공유한다. 실제 1.1.11 shared-HOME
   positive control의 global MCP launch는 2.0.7의 필수 inheritance 증거다. 실제 HAOS
   OAuth/AppArmor enforce와 동일-process 비유출 시험은 별도 기록한다.
-- raw file tool을 통한 App 관리 `settings.json`과 native MCP config 직접 mutation은
-  exact deny다. interactive Web/SSH의 일반 전역 setting은 digest-bound `agy-settings patch`로 매개 수정할 수 있지만
+- raw native file read/write는 symlink alias 우회를 막기 위해 두 mode 모두 전역
+  deny한다. ordinary file 작업은 confined `ha_files` MCP의 `ha_files_list`,
+  `ha_files_read_text`, `ha_files_write_text`만 사용하고 `/config`, `/share`, `/media`,
+  ordinary `/data/home`, `/tmp`, `/var/tmp` root와 UTF-8 1 MiB·listing 200개 상한을
+  적용한다. secrets/.storage/.gemini/credential/policy/Recorder-write,
+  symlink/hardlink/TOCTOU를 fail closed한다.
+  App 관리 `settings.json`과 native MCP config는 직접 read/mutation exact deny다.
+  interactive Web/SSH의 일반 전역 setting은 digest-bound `agy-settings patch`로 매개 수정할 수 있지만
   `permissions`, `enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`,
   `artifactReviewPolicy`는 거부한다. global plugin·agent·rule·skill은 계속 공유·직접
   공유한다. Telegram customization mutation은 approved exact terminal/script proposal로만
   실행하고 user-configured MCP executable은 AppArmor command profile에서 실행한다.
-- Telegram은 최초 실행 전에 conversation을 결합하고 `/new` 전까지 유지하며,
-  same-session approval과 암호화 reply outbox의 retry/ack를 보장한다.
+- Telegram은 최초 실행 전에 conversation을 결합하고 healthy session은 `/new` 전까지
+  유지한다. native worker terminal failure는 failed conversation을 quarantine하고
+  update를 durable ACK한 뒤 다음 user request에 새 generation을 결합하며 failed
+  mutation을 replay하지 않는다. same-session approval과 암호화 reply outbox의
+  retry/ack를 보장한다.
 - `multi_choice_service_call` approval은 최대 31개 사전 검증 service call과 cancel을
   4×8 grid에 표시하고 opaque callback token만 사용한다. choice는 authorization 전에
   durable state에 기록하고 requester/session generation/conversation/digest/choice/
@@ -252,6 +265,37 @@
   취급하고 DB 본체, symlink, owner/mode 위반과 `nlink > 1`은 계속 거부한다.
   zero-link와 two-link 양방향 회귀를 모두 통과해야 Candidate로 진행한다.
 
+### 2026-08-19 공개 2.0.18 실기기 결과와 2.1.0 breaking 교정
+
+- 실제 공개 2.0.18 HAOS amd64는 App startup, native `antigravity --version` status 0,
+  Telegram transport와 no-tool chat을 `PASS`했다. Web `agy`/`antigravity` interactive
+  I/O와 첫 managed Telegram tool은 `FAIL`했고 current audit는 `/dev/pts/0`
+  inherited/open `rw` denial을 기록한다. 후속 3~7은 failed conversation reuse라 각
+  tool의 독립 결과가 아니며 approved write는 `NOT RUN`이다. 2.0.18 수용은 `FAIL`이다.
+- 2.1.0은 `/config`, `/share`, `/media`, ordinary HOME/temp, system command, installed
+  MCP, supported Core/Supervisor manager API와 sanitized bounded logs에 operational
+  default-allow를 적용한다. raw Host logs는 제공하지 않고 exact token/known
+  credential-shaped line/block을 제거하지만 arbitrary unkeyed text의 완전한 secret
+  판별을 주장하지 않는다.
+- native raw file read/write는 전역 deny하고 ordinary file은 confined `ha_files` MCP로
+  `ha_files_list`/`ha_files_read_text`/`ha_files_write_text`만 사용한다. ordinary root,
+  UTF-8 1 MiB·listing 200개, atomic write/optional digest를 강제하고
+  secrets/storage/.gemini/credential/policy/Recorder-write,
+  symlink/hardlink/path swap/TOCTOU negative와 ordinary-root positive matrix를 모두
+  통과해야 한다.
+- `request-review`/explicit `always-proceed` dual mode와 mandatory blacklist를 mode별로
+  검증한다. `always-proceed`의 `mcp(*)`/Playwright interaction은 의도된
+  autonomous-admin이고, `strict`/`proceed-in-sandbox`는 request-review로 정규화한다.
+- failed native conversation quarantine, durable ACK, next-generation recovery와 failed
+  mutation no-replay를 검증한다. Web PTY inherit/open/read/write는 actual Antigravity
+  interactive probe로 검사한다.
+- `breaking_versions`에 2.1.0을 추가한다. `full_access`, `docker_api`, Docker socket,
+  host-root/PID/journal mount, privileged capability와 protection disablement는 계속
+  없어야 한다.
+- source/container/kernel 회귀는 HAOS 증거가 아니다. 2.1.0 amd64/aarch64 실기기
+  수용은 배포 시점 `NOT RUN`이며 전체 v2 수용은 `PARTIAL`이다. 2.0.12는 clean/safe
+  rollback이 아니고 exact old backup restore는 newer `/data`를 교체한다.
+
 ### 2026-08-11 local v2 증거 스냅샷
 
 - 전체 Python suite: `134 passed`.
@@ -347,9 +391,9 @@
 | M3-02 | `PARTIAL` | typed proposal, risk classifier, capability 구현 | broker unit/security suite PASS; HAOS mutation TODO |
 | M3-03 | `PARTIAL` | secret-safe structured preview와 일반 YAML transaction/check/reload-or-restart-required/exact rollback | local broker suite PASS; HAOS safe change TODO |
 | M3-04 | `PARTIAL` | service_call과 분리된 typed transient device prior/test/always-restore workflow | local success/failure/in-doubt/replay PASS; HAOS safe test TODO |
-| M3-05 | `PARTIAL` | custom `apparmor.txt` root와 restricted/sensitive-read top-level named `Px` 실행 프로필 작성 | parser/static + kernel-enforced startup smoke; 2.0.12 attach FAIL, 2.0.13 S6 FAIL, 2.0.14 init FAIL, 2.0.15 PTY FAIL, 2.0.16 native mmap FAIL, 2.0.17 proposal-client module FAIL, 2.0.18 HAOS TODO |
-| M3-06 | `TODO` | HAOS complain audit로 최소 allowlist 조정 | sanitized audit report |
-| M3-07 | `TODO` | HAOS enforce positive/negative matrix | 2.0.12 custom attach FAIL; 2.0.13 S6 FAIL; 2.0.14 init FAIL; 2.0.15 PTY FAIL; 2.0.16 native mmap FAIL; 2.0.17 module read FAIL; 2.0.18 AppArmor E2E TODO |
+| M3-05 | `PARTIAL` | custom `apparmor.txt` operational-blacklist와 restricted/sensitive-read top-level named `Px` 실행 프로필 | parser/static + kernel-enforced smoke; public 2.0.18 Web PTY FAIL; 2.1.0 HAOS TODO |
+| M3-06 | `PARTIAL` | 실기기 audit 기반 PTY/ordinary-operation positive와 explicit sensitive/raw-host blacklist | 2.0.18 `/dev/pts/0` denial RCA; 2.1.0 sanitized audit TODO |
+| M3-07 | `PARTIAL` | HAOS enforce positive/negative matrix | historical 2.0.12~2.0.18 failures recorded; 2.1.0 operational/blacklist E2E TODO |
 | M3-08 | `PARTIAL` | App-managed broker 고위험 항상 확인 불변조건 검증 | local policy/replay matrix PASS; real Telegram E2E TODO |
 | M3-09 | `PARTIAL` | 민감정보 option의 profile 선택과 불변 deny 구현 | local profile matrix PASS; false/true HAOS matrix TODO |
 | M3-10 | `PARTIAL` | shared native OAuth 동일-process 잔여 위험과 관리자 trust-model 검증 | local shared-HOME canary; actual HAOS OAuth 비유출/AppArmor TODO |
@@ -359,12 +403,13 @@
 | ID | 상태 | 과제 | 완료 증거 |
 | --- | --- | --- | --- |
 | M4-01 | `VERIFIED` | ordinary read/memory/fresh-state validate의 ha-read broker ownership 고정; config-check/mutation/browser-auth는 scoped 분리 | static owner + shared failure injection PASS |
-| M4-02 | `PARTIAL` | bounded Core/Supervisor read/log tools | API/component contract PASS; 2.0.17 managed MCP FAIL; 2.0.18 HAOS E2E TODO |
+| M4-02 | `PARTIAL` | bounded Core/Supervisor read와 raw-unavailable sanitized Host/Supervisor log tools | API/component contract; 2.0.18 first managed tool FAIL; 2.1.0 HAOS E2E TODO |
+| M4-09 | `PARTIAL` | confined `ha_files` ordinary-root list/read/write와 alias/TOCTOU/sensitive deny | component positive/negative pending final report; 2.1.0 HAOS E2E TODO |
 | M4-03 | `PARTIAL` | memory 모듈 분리와 bootstrap/degraded isolation | memory suite PASS; HAOS lifecycle TODO |
 | M4-04 | `PARTIAL` | explicit/candidate/change memory workflow | state-machine suite PASS; HAOS mutation TODO |
 | M4-05 | `PARTIAL` | Chromium executable와 Playwright lock 일치 | amd64 runtime/QEMU arm64 packaging PASS; native arm64 TODO |
 | M4-06 | `PARTIAL` | loopback gateway와 managed read-only identity | managed-auth suite PASS; HAOS identity lifecycle TODO |
-| M4-07 | `PARTIAL` | desktop/mobile/console/network 검증; Telegram auto-allow는 upstream read-only console/network/snapshot/screenshot만, mutation-capable browser는 fail closed | fixture rendered smoke PASS; rendered HAOS E2E TODO |
+| M4-07 | `PARTIAL` | desktop/mobile/console/network 검증; request-review는 read-only 네 도구만, always-proceed는 installed interaction 허용 | fixture rendered smoke; 2.1.0 rendered HAOS E2E TODO |
 | M4-08 | `PARTIAL` | browser/memory 비밀 및 output redaction | local canary security suite PASS; HAOS E2E TODO |
 
 ### M5 — 새 Telegram 브리지
@@ -375,14 +420,14 @@
 | M5-02 | `PARTIAL` | long polling, static user/chat allowlist와 bounded metrics | Bot API/metric component tests PASS; live Bot API TODO |
 | M5-03 | `PARTIAL` | local-only pairing create/list/revoke | pairing security suite PASS; HAOS operator flow TODO |
 | M5-04 | `PARTIAL` | input normalization과 shell-free shared-runtime invocation | injection/argv/stdin suite PASS; live conversation TODO |
-| M5-05 | `PARTIAL` | pre-bound stable session, explicit `/new`, per-chat queue, cancel와 timeout | 2.0.9 component 재검증 및 live HAOS Telegram TODO |
+| M5-05 | `PARTIAL` | pre-bound healthy session, explicit `/new`, failed-conversation quarantine/no-replay, per-chat queue/cancel/timeout | component recovery suite; live 2.1.0 HAOS Telegram TODO |
 | M5-06 | `PARTIAL` | stream-json parser, bounded metadata/single-proposal empty-text fallback와 Telegram chunking | parser/output component PASS; live Telegram formatting TODO |
 | M5-07 | `PARTIAL` | typed binary/multi-choice proposal, 31+cancel grid와 broker-generated human-reviewable confirmation preview | local secret-safe diff + choice binding/replay/cross-chat PASS; 2.0.17 proposal card FAIL; 2.0.18 HAOS E2E TODO |
-| M5-08 | `PARTIAL` | effective `request-review` 단일값, bounded read/proposal allow, sensitive exact deny, native-prompt/broker 경계와 high-risk matrix | 2.0.11 local policy suite 및 HAOS E2E TODO |
+| M5-08 | `PARTIAL` | request-review/always-proceed dual policy, raw native file deny, mandatory blacklist, native-prompt/broker high-risk matrix | 2.1.0 local policy suite pending final report; HAOS E2E TODO |
 | M5-09 | `PARTIAL` | encrypted reply outbox, rate limit/backoff/idempotent result와 registration→approval sealing 전 crash 재시도 경계 | pre-send persist/retry/ack component와 live Bot API TODO |
-| M5-10 | `TODO` | 실제 HAOS Telegram E2E | 2.0.17 no-tool chat PASS, managed MCP/proposal FAIL, approved write NOT RUN; 2.0.18 sanitized E2E TODO |
+| M5-10 | `TODO` | 실제 HAOS Telegram E2E | 2.0.18 no-tool PASS, first managed tool FAIL, later reused-session inconclusive, approved write NOT RUN; 2.1.0 E2E TODO |
 | M5-11 | `PARTIAL` | shared Home/cwd와 user customization 상속·수정 | actual 1.1.13 positive canary 재검증; HAOS OAuth/AppArmor TODO |
-| M5-12 | `IN_PROGRESS` | shared Telegram permission validator와 `permission_boundary_blocked` Bot-API-before hold/no-S6-loop | 2.0.12 amd64 reconcile/reconnect/restart PASS; 2.0.15 malformed-bucket refresh FAIL; 2.0.16 native worker FAIL; 2.0.17 tool path FAIL; 2.0.18 HAOS E2E TODO |
+| M5-12 | `IN_PROGRESS` | dual-mode permission validator와 `permission_boundary_blocked` Bot-API-before hold/no-S6-loop | historical evidence recorded; 2.1.0 HAOS dual-mode/unsafe-hold TODO |
 
 ### M6 — migration과 multi-arch release
 
@@ -390,15 +435,15 @@
 | --- | --- | --- | --- |
 | M6-01 | `PARTIAL` | v1 option conservative mapping | exact public-v1 source container rehearsal PASS; HA-007 local HAOS/HA-005 public update TODO |
 | M6-02 | `PARTIAL` | preserve mode와 ownership conflict | local preflight/preserve/full update PASS; HAOS TODO |
-| M6-03 | `PARTIAL` | refresh_managed owned settings merge와 plugin mode-independent refresh의 one-shot/idempotency | 2.0.15 malformed permission bucket ordering FAIL; 2.0.16 local transaction PASS but native HAOS worker FAIL; 2.0.17 basic startup PASS/tool path FAIL; 2.0.18 HAOS restart/update TODO |
+| M6-03 | `PARTIAL` | refresh_managed owned settings merge, 2.0.x→2.1 dual-mode migration와 plugin refresh idempotency | local transaction pending final report; 2.1.0 HAOS restart/update TODO |
 | M6-04 | `PARTIAL` | reset_v2가 ownership state와 무관하게 safe settings를 backup하고 managed key/permission을 exact 복구, preserve 전 매-start drift 복구 | local state/target journal + SIGKILL rollback PASS; HAOS rollback TODO |
 | M6-05 | `PARTIAL` | memory/browser/SSH/OAuth preservation | amd64 public-v1 fixture와 QEMU arm64 restart persistence PASS; HA-005/HA-006/HA-007 TODO |
 | M6-06 | `PARTIAL` | amd64/aarch64 build/runtime와 per-checkout bounded local cache | 2.0.9 build helper contract 및 shared Telegram/permission/broker 재검증; native HAOS both arch TODO |
-| M6-07 | `PARTIAL` | `image`, AppArmor와 breaking metadata | 2.0.13 breaking binding; 2.0.13 S6 FAIL, 2.0.14 init FAIL, 2.0.15 PTY FAIL, 2.0.16 native mmap FAIL, 2.0.17 module FAIL, 2.0.18 enforced smoke/HAOS install TODO |
+| M6-07 | `PARTIAL` | `image`, operational AppArmor와 breaking metadata | 2.0.13/2.1.0 breaking binding; 2.1.0 Candidate/HAOS install TODO |
 | M6-08 | `PARTIAL` | staged candidate exact-digest smoke, HAOS rehearsal bundle와 rebuild 없는 idempotent promotion | remote PR Builder PASS; Candidate workflow/actual bundle run TODO |
 | M6-09 | `PARTIAL` | leaf SBOM, provenance, exact Cosign identity와 anonymous preflight | local workflow contract; public registry retrieval TODO |
 | M6-10 | `PARTIAL` | candidate-bound local HAOS rehearsal과 post-publish public acceptance | pre-finalize finalizer와 post-publish HA-005/HA-008 validator/uploader implemented; HA-005/006/007/008 NOT RUN |
-| M6-11 | `IN_PROGRESS` | Telegram-enabled preserve의 boundary-only transaction reconciliation, unrelated-state 보존과 restart idempotency | 2.0.12 amd64 public preserve update/restart PASS; 2.0.15 malformed-bucket ordering FAIL; 2.0.16 worker FAIL; 2.0.17 tool path FAIL; 2.0.18 HAOS proof/unsafe hold NOT RUN |
+| M6-11 | `IN_PROGRESS` | Telegram-enabled preserve의 selected dual-mode boundary reconciliation, unrelated-state 보존과 restart idempotency | 2.0.12 historical PASS; 2.1.0 migration/unsafe hold HAOS NOT RUN |
 
 ### M7 — 사용자 문서와 최종 감사
 

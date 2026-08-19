@@ -1,9 +1,10 @@
 #!/bin/bash -p
 set -Eeuo pipefail
 unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
+unset PYTHONHOME PYTHONPATH
 
-if (( $# < 1 || $# > 2 )) || [[ ! "$1" =~ ^[a-z0-9_-]+$ ]]; then
-  printf 'Usage: ha-addon-logs ADDON_SLUG [LINES]\n' >&2
+if (( $# != 0 )); then
+  printf 'ha-files-mcp: command-line arguments are not supported\n' >&2
   exit 64
 fi
 
@@ -12,5 +13,5 @@ exec /usr/bin/env -i \
   LANG=C.UTF-8 \
   LC_ALL=C.UTF-8 \
   PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-  /usr/bin/node /usr/local/share/antigravity-ha/ha-read-log-cli.mjs \
-  addon "$1" "${2:-200}"
+  /usr/bin/python3 -I -B -u \
+  /usr/local/share/antigravity-ha/ha-files-mcp.py

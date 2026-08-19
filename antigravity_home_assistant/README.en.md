@@ -27,19 +27,29 @@ Use antigravity inside Home Assistant to inspect your setup and improve dashboar
 > [!WARNING]
 > This app is a powerful administrative tool that can directly change your Home Assistant configuration. Telegram is equivalent to the CLI as an administrator channel, so protect the bot token, authorized chats, and Telegram accounts. Back up important data, review plans and diffs, and never expose the SSH port directly to the internet.
 
-**2.0.18 Telegram MCP and approval-path correction:** On public 2.0.17 on real
-HAOS 18.2 amd64, the App, Web terminal, native basic conversation, Telegram
-connection, and a no-tool reply passed, but managed MCP and
-`telegram_action_propose` failed. Kernel audit identified an exact image-owned
-`supervisor-credential-fd.mjs` module-read denial in `change-proposal-client`,
-while both confined launchers discarded the five requester/run binding values
-needed for an approval proposal. Approved writes were `NOT RUN`, so 2.0.17
-acceptance is `FAIL` overall. Version 2.0.18 grants only the exact module read and
-makes both launchers validate and preserve only a complete five-value binding.
-It adds no broad AppArmor/native-tool permission or unapproved direct write or
-command path. Real-device 2.0.18 acceptance on amd64 and aarch64 is `NOT RUN`
-before release and overall v2 acceptance remains `PARTIAL`. Only 2.0.13 remains
-breaking; a 2.0.12 backup restore is not a lossless fallback.
+**2.1.0 operational-permission redesign:** Public 2.0.18 on real HAOS 18.2
+amd64 passed App startup, native `antigravity --version` with status 0,
+Telegram transport, and a no-tool chat. Web `agy`/`antigravity` interactive I/O
+and the first managed Telegram tool failed; kernel audit records denied
+inherited/open `rw` access to `/dev/pts/0`. Tests 3 through 7 reused the failed
+conversation and are not independent tool results. Approved write remained
+`NOT RUN`, so public 2.0.18 acceptance is `FAIL` overall.
+
+Version 2.1.0 opens supported mounts, manager APIs, installed MCPs, commands,
+and bounded Host/Supervisor log projections under an operational blacklist.
+Raw logs are unavailable; exact App tokens and known credential-shaped lines or
+blocks are removed without claiming complete detection of arbitrary unkeyed
+application text. Native `read_file`/`write_file` are denied in both modes to
+block symlink-alias bypasses. Ordinary files use only confined `ha_files_list`,
+`ha_files_read_text`, and `ha_files_write_text`. Secrets, `.storage`, OAuth/
+tokens/keys, policy, credential-bearing `/proc`, Recorder writes, and raw host/
+Docker boundaries remain blocked. `request-review` is the default; explicit
+`always-proceed` is autonomous administrator mode for installed MCPs, commands,
+URLs, and Playwright interaction outside the blacklist. `strict` and
+`proceed-in-sandbox` normalize to `request-review`. This breaking transition
+adds 2.1.0 to `breaking_versions`. Real-device 2.1.0 acceptance is `NOT RUN` on
+amd64 and aarch64 at publication, and overall v2 remains `PARTIAL`. A 2.0.12
+downgrade is not a clean, safe, or lossless fallback.
 
 ## Quick start
 
@@ -62,12 +72,13 @@ a native permission prompt, so arbitrary future/plugin MCP tools are not
 transparently intercepted and unsupported side effects fail closed. Initial
 OAuth still requires a one-time Web/SSH login when no shared identity exists.
 
-Telegram's effective native permission is only `request-review` because of the
-pinned CLI boundary. Schema values `strict`, `always-proceed`, and
-`proceed-in-sandbox` are upgrade-input compatibility and the user-files updater
-normalizes all of them to `request-review`. Playwright auto-allows only the four
-upstream `readOnly: true` console/network/snapshot/screenshot tools;
-navigate/tabs/hover/wait/resize/close fail closed until a typed adapter exists.
+Telegram defaults to effective native `request-review` and also supports
+explicit `always-proceed`. `strict` and `proceed-in-sandbox` are legacy upgrade
+inputs normalized to `request-review`. In request-review, Playwright auto-allows
+only the four upstream `readOnly: true` console/network/snapshot/screenshot
+tools; navigate/tabs/hover/wait/resize/close fail closed until a typed adapter
+exists. Always-proceed permits installed Playwright interaction within the
+current authenticated user request but does not open the mandatory blacklist.
 If the bridge exits after proposal registration but before sealing encrypted
 approval/card state, registration cannot be recovered and the request must be
 repeated.

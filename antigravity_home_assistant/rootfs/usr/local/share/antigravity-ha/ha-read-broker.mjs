@@ -25,6 +25,7 @@ const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 100;
 const DEFAULT_LOG_LINES = 200;
 const MAX_LOG_LINES = 500;
+const LOG_CONTEXT_LINES = 128;
 const MAX_LOG_LINE_BYTES = 4096;
 const DEFAULT_HISTORY_HOURS = 24;
 const MAX_HISTORY_HOURS = 168;
@@ -50,10 +51,13 @@ const STORAGE_USAGE_CATEGORY_ALIASES = new Map([
   ["addons_config", "apps_config"],
 ]);
 const ACTIONS = new Set([
+  "addon_logs",
   "app_logs",
   "config",
   "core_info",
   "core_logs",
+  "host_info",
+  "host_logs",
   "history",
   "memory_snapshot",
   "registry",
@@ -62,6 +66,7 @@ const ACTIONS = new Set([
   "states",
   "storage_usage",
   "supervisor_info",
+  "supervisor_logs",
   "traces",
 ]);
 const SAFE_STATE_ATTRIBUTES = new Set([
@@ -73,7 +78,7 @@ const SAFE_STATE_ATTRIBUTES = new Set([
 ]);
 const REDACTED_SENSITIVE_STATE = "[REDACTED_SENSITIVE_STATE]";
 const SENSITIVE_STATE_SUBJECT =
-  /(?:^|[._-])(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)(?:[._-]|$)/iu;
+  /(?:^|[._-])(?:access[_-]?token|api[_-]?(?:key|token)|authorization|credential|password|secret|token)(?:[._-]|$)/iu;
 const SENSITIVE_STATE_VALUE =
   /(?:\bBearer\s+\S+|-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|\bhttps?:\/\/[^\s/@:]+:[^\s/@]+@|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/iu;
 
@@ -220,19 +225,41 @@ function projectStorageUsage(value) {
 
 const SENSITIVE_LOG_LINE = "[REDACTED_SENSITIVE_LOG_LINE]";
 const SENSITIVE_LOG_KEY =
-  /(?:access[_-]?token|api[_-]?key|authorization|client[_-]?secret|cookie|credential|password|proxy[_-]?authorization|secret|set-cookie|token)[\\'"`\s]{0,8}[=:]/iu;
+  /(?:access[_-]?token|api[_-]?(?:key|token)|authorization|client[_-]?secret|cookie|credential|password|proxy[_-]?authorization|secret|set-cookie|token|x[_-]?api[_-]?token)[\\'"`\s]{0,8}[=:]/iu;
+const SENSITIVE_LOG_HEADER =
+  /(?:^|\s)x[_-]?api[_-]?token\s+\S/iu;
+const SENSITIVE_LOG_CLI_OPTION =
+  /(?:^|\s)--?(?:access[_-]?token|api[_-]?(?:key|token)|authorization|client[_-]?secret|cookie|credential|password|proxy[_-]?authorization|secret|token)(?:[=\s]+\S+|$)/iu;
 const SENSITIVE_LOG_VALUE =
-  /(?:\bBearer\s+\S+|\bBasic\s+[A-Za-z0-9+/=]+|-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|\bhttps?:\/\/[^\s/@:]+:[^\s/@]+@|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/iu;
+  /(?:\bBearer\s+[A-Za-z0-9._~+\/-]{16,}\b|-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|\bhttps?:\/\/[^\s/@:]+:[^\s/@]+@|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|\b\d{8,12}:[A-Za-z0-9_-]{30,}\b|\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{30,})\b|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bAIza[0-9A-Za-z_-]{35}\b|\bxox[baprs]-[A-Za-z0-9-]{10,}\b|\b(?:sk|rk)_live_[A-Za-z0-9]{16,}\b)/iu;
+const BASIC_LOG_CANDIDATE = /(?:^|\s)Basic\s+([A-Za-z0-9+/]+={0,2})(?=\s|$)/giu;
 const PRIVATE_KEY_BEGIN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/iu;
 const PRIVATE_KEY_END = /-----END [A-Z0-9 ]*PRIVATE KEY-----/iu;
-const SENSITIVE_KEY_WITHOUT_VALUE =
-  /(?:access[_-]?token|api[_-]?key|authorization|client[_-]?secret|cookie|credential|password|proxy[_-]?authorization|secret|set-cookie|token)[\\'"`\s]{0,8}[=:]\s*$/iu;
+const PRIVATE_KEY_BODY = /^[A-Za-z0-9+/]{32,}={0,2}$/u;
+const SENSITIVE_LOG_BLOCK_HEADER =
+  /^([ \t]*)["']?(?:access[_-]?token|api[_-]?(?:key|token)|authorization|client[_-]?secret|cookie|credential|password|proxy[_-]?authorization|secret|set-cookie|token|x[_-]?api[_-]?token)["']?\s*:\s*(?:(?:[!&][^\s#]+)\s*)*(?:[|>](?:[-+]?[1-9]?|[1-9][-+]?))?\s*(?:#.*)?$/iu;
+const SENSITIVE_LOG_CONTAINER_HEADER =
+  /^[ \t]*["']?(?:access[_-]?token|api[_-]?(?:key|token)|authorization|client[_-]?secret|cookie|credential|password|proxy[_-]?authorization|secret|set-cookie|token|x[_-]?api[_-]?token)["']?\s*:\s*(?:(?:[!&][^\s#]+)\s*)*(?<opener>[\[{])\s*$/iu;
+
+function containsBasicCredential(line) {
+  for (const match of line.matchAll(BASIC_LOG_CANDIDATE)) {
+    const encoded = match[1];
+    if (encoded.length % 4 === 1) continue;
+    const decoded = Buffer.from(encoded, "base64");
+    const canonical = decoded.toString("base64").replace(/=+$/u, "");
+    if (canonical === encoded.replace(/=+$/u, "") && decoded.includes(0x3a)) return true;
+  }
+  return false;
+}
 
 function redactLogLine(line, supervisorToken) {
   if (
     line.includes(supervisorToken) ||
     SENSITIVE_LOG_KEY.test(line) ||
-    SENSITIVE_LOG_VALUE.test(line)
+    SENSITIVE_LOG_HEADER.test(line) ||
+    SENSITIVE_LOG_CLI_OPTION.test(line) ||
+    SENSITIVE_LOG_VALUE.test(line) ||
+    containsBasicCredential(line)
   ) {
     return SENSITIVE_LOG_LINE;
   }
@@ -241,18 +268,122 @@ function redactLogLine(line, supervisorToken) {
   return `${bytes.subarray(0, MAX_LOG_LINE_BYTES).toString("utf8")}…[truncated]`;
 }
 
-function redactLogLines(lines, supervisorToken) {
+function scanFlowStructure(line, state) {
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (state.escaped) {
+      state.escaped = false;
+      continue;
+    }
+    if (state.quote !== null) {
+      if (state.quote === "'" && character === "'" && line[index + 1] === "'") {
+        index += 1;
+      } else if (state.quote === '"' && character === "\\") {
+        state.escaped = true;
+      } else if (character === state.quote) {
+        state.quote = null;
+      }
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      state.quote = character;
+    } else if (character === "#") {
+      // YAML comments cannot contain live flow-container delimiters.
+      break;
+    } else if (character === "{") {
+      state.stack.push("}");
+    } else if (character === "[") {
+      state.stack.push("]");
+    } else if (character === state.stack.at(-1)) {
+      state.stack.pop();
+    }
+  }
+  // In YAML double-quoted scalars a terminal backslash folds the physical
+  // newline; it does not escape the first character on the next log line.
+  state.escaped = false;
+  return state;
+}
+
+function flowStructureIsOpen(state) {
+  return state.quote !== null || state.stack.length > 0;
+}
+
+function redactLogLines(lines, supervisorToken, windowMayStartMidBlock = false) {
   let privateKeyBlock = false;
-  let redactContinuation = false;
+  let sensitiveBlockIndent = null;
+  let sensitiveFlowState = null;
+  let uncertainPrefix = windowMayStartMidBlock;
   return lines.map((line) => {
+    const indentation = line.match(/^[ \t]*/u)?.[0].length ?? 0;
+    const trimmed = line.trim();
+    if (uncertainPrefix) {
+      if (
+        trimmed === "" ||
+        indentation > 0 ||
+        trimmed.startsWith("-") ||
+        PRIVATE_KEY_BODY.test(trimmed) ||
+        PRIVATE_KEY_END.test(trimmed)
+      ) {
+        return SENSITIVE_LOG_LINE;
+      }
+      uncertainPrefix = false;
+    }
+    if (sensitiveFlowState !== null) {
+      scanFlowStructure(line, sensitiveFlowState);
+      if (!flowStructureIsOpen(sensitiveFlowState)) sensitiveFlowState = null;
+      return SENSITIVE_LOG_LINE;
+    }
+    if (sensitiveBlockIndent !== null) {
+      if (
+        trimmed === "" ||
+        trimmed.startsWith("#") ||
+        indentation > sensitiveBlockIndent ||
+        (indentation === sensitiveBlockIndent && trimmed.startsWith("-"))
+      ) {
+        return SENSITIVE_LOG_LINE;
+      }
+      sensitiveBlockIndent = null;
+    }
+
     const startsPrivateKey = PRIVATE_KEY_BEGIN.test(line);
     const endsPrivateKey = PRIVATE_KEY_END.test(line);
-    const redactThisLine = privateKeyBlock || startsPrivateKey || redactContinuation;
+    const sensitiveBlock = line.match(SENSITIVE_LOG_BLOCK_HEADER);
+    const sensitiveContainer = line.match(SENSITIVE_LOG_CONTAINER_HEADER);
+    const sensitiveKeyMatch = line.match(SENSITIVE_LOG_KEY);
+    const sensitiveKeyLine = sensitiveKeyMatch !== null;
+    const redactThisLine =
+      privateKeyBlock ||
+      startsPrivateKey ||
+      sensitiveBlock !== null ||
+      sensitiveContainer !== null ||
+      sensitiveKeyLine;
     privateKeyBlock = (privateKeyBlock || startsPrivateKey) && !endsPrivateKey;
-    redactContinuation = !redactThisLine && SENSITIVE_KEY_WITHOUT_VALUE.test(line);
+    if (sensitiveBlock !== null) sensitiveBlockIndent = sensitiveBlock[1].length;
+    if (sensitiveBlock === null && sensitiveKeyLine) {
+      const sensitiveValueSuffix = line.slice(
+        sensitiveKeyMatch.index + sensitiveKeyMatch[0].length,
+      );
+      const discoveredState = scanFlowStructure(sensitiveValueSuffix, {
+        stack: [],
+        quote: null,
+        escaped: false,
+      });
+      if (flowStructureIsOpen(discoveredState)) sensitiveFlowState = discoveredState;
+      else sensitiveBlockIndent = indentation;
+    }
     if (redactThisLine) return SENSITIVE_LOG_LINE;
     return redactLogLine(line, supervisorToken);
   });
+}
+
+function projectLogTail(body, requestedLines, supervisorToken) {
+  const allLines = body === "" ? [] : body.split(/\r?\n/u);
+  if (allLines.at(-1) === "") allLines.pop();
+  const windowMayStartMidBlock = allLines.length >= requestedLines + LOG_CONTEXT_LINES;
+  return {
+    lines: redactLogLines(allLines, supervisorToken, windowMayStartMidBlock).slice(-requestedLines),
+    truncated: allLines.length > requestedLines,
+  };
 }
 
 function sanitizedText(value, supervisorToken, maximum = 1000) {
@@ -656,6 +787,24 @@ export class HaReadBroker {
           "version_latest",
         ]);
       }
+      case "host_info": {
+        assertOnlyKeys(payload, new Set(), "host info payload");
+        return pick(await this.#supervisorData("/host/info"), [
+          "agent_version",
+          "apparmor_version",
+          "chassis",
+          "deployment",
+          "disk_free",
+          "disk_total",
+          "disk_used",
+          "dt_synchronized",
+          "kernel",
+          "operating_system",
+          "startup_time",
+          "use_ntp",
+          "virtualization",
+        ]);
+      }
       case "storage_usage": {
         assertOnlyKeys(payload, new Set(), "storage usage payload");
         return projectStorageUsage(
@@ -665,28 +814,58 @@ export class HaReadBroker {
       case "core_logs": {
         assertOnlyKeys(payload, new Set(["lines"]), "log payload");
         const lines = boundedInteger(payload.lines, DEFAULT_LOG_LINES, 1, MAX_LOG_LINES, "lines");
-        const body = await this.#fetch("/core/logs", {
+        const body = await this.#fetch(`/core/logs?lines=${lines + LOG_CONTEXT_LINES}&no_colors`, {
           supervisor: true,
           accept: "text/x-log",
         });
-        const allLines = body.split(/\r?\n/u);
-        return {
-          lines: redactLogLines(allLines, this.supervisorToken).slice(-lines),
-          truncated: allLines.length > lines,
-        };
+        return projectLogTail(body, lines, this.supervisorToken);
       }
       case "app_logs": {
         assertOnlyKeys(payload, new Set(["lines"]), "App log payload");
         const lines = boundedInteger(payload.lines, DEFAULT_LOG_LINES, 1, MAX_LOG_LINES, "lines");
-        const body = await this.#fetch("/addons/self/logs", {
+        const body = await this.#fetch(`/addons/self/logs?lines=${lines + LOG_CONTEXT_LINES}&no_colors`, {
           supervisor: true,
           accept: "text/x-log",
         });
-        const allLines = body.split(/\r?\n/u);
-        return {
-          lines: redactLogLines(allLines, this.supervisorToken).slice(-lines),
-          truncated: allLines.length > lines,
-        };
+        return projectLogTail(body, lines, this.supervisorToken);
+      }
+      case "addon_logs": {
+        assertOnlyKeys(payload, new Set(["slug", "lines"]), "App log payload");
+        const slug = optionalToken(payload.slug, "slug", /^[a-z0-9_-]+$/u, 128);
+        if (slug === undefined) throw new HaReadError("invalid_request", "slug is required");
+        const lines = boundedInteger(payload.lines, DEFAULT_LOG_LINES, 1, MAX_LOG_LINES, "lines");
+        const body = await this.#fetch(
+          `/addons/${encodeURIComponent(slug)}/logs?lines=${lines + LOG_CONTEXT_LINES}&no_colors`,
+          { supervisor: true, accept: "text/x-log" },
+        );
+        return projectLogTail(body, lines, this.supervisorToken);
+      }
+      case "supervisor_logs": {
+        assertOnlyKeys(payload, new Set(["lines"]), "Supervisor log payload");
+        const lines = boundedInteger(payload.lines, DEFAULT_LOG_LINES, 1, MAX_LOG_LINES, "lines");
+        const body = await this.#fetch(
+          `/supervisor/logs?lines=${lines + LOG_CONTEXT_LINES}&no_colors`,
+          { supervisor: true, accept: "text/x-log" },
+        );
+        return projectLogTail(body, lines, this.supervisorToken);
+      }
+      case "host_logs": {
+        assertOnlyKeys(payload, new Set(["identifier", "lines"]), "host log payload");
+        const lines = boundedInteger(payload.lines, DEFAULT_LOG_LINES, 1, MAX_LOG_LINES, "lines");
+        const identifier = optionalToken(
+          payload.identifier,
+          "identifier",
+          /^[A-Za-z0-9_.@:-]+$/u,
+          128,
+        );
+        const endpoint = identifier
+          ? `/host/logs/identifiers/${encodeURIComponent(identifier)}`
+          : "/host/logs";
+        const body = await this.#fetch(
+          `${endpoint}?lines=${lines + LOG_CONTEXT_LINES}&no_colors`,
+          { supervisor: true, accept: "text/x-log" },
+        );
+        return projectLogTail(body, lines, this.supervisorToken);
       }
       case "memory_snapshot": {
         assertOnlyKeys(payload, new Set(), "memory snapshot payload");

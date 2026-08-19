@@ -23,7 +23,7 @@ render_body() {
   local sensitive_supervisor_response=false
   local -a jq_args
   if [[ "${API_PROGRAM_NAME}" == supervisor-api \
-    && "${response_path}" =~ ^/(addons|apps)/[^/]+/(info|options|config)(/|$) ]]; then
+    && "${response_path}" =~ ^/(addons|apps|v2/apps)/[^/]+/(info|options|config)(/|$) ]]; then
     sensitive_supervisor_response=true
   fi
   if ! jq --exit-status . "${body_file}" >/dev/null 2>&1; then
@@ -41,14 +41,40 @@ render_body() {
       --arg api_program "${API_PROGRAM_NAME}" \
       --arg api_path "${response_path}" '
       def sensitive_key:
-        test(
-          "(^|[_ -])(access[_ -]?key|api[_ -]?key|auth(orization)?|bearer|client[_ -]?secret|code|cookie|credential|key|pass(code|phrase|word)?|pin|private[_ -]?key|psk|secret|session([_ -]?id)?|token|webhook)([_ -]|$)";
+        gsub("(?<lower>[a-z0-9])(?<upper>[A-Z])"; "\(.lower)_\(.upper)")
+        | test(
+          "(^|[_ -])(access[_ -]?(key|token)|api[_ -]?(key|token)|auth(orization)?([_ -]?code)?|oauth[_ -]?code|bearer[_ -]?token|client[_ -]?secret|cookie|credential|key|pass(code|phrase|word)?|pin|private[_ -]?key|proxy[_ -]?authorization|psk|refresh[_ -]?token|secret|session([_ -]?id)?|set[_ -]?cookie|token|webhook([_ -]?id)?)([_ -]|$)";
           "i"
         );
+      def basic_credential:
+        if type != "string" then false
+        else
+          [splits("[[:space:]]+")] as $parts
+          | any(
+              range(0; (($parts | length) - 1 | if . > 0 then . else 0 end));
+              (($parts[.] | ascii_downcase) == "basic") and
+              (
+                $parts[. + 1] as $encoded
+                | ($encoded | test("^[A-Za-z0-9+/]+={0,2}$")) and
+                  (
+                    try (
+                      ($encoded | @base64d) as $decoded
+                      | ($decoded | contains(":")) and
+                        (
+                          ($decoded | @base64 | rtrimstr("=")) ==
+                          ($encoded | rtrimstr("="))
+                        )
+                    ) catch false
+                  )
+              )
+            )
+        end;
       def sensitive_value:
-        type == "string" and test(
-          "(^|[[:space:]])bearer[[:space:]]+[^[:space:]]|-----BEGIN [A-Z ]*PRIVATE KEY-----|(^|[^A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}";
-          "i"
+        type == "string" and (
+          test(
+            "(^|[[:space:]])bearer[[:space:]]+[A-Za-z0-9._~+/-]{16,}([[:space:]]|$)|-----BEGIN [A-Z ]*PRIVATE KEY-----|https?://[^[:space:]/@:]+:[^[:space:]/@]+@|(^|[^A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}|(^|[^0-9])([0-9]{8,12}:[A-Za-z0-9_-]{30,})([^A-Za-z0-9_-]|$)|(^|[^A-Za-z0-9_])(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{30,})([^A-Za-z0-9_]|$)|(^|[^A-Z0-9])((AKIA|ASIA)[A-Z0-9]{16})([^A-Z0-9]|$)|(^|[^A-Za-z0-9_-])(AIza[0-9A-Za-z_-]{35}|xox[baprs]-[A-Za-z0-9-]{10,}|(sk|rk)_live_[A-Za-z0-9]{16,})([^A-Za-z0-9_-]|$)";
+            "i"
+          ) or basic_credential
         );
       def redact_sensitive:
         if type == "object" then
@@ -57,7 +83,7 @@ render_body() {
               (.key | sensitive_key) or
               (
                 $api_program == "supervisor-api" and
-                ($api_path | test("^/(addons|apps)/[^/]+/(info|options|config)(/|$)")) and
+                ($api_path | test("^/(addons|apps|v2/apps)/[^/]+/(info|options|config)(/|$)")) and
                 (.key | test("^(options|config)$"; "i"))
               )
             ) then
@@ -75,7 +101,7 @@ render_body() {
         end;
       if (
         $api_program == "supervisor-api" and
-        ($api_path | test("^/(addons|apps)/[^/]+/(options|config)(/|$)"))
+        ($api_path | test("^/(addons|apps|v2/apps)/[^/]+/(options|config)(/|$)"))
       ) then
         if type == "object" then
           with_entries(
@@ -101,6 +127,7 @@ api_main() {
   local method
   local path
   local path_only
+  local core_path=''
   local body=''
   local has_body=false
   local request_dir
@@ -159,7 +186,9 @@ api_main() {
     return 64
   fi
   if [[ "${path}" != /* || "${path}" == //* || "${path}" =~ [[:space:]] \
-    || ${#path} -gt 2048 || "${path}" == *'#'* || "${path}" == *\\* ]]; then
+    || ${#path} -gt 2048 || "${path}" == *'#'* || "${path}" == *\\* \
+    || "${path}" == *'['* || "${path}" == *']'* \
+    || "${path}" == *'{'* || "${path}" == *'}'* ]]; then
     printf '%s: path must be a relative API path beginning with one slash\n' "${API_PROGRAM_NAME}" >&2
     return 64
   fi
@@ -169,11 +198,34 @@ api_main() {
     printf '%s: path contains a non-canonical segment\n' "${API_PROGRAM_NAME}" >&2
     return 64
   fi
+  if [[ "${API_PROGRAM_NAME}" == ha-api ]]; then
+    core_path=${path_only}
+  elif [[ "${API_PROGRAM_NAME}" == supervisor-api \
+    && "${path_only}" =~ ^/(v2/)?(core|homeassistant)/api(/.*)?$ ]]; then
+    core_path=${BASH_REMATCH[3]:-/}
+  fi
   if [[ "${API_PROGRAM_NAME}" == supervisor-api ]] && {
-    [[ "${path_only}" =~ ^/backups/[^/]+/download$ ]] \
-      || [[ "${path_only}" =~ ^/ingress/ ]];
+    [[ "${path_only}" =~ ^/(v2/)?backups/[^/]+/download$ ]] \
+      || [[ "${path_only}" =~ ^/(v2/)?ingress/ ]];
   }; then
     printf '%s: sensitive credential-bearing endpoint is unavailable\n' \
+      "${API_PROGRAM_NAME}" >&2
+    return 77
+  fi
+  if [[ "${API_PROGRAM_NAME}" == supervisor-api ]] && {
+    [[ "${path_only}" =~ ^/(v2/)?(core|homeassistant|supervisor|host|dns|audio|multicast)/logs(/|$) ]] \
+      || [[ "${path_only}" =~ ^/(v2/)?(addons|apps)/[^/]+/logs(/|$) ]];
+  }; then
+    printf '%s: raw log endpoint is unavailable; use the managed sanitized log reader\n' \
+      "${API_PROGRAM_NAME}" >&2
+    return 77
+  fi
+  if [[ -n "${core_path}" ]] && {
+    { [[ "${method}" == GET ]] \
+      && [[ "${core_path}" =~ ^/(states|history|logbook|error_log|stream|events|camera_proxy)(/|$) ]]; } \
+      || [[ "${core_path}" =~ ^/template(/|$) ]];
+  }; then
+    printf '%s: secret-prone raw read is unavailable; use the managed projected reader\n' \
       "${API_PROGRAM_NAME}" >&2
     return 77
   fi
@@ -206,6 +258,7 @@ api_main() {
 
   curl_args=(
     --disable
+    --globoff
     --silent
     --show-error
     --noproxy '*'

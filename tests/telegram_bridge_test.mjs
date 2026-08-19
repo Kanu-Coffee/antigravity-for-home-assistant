@@ -50,7 +50,15 @@ import {
   workerStatusSnapshot,
 } from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs";
 import {
+  TELEGRAM_ALWAYS_PROCEED_ALLOW_RULES,
+  TELEGRAM_REQUEST_REVIEW_ASK_RULES,
+} from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/telegram-permission-policy.mjs";
+import {
+  bindSessionConversation,
+  ensureSession,
+  getSession,
   loadBridgeState,
+  registerSealedUpdateBatch,
 } from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/telegram-state.mjs";
 
 const pollBackoff = new TelegramPollBackoff({ jitter: () => 0 });
@@ -77,27 +85,40 @@ const config = loadRuntimeConfig({
   antigravity_tool_permission: "request-review",
 });
 assert.equal(config.toolPermission, "request-review");
-assert.equal(loadRuntimeConfig({
+const alwaysProceedConfig = loadRuntimeConfig({
   telegram_enabled: false,
   antigravity_tool_permission: "always-proceed",
-}).toolPermission, "request-review");
+});
+assert.equal(alwaysProceedConfig.toolPermission, "always-proceed");
 assert.equal(loadRuntimeConfig({
   telegram_enabled: false,
   antigravity_tool_permission: "strict",
 }).toolPermission, "request-review");
+assert.equal(loadRuntimeConfig({
+  telegram_enabled: false,
+  antigravity_tool_permission: "proceed-in-sandbox",
+}).toolPermission, "request-review");
 const safePermissionFixture = {
   toolPermission: "request-review",
   enableTerminalSandbox: false,
-  allowNonWorkspaceAccess: false,
+  allowNonWorkspaceAccess: true,
   artifactReviewPolicy: "agent-decides",
   permissions: {
     allow: [...TELEGRAM_SAFE_ALLOW_RULES],
-    ask: [],
+    ask: [...TELEGRAM_REQUEST_REVIEW_ASK_RULES],
     deny: [...TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES],
   },
 };
 assert.equal(
   TELEGRAM_SAFE_ALLOW_RULES.has("mcp(ha_read/ha_read_storage_usage)"),
+  true,
+);
+assert.equal(
+  TELEGRAM_SAFE_ALLOW_RULES.has("mcp(ha_read/ha_read_host_logs)"),
+  true,
+);
+assert.equal(
+  TELEGRAM_SAFE_ALLOW_RULES.has("mcp(ha_read/ha_read_supervisor_logs)"),
   true,
 );
 assert.deepEqual(assertTelegramPermissionBoundary(safePermissionFixture), {
@@ -128,8 +149,8 @@ assert.deepEqual(await waitForTelegramPermissionBoundary(
   {
     load: () => ({
       toolPermission: "request-review",
-      allowCount: 29,
-      denyCount: 33,
+      allowCount: TELEGRAM_SAFE_ALLOW_RULES.size,
+      denyCount: TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size,
     }),
     hold: async () => { readyBoundaryHeld = true; },
     auditEvent: () => {
@@ -138,8 +159,8 @@ assert.deepEqual(await waitForTelegramPermissionBoundary(
   },
 ), {
   toolPermission: "request-review",
-  allowCount: 29,
-  denyCount: 33,
+  allowCount: TELEGRAM_SAFE_ALLOW_RULES.size,
+  denyCount: TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size,
 });
 assert.equal(readyBoundaryHeld, false);
 const mismatchedBoundaryEvents = [];
@@ -149,8 +170,8 @@ assert.equal(await waitForTelegramPermissionBoundary(
   {
     load: () => ({
       toolPermission: "always-proceed",
-      allowCount: 29,
-      denyCount: 33,
+      allowCount: TELEGRAM_ALWAYS_PROCEED_ALLOW_RULES.size,
+      denyCount: TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size,
     }),
     hold: async () => { mismatchedBoundaryHolds += 1; },
     auditEvent: (event, fields) => mismatchedBoundaryEvents.push({
@@ -170,7 +191,7 @@ for (const unsafeRule of ["command(*)", "mcp(*)", "write_file(/config)"]) {
       ...safePermissionFixture.permissions,
       allow: [...safePermissionFixture.permissions.allow, unsafeRule],
     },
-  }), /bypass or block Telegram approval/u);
+  }), /bypass or block the configured Telegram policy/u);
 }
 for (const nonReadOnlyBrowserTool of [
   "browser_close",
@@ -190,35 +211,45 @@ for (const nonReadOnlyBrowserTool of [
         `mcp(playwright/${nonReadOnlyBrowserTool})`,
       ],
     },
-  }), /bypass or block Telegram approval/u);
+  }), /bypass or block the configured Telegram policy/u);
 }
-assert.throws(() => assertTelegramPermissionBoundary({
+const alwaysProceedPermissionFixture = {
   ...safePermissionFixture,
   toolPermission: "always-proceed",
-}), /not safe for Telegram approval/u);
+  permissions: {
+    allow: [...TELEGRAM_ALWAYS_PROCEED_ALLOW_RULES],
+    ask: [],
+    deny: [...TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES],
+  },
+};
+assert.deepEqual(assertTelegramPermissionBoundary(alwaysProceedPermissionFixture), {
+  toolPermission: "always-proceed",
+  allowCount: TELEGRAM_ALWAYS_PROCEED_ALLOW_RULES.size,
+  denyCount: TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size,
+});
 assert.throws(() => assertTelegramPermissionBoundary({
   ...safePermissionFixture,
   toolPermission: "strict",
-}), /not safe for Telegram approval/u);
+}), /not valid for Telegram/u);
 assert.throws(() => assertTelegramPermissionBoundary({
   ...safePermissionFixture,
-  permissions: { ...safePermissionFixture.permissions, ask: ["command(*)"] },
-}), /bypass or block Telegram approval/u);
+  permissions: { ...safePermissionFixture.permissions, ask: [] },
+}), /bypass or block the configured Telegram policy/u);
 for (const unsafeTopLevel of [
   { enableTerminalSandbox: true },
-  { allowNonWorkspaceAccess: true },
+  { allowNonWorkspaceAccess: false },
   { artifactReviewPolicy: "never" },
 ]) {
   assert.throws(() => assertTelegramPermissionBoundary({
     ...safePermissionFixture,
     ...unsafeTopLevel,
-  }), /not safe for Telegram approval/u);
+  }), /not valid for Telegram/u);
 }
 const missingSandboxFixture = { ...safePermissionFixture };
 delete missingSandboxFixture.enableTerminalSandbox;
 assert.throws(
   () => assertTelegramPermissionBoundary(missingSandboxFixture),
-  /not safe for Telegram approval/u,
+  /not valid for Telegram/u,
 );
 assert.throws(() => assertTelegramPermissionBoundary({
   ...safePermissionFixture,
@@ -226,14 +257,18 @@ assert.throws(() => assertTelegramPermissionBoundary({
     ...safePermissionFixture.permissions,
     allow: safePermissionFixture.permissions.allow.slice(1),
   },
-}), /bypass or block Telegram approval/u);
-assert.throws(() => assertTelegramPermissionBoundary({
+}), /bypass or block the configured Telegram policy/u);
+assert.deepEqual(assertTelegramPermissionBoundary({
   ...safePermissionFixture,
   permissions: {
     ...safePermissionFixture.permissions,
-    deny: [...safePermissionFixture.permissions.deny, "command(*)"],
+    deny: [...safePermissionFixture.permissions.deny, "read_file(/fixture-extra-secret)"],
   },
-}), /bypass or block Telegram approval/u);
+}), {
+  toolPermission: "request-review",
+  allowCount: TELEGRAM_SAFE_ALLOW_RULES.size,
+  denyCount: TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size + 1,
+});
 assert.equal(toolActionWatchdogMs(120_000, null, 5_000), 127_000);
 assert.equal(toolActionWatchdogMs(4_000, 250, 50), 250);
 assert.throws(() => toolActionWatchdogMs(120_001, null, 5_000), /watchdog/u);
@@ -243,7 +278,7 @@ assert.throws(() => assertTelegramPermissionBoundary({
     ...safePermissionFixture.permissions,
     deny: safePermissionFixture.permissions.deny.slice(1),
   },
-}), /bypass or block Telegram approval/u);
+}), /bypass or block the configured Telegram policy/u);
 assert.equal(
   ANTIGRAVITY_AUTH_REQUIRED_MARKER.toString("utf8"),
   "Error: authentication required. Run 'antigravity-real' to log in, then retry.",
@@ -505,6 +540,8 @@ assert.equal(proposalDisposition("request-review", "low"), "human_confirmation")
 assert.equal(proposalDisposition("strict", "high"), "human_confirmation");
 assert.equal(proposalDisposition("always-proceed", "low"), "autonomous_policy");
 assert.equal(proposalDisposition("always-proceed", "high"), "human_confirmation");
+assert.equal(proposalDisposition(alwaysProceedConfig.toolPermission, "low"), "autonomous_policy");
+assert.equal(proposalDisposition(alwaysProceedConfig.toolPermission, "high"), "human_confirmation");
 assert.throws(() => proposalDisposition("autonomous", "low"), /invalid/u);
 
 const planArgs = buildAgyArgs("plan", true);
@@ -1598,6 +1635,226 @@ assert.match(renderCancellationResult({
   durable_in_progress: 1,
   workers_terminated: 0,
 }), /취소할 수 없습니다.*결과를 전달/u);
+
+const quarantineRoot = await mkdtemp(join(tmpdir(), "telegram-worker-quarantine-"));
+try {
+  const managedRoot = join(quarantineRoot, "data", "antigravity-ha");
+  await mkdir(managedRoot, { recursive: true, mode: 0o700 });
+  await chmod(managedRoot, 0o700);
+  const statePath = join(managedRoot, "telegram", "bridge-state.json");
+  const promptCanary = "PRIVATE_QUARANTINE_PROMPT_CANARY";
+  const stderrCanary = "PRIVATE_QUARANTINE_STDERR_CANARY";
+  const idCanary = "PRIVATE_QUARANTINE_ID_CANARY";
+  const terminalConversationCanary = "private-terminal-conversation-canary";
+  const successfulConversationCanary = "private-success-conversation-canary";
+  const nonzeroConversationCanary = "private-nonzero-conversation-canary";
+  const postFailureConversationCanary = "private-post-failure-conversation-canary";
+  const reuseObservations = [];
+  const auditLines = [];
+  const sentFailures = [];
+  const originalConsoleLog = console.log;
+
+  const registerMessage = (updateId, text) => {
+    const normalized = normalizeUpdate({
+      update_id: updateId,
+      message: {
+        message_id: updateId,
+        from: { id: 100 },
+        chat: { id: -200, type: "private" },
+        text,
+      },
+    });
+    assert.ok(normalized);
+    registerSealedUpdateBatch([{
+      update_id: updateId,
+      normalized,
+    }], config.botToken, { path: statePath });
+    return normalized.value;
+  };
+
+  const runMessage = async (updateId, text, promptProcessor) => {
+    const message = registerMessage(updateId, text);
+    await handleMessage(config, message, {
+      statePath,
+      promptProcessor,
+      send: async (token, chatId, reply) => {
+        assert.equal(token, config.botToken);
+        assert.equal(chatId, "-200");
+        sentFailures.push(reply);
+      },
+    });
+  };
+
+  console.log = (...parts) => { auditLines.push(parts.join(" ")); };
+  try {
+    await runMessage(3_000, promptCanary, async (_runtimeConfig, message) => {
+      const session = ensureSession(message.from.id, message.chat.id, { path: statePath });
+      reuseObservations.push({
+        turn: "terminal_failure",
+        conversation_reused: session.conversation_id !== null,
+      });
+      bindSessionConversation(
+        message.from.id,
+        message.chat.id,
+        session.generation,
+        terminalConversationCanary,
+        { path: statePath },
+      );
+      const error = new AntigravityWorkerError("terminal_status_failed", {
+        failure_kind: "terminal_status",
+        flags: ["tool_error_seen"],
+      });
+      Object.assign(error, {
+        conversation_id: terminalConversationCanary,
+        request_id: idCanary,
+        prompt: promptCanary,
+        stderr: stderrCanary,
+      });
+      throw error;
+    });
+    assert.deepEqual(getSession("100", "-200", { path: statePath }), {
+      user_id: "100",
+      chat_id: "-200",
+      generation: 2,
+      conversation_id: null,
+    });
+    assert.equal(loadBridgeState(statePath).update_offset, 3_001,
+      "failed worker input remained replayable");
+
+    await runMessage(3_001, "successful reply", async (
+      _runtimeConfig,
+      message,
+      _ticket,
+      { acknowledgeInput },
+    ) => {
+      const session = ensureSession(message.from.id, message.chat.id, { path: statePath });
+      reuseObservations.push({
+        turn: "after_terminal_failure",
+        conversation_reused: session.conversation_id !== null,
+      });
+      bindSessionConversation(
+        message.from.id,
+        message.chat.id,
+        session.generation,
+        successfulConversationCanary,
+        { path: statePath },
+      );
+      acknowledgeInput();
+    });
+    await runMessage(3_002, "successful follow-up", async (
+      _runtimeConfig,
+      message,
+      _ticket,
+      { acknowledgeInput },
+    ) => {
+      const session = ensureSession(message.from.id, message.chat.id, { path: statePath });
+      reuseObservations.push({
+        turn: "after_success",
+        conversation_reused: session.conversation_id !== null,
+      });
+      assert.equal(session.conversation_id, successfulConversationCanary);
+      acknowledgeInput();
+    });
+
+    await runMessage(3_003, "nonzero worker failure", async (_runtimeConfig, message) => {
+      const session = ensureSession(message.from.id, message.chat.id, { path: statePath });
+      reuseObservations.push({
+        turn: "nonzero_failure",
+        conversation_reused: session.conversation_id !== null,
+      });
+      assert.equal(session.conversation_id, successfulConversationCanary);
+      const error = new AntigravityWorkerError("worker_failed", {
+        failure_kind: "exit_code",
+        exit_code: 139,
+        flags: ["stderr_seen"],
+      });
+      Object.assign(error, {
+        conversation_id: nonzeroConversationCanary,
+        request_id: idCanary,
+        prompt: promptCanary,
+        stderr: stderrCanary,
+      });
+      throw error;
+    });
+    assert.deepEqual(getSession("100", "-200", { path: statePath }), {
+      user_id: "100",
+      chat_id: "-200",
+      generation: 3,
+      conversation_id: null,
+    });
+    assert.equal(loadBridgeState(statePath).update_offset, 3_004,
+      "nonzero worker input remained replayable");
+
+    await runMessage(3_004, "post-failure reply", async (
+      _runtimeConfig,
+      message,
+      _ticket,
+      { acknowledgeInput },
+    ) => {
+      const session = ensureSession(message.from.id, message.chat.id, { path: statePath });
+      reuseObservations.push({
+        turn: "after_nonzero_failure",
+        conversation_reused: session.conversation_id !== null,
+      });
+      bindSessionConversation(
+        message.from.id,
+        message.chat.id,
+        session.generation,
+        postFailureConversationCanary,
+        { path: statePath },
+      );
+      acknowledgeInput();
+    });
+  } finally {
+    console.log = originalConsoleLog;
+  }
+
+  assert.deepEqual(reuseObservations, [
+    { turn: "terminal_failure", conversation_reused: false },
+    { turn: "after_terminal_failure", conversation_reused: false },
+    { turn: "after_success", conversation_reused: true },
+    { turn: "nonzero_failure", conversation_reused: true },
+    { turn: "after_nonzero_failure", conversation_reused: false },
+  ]);
+  assert.equal(sentFailures.length, 2);
+  const auditRecords = auditLines
+    .filter((line) => line.startsWith("[Telegram Bridge] "))
+    .map((line) => JSON.parse(line.slice("[Telegram Bridge] ".length)));
+  const quarantineRecords = auditRecords.filter(
+    (record) => record.event === "worker_session_quarantined",
+  );
+  assert.equal(quarantineRecords.length, 2);
+  for (const [index, record] of quarantineRecords.map((record) => {
+    const { chat, ...fields } = record;
+    assert.match(chat, /^[a-f0-9]{12}$/u);
+    return fields;
+  }).entries()) {
+    assert.deepEqual(record, index === 0 ? {
+      event: "worker_session_quarantined",
+      generation: 2,
+      reason_class: "terminal_status_failed",
+    } : {
+      event: "worker_session_quarantined",
+      generation: 3,
+      reason_class: "worker_failed",
+    });
+  }
+  const serializedFailureSurfaces = JSON.stringify({ auditRecords, sentFailures });
+  for (const privateCanary of [
+    promptCanary,
+    stderrCanary,
+    idCanary,
+    terminalConversationCanary,
+    successfulConversationCanary,
+    nonzeroConversationCanary,
+    postFailureConversationCanary,
+    config.botToken,
+  ]) {
+    assert.equal(serializedFailureSurfaces.includes(privateCanary), false);
+  }
+} finally {
+  await rm(quarantineRoot, { recursive: true, force: true });
+}
 
 const fixtureDir = await mkdtemp(join(tmpdir(), "agy-telegram-test-"));
 try {

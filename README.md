@@ -31,23 +31,40 @@
 > 확인하세요. 현재 `experimental`이며 실제 HAOS 양쪽 아키텍처의 전체 설치·업데이트·
 > rollback 검증은 릴리스별 증거를 확인해야 합니다.
 
-**2.0.18 Telegram MCP·승인 경로 교정:** 공개 2.0.17의 실제 HAOS 18.2 amd64에서
-App 기동, Ingress/Web terminal, native CLI·기본 대화, Telegram transport와 도구 없는
-한 줄 답변은 통과했지만 managed MCP 요청과 `telegram_action_propose` 승인카드 생성은
-실패했습니다. kernel audit는 `change-proposal-client`가 image-owned
-`/usr/local/share/antigravity-ha/supervisor-credential-fd.mjs` 전이 module을 읽지 못한
-exact AppArmor 거부를 확인했습니다. 별도로 restricted와 sensitive-read 두 launcher가
-승인 제안에 필요한 requester/run binding 다섯 값을 버려 승인카드 전에 실패했으며,
-승인된 쓰기 실행은 `NOT RUN`입니다. 따라서 2.0.17 amd64 수용은 전체 `FAIL`입니다.
+**2.1.0 운영 권한 재설계:** 공개 2.0.18의 실제 HAOS 18.2 amd64에서 App 기동,
+`antigravity --version` status 0, Telegram transport와 도구 없는 기본 대화는
+`PASS`했습니다. 그러나 Web UI의 `agy`/`antigravity` 대화형 입출력은 실패했고, 현재
+kernel audit는 confined interactive profile이 `/dev/pts/0`의 inherited/open `rw`를
+거부한 사실을 확인했습니다. 첫 managed Telegram tool 요청도 terminal error로
+종료됐습니다. 그 뒤 3~7번 시험은 같은 failed conversation을 재사용했으므로 각 기능의
+독립적인 PASS/FAIL 증거가 아니며 승인된 쓰기는 `NOT RUN`입니다. 따라서 공개 2.0.18
+amd64 수용은 전체 `FAIL`입니다.
 
-2.0.18은 proposal client에 해당 exact module read만 추가하고, 두 launcher가 다섯 값을
-완전한 한 묶음으로 검증·보존하며 일부만 있는 binding은 거부합니다. broad AppArmor나
-native tool 권한을 열지 않고, 승인 없는 직접 쓰기·명령 차단과 기존 민감정보 deny를
-유지합니다. 자동 회귀는 HAOS 증거가 아니며 2.0.18 amd64와 aarch64 실기기 수용은
-릴리스 전 `NOT RUN`, 전체 v2 수용은 `PARTIAL`입니다. breaking 목록은 보안 경계를
-활성화한 2.0.13까지만 유지합니다.
+2.1.0은 `/config`, `/share`, `/media`, credential이 아닌 persistent HOME, 임시 작업공간,
+일반 system command, installed MCP, 지원되는 Core/Supervisor manager API와 bounded
+Host/Supervisor log projection을 일반 운영 범위로 엽니다. raw log는 제공하지 않으며 exact
+App token과 알려진 credential-shaped line/block을 제거하지만, key 없이 섞인 임의의
+application text까지 모두 비밀이 아니라고 보장하지는 않습니다. 대신
+`secrets.yaml`, `.storage`, OAuth/token/key, App 소유 permission/MCP policy, 다른
+프로세스의 credential-bearing `/proc`, Recorder write와 raw backup/SSL/다른 App config는
+두 모드에서 항상 차단합니다. `request-review`는 안전 기본값으로 mutation을 검토·승인에
+묶고, 명시적 `always-proceed`는 이 blacklist 밖의 일반 작업을 자율 관리자 권한으로
+실행합니다. `strict`와 `proceed-in-sandbox`는 legacy 입력으로만 수용해
+`request-review`로 정규화합니다. `full_access`, `docker_api`, Docker socket, host-root/PID
+mount 또는 보호 모드 해제는 추가하지 않습니다. 이 breaking 전환 때문에
+`breaking_versions`에 2.1.0을 추가했습니다.
 
-2.0.12로의 downgrade는 자동·무손실 복구 경로가 아닙니다. 그 공개 image는 custom
+native `read_file`/`write_file`은 symlink alias로 보호 경계를 우회할 수 있어 두 모드에서
+전역 차단합니다. 일반 파일 작업은 confined `ha_files` MCP의
+`ha_files_list`, `ha_files_read_text`, `ha_files_write_text`만 사용합니다. 이 broker는
+`/config`, `/share`, `/media`, 일반 `/data/home`, `/tmp`, `/var/tmp` 아래에서만 작동하고,
+UTF-8 파일 1 MiB·목록 200개 상한, no-symlink·single-link regular-file 검사,
+same-directory atomic write와 선택적 `expected_sha256` 충돌 검사를 적용합니다.
+
+자동 회귀는 HAOS 증거가 아닙니다. 2.1.0 amd64/aarch64 실기기 수용은 배포 시점
+`NOT RUN`이고 전체 v2 수용은 `PARTIAL`입니다.
+
+2.0.12로의 downgrade는 2.0.18 권한 문제의 정상 복구책도, 자동·무손실 경로도 아닙니다. 그 공개 image는 custom
 AppArmor attach에 실패했고 실제 성공 증거도 amd64 `docker-default`에 한정됩니다.
 Supervisor 직접 downgrade는 지원되지 않으며, exact 2.0.12 시점 App backup 복원은
 그 이후의 OAuth·memory·approval/outbox·identity 상태를 잃을 수 있습니다. 해당 backup이
@@ -56,7 +73,7 @@ Supervisor 직접 downgrade는 지원되지 않으며, exact 2.0.12 시점 App b
 ## v2가 제공하는 것
 
 - 고정된 native Google Antigravity CLI와 `agy` 명령
-- Home Assistant용 image-managed plugin, rules, skills, bounded read MCP
+- Home Assistant용 image-managed plugin, rules, skills, bounded read/file MCP
 - `/config` 설정 검사, Core/App 로그, 제한된 Supervisor API helper
 - read-only 관리형 사용자로 HA dashboard를 보는 headless Playwright MCP
 - 명시적 사실과 검증된 후보만 보존하는 bounded HA memory
@@ -105,9 +122,10 @@ Supervisor 직접 downgrade는 지원되지 않으며, exact 2.0.12 시점 App b
 > 공유 OAuth identity와 `/config`, 전역 customization을 사용하며, 승인 카드를 통해
 > 기기·설정·terminal/script 작업을 실행할 수 있습니다. OAuth 자료, App 소유 권한
 > 설정과 민감 경로는 직접 수정할 수 없습니다. bot token, 허용된 chat과 Telegram
-> 계정을 HA 관리자 credential처럼 보호하세요. 2.0.17 amd64에서 Bot API와 도구 없는
-> 대화는 통과했지만 managed MCP와 승인 제안은 실패했습니다. 2.0.18의 corrected MCP·
-> 승인·mutation 경로와 aarch64 실기기 E2E는 아직 `NOT RUN`입니다.
+> 계정을 HA 관리자 credential처럼 보호하세요. 공개 2.0.18 amd64에서 Bot API와 도구
+> 없는 대화는 통과했지만 첫 managed tool 요청은 terminal error로 실패했고 이후 요청은
+> failed conversation을 재사용했습니다. 2.1.0의 managed read/write·승인·session
+> quarantine 경로와 aarch64 실기기 E2E는 아직 `NOT RUN`입니다.
 
 Web UI 또는 SSH에서 `ha-antigravity-login`으로 공식 native first-run OAuth를 한 번
 완료한 뒤 bot을 활성화합니다. 별도 Telegram identity, `ha-telegram-login`, 전용 HOME
@@ -170,37 +188,41 @@ sandbox를 사용하지 않고, model이 시작한 command와 stdio tool을 별�
 `false` 모두 `false`로 정규화됩니다. wrapper는 사용자가 native sandbox flag를
 덮어쓰는 것도 거부합니다. 2.0.6 이하의
 `telegram_access_mode` 값은 권한으로 사용하지 않는 migration-only 입력입니다.
-2.0.11 새 설치와 Telegram의 유일한 effective native 값은 `request-review`입니다.
-고정 CLI의 headless 가용성 때문에 `strict`, `always-proceed`,
-`proceed-in-sandbox` option은 user-files updater에서 모두 `request-review`로
-정규화됩니다. schema가 세 legacy 값을 계속 받는 것은 기존 Supervisor option으로
-업그레이드를 시작하기 위한 입력 호환성일 뿐입니다. 2.0.9/2.0.10의 App 소유
-`always-proceed`·`mcp(*)`·`command(*)` broad-allow 설정은 안전하게 식별되는 경우
-bounded native read와 정확한 managed proposal MCP만 허용하는 정책으로
-migration됩니다. Telegram이 꺼져 있으면 기존 `preserve` 소유권 규칙대로 사용자
-permission을 보존합니다. 2.0.12부터 Telegram이 켜져 있으면 시작 전에 root 소유
+2.1.0의 기본 effective native 값은 `request-review`입니다. 이 모드는 URL read와
+managed read/validate/memory/proposal 및 `ha_files` list/read를 허용하고,
+`ha_files` write·command·URL 실행과 mutation-capable MCP는 native review 또는
+requester-bound Telegram proposal을 요구합니다. 사용자가 App option에서
+`always-proceed`를 명시적으로 선택하면 mandatory blacklist 밖의 일반 운영
+command/URL과 installed MCP를 자율 관리자 권한으로 실행합니다. native
+`read_file`/`write_file`은 이 모드에서도 차단되고 파일 작업은 `ha_files`를 거칩니다.
+`strict`와 `proceed-in-sandbox`는 기존 Supervisor option으로 업그레이드를
+시작하기 위한 legacy 입력 호환 값이며 `request-review`로 정규화됩니다.
+
+2.0.12부터 Telegram이 켜져 있으면 시작 전에 root 소유
 single-link regular이고 256 KiB 이하이며 parse 가능한 settings를 transaction backup하고,
-`allowNonWorkspaceAccess=false`, `artifactReviewPolicy=agent-decides`,
-`enableTerminalSandbox=false`, `toolPermission=request-review`와 permission 세 bucket
-(29 allow/0 ask/33 deny)을 exact safe policy로 정규화합니다. unknown custom
+2.1.0은 `allowNonWorkspaceAccess=true`, `artifactReviewPolicy=agent-decides`,
+`enableTerminalSandbox=false`, 선택된 effective `toolPermission`과 permission 세 bucket을
+해당 모드의 exact image policy로 정규화합니다. unknown custom
 allow/ask/deny는 제거하지만 이 다섯 App 관리 보안 key 밖의 top-level 설정, global MCP,
 plugin, OAuth와 `/config`는 보존합니다. 기존 mode가 0600이 아니면 transaction에서
 0600으로 강화합니다. symlink/hardlink/non-root owner, 크기 초과 또는 parse 불가능한
 JSON은 수정하지 않으며, bridge는 sanitized
 `permission_boundary_blocked`를 한 번 기록하고 Bot API에 접속하거나 재시작 loop를
 만들지 않은 채 대기합니다. 관리자가 `reset_v2` 또는 안전한 파일 복구를 적용한 뒤
-App을 재시작해야 합니다.
-일반 command, native write, URL 실행, interactive browser, 임의 mutation MCP는
-unattended allow 목록에 없습니다. `secrets.yaml`, `.storage`, App runtime/browser/bot
-token, SSH/private key, native MCP 설정과 표준 cloud-auth 경로의 직접 읽기·쓰기는
+App을 재시작해야 합니다. `secrets.yaml`, `.storage`, OAuth·cloud credential,
+App runtime/browser/bot token, SSH/private key, App 소유 native MCP/permission policy,
+credential-bearing `/proc`, Recorder write와 raw backup/SSL/다른 App config는 두 모드에서
 계속 exact deny입니다.
 
-Telegram에서 자동 허용되는 Playwright 도구는 upstream이 `readOnly: true`로 선언한
+`request-review`의 Telegram에서 자동 허용되는 Playwright 도구는 upstream이
+`readOnly: true`로 선언한
 `browser_console_messages`, `browser_network_requests`, `browser_snapshot`,
 `browser_take_screenshot` 네 개뿐입니다. `browser_navigate`, `browser_navigate_back`,
 `browser_tabs`, `browser_hover`, `browser_wait_for`, `browser_resize`, `browser_close`를
 포함한 mutation-capable 브라우저 도구는 typed approval adapter가 생기기 전까지
-fail closed합니다.
+fail closed합니다. 명시적 `always-proceed`에서는 현재 인증된 사용자 요청 범위의
+installed Playwright navigation/interaction을 허용하지만 mandatory credential·file
+blacklist를 열지는 않습니다.
 
 bridge는 pipe된 stdin으로 질문을 받고 같은 `/data/home`과 `/config`에서 공유
 `antigravity --output-format stream-json` launcher를 실행합니다. 별도 shell이나 공유
@@ -294,11 +316,11 @@ AppArmor, native OAuth, live Bot API 카드/callback과 실제 기기 변경 E2E
 - SSH private key, App token, backup, SSL private material과 표준 cloud-auth 경로는
   두 설정 모두 차단됩니다. 전역 plugin/MCP 설정에는 inline secret을 넣지 말고
   credential-aware wrapper나 보호된 환경 참조를 사용하세요.
-- native default이자 Telegram의 유일한 effective 값은 `request-review`입니다.
-  `strict`와 legacy autonomous option도 user-files updater가 이 값으로 정규화하며,
-  schema의 다른 값은 upgrade 입력 호환용입니다. AppArmor command-profile 전환과
-  proposal approval은 App option으로 해제할 수 없고 native terminal sandbox는
-  사용하지 않습니다.
+- native 기본값은 `request-review`이며 mutation을 검토·proposal approval에 묶습니다.
+  명시적 `always-proceed`는 blacklist 밖의 일반 운영을 자율 실행합니다. `strict`와
+  `proceed-in-sandbox`만 legacy upgrade 입력으로 `request-review`에 정규화됩니다.
+  두 effective mode 모두 AppArmor command-profile 전환과 mandatory blacklist를
+  우회하지 않으며 native terminal sandbox는 사용하지 않습니다.
 - Web/SSH/Telegram Antigravity는 의도적으로 `/data/home`의 OAuth와 사용자 설정,
   `/config` 프로젝트를 공유합니다. 따라서 Telegram prompt가 유도한 credential·설정
   접근과 정상 접근을 AppArmor만으로 구분할 수 없으며, 정확한 user/chat 인증과

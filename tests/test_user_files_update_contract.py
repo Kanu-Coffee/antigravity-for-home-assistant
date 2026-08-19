@@ -341,9 +341,11 @@ def test_telegram_refresh_reconciles_malformed_owned_permissions_before_merge(
         '"${TELEGRAM_MALFORMED_BACKUP}/settings.before"',
         'synthetic_refresh_marker = "preserve-unrelated-setting"',
         'synthetic_mcp_marker: "preserve-byte-exact"',
-        "and (.permissions.allow | length) == 29",
-        "and .permissions.ask == []",
-        "and (.permissions.deny | length) == 33",
+        'and (.permissions.allow | index("read_file(*)") == null)',
+        '["mcp(ha_files/ha_files_write_text)", "execute_url(*)", "command(*)"]',
+        'index("mcp(ha_files/ha_files_read_text)") != null',
+        'index("read_file(*)") != null',
+        'index("read_file(/config/secrets.yaml)") != null',
         "loadTelegramPermissionBoundary",
         "Telegram malformed-refresh repair was not restart-idempotent",
         "Telegram-disabled managed refresh accepted a malformed permission bucket",
@@ -593,6 +595,9 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
     helper = (
         rootfs / "usr/local/share/antigravity-ha/user-files-update.mjs"
     ).read_text(encoding="utf-8")
+    permission_policy = (
+        rootfs / "usr/local/share/antigravity-ha/telegram-permission-policy.mjs"
+    ).read_text(encoding="utf-8")
     plugin_update = (
         rootfs / "usr/local/share/antigravity-ha/managed-plugin-update.mjs"
     ).read_text(encoding="utf-8")
@@ -636,6 +641,7 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
     assert set(plugin_mcp_config) == {"mcpServers"}
     assert set(plugin_mcp_config["mcpServers"]) == {
         "ha_change",
+        "ha_files",
         "telegram_action",
         "ha_memory",
         "ha_read",
@@ -644,6 +650,7 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
     }
     for name, command in {
         "ha_change": "/usr/local/bin/ha-change-proposal-mcp",
+        "ha_files": "/usr/local/bin/ha-files-mcp",
         "telegram_action": "/usr/local/bin/telegram-action-proposal-mcp",
         "ha_memory": "/usr/local/bin/ha-memory-mcp",
         "ha_read": "/usr/local/bin/ha-read-mcp",
@@ -688,7 +695,7 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
     assert '"ha_validate"' in plugin_mcp
     assert "/usr/local/bin/ha-validate-mcp" in plugin_mcp
     assert "mcp(ha_change/ha_change_propose)" in helper
-    expected_safe_native_read_rules = (
+    legacy_bounded_native_read_rules = (
         "read_file(/config)",
         "read_file(/data/home/.gemini/config)",
         "read_file(/data/home/.gemini/antigravity-cli/agents)",
@@ -697,97 +704,93 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
         "read_file(/data/home/.gemini/GEMINI.md)",
         "read_file(/data/home/.gemini/antigravity-cli/settings.json)",
     )
-    for native_file_rule in expected_safe_native_read_rules:
+    for native_file_rule in legacy_bounded_native_read_rules:
         assert f'"{native_file_rule}"' in helper
     assert (
         '"write_file(/data/home/.gemini/antigravity-cli/settings.json)"'
         in helper
     ), "the public 2.0.8 migration source must remain registered"
-    active_permissions = helper.split("const HA_PERMISSION_RULES =", 1)[1].split(
-        "const LEGACY_SHARED_NATIVE_FILE_RULE_SET =", 1
-    )[0]
-    assert '"read_file(/data)"' not in active_permissions
-    assert '"write_file(/data)"' not in active_permissions
     shared_file_rules = helper.split(
-        "const SAFE_NATIVE_READ_PERMISSION_RULES =", 1
+        "const LEGACY_2_0_11_2_0_18_NATIVE_READ_PERMISSION_RULES =", 1
     )[1].split("const LEGACY_V3_SHARED_NATIVE_FILE_RULES =", 1)[0]
     assert tuple(
         re.findall(r'^\s*"([^"]+)",$', shared_file_rules, re.MULTILINE)
-    ) == expected_safe_native_read_rules
-    assert (
-        '"write_file(/data/home/.gemini/antigravity-cli/settings.json)"'
-        not in shared_file_rules
-    )
-    active_policy = helper.split("const HA_PERMISSION_RULES =", 1)[1].split(
-        "const LEGACY_V3_PERMISSION_RULES =", 1
-    )[0]
-    assert "...SAFE_NATIVE_READ_PERMISSION_RULES" in active_policy
-    assert "...SAFE_MCP_PERMISSION_RULES" in active_policy
-    assert '"mcp(telegram_action/telegram_action_propose)"' in helper
-    assert "ask: []" in active_policy
-    assert "DIRECT_REVIEW_PERMISSION_RULES" not in helper
-    assert '"mcp(*)"' not in active_policy
+    ) == legacy_bounded_native_read_rules
+    request_review_policy = permission_policy.split(
+        "const TELEGRAM_REQUEST_REVIEW_ALLOW_RULES =", 1
+    )[1].split("const TELEGRAM_ALWAYS_PROCEED_ALLOW_RULES =", 1)[0]
+    for rule in (
+        "read_url(*)",
+        "mcp(ha_files/ha_files_write_text)",
+        "execute_url(*)",
+        "command(*)",
+    ):
+        assert f'"{rule}"' in request_review_policy
+    for read_rule in (
+        "mcp(ha_files/ha_files_list)",
+        "mcp(ha_files/ha_files_read_text)",
+    ):
+        assert f'"{read_rule}"' in permission_policy
+    assert "...TELEGRAM_MANAGED_READ_MCP_RULES" in request_review_policy
+    for native_file_rule in ("read_file(*)", "write_file(*)"):
+        assert f'"{native_file_rule}"' not in request_review_policy
+    assert "...TELEGRAM_REQUIRED_PROPOSAL_RULES" in request_review_policy
+    assert '"mcp(ha_change/ha_change_propose)"' in permission_policy
+    assert '"mcp(telegram_action/telegram_action_propose)"' in permission_policy
+    assert '"mcp(*)"' not in request_review_policy
+    always_proceed_policy = permission_policy.split(
+        "const TELEGRAM_ALWAYS_PROCEED_ALLOW_RULES =", 1
+    )[1].split("const TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES =", 1)[0]
+    for rule in (
+        "read_url(*)",
+        "execute_url(*)",
+        "command(*)",
+        "mcp(*)",
+    ):
+        assert f'"{rule}"' in always_proceed_policy
+    for native_file_rule in ("read_file(*)", "write_file(*)"):
+        assert f'"{native_file_rule}"' not in always_proceed_policy
     image_settings = json.loads(settings.read_text(encoding="utf-8"))
     assert image_settings["toolPermission"] == "request-review"
-    sensitive_denies = helper.split(
-        "const LEGACY_V3_SENSITIVE_DENY_PERMISSION_RULES =", 1
-    )[1].split("const SENSITIVE_DENY_PERMISSION_RULES =", 1)[0]
-    assert re.findall(
-        r'^\s*"([^"]+)",$', sensitive_denies, re.MULTILINE
-    ) == [
+    assert image_settings["allowNonWorkspaceAccess"] is True
+    for sensitive_rule in (
+        "read_file(*)",
+        "write_file(*)",
+        "read_file(/data/home/.gemini)",
+        "write_file(/data/home/.gemini)",
+        "read_file(/data/home/.gemini/antigravity-cli/settings.json)",
         "write_file(/data/home/.gemini/antigravity-cli/settings.json)",
-        "read_file(/data/options.json)",
-        "write_file(/data/options.json)",
-        "read_file(/run/antigravity-ha/supervisor.token)",
-        "write_file(/run/antigravity-ha/supervisor.token)",
-        "read_file(/run/antigravity-ha/home-assistant-browser.token)",
-        "write_file(/run/antigravity-ha/home-assistant-browser.token)",
+        "read_file(/data/home/.gemini/config/mcp_config.json)",
+        "write_file(/data/home/.gemini/config/mcp_config.json)",
+        "read_file(/data/browser-auth)",
         "read_file(/config/secrets.yaml)",
         "write_file(/config/secrets.yaml)",
         "read_file(/config/.storage)",
         "write_file(/config/.storage)",
-        "read_file(/config/.ssh)",
-        "write_file(/config/.ssh)",
-        "read_file(/data/home/.ssh)",
-        "write_file(/data/home/.ssh)",
-        "read_file(/data/home/.aws)",
-        "write_file(/data/home/.aws)",
-        "read_file(/data/home/.azure)",
-        "write_file(/data/home/.azure)",
-        "read_file(/data/home/.config/gcloud)",
-        "write_file(/data/home/.config/gcloud)",
-        "read_file(/data/home/.kube)",
-        "write_file(/data/home/.kube)",
-        "read_file(/data/home/.docker/config.json)",
-        "write_file(/data/home/.docker/config.json)",
-        "read_file(/data/home/.netrc)",
-        "write_file(/data/home/.netrc)",
-        "read_file(/data/home/.npmrc)",
-        "write_file(/data/home/.npmrc)",
-        "read_file(/root/.ssh)",
-        "write_file(/root/.ssh)",
-    ]
-    active_sensitive_denies = helper.split(
-        "const SENSITIVE_DENY_PERMISSION_RULES =", 1
-    )[1].split("const HA_PERMISSION_RULES =", 1)[0]
-    for mcp_config_rule in (
-        "read_file(/data/home/.gemini/config/mcp_config.json)",
-        "write_file(/data/home/.gemini/config/mcp_config.json)",
+        "read_file(/config/ssl)",
+        "read_file(/etc/ssl/private)",
+        "read_file(/proc/self/environ)",
+        "read_file(/proc/self/fd)",
     ):
-        assert f'"{mcp_config_rule}"' in active_sensitive_denies
+        assert f'"{sensitive_rule}"' in permission_policy
+    assert 'oauth*' not in permission_policy
+    assert "AppArmor remains responsible for dynamic PID paths" in permission_policy
     assert 'const RETIRED_MANAGED_PERMISSION_RULES = new Set([' in helper
     assert 'const REGISTERED_MANAGED_PERMISSION_RULES = new Set([' in helper
     assert "!REGISTERED_MANAGED_PERMISSION_RULES.has(rule)" in helper
     for tool in (
+        "ha_read_addon_logs",
         "ha_read_app_logs",
         "ha_read_config",
         "ha_read_core_logs",
         "ha_read_history",
+        "ha_read_host_logs",
         "ha_read_registry",
         "ha_read_services",
         "ha_read_state",
         "ha_read_states",
         "ha_read_storage_usage",
+        "ha_read_supervisor_logs",
         "ha_read_system_info",
         "ha_read_traces",
     ):
@@ -796,6 +799,7 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
         "const LEGACY_2_0_6_2_0_8_HA_READ_TOOLS = [", 1
     )[1].split("];", 1)[0]
     assert '"ha_read_storage_usage"' not in legacy_read_tools
+    assert '"ha_read_addon_logs"' not in legacy_read_tools
     assert '...LEGACY_2_0_6_2_0_8_HA_READ_TOOLS.map(' in helper
     assert "mcp(ha_read/${tool})" in helper
     assert re.search(r"Do not\s+supply or invent requester\s+fields", proposal_skill)

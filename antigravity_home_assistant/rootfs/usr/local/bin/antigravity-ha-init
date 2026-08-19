@@ -65,10 +65,10 @@ if jq --exit-status '.antigravity_terminal_sandbox == true' \
   bashio::log.warning 'antigravity_terminal_sandbox=true is deprecated and ignored; run_command uses the non-privileged AppArmor command boundary'
 fi
 if jq --exit-status \
-  '.antigravity_tool_permission != null
-    and .antigravity_tool_permission != "request-review"' \
+  '.antigravity_tool_permission == "strict"
+    or .antigravity_tool_permission == "proceed-in-sandbox"' \
   /data/options.json >/dev/null; then
-  bashio::log.warning 'The selected autonomous tool policy is deprecated and normalized to request-review so Telegram side effects require an inline confirmation card'
+  bashio::log.warning 'The selected legacy tool policy is normalized to request-review; choose always-proceed explicitly for autonomous operational tools'
 fi
 
 feedback_options_tmp=$(mktemp "${RUNTIME_DIR}/.ha-feedback-options.XXXXXX")
@@ -88,7 +88,10 @@ if ! jq --exit-status '
       web_terminal_auto_start_antigravity: option_bool("web_terminal_auto_start_antigravity"; false),
       antigravity_tool_permission:
         (option_string("antigravity_tool_permission"; "request-review")
-          | if . == "request-review" then . else "request-review" end),
+          | if . == "request-review" or . == "always-proceed" then .
+            elif . == "strict" or . == "proceed-in-sandbox"
+              then "request-review"
+            else error("invalid native tool permission") end),
       antigravity_terminal_sandbox:
         (option_bool("antigravity_terminal_sandbox"; false) | false),
       antigravity_sensitive_data_access: option_bool("antigravity_sensitive_data_access"; false),
