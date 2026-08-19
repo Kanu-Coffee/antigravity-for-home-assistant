@@ -578,9 +578,10 @@ async function runBoundedCatalogAndLogs(fixtureDirectory) {
   const broker = new HaReadBroker({
     supervisorToken: "GAP007_LOCAL_FIXTURE_TOKEN",
     fetchImpl: async (url) => {
-      if (url.endsWith("/states")) return readableResponse(200, snapshot.states);
-      if (url.endsWith("/core/logs")) return readableResponse(200, longLogs, { raw: true });
-      if (url.endsWith("/addons/self/logs")) {
+      const { pathname } = new URL(url);
+      if (pathname.endsWith("/states")) return readableResponse(200, snapshot.states);
+      if (pathname === "/core/logs") return readableResponse(200, longLogs, { raw: true });
+      if (pathname === "/addons/self/logs") {
         return readableResponse(200, "X".repeat(HA_READ_MAX_RESPONSE_BYTES + 1), { raw: true });
       }
       return readableResponse(404, { status: "missing" });
