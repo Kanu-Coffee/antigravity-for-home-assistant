@@ -241,6 +241,10 @@ requester/run binding 다섯 값을 버렸다.
   일부 binding은 native child 시작 전에 실패하며 환경 전체를 상속하지 않는다.
 - managed read MCP와 `telegram_action_propose` coordinator fixture가 성공하고 direct
   unapproved write/command와 기존 민감정보 deny negative canary는 그대로다.
+- memory DB 본체와 실제 hardlink는 계속 fail closed하고, SQLite가 `-wal`/`-shm`/
+  `-journal`을 정상 unlink하는 경합에서만 관찰 가능한 `nlink == 0`은 `ENOENT`와 같은
+  ephemeral disappearance로 처리한다. deterministic zero-link fixture와 two-link
+  negative fixture를 모두 실행한다.
 
 실제 HAOS 2.0.18 amd64에서는 최초 기동·stop/start·restart 뒤 단일 read MCP,
 Telegram 승인카드, requester-bound callback과 승인된 bounded `/config` 쓰기를 순서대로

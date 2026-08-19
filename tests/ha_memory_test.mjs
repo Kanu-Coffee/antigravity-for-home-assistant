@@ -1685,6 +1685,157 @@ test("SQLite auxiliary files may disappear only during their own inspection", as
   }
 });
 
+test("an unlinked SQLite SHM lstat snapshot is treated as disappearance", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "ha-memory-aux-unlinked-"));
+  const dbPath = join(directory, "memory.sqlite3");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const initialized = openMemoryDatabase(dbPath);
+  closeMemoryDatabase(initialized, dbPath);
+  const holdingConnection = new DatabaseSync(dbPath);
+  holdingConnection.exec("BEGIN");
+  holdingConnection.prepare("SELECT value FROM metadata WHERE key = ?").get(
+    "schema_version",
+  );
+  assert.equal(existsSync(`${dbPath}-shm`), true);
+
+  const originalLstatSync = fs.lstatSync;
+  let unlinkedSnapshotInjected = false;
+  fs.lstatSync = (path, ...options) => {
+    const info = originalLstatSync(path, ...options);
+    if (path === `${dbPath}-shm` && !unlinkedSnapshotInjected) {
+      info.nlink = 0;
+      unlinkedSnapshotInjected = true;
+    }
+    return info;
+  };
+  syncBuiltinESMExports();
+
+  let reopened;
+  try {
+    reopened = openMemoryDatabase(dbPath);
+    assert.equal(memoryStatus(reopened, dbPath).integrity, "ok");
+    assert.equal(unlinkedSnapshotInjected, true);
+  } finally {
+    fs.lstatSync = originalLstatSync;
+    syncBuiltinESMExports();
+    if (reopened) closeMemoryDatabase(reopened, dbPath);
+    holdingConnection.exec("ROLLBACK");
+    holdingConnection.close();
+  }
+});
+
+test("an unlinked SQLite SHM snapshot with unsafe mode remains unsafe", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "ha-memory-aux-unlinked-mode-"));
+  const dbPath = join(directory, "memory.sqlite3");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const initialized = openMemoryDatabase(dbPath);
+  closeMemoryDatabase(initialized, dbPath);
+  const holdingConnection = new DatabaseSync(dbPath);
+  holdingConnection.exec("BEGIN");
+  holdingConnection.prepare("SELECT value FROM metadata WHERE key = ?").get(
+    "schema_version",
+  );
+  assert.equal(existsSync(`${dbPath}-shm`), true);
+
+  const originalLstatSync = fs.lstatSync;
+  let unsafeSnapshotInjected = false;
+  fs.lstatSync = (path, ...options) => {
+    const info = originalLstatSync(path, ...options);
+    if (path === `${dbPath}-shm` && !unsafeSnapshotInjected) {
+      info.nlink = 0;
+      info.mode = (info.mode & ~0o777) | 0o644;
+      unsafeSnapshotInjected = true;
+    }
+    return info;
+  };
+  syncBuiltinESMExports();
+
+  try {
+    assert.throws(
+      () => openMemoryDatabase(dbPath),
+      (error) => error?.code === "unsafe_storage",
+    );
+    assert.equal(unsafeSnapshotInjected, true);
+  } finally {
+    fs.lstatSync = originalLstatSync;
+    syncBuiltinESMExports();
+    holdingConnection.exec("ROLLBACK");
+    holdingConnection.close();
+  }
+});
+
+test("an unlinked primary database lstat snapshot remains unsafe", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "ha-memory-db-unlinked-"));
+  const dbPath = join(directory, "memory.sqlite3");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const initialized = openMemoryDatabase(dbPath);
+  closeMemoryDatabase(initialized, dbPath);
+
+  const originalLstatSync = fs.lstatSync;
+  let databaseInspectionCount = 0;
+  let unlinkedSnapshotInjected = false;
+  fs.lstatSync = (path, ...options) => {
+    const info = originalLstatSync(path, ...options);
+    if (path === dbPath) {
+      databaseInspectionCount += 1;
+      if (databaseInspectionCount === 2) {
+        info.nlink = 0;
+        unlinkedSnapshotInjected = true;
+      }
+    }
+    return info;
+  };
+  syncBuiltinESMExports();
+
+  try {
+    assert.throws(
+      () => openMemoryDatabase(dbPath),
+      (error) => error?.code === "unsafe_storage",
+    );
+    assert.equal(unlinkedSnapshotInjected, true);
+  } finally {
+    fs.lstatSync = originalLstatSync;
+    syncBuiltinESMExports();
+  }
+});
+
+test("a multiply-linked SQLite SHM file remains unsafe", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("hard-link storage policy is POSIX-only");
+    return;
+  }
+
+  const directory = await mkdtemp(join(tmpdir(), "ha-memory-aux-hardlink-"));
+  const dbPath = join(directory, "memory.sqlite3");
+  const shmPath = `${dbPath}-shm`;
+  const extraLink = join(directory, "memory-shm-extra-link");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const initialized = openMemoryDatabase(dbPath);
+  closeMemoryDatabase(initialized, dbPath);
+  const holdingConnection = new DatabaseSync(dbPath);
+  holdingConnection.exec("BEGIN");
+  holdingConnection.prepare("SELECT value FROM metadata WHERE key = ?").get(
+    "schema_version",
+  );
+  assert.equal(existsSync(shmPath), true);
+  await link(shmPath, extraLink);
+
+  try {
+    assert.throws(
+      () => openMemoryDatabase(dbPath),
+      (error) => error?.code === "unsafe_storage",
+    );
+  } finally {
+    await rm(extraLink, { force: true });
+    holdingConnection.exec("ROLLBACK");
+    holdingConnection.close();
+  }
+});
+
 test("concurrent opens tolerate normal SQLite auxiliary-file cleanup", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "ha-memory-aux-race-"));
   const dbPath = join(directory, "memory.sqlite3");

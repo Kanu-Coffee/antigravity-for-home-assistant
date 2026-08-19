@@ -627,8 +627,8 @@
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/ha-memory-core.mjs",
-      "sha256": "sha256:56451ce3a801e02cfbacebb2932866150da0243c23ad1e9c807d93f8aa3db09c",
-      "size": 156304
+      "sha256": "sha256:dfefe15a70113b8ad406ed264240360e9aa639d3d4a718a03ec6a12d6759175d",
+      "size": 156915
     },
     {
       "mode": "0644",
@@ -818,5 +818,5 @@
     }
   ],
   "schema": "antigravity-ha-source-rootfs/v1",
-  "source_rootfs_sha256": "sha256:10b0f38241b7b78cabd380f2963c10b6675ed2938067065c124867ea8903912c"
+  "source_rootfs_sha256": "sha256:f8c14efe2188d1204413d2ae7603b930b71be29703dd221a1571ceaf4f9742b8"
 }

@@ -338,7 +338,7 @@ function ensureSafeUserPayload(value, label) {
   return serialized;
 }
 
-function checkStorageObject(path, expectedType) {
+function checkStorageObject(path, expectedType, options = {}) {
   const info = lstatSync(path);
   if (info.isSymbolicLink()) {
     throw new MemoryError("unsafe_storage", `${path} must not be a symbolic link`);
@@ -349,8 +349,16 @@ function checkStorageObject(path, expectedType) {
   if (expectedType === "file" && !info.isFile()) {
     throw new MemoryError("unsafe_storage", `${path} must be a regular file`);
   }
-  if (expectedType === "file" && info.nlink !== 1) {
-    throw new MemoryError("unsafe_storage", `${path} must not have multiple hard links`);
+  // Linux may finish a path lookup just before SQLite unlinks an auxiliary
+  // file, leaving lstat with a regular-file snapshot whose link count is
+  // already zero. Only ephemeral SQLite files may treat that exact state as
+  // disappearance; the database itself and every nlink > 1 object remain
+  // fail-closed. Ownership and mode are still validated below.
+  const unlinkedFileSnapshot = expectedType === "file" &&
+    options.allowUnlinkedFile === true &&
+    info.nlink === 0;
+  if (expectedType === "file" && info.nlink !== 1 && !unlinkedFileSnapshot) {
+    throw new MemoryError("unsafe_storage", `${path} must have exactly one hard link`);
   }
   if (
     process.platform !== "win32" &&
@@ -369,6 +377,7 @@ function checkStorageObject(path, expectedType) {
       );
     }
   }
+  return !unlinkedFileSnapshot;
 }
 
 function lstatIfPresent(path) {
@@ -382,13 +391,13 @@ function lstatIfPresent(path) {
 
 function checkEphemeralSqliteFile(path) {
   try {
-    checkStorageObject(path, "file");
-    return true;
+    return checkStorageObject(path, "file", { allowUnlinkedFile: true });
   } catch (error) {
     // SQLite removes WAL, shared-memory, and rollback-journal files as the
-    // final connection closes. Disappearance during inspection is therefore
-    // expected; every object that remains present must still pass the full
-    // type, link-count, owner, and mode checks above.
+    // final connection closes. ENOENT or an lstat snapshot with nlink zero
+    // during inspection is therefore expected; every object that remains
+    // linked must still pass the full type, link-count, owner, and mode checks
+    // above.
     if (error?.code === "ENOENT") return false;
     throw error;
   }
