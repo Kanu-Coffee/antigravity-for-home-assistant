@@ -475,20 +475,23 @@ run_operational_blacklist_probe() {
       trap "kill ${other_pid} >/dev/null 2>&1 || true" EXIT
       must_fail /bin/cat "/proc/${other_pid}/environ"
       must_fail /bin/ls "/proc/${other_pid}/fd"
-      # readlink(2) may reveal the non-secret mount-root label without opening
-      # the target. Exercise the actual credential-bearing escape instead by
-      # following each root alias to a file that is otherwise directly readable.
-      must_fail /bin/cat "/proc/${other_pid}/root/etc/os-release"
+      # AppArmor canonicalizes symlinks before matching file rules. Prove that
+      # an ordinary file remains available through the same-container root
+      # alias while a protected target stays denied through that alias.
+      grep -Fq "=" "/proc/${other_pid}/root/etc/os-release"
+      must_fail /bin/cat "/proc/${other_pid}/root/data/options.json"
       must_fail /bin/ls "/proc/${other_pid}/map_files"
       other_tid=$(/bin/ls "/proc/${other_pid}/task" | /usr/bin/head -n 1)
       [[ $other_tid =~ ^[0-9]+$ ]]
       must_fail /bin/cat "/proc/${other_pid}/task/${other_tid}/environ"
       must_fail /bin/ls "/proc/${other_pid}/task/${other_tid}/fd"
-      must_fail /bin/cat "/proc/${other_pid}/task/${other_tid}/root/etc/os-release"
+      grep -Fq "=" "/proc/${other_pid}/task/${other_tid}/root/etc/os-release"
+      must_fail /bin/cat "/proc/${other_pid}/task/${other_tid}/root/data/options.json"
       must_fail /bin/ls "/proc/${other_pid}/task/${other_tid}/map_files"
       must_fail /bin/cat /proc/thread-self/environ
       must_fail /bin/ls /proc/thread-self/fd
-      must_fail /bin/cat /proc/thread-self/root/etc/os-release
+      grep -Fq "=" /proc/thread-self/root/etc/os-release
+      must_fail /bin/cat /proc/thread-self/root/data/options.json
       must_fail /bin/ls /proc/thread-self/map_files
       kill "$other_pid"
       wait "$other_pid" 2>/dev/null || true
