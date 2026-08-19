@@ -21,6 +21,15 @@ All notable changes to this App are documented in this file.
   and preserves the complete validated binding as one unit. Direct unapproved
   native writes and commands remain blocked, and no broad AppArmor or native
   tool permission is added.
+- Harden a rare `unsafe_storage` failure during concurrent memory daemon
+  bootstrap and `ha-memory status`. The CI record did not preserve the observed
+  link count, but its timing and path match a Linux cleanup race reproduced
+  separately: link count zero can be returned after a transient SQLite `-shm`
+  pathname is resolved while SQLite's last client unlinks it. The previous check
+  reported every count other than one as "multiple hard links". Version 2.0.18
+  treats only link count zero on SQLite auxiliary files as the same normal
+  disappearance as `ENOENT`; the main database, symbolic links, wrong owner or
+  mode, and every actual multiple-hard-link case remain fail-closed.
 - Keep 2.0.13 as the sole breaking AppArmor security-boundary transition.
   Version 2.0.18 is a corrective patch within that boundary and is not added to
   `breaking_versions`.
@@ -29,8 +38,9 @@ All notable changes to this App are documented in this file.
 
 - Focused automated regressions cover the exact module-read rule, absence of a
   broad substitute grant, complete five-variable propagation through both
-  launchers, partial-binding rejection, and proposal coordinator behavior.
-  These source/container checks are not HAOS evidence.
+  launchers, partial-binding rejection, proposal coordinator behavior, SQLite
+  auxiliary-file link-count-zero cleanup, and continued rejection of link count
+  greater than one. These source/container checks are not HAOS evidence.
 - Public 2.0.17 real-HAOS amd64 acceptance is `FAIL` overall: startup, Web
   terminal, native/basic conversation, Telegram transport, and no-tool chat
   passed; managed MCP and `telegram_action_propose` failed, and approved write

@@ -245,6 +245,12 @@
   binding 전달·partial binding 거부와 proposal coordinator를 검사하지만 HAOS 증거가
   아니다. 2.0.18 amd64 최초 기동·read MCP·승인카드·승인된 bounded write와 aarch64
   실기기 수용은 릴리스 전 `NOT RUN`이며 전체 v2 수용은 `PARTIAL`이다.
+- main push memory smoke에서 daemon bootstrap과 `ha-memory status`가 겹친 직후
+  transient SQLite `-shm`을 `multiple hard links`로 보고한 1건이 있었다. CI 원문은
+  실제 link count를 남기지 않았지만, 별도 Linux stress에서 같은 unlink 경합의
+  `nlink == 0`을 재현했다. 2.0.18은 auxiliary file의 zero-link snapshot만 정상 소멸로
+  취급하고 DB 본체, symlink, owner/mode 위반과 `nlink > 1`은 계속 거부한다.
+  zero-link와 two-link 양방향 회귀를 모두 통과해야 Candidate로 진행한다.
 
 ### 2026-08-11 local v2 증거 스냅샷
 
