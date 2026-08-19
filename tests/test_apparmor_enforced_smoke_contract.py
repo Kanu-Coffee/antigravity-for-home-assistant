@@ -226,6 +226,53 @@ def test_enforced_smoke_exercises_ssh_browser_feedback_and_accounting() -> None:
     assert "[REDACTED_HOME_ASSISTANT_TOKEN]" in smoke
 
 
+def test_enforced_smoke_executes_both_native_cli_px_paths() -> None:
+    smoke = read("tests/apparmor-enforced-smoke.sh")
+
+    for token in (
+        "run_native_cli_probe",
+        'run_native_cli_probe "$FIRST_CONTAINER" restricted',
+        'run_native_cli_probe "$FIRST_CONTAINER" sensitive',
+        "enable_sensitive_data_access_fixture",
+        "/run/antigravity-ha/sensitive-data-access.enabled",
+        "0:400:1",
+        "/usr/bin/env /usr/local/bin/antigravity --version",
+        "EXPECTED_ANTIGRAVITY_VERSION=1.1.13",
+        "--output-format stream-json",
+        "--print-timeout 5s",
+        "--disable-slash-commands",
+        "Error: authentication required. Run 'antigravity-real' to log in, then retry.",
+        "authentication failed or timed out",
+        "did not return rc=1 without a signal",
+    ):
+        assert token in smoke
+
+    native_probe = smoke.split("run_native_cli_probe() {", 1)[1].split(
+        "\n}", 1
+    )[0]
+    assert native_probe.count("/usr/bin/env /usr/local/bin/antigravity") == 2
+    assert "stream_status != 1" in native_probe
+    assert "stream_status == 139" in native_probe
+    assert "received SIGSEGV (rc=139)" in native_probe
+    assert '$(< "$stream_stderr") == "$ANTIGRAVITY_AUTH_REQUIRED_MARKER"' in (
+        native_probe
+    )
+    assert 'wc -l < "$stream_stdout"' in native_probe
+    assert '.result.status == "ERROR"' in native_probe
+    assert '.result.num_turns == 0' in native_probe
+
+    restricted_call = smoke.index(
+        'run_native_cli_probe "$FIRST_CONTAINER" restricted'
+    )
+    option_change = smoke.index("enable_sensitive_data_access_fixture\n")
+    restart = smoke.index('docker restart "$FIRST_CONTAINER"')
+    sensitive_call = smoke.index(
+        'run_native_cli_probe "$FIRST_CONTAINER" sensitive'
+    )
+    final_audit = smoke.rindex("assert_relevant_audit_denials\n")
+    assert restricted_call < option_change < restart < sensitive_call < final_audit
+
+
 def test_ci_and_candidate_require_enforcement_against_exact_images() -> None:
     ci = read(".github/workflows/ci.yaml")
     candidate = read(".github/workflows/build-app.yaml")

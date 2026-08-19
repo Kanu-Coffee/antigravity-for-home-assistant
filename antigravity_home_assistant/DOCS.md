@@ -36,10 +36,20 @@ directory 거부로 exit 111, 2.0.14는 resolved Bashio 실행 거부로 init ex
 EACCES로 실패했습니다. 같은 시작에서 `refresh_managed`는 malformed
 `permissions.ask`를 Telegram 안전 정규화보다 먼저 거부해 bridge가
 `permission_boundary_blocked`에 머물렀습니다. 따라서 2.0.15 실제 amd64 HAOS 수용은
-`FAIL`입니다. 2.0.16은 exact `/dev/ptmx` read/write와 managed permission bucket의
-검증 전 29/0/33 정규화만 추가합니다. 2.0.16 실제 HAOS는 아직 `NOT RUN`이고 aarch64
-시험도 장비 부재로 `NOT RUN`입니다. 소유자의 experimental 배포 면제는 PASS가 아니며
-전체 v2 수용은 `PARTIAL`입니다.
+`FAIL`입니다. 2.0.16은 이 두 결함을 복구해 App, Ingress, Web terminal과 Telegram Bot
+API 연결까지 기동했지만 `agy`와 `antigravity --version`이 SIGSEGV/status 139로 즉시
+종료되고 Telegram worker도 같은 native crash로 실패했습니다. exact public 2.0.16
+image/custom AppArmor 재현의 kernel audit는 `interactive-runtime-restricted`에서
+`/usr/local/libexec/antigravity-real`의 `file_mmap` permission `m` 거부를 확인했고,
+`interactive-runtime-sensitive-read`에도 동일한 `r`-only rule이 있었습니다.
+2.0.17은 두 exact native-binary rule을 `r`에서 `rm`으로 바꾸고 full blank-auth worker
+trace의 exact bootstrap nsswitch/passwd identity read와 runtime
+`/usr/share/ca-certificates/**` TLS trust-store read만 두 transition chain에 추가합니다.
+새로운 broad `/etc/**`·`/usr/share/**` rule은 추가하지 않고, runtime의 기존
+`/etc/** r`와 필수 system-library mapping 및 proc/settings/credential deny는 그대로입니다.
+local kernel-enforced `--version` status
+0은 HAOS 증거가 아니며 2.0.17 실제 HAOS와 aarch64 시험은 `NOT RUN`입니다. 소유자의
+experimental 배포 면제는 PASS가 아니며 전체 v2 수용은 `PARTIAL`입니다.
 
 ### 실행 표면
 
@@ -522,7 +532,15 @@ PASS가 아니라 attach `FAIL`입니다. 공개 2.0.13에서는 custom policy �
 Telegram pause, SSH accounting/OOM, Chromium child와 feedback subtree도 각각 필요한
 profile과 exact 경로에만 허용했지만 primary profile의 `/dev/ptmx` 접근을 빠뜨려 실제
 HAOS Web terminal의 PTY 생성이 EACCES로 실패했습니다. 2.0.16은 그 profile에 exact
-`/dev/ptmx rw`만 추가합니다. 업데이트 뒤 App terminal과 관련 service 실행 경로의
+`/dev/ptmx rw`를 추가해 terminal과 Telegram transport를 시작했지만 두 interactive
+runtime profile의 exact native-binary rule에는 executable `mmap` 권한이 없었습니다.
+그 결과 실제 HAOS의 `antigravity-real`이 SIGSEGV/status 139로 종료됐고 kernel audit는
+`file_mmap` permission `m` 거부를 기록했습니다. 2.0.17은 두 rule의 `r`을 `rm`으로
+바꾸고 trace-derived bootstrap nsswitch/passwd identity와 runtime
+`/usr/share/ca-certificates/**` TLS trust-store exact read만 두 transition chain에
+추가합니다. 새로운 broad `/etc/**`·`/usr/share/**` rule은 추가하지 않고, runtime의
+기존 `/etc/** r`와 필수 system-library mapping 및 proc/settings/credential deny는
+유지합니다. 업데이트 뒤 App terminal과 관련 service 실행 경로의
 `/proc/self/attr/current` 및 Supervisor 상태에서 `antigravity_home_assistant` named
 profile이 enforce인지 확인하고, `s6-mkdir` 오류와 예상하지 않은 `DENIED`를 검토하세요.
 문제를 우회하려고 보호 mode나 AppArmor를 끄지 마세요.
@@ -686,6 +704,15 @@ sync는 계속 보존합니다. refresh 중 비정상 종료로 남은 `running`
 `/config` 삭제, DB 복원 또는 Home Assistant backup restore는 현재 사용자의
 명시적 확인 없이 수행하지 마세요.
 
+특히 2.0.12를 무조건적인 마지막 정상·무손실 fallback으로 취급하면 안 됩니다. public
+2.0.12 image/tag는 존재하지만 custom 23-profile policy attach가 `FAIL`했고 실제 현장
+성공은 amd64 `docker-default`에 한정되며 aarch64는 `NOT RUN`입니다. Supervisor 직접
+downgrade는 지원되지 않습니다. exact 2.0.12 시점 App backup을 복원하면 App `/data`가
+교체되어 backup 이후의 OAuth·memory·approval/outbox·identity가 사라집니다. 그 backup이
+없으면 App을 제거하거나 Docker 상태를 수동 조작하지 마세요. current `/data`를 보존한
+채 custom attachment를 의도적으로 되돌리는 higher-version compatibility patch는 보안
+저하를 명시해야 하며 현재는 감사된 contingency일 뿐 `NOT RUN`입니다.
+
 ## 문제 해결
 
 ### App 설치 또는 시작 실패
@@ -698,6 +725,11 @@ sync는 계속 보존합니다. refresh 중 비정상 종료로 남은 `running`
 - 공개 2.0.15에서 Ingress HTTP 200·WebSocket 101 뒤 `pty_spawn: 13`과 ttyd 재시작이
   반복되면 reconnect만으로 복구되지 않습니다. 2.0.16 이상으로 업데이트하고 실제
   terminal 입력과 재접속을 다시 확인합니다.
+- 공개 2.0.16에서 Web terminal은 연결되지만 `agy` 또는 `antigravity --version`이
+  `Segmentation fault`와 status 139로 끝나고 Telegram 요청도 즉시 `worker_failed`이면
+  session reset이나 reconnect 문제로 분류하지 마세요. 2.0.17 이상으로 업데이트한 뒤
+  먼저 `antigravity --version` status 0, 실제 대화와 Telegram worker를 차례로
+  확인합니다. AppArmor나 protection mode를 끄는 방식으로 우회하지 않습니다.
 
 ### OAuth 실패
 
@@ -733,6 +765,9 @@ sync는 계속 보존합니다. refresh 중 비정상 종료로 남은 `running`
 - `request_failed`의 `reason_class=authentication_required`이면 Bot pairing을
   반복하지 말고 신뢰하는 App 웹 터미널 또는 SSH에서 `ha-antigravity-login`을
   실행합니다.
+- `request_failed`가 native termination signal을 포함하면 그 제한된 signal class로
+  CLI crash와 일반 exit를 구분합니다. stderr, prompt, OAuth 또는 token 원문을 공유하지
+  마세요. 2.0.16의 SIGSEGV는 `/new`나 pairing 재설정으로 복구되지 않습니다.
 - `reason_class=headless_read_denied`이면 headless AI의 비허용 파일 읽기가 차단된
   것입니다. 정상 질문에서 반복되면 사용자 settings를 편집하거나 `read_file(*)`를
   추가하지 말고 App을 최신 버전으로 업데이트한 뒤 재시작합니다.
@@ -797,9 +832,9 @@ fresh-container restart, S6 init과 안전한 canary 내용으로 준비한
 
 - 실제 HAOS amd64의 clean install과 aarch64의 install·start·update
 - 양쪽 아키텍처의 native Antigravity OAuth와 plugin discovery
-- 2.0.16에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되고 S6,
-  Web terminal PTY·reconnect와 Telegram reconcile이 최초 기동·stop/start·restart를
-  완료하는지
+- 2.0.17에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되고 S6,
+  native `--version`/대화, Web terminal PTY·reconnect와 Telegram worker가 최초
+  기동·stop/start·restart를 완료하는지
 - 공개 GHCR generic manifest와 per-arch digest의 실제 pull
 - 실제 dashboard, live Telegram card/callback/command/HA action, migration 세 mode와
   rollback E2E
@@ -811,8 +846,9 @@ manifest와 HAOS acceptance 기록에서 해당 항목이 통과했는지 확인
 현재 좁은 현장 증거는 2.0.12 amd64 Telegram reconcile/reconnect와 App
 restart/reconnect `PASS`, 같은 image의 custom AppArmor attach `FAIL`, 공개 2.0.13의
 S6 runtime startup `FAIL`, 공개 2.0.14의 resolved Bashio execute startup `FAIL`, 공개
-2.0.15의 Web terminal PTY EACCES와 Telegram `refresh_managed` ordering `FAIL`, 그리고
-2.0.16·aarch64 실기기 `NOT RUN`입니다. aarch64 면제는 PASS가 아니며 전체 v2 수용은
+2.0.15의 Web terminal PTY EACCES와 Telegram `refresh_managed` ordering `FAIL`, 공개
+2.0.16의 native `file_mmap` denial·SIGSEGV/status 139 `FAIL`, 그리고 2.0.17·aarch64
+실기기 `NOT RUN`입니다. aarch64 면제는 PASS가 아니며 전체 v2 수용은
 `PARTIAL`입니다. 이 결과를 전체 HA-001~HA-008 또는 AA-001 PASS로 확대하지 않습니다.
 
 ## 지원 보고서

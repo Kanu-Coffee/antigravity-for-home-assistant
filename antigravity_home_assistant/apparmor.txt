@@ -195,6 +195,8 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   /lib/** rm,
   /lib64/** rm,
   /etc/ld.so.cache r,
+  /etc/nsswitch.conf r,
+  /etc/passwd r,
 
   /dev/null rw,
   /dev/tty rw,
@@ -232,8 +234,12 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   /usr/local/lib/** r,
   /usr/local/libexec/antigravity-interactive-restricted r,
   /usr/local/libexec/antigravity-native-env r,
-  /usr/local/libexec/antigravity-real r,
+  # The Px target needs executable mapping permission for the native ELF's
+  # load segments.  Keep execute permission exclusively on the bootstrap.
+  /usr/local/libexec/antigravity-real rm,
   /usr/local/share/** r,
+  /usr/share/ca-certificates/ r,
+  /usr/share/ca-certificates/** r,
   /lib/** rm,
   /lib64/** rm,
   /etc/** r,
@@ -355,6 +361,8 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   /lib/** rm,
   /lib64/** rm,
   /etc/ld.so.cache r,
+  /etc/nsswitch.conf r,
+  /etc/passwd r,
 
   /run/ r,
   /run/antigravity-ha/ r,
@@ -395,8 +403,11 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   /usr/local/lib/** r,
   /usr/local/libexec/antigravity-interactive-sensitive-read r,
   /usr/local/libexec/antigravity-native-env r,
-  /usr/local/libexec/antigravity-real r,
+  # Match the restricted Px target without granting a runtime re-exec path.
+  /usr/local/libexec/antigravity-real rm,
   /usr/local/share/** r,
+  /usr/share/ca-certificates/ r,
+  /usr/share/ca-certificates/** r,
   /lib/** rm,
   /lib64/** rm,
   /etc/** r,

@@ -150,7 +150,7 @@ restart/reconnect는 `PASS`했다. 이 좁은 결과는 unrelated settings/globa
 `FAIL`이고, aarch64 실기기 결과는 장비 부재로 `NOT RUN`이다. 소유자가 experimental
 배포에서 aarch64 결과를 면제했지만 이 면제를 PASS 증거로 기록하지 않는다.
 
-### 2.0.13~2.0.16 Supervisor AppArmor와 startup 회귀
+### 2.0.13~2.0.17 Supervisor AppArmor와 startup 회귀
 
 2.0.12 `apparmor.txt`의 들여쓰기 없는 최상위 `profile` 선언 23개는 Supervisor
 2026.07.5의 App policy primary scanner가 요구하는 정확히 한 개의 `^profile[ ]` 선언과
@@ -205,11 +205,38 @@ Web terminal/AppArmor 수용은 `FAIL`이다.
 예상 밖 AppArmor denial과 ttyd 재시작이 없어야 한다. updater 수용은 위의 malformed
 allow/ask/deny fixture와 unsafe-file fail-closed matrix를 함께 통과해야 한다.
 
-실제 HAOS에서는 2.0.16 설치 뒤 최초 기동, stop/start와 restart, Web terminal 입력·
-reconnect, Telegram `permission_boundary_ready` 29/33와 `connected`, 실제 승인 1회,
-root와 각 서비스 경로의 named profile enforce 및 예상 밖 `DENIED` 0건을 관찰한다.
-2.0.16 실기기 결과는 현재 `NOT RUN`이다. aarch64 장비 부재 owner waiver는 PASS가
-아니며 전체 v2 수용은 `PARTIAL`이다.
+실제 HAOS 2.0.16은 App service graph, Ingress/Web terminal, Telegram
+`permission_boundary_ready`와 `connected`까지 도달했지만 `agy` 및
+`antigravity --version`이 SIGSEGV/status 139로 즉시 종료되고 모든 Telegram worker가
+`session_ready` 뒤 실패했다. 따라서 2.0.16 native/Telegram 수용은 `FAIL`이다.
+
+2.0.17 회귀는 먼저 exact public 2.0.16 image와 project custom profile에서 status 139와
+kernel audit의 `/usr/local/libexec/antigravity-real` `file_mmap` permission `m` denial을
+재현해야 한다. corrected image에서는 restricted/sensitive-read 두 runtime profile의
+exact native-binary rule은 `r`에서 `rm`으로 바뀌며 full blank-auth trace의 bootstrap
+nsswitch/passwd identity와 runtime `/usr/share/ca-certificates/**` TLS trust-store exact
+read가 두 transition chain에만 존재하는지 검증한다. 새로운 broad `/etc/**`·
+`/usr/share/**` rule이 없고 runtime의 기존 `/etc/** r`, 필수 system-library mapping 및
+proc/settings/credential deny가 그대로인지 정적으로 검증한다.
+kernel-enforced 양성 검사는 실제 `antigravity --version` status 0, blank-auth worker의
+TLS trust-store 도달, PTY와 fresh-container restart를 실행하고,
+음성 검사는 proc/settings/sensitive canary와 unexpected denial 부재를 유지한다. Telegram
+fixture는 child SIGSEGV를 generic `worker_failed`로만 숨기지 않고 bounded signal class로
+기록하되 stderr, prompt, OAuth, token과 사용자 content가 없는지 검증한다.
+
+실제 HAOS에서는 2.0.17 설치 뒤 최초 기동, stop/start와 restart, Web terminal
+`antigravity --version` status 0과 실제 대화, Telegram
+`permission_boundary_ready`/`connected` 뒤 worker 성공, root와 각 서비스 경로의 named
+profile enforce 및 예상 밖 `DENIED` 0건을 관찰한다. 2.0.17 실기기 결과는 현재
+`NOT RUN`이다. aarch64 장비 부재 owner waiver는 PASS가 아니며 전체 v2 수용은
+`PARTIAL`이다. automated Linux-container result는 HAOS 증거로 승격하지 않는다.
+
+2.0.12 rollback rehearsal은 Supervisor direct downgrade가 지원된다고 가정하지 않는다.
+exact 2.0.12 App backup이 있는 경우에만 backup restore가 App image와 `/data`를 함께
+되돌리는지, post-backup OAuth·memory·approval/outbox·identity 손실을 사용자가 수용했는지
+확인한다. backup 없는 uninstall/Docker 조작은 시험하지 않는다. current `/data`를
+보존하는 higher-version security-degraded compatibility fallback도 실제 Candidate와
+HAOS 수용 전에는 `NOT RUN` contingency다.
 
 ### 2.1 2026-08-11 local v2 working-tree 증거
 

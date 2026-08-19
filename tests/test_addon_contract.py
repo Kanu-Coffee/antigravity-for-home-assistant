@@ -770,6 +770,14 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
         "/usr/share/glib-2.0/schemas/gschemas.compiled r,": {
             "antigravity_home_assistant-browser"
         },
+        "/usr/share/ca-certificates/ r,": {
+            "antigravity_home_assistant-interactive-runtime-restricted",
+            "antigravity_home_assistant-interactive-runtime-sensitive-read",
+        },
+        "/usr/share/ca-certificates/** r,": {
+            "antigravity_home_assistant-interactive-runtime-restricted",
+            "antigravity_home_assistant-interactive-runtime-sensitive-read",
+        },
         "/usr/share/mime/mime.cache r,": {
             "antigravity_home_assistant-browser"
         },
@@ -841,6 +849,11 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
     sshd_profile = profiles["antigravity_home_assistant-sshd"]
     helper_profile = profiles["antigravity_home_assistant-ha-helper"]
     browser_profile = profiles["antigravity_home_assistant-browser"]
+    for native_runtime in (
+        "antigravity_home_assistant-interactive-runtime-restricted",
+        "antigravity_home_assistant-interactive-runtime-sensitive-read",
+    ):
+        assert "/usr/share/** r," not in profiles[native_runtime]
     assert "/proc/self/oom_score_adj rw," not in source
     assert "/proc/** rw," not in sshd_profile
     assert "/config/** r," in helper_profile
@@ -1084,16 +1097,25 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
     ) in sensitive_bootstrap
     assert "/usr/bin/stat rix," not in restricted_bootstrap
     assert "/usr/bin/stat rix," in sensitive_bootstrap
+    for bootstrap_profile in (restricted_bootstrap, sensitive_bootstrap):
+        assert "/etc/ld.so.cache r," in bootstrap_profile
+        assert "/etc/nsswitch.conf r," in bootstrap_profile
+        assert "/etc/passwd r," in bootstrap_profile
+        assert "/etc/** r," not in bootstrap_profile
+    assert profile.count("  /etc/nsswitch.conf r,\n") == 2
+    assert profile.count("  /etc/passwd r,\n") == 2
     for runtime_profile in (restricted_profile, sensitive_profile):
         assert "/bin/** Px -> antigravity_home_assistant-command," in runtime_profile
         assert "/usr/bin/** Px -> antigravity_home_assistant-command," in runtime_profile
         assert "/usr/local/libexec/antigravity-native-env r," in runtime_profile
-        assert "/usr/local/libexec/antigravity-real r," in runtime_profile
+        assert "/usr/local/libexec/antigravity-real rm," in runtime_profile
+        assert "/usr/local/libexec/antigravity-real r," not in runtime_profile
         assert "/usr/local/libexec/antigravity-real rix," not in runtime_profile
         assert (
             "deny /data/home/.gemini/antigravity-cli/settings.json wklm,"
             in runtime_profile
         )
+    assert profile.count("  /usr/local/libexec/antigravity-real rm,\n") == 2
     for credential_profile in (
         main_profile,
         restricted_profile,

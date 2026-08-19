@@ -791,5 +791,9 @@ profile에만 exact execute로 추가했지만, 실제 HAOS의 `refresh_managed`
 `permission_boundary_blocked`에 머물렀다. 따라서 2.0.15 Telegram 수용은 `FAIL`이다.
 2.0.16은 supported safe settings에서 managed bucket을 검증 전에 canonicalize하지만
 unsafe file과 unsafe effective boundary는 계속 Bot API 접촉 없이 fail closed한다.
-2.0.16 실제 HAOS reconcile/connect/approval은 `NOT RUN`이며 kernel-enforced·fixture
-자동 smoke는 HAOS 증거가 아니다.
+2.0.16 실제 HAOS reconcile/connect는 성공했지만 native CLI의 AppArmor `file_mmap`
+denial과 SIGSEGV/status 139 때문에 모든 worker가 `session_ready` 뒤 실패했다. bridge는
+2.0.17부터 native child의 bounded termination signal을 진단에 포함하되 stderr, prompt,
+OAuth, token과 사용자 content를 기록하지 않는다. `/new`나 reconnect는 이 crash를
+복구하지 않는다. 2.0.17 actual HAOS approval/worker completion은 `NOT RUN`이며
+kernel-enforced·fixture 자동 smoke는 HAOS 증거가 아니다.

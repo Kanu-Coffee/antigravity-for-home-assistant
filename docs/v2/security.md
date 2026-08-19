@@ -118,7 +118,17 @@ kernel-enforced 자동 startup/restart smoke는 실제 profile attach와 안전�
 `/config/secrets.yaml` read-denial canary를 검사하지만 HAOS 증거가 아니다. 공개
 2.0.15의 실제 HAOS에서는 primary profile의 `/dev/ptmx` 접근 누락으로 ttyd PTY 생성이
 EACCES를 반환했다. 2.0.16은 그 profile에 exact `/dev/ptmx rw`만 추가하고 broad
-`/dev/**` 권한은 열지 않는다. 2.0.16 HAOS enforce 수용은 `NOT RUN`이다.
+`/dev/**` 권한은 열지 않는다. 이로써 실제 2.0.16의 terminal과 Telegram transport는
+시작했지만 두 interactive runtime profile의 exact native-binary rule에 executable
+`mmap` 권한이 없어 `antigravity-real`이 SIGSEGV/status 139로 종료됐다. exact public
+image/custom profile 재현의 kernel audit는 `/usr/local/libexec/antigravity-real`에
+`file_mmap` permission `m`이 거부됐음을 확인했다. 2.0.17은 두 기존 rule을 `r`에서
+`rm`으로 바꾸고 full blank-auth trace-derived bootstrap nsswitch/passwd identity read와
+runtime `/usr/share/ca-certificates/**` TLS trust-store read만 두 transition chain에
+추가한다. 새로운 broad `/etc/**`·`/usr/share/**` rule은 추가하지 않고, runtime의 기존
+`/etc/** r`와 필수 system-library mapping 및 proc/settings/credential deny를 변경하지 않는다.
+local kernel-enforced `--version` status 0은 HAOS 증거가 아니며 2.0.17 HAOS enforce
+수용은 `NOT RUN`이다.
 
 | profile | 허용 | 주요 deny |
 | --- | --- | --- |
@@ -127,8 +137,8 @@ EACCES를 반환했다. 2.0.16은 그 profile에 exact `/dev/ptmx rw`만 추가�
 | broker | 제한된 `/data`, Supervisor socket/API | 임의 host path, kernel/admin capability |
 | ordinary shell | 일반 `/config`, shell 도구, exact `utempter`와 login accounting | native OAuth Home, SSH/App credential, broker state, 다른 PID의 env/fd/root |
 | interactive bootstrap | clean environment copy와 image-owned `antigravity-real`로 단일 전환 | HOME/OAuth, `/config` data, runtime credential |
-| interactive-runtime-restricted | Web/SSH/Telegram의 `/config` 일반 프로젝트 파일, native CLI/OAuth Home read, 사용자 customization, plugin socket, 매개 settings update helper 실행 | raw settings direct write; secrets/storage/Recorder read/write; runtime token/options, SSH/private key, broker state |
-| interactive-runtime-sensitive-read | restricted runtime 허용 범위 + Recorder DB 진단용 read | raw settings direct write; secrets/storage read/write; Recorder write, runtime token/options, SSH/private key, broker state |
+| interactive-runtime-restricted | exact `antigravity-real rm`, Web/SSH/Telegram의 `/config` 일반 프로젝트 파일, native CLI/OAuth Home read, 사용자 customization, plugin socket, 매개 settings update helper 실행 | native binary re-exec와 허가되지 않은 application-library execute/map, raw settings direct write; secrets/storage/Recorder read/write; runtime token/options, SSH/private key, broker state |
+| interactive-runtime-sensitive-read | exact `antigravity-real rm`, restricted runtime 허용 범위 + Recorder DB 진단용 read | native binary re-exec와 허가되지 않은 application-library execute/map, raw settings direct write; secrets/storage read/write; Recorder write, runtime token/options, SSH/private key, broker state |
 | `antigravity_home_assistant-command` | 일반 `/config`, network, user plugin/agent/rule/skill과 scoped helper | OAuth backend, App 관리 settings/MCP config, token, secrets/storage/Recorder, broker state |
 | Telegram action proposal client | active run-bound private proposal socket write | `/config`/`/data` content, token, OAuth, final executor |
 | Telegram action executor | exact committed action envelope와 fixed shell transition | Supervisor/bot token, OAuth, App settings/MCP config, proposal socket |
@@ -510,6 +520,16 @@ OAuth/unrelated-state 보존과 전체 Telegram security matrix는 `NOT RUN`이�
 확인했다. 공개 2.0.15는 App service graph를 시작했지만 Web terminal PTY EACCES와
 Telegram `refresh_managed`의 malformed-bucket ordering 때문에 실기기 수용 `FAIL`이다.
 2.0.16의 exact PTY rule과 검증 전 managed-bucket canonicalization은 기존
-credential·민감정보 deny와 unsafe-file fail-closed 경계를 유지한다. 2.0.16 실기기
-enforce·재시작은 `NOT RUN`이다. aarch64 실기기 `NOT RUN`은 experimental 배포에 한해
+credential·민감정보 deny와 unsafe-file fail-closed 경계를 유지했지만, 실제 HAOS
+native `file_mmap` denial과 SIGSEGV/status 139로 수용은 `FAIL`이다. 2.0.17의 두 exact
+`antigravity-real rm` rule, trace-derived exact bootstrap identity/TLS trust-store reads와
+bounded Telegram signal 진단은 새로운 broad rule이나 기존 deny를 변경하지 않으며,
+runtime의 기존 `/etc/** r`와 필수 system-library mapping도 그대로 둔다. 2.0.17
+실기기 enforce·재시작은 `NOT RUN`이다. aarch64 실기기
+`NOT RUN`은 experimental 배포에 한해
 owner-waived됐지만 PASS가 아니며 전체 v2 수용은 `PARTIAL`이다.
+2.0.12 direct downgrade를 보안 복구로 간주하지 않는다. 그 image의 custom 23-profile
+attach는 `FAIL`했고 field PASS는 amd64 `docker-default`에 한정된다. exact 2.0.12 App
+backup restore는 newer `/data`를 교체하며, backup 없는 uninstall/Docker 조작은 금지한다.
+현재 `/data`를 보존하면서 custom attachment를 되돌리는 higher-version fallback은
+명시적 security-degraded `NOT RUN` contingency다.

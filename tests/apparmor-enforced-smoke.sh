@@ -18,6 +18,8 @@ readonly DATA_VOLUME="${TEST_ID}-data"
 readonly CONFIG_VOLUME="${TEST_ID}-config"
 readonly HELPER_RUNTIME_VOLUME="${TEST_ID}-helper-runtime"
 readonly SUPERVISOR_TOKEN=apparmor-enforced-smoke-token-do-not-use
+readonly EXPECTED_ANTIGRAVITY_VERSION=1.1.13
+readonly ANTIGRAVITY_AUTH_REQUIRED_MARKER="Error: authentication required. Run 'antigravity-real' to log in, then retry."
 WORK_DIR=$(mktemp -d)
 readonly WORK_DIR
 readonly RENDERED_PROFILE="${WORK_DIR}/apparmor.profile"
@@ -441,6 +443,102 @@ run_feedback_probe() {
   fi
 }
 
+run_native_cli_probe() {
+  local container=$1
+  local access_mode=$2
+  local marker_metadata
+  local stream_stderr="${WORK_DIR}/native-${access_mode}.stderr"
+  local stream_status
+  local stream_stdout="${WORK_DIR}/native-${access_mode}.stdout"
+  local version_output
+
+  case "$access_mode" in
+    restricted)
+      if docker exec "$container" /usr/bin/test -e \
+        /run/antigravity-ha/sensitive-data-access.enabled; then
+        fail 'the restricted native CLI probe found an unexpected sensitive-access marker'
+      fi
+      ;;
+    sensitive)
+      if ! marker_metadata=$(docker exec "$container" /usr/bin/stat \
+        -c '%u:%a:%h' /run/antigravity-ha/sensitive-data-access.enabled \
+        2>&1); then
+        printf '%s\n' "$marker_metadata" | redact_probe_output >&2
+        fail 'the sensitive native CLI probe could not validate its access marker'
+      fi
+      [[ $marker_metadata == 0:400:1 ]] \
+        || fail "the sensitive native CLI marker is unsafe: ${marker_metadata}"
+      ;;
+    *) fail "unknown native CLI access mode: ${access_mode}" ;;
+  esac
+
+  # runc applies the container's primary profile to the first docker-exec
+  # command. Start with env so the public launcher itself performs the same
+  # shell -> bootstrap -> native-runtime Px chain used by ttyd and Telegram.
+  if ! version_output=$(docker exec --workdir /config "$container" \
+    /usr/bin/env /usr/local/bin/antigravity --version 2>&1); then
+    printf '%s\n' "$version_output" | redact_probe_output >&2
+    fail "the ${access_mode} public Antigravity launcher version probe failed"
+  fi
+  [[ $version_output == "$EXPECTED_ANTIGRAVITY_VERSION" ]] \
+    || fail "the ${access_mode} public launcher returned an unexpected version: ${version_output}"
+
+  set +e
+  printf '%s\n' 'AppArmor native worker authentication probe' \
+    | docker exec --interactive --workdir /config "$container" \
+      /usr/bin/env /usr/local/bin/antigravity \
+        --output-format stream-json \
+        --print-timeout 5s \
+        --disable-slash-commands \
+        >"$stream_stdout" 2>"$stream_stderr"
+  stream_status=${PIPESTATUS[1]}
+  set -e
+  if (( stream_status == 139 )); then
+    redact_probe_output < "$stream_stderr" >&2
+    fail "the ${access_mode} blank-auth native worker received SIGSEGV (rc=139)"
+  elif (( stream_status != 1 )); then
+    redact_probe_output < "$stream_stderr" >&2
+    redact_probe_output < "$stream_stdout" >&2
+    fail "the ${access_mode} blank-auth native worker did not return rc=1 without a signal (rc=${stream_status})"
+  fi
+  [[ $(< "$stream_stderr") == "$ANTIGRAVITY_AUTH_REQUIRED_MARKER" ]] \
+    || fail "the ${access_mode} blank-auth native worker stderr did not equal its authentication marker"
+  [[ $(wc -l < "$stream_stdout") == 1 ]] \
+    || fail "the ${access_mode} blank-auth native worker did not emit one stream result"
+  docker exec --interactive "$container" /usr/bin/jq --exit-status \
+      'select(
+        .event == "result"
+        and .result.conversation_id == ""
+        and .result.status == "ERROR"
+        and .result.response == ""
+        and .result.error == "authentication failed or timed out"
+        and .result.num_turns == 0
+      )' < "$stream_stdout" >/dev/null \
+    || fail "the ${access_mode} blank-auth native worker omitted its exact stream result"
+}
+
+enable_sensitive_data_access_fixture() {
+  local output
+
+  if ! output=$(docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --entrypoint /bin/bash \
+    --volume "${DATA_VOLUME}:/data" \
+    "$IMAGE" -p -c '
+      set -Eeuo pipefail
+      candidate=$(mktemp /data/.options-sensitive.XXXXXX)
+      trap '\''[[ ! -e $candidate ]] || unlink -- "$candidate"'\'' EXIT
+      jq '\''.antigravity_sensitive_data_access = true'\'' \
+        /data/options.json > "$candidate"
+      chmod 0600 "$candidate"
+      mv -f -- "$candidate" /data/options.json
+      trap - EXIT
+    ' 2>&1); then
+    printf '%s\n' "$output" | redact_probe_output >&2
+    fail 'could not enable the sensitive-access fixture for the restart probe'
+  fi
+}
+
 run_confined_feature_probes() {
   local container=$1
   run_ssh_and_accounting_probe "$container"
@@ -603,11 +701,14 @@ run_helper_credential_boundary_probe
 
 start_container "$FIRST_CONTAINER"
 assert_enforced_container_ready "$FIRST_CONTAINER"
+run_native_cli_probe "$FIRST_CONTAINER" restricted
 run_ttyd_websocket_probe "$FIRST_CONTAINER"
 run_confined_feature_probes "$FIRST_CONTAINER"
 
+enable_sensitive_data_access_fixture
 docker restart "$FIRST_CONTAINER" >/dev/null
 assert_enforced_container_ready "$FIRST_CONTAINER" 2
+run_native_cli_probe "$FIRST_CONTAINER" sensitive
 docker rm --force "$FIRST_CONTAINER" >/dev/null
 
 # Recreate the container with the same persistent data/config. This exercises a

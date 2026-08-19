@@ -27,19 +27,24 @@ Use antigravity inside Home Assistant to inspect your setup and improve dashboar
 > [!WARNING]
 > This app is a powerful administrative tool that can directly change your Home Assistant configuration. Telegram is equivalent to the CLI as an administrator channel, so protect the bot token, authorized chats, and Telegram accounts. Back up important data, review plans and diffs, and never expose the SSH port directly to the internet.
 
-**2.0.16 Web-terminal and Telegram recovery:** On public 2.0.15 on real HAOS
-amd64, the App and Ingress HTTP/WebSocket started, but ttyd PTY creation returned
-EACCES and the Web UI repeatedly reconnected. During the same startup,
-`refresh_managed` rejected malformed `permissions.ask` before Telegram-safe
-normalization, so the bridge remained `permission_boundary_blocked`. Version
-2.0.16 adds only exact `/dev/ptmx` read/write access to the primary AppArmor
-profile and, for an otherwise safe supported settings file, canonicalizes all
-three permission buckets to the exact 29/0/33 policy before typed merge
-validation. Unsafe files remain fail-closed; unrelated settings, global MCP,
-plugins, OAuth, and `/config` are preserved. Real-HAOS 2.0.16 remains `NOT RUN`,
-the unavailable aarch64-device waiver is not a PASS, and overall acceptance is
-`PARTIAL`. Automated Linux-container gates are not HAOS evidence. Only 2.0.13
-remains the breaking security transition.
+**2.0.17 native-CLI recovery:** On public 2.0.16 on real HAOS 18.2 amd64, the
+App, Ingress, Web terminal, and Telegram Bot API connection started, but `agy`
+and `antigravity --version` immediately exited with `Segmentation fault`/status
+139, and Telegram workers failed with the same native crash. An exact-image,
+custom-AppArmor reproduction showed a kernel-audit `file_mmap` permission `m`
+denial on `/usr/local/libexec/antigravity-real` under
+`interactive-runtime-restricted`; `interactive-runtime-sensitive-read` had the
+same `r`-only rule. Version 2.0.17 changes those two exact native-binary rules from `r` to
+`rm` and adds only trace-derived bootstrap nsswitch/passwd identity reads plus
+runtime `/usr/share/ca-certificates/**` TLS trust-store reads to the two
+transition chains. It adds no new broad `/etc/**` or `/usr/share/**` rule;
+existing runtime `/etc/** r`, required system-library mappings, and
+proc/settings/credential denies are unchanged.
+The local kernel-enforced `--version` regression reaches status 0, but real-HAOS
+2.0.17 is `NOT RUN`, the aarch64 waiver is not a PASS, and overall acceptance is
+`PARTIAL`. Only 2.0.13 remains the breaking security transition. Direct 2.0.12
+downgrade is unsupported, and restoring an exact App backup can lose newer App
+`/data`, so it is not a lossless fallback.
 
 ## Quick start
 

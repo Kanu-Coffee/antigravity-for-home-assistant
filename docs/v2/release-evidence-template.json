@@ -1,6 +1,6 @@
 {
   "schema": "antigravity-ha-manual-evidence/v1",
-  "version": "2.0.16",
+  "version": "2.0.17",
   "source_sha": "REPLACE_WITH_40_HEX_CANDIDATE_SOURCE_SHA",
   "candidate_manifest_digest": "sha256:REPLACE_WITH_64_HEX_CANDIDATE_DIGEST",
   "gates": {

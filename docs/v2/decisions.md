@@ -209,5 +209,32 @@
   아니며 bridge는 effective boundary가 안전하지 않으면 Bot API 접촉 없이
   `permission_boundary_blocked` hold를 유지한다.
 - 2.0.16은 2.0.13에서 활성화한 security boundary 내부의 corrective patch다.
-  `breaking_versions`에는 2.0.13까지만 유지한다. 2.0.16 실제 HAOS 수용은 `NOT RUN`,
-  aarch64 owner waiver는 not a PASS이며 전체 v2 수용은 `PARTIAL`이다.
+  `breaking_versions`에는 2.0.13까지만 유지한다. 2.0.16 실제 HAOS는 뒤이은 native
+  `file_mmap` denial과 SIGSEGV/status 139 때문에 `FAIL`, aarch64 owner waiver는 not a
+  PASS이며 전체 v2 수용은 `PARTIAL`이다.
+
+## ADR-010 — native executable mmap 최소권한과 signal 진단
+
+- 상태: `Accepted`
+- 공개 2.0.16 실제 HAOS 18.2 amd64에서 App, Ingress/Web terminal과 Telegram Bot API
+  transport는 시작됐지만 `agy`와 `antigravity --version`은 SIGSEGV/status 139로 즉시
+  종료되고 Telegram worker도 같은 native crash로 실패했다. session reset이나 transport
+  재연결을 복구 경로로 분류하지 않는다.
+- exact public 2.0.16 image를 custom AppArmor policy 아래에서 재현한 kernel audit는
+  `interactive-runtime-restricted`의 exact `/usr/local/libexec/antigravity-real` rule에서
+  `file_mmap` permission `m` 거부를 확인했고 sensitive-read에는 동일한 `r`-only rule이
+  있었다. 2.0.17은 두 rule을 `r`에서 `rm`으로 바꾸고 full blank-auth worker trace의
+  exact bootstrap nsswitch/passwd identity read와 runtime
+  `/usr/share/ca-certificates/**` TLS trust-store read만 두 transition chain에 추가한다.
+  새로운 broad `/usr/local/**`, `/etc/**`, `/usr/share/**` 또는 library mapping rule은
+  추가하지 않고, runtime의 기존 `/etc/** r`, 필수 system-library mapping 및
+  proc/settings/credential deny는 변경하지 않는다.
+- Telegram bridge는 native child의 bounded termination signal을 `worker_failed` 진단에
+  포함하지만 stderr, prompt, OAuth, token이나 사용자 content는 기록하지 않는다.
+- local kernel-enforced `antigravity --version` status 0과 negative canary 보존은
+  Candidate evidence일 뿐 HAOS evidence가 아니다. 2.0.17 actual HAOS와 aarch64는
+  `NOT RUN`, 전체 v2 수용은 `PARTIAL`이다.
+- 2.0.17도 2.0.13 security boundary 내부 corrective patch이므로
+  `breaking_versions`를 확장하지 않는다. 2.0.12 fallback은 direct downgrade가 아니며,
+  exact App backup restore의 post-backup `/data` 손실과 custom-attach 보안 저하를
+  명시한 `NOT RUN` contingency로만 유지한다.

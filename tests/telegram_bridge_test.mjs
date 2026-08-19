@@ -18,6 +18,7 @@ import {
   dispatchNormalizedUpdate,
   dispatchUpdateBatch,
   enqueueRequester,
+  handleMessage,
   holdTelegramFailClosed,
   isAuthorized,
   assertTelegramPermissionBoundary,
@@ -45,6 +46,7 @@ import {
   waitForExecution,
   waitForTelegramPermissionBoundary,
   waitForTelegramAuthorization,
+  workerFailureAuditFields,
   workerStatusSnapshot,
 } from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs";
 import {
@@ -1107,6 +1109,23 @@ assert.deepEqual(await waitForExecution(
 assert.ok(chunkText("A".repeat(32_768)).every((part) => Array.from(part).length <= 4_096));
 assert.throws(() => chunkText("A".repeat(32_769)), /message limit/u);
 assert.equal(safeError(new Error("Bearer abc\nnext")).includes("abc"), false);
+assert.deepEqual(workerFailureAuditFields({
+  workerFailure: {
+    failure_kind: "spawn_error",
+    signal: "SECRET_SIGNAL_CANARY",
+    errno: "SECRET_ERRNO_CANARY",
+    exit_code: 42,
+    flags: ["stdout_seen", "SECRET_FLAG_CANARY"],
+  },
+}), {
+  failure_kind: "spawn_error",
+  flags: [
+    "errno_unrecognized",
+    "exit_code_unrecognized",
+    "signal_unrecognized",
+    "stdout_seen",
+  ],
+});
 
 let releaseDispatch;
 const dispatchGate = new Promise((resolve) => { releaseDispatch = resolve; });
@@ -1792,6 +1811,131 @@ process.exitCode = 70;
   assert.equal(nativeExit70Failure.reasonClass, "worker_failed");
   assert.equal(requestFailureReason(nativeExit70Failure), "worker_failed");
   assert.equal(renderRequestFailure(nativeExit70Failure).includes(stderrCanary), false);
+  assert.deepEqual(workerFailureAuditFields(nativeExit70Failure), {
+    failure_kind: "exit_code",
+    exit_code: 70,
+    flags: ["stderr_seen"],
+  });
+
+  const nativeSigsegvFake = join(fixtureDir, "native-sigsegv-agy.mjs");
+  await writeFile(nativeSigsegvFake, `
+for await (const _chunk of process.stdin) { /* drain stdin */ }
+process.stderr.write("native signal diagnostic ${stderrCanary}\\n");
+process.kill(process.pid, "SIGSEGV");
+`, "utf8");
+  let nativeSigsegvFailure;
+  try {
+    await runAntigravityPrompt("private native SIGSEGV prompt canary", {
+      binary: process.execPath,
+      prefixArgs: [nativeSigsegvFake],
+      cwd: fixtureDir,
+      timeoutMs: 5_000,
+      requester: { user_id: "100", chat_id: "-200" },
+    });
+    assert.fail("SIGSEGV worker unexpectedly succeeded");
+  } catch (error) {
+    nativeSigsegvFailure = error;
+  }
+  assert.ok(nativeSigsegvFailure instanceof AntigravityWorkerError);
+  assert.equal(nativeSigsegvFailure.reasonClass, "worker_failed");
+  assert.deepEqual(workerFailureAuditFields(nativeSigsegvFailure), {
+    failure_kind: "signal",
+    signal: "SIGSEGV",
+    flags: ["stderr_seen"],
+  });
+  for (const forbidden of [
+    stderrCanary,
+    "private native SIGSEGV prompt canary",
+    nativeSigsegvFake,
+  ]) {
+    assert.equal(JSON.stringify(workerFailureAuditFields(nativeSigsegvFailure)).includes(forbidden), false);
+  }
+
+  const auditBoundaryPromptCanary = "PRIVATE_AUDIT_BOUNDARY_PROMPT_CANARY";
+  const auditBoundaryStderrCanary = "PRIVATE_AUDIT_BOUNDARY_STDERR_CANARY";
+  const auditBoundaryPathCanary = "PRIVATE_AUDIT_BOUNDARY_PATH_CANARY";
+  const auditBoundaryRoot = join(fixtureDir, auditBoundaryPathCanary);
+  const auditManagedRoot = join(auditBoundaryRoot, "data", "antigravity-ha");
+  await mkdir(auditManagedRoot, { recursive: true, mode: 0o700 });
+  await chmod(auditManagedRoot, 0o700);
+  const auditStatePath = join(auditManagedRoot, "telegram", "bridge-state.json");
+  Object.assign(nativeSigsegvFailure, {
+    path: auditBoundaryPathCanary,
+    prompt: auditBoundaryPromptCanary,
+    stderr: auditBoundaryStderrCanary,
+    token: config.botToken,
+  });
+  let auditApiCalls = 0;
+  const auditLines = [];
+  const sentAuditFailures = [];
+  const originalConsoleLog = console.log;
+  console.log = (...parts) => { auditLines.push(parts.join(" ")); };
+  try {
+    await handleMessage(config, {
+      updateId: 970,
+      message_id: 970,
+      from: { id: "100" },
+      chat: { id: "-200", type: "private" },
+      text: auditBoundaryPromptCanary,
+    }, {
+      statePath: auditStatePath,
+      api: () => {
+        auditApiCalls += 1;
+        throw nativeSigsegvFailure;
+      },
+      send: async (token, chatId, text) => {
+        assert.equal(token, config.botToken);
+        assert.equal(chatId, "-200");
+        sentAuditFailures.push(text);
+      },
+    });
+  } finally {
+    console.log = originalConsoleLog;
+  }
+  assert.equal(auditApiCalls, 1);
+  assert.equal(sentAuditFailures.length, 1);
+  const auditRecords = auditLines
+    .filter((line) => line.startsWith("[Telegram Bridge] "))
+    .map((line) => JSON.parse(line.slice("[Telegram Bridge] ".length)));
+  const workerFailureRecord = auditRecords.find((record) => record.event === "request_failed");
+  assert.ok(workerFailureRecord);
+  const { chat: workerFailureChat, ...workerFailureFields } = workerFailureRecord;
+  assert.match(workerFailureChat, /^[a-f0-9]{12}$/u);
+  assert.deepEqual(workerFailureFields, {
+    event: "request_failed",
+    reason_class: "worker_failed",
+    failure_kind: "signal",
+    signal: "SIGSEGV",
+    flags: ["stderr_seen"],
+  });
+  const serializedAudit = JSON.stringify(auditRecords);
+  for (const forbidden of [
+    auditBoundaryPromptCanary,
+    auditBoundaryStderrCanary,
+    auditBoundaryPathCanary,
+    config.botToken,
+  ]) {
+    assert.equal(serializedAudit.includes(forbidden), false);
+  }
+
+  let missingBinaryFailure;
+  try {
+    await runAntigravityPrompt("private spawn error prompt canary", {
+      binary: join(fixtureDir, "missing-antigravity-binary"),
+      cwd: fixtureDir,
+      timeoutMs: 5_000,
+      requester: { user_id: "100", chat_id: "-200" },
+    });
+    assert.fail("missing worker binary unexpectedly started");
+  } catch (error) {
+    missingBinaryFailure = error;
+  }
+  assert.ok(missingBinaryFailure instanceof AntigravityWorkerError);
+  assert.deepEqual(workerFailureAuditFields(missingBinaryFailure), {
+    failure_kind: "spawn_error",
+    errno: "ENOENT",
+    flags: [],
+  });
 
   const genericFailureFake = join(fixtureDir, "generic-failure-agy.mjs");
   await writeFile(genericFailureFake, `

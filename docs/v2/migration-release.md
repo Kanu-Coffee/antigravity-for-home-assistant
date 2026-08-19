@@ -9,7 +9,7 @@ public App은 사용자의 HAOS에서 source build하지 않고 GHCR prebuilt im
 받는다.
 
 ```yaml
-version: "2.0.16"
+version: "2.0.17"
 arch:
   - amd64
   - aarch64
@@ -78,9 +78,21 @@ Telegram-safe canonical replacement 전에 검증해 update를 적용하지 못�
 settings의 allow/ask/deny managed bucket을 typed merge validation 전에 exact 29/0/33
 policy로 정규화한다. unrelated top-level settings, global MCP, plugin, OAuth와
 `/config`를 보존하고 symlink·hardlink·non-root owner·크기 초과·invalid JSON은 계속
-fail closed한다. 2.0.16 실제 HAOS 수용은 `NOT RUN`, aarch64 장비 부재 owner waiver는
-not a PASS이며 전체 v2 수용은 `PARTIAL`이다. 이 corrective patch도 새 migration이
-아니므로 `breaking_versions`에는 2.0.13만 유지한다.
+fail closed한다. 2.0.16 공개 시점 실제 HAOS 수용은 `NOT RUN`, aarch64 장비 부재 owner waiver는
+not a PASS이며 전체 v2 수용은 `PARTIAL`이다. 이후 실제 2.0.16은 terminal과 Telegram
+transport까지 시작했지만 native CLI가 SIGSEGV/status 139로 종료되어 수용 `FAIL`로
+갱신됐다. exact public image/custom profile 재현의 kernel audit는
+`interactive-runtime-restricted`에서 `/usr/local/libexec/antigravity-real` `file_mmap`
+permission `m` 거부를 확인했고 sensitive-read에는 동일한 `r`-only rule이 있었다.
+
+2.0.17은 두 exact native-binary rule을 `r`에서 `rm`으로 바꾸고 full blank-auth trace의
+exact bootstrap nsswitch/passwd identity read와 runtime
+`/usr/share/ca-certificates/**` TLS trust-store read만 두 transition chain에 추가한다.
+새로운 broad `/etc/**`·`/usr/share/**` rule은 추가하지 않고, runtime의 기존 `/etc/** r`,
+필수 system-library mapping 및 proc/settings/credential deny는 그대로이고, local kernel-enforced
+`antigravity --version` status 0은 HAOS 증거가 아니다. 2.0.17 actual HAOS와 aarch64는
+`NOT RUN`, 전체 v2 수용은 `PARTIAL`이다. 2.0.16과 2.0.17 corrective patch 모두 새
+migration이 아니므로 `breaking_versions`에는 2.0.13만 유지한다.
 
 image에 고정한 Antigravity binary는 App runtime에서 자체 갱신하지 않는다. 모든
 native launch와 `env -i` child allowlist는 공식 opt-out
@@ -369,6 +381,20 @@ postcondition 실패는 journal의 verified backup으로 App 관리 파일만 �
 backup 복원까지만 확인했다. Supervisor의 이전 immutable image 선택, 실제 HAOS의
 OAuth/SSH/browser/memory 보존과 schema downgrade restore는 실행하지 않았으므로
 MIG-007은 `PARTIAL`이다.
+
+2.0.12는 자동 또는 무손실 rollback target이 아니다. exact public image/tag는 있지만
+custom 23-profile policy attach가 거부됐고, 실제 성공은 amd64 `docker-default`에서의
+제한된 update/reconnect 범위뿐이며 aarch64는 `NOT RUN`이다. Supervisor direct
+downgrade는 지원되지 않는다. 사용자가 보유한 exact 2.0.12 App backup을 복원하는
+경우에만 이전 App image와 `/data`를 함께 되돌릴 수 있고, 그 이후의 OAuth·memory·
+approval/outbox·identity state는 소실된다. 그러한 backup 없이 uninstall 또는 Docker
+상태 수동 조작을 복구 절차로 사용하지 않는다.
+
+backup이 없고 2.0.17도 실기기 수용에 실패한다면 fallback은 현재 `/data`를 보존하는
+새로운 더 높은 numeric compatibility patch여야 한다. custom attachment를 의도적으로
+되돌리는 선택은 명시적 security degradation이며, 별도 candidate/HAOS 검증 전에는
+감사된 contingency `NOT RUN`일 뿐 정상 복구나 PASS로 기록하지 않는다. 문제 분석 중
+사용한 `reset_v2` mode는 정상화 뒤 반드시 `preserve`로 되돌린다.
 
 ## MIG-008 — multi-arch build
 

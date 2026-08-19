@@ -121,6 +121,63 @@ const REQUEST_FAILURE_REASONS = Object.freeze([
   "request_failed",
   "timeout",
 ]);
+const WORKER_PROCESS_FAILURE_KINDS = new Set([
+  "close_unknown",
+  "empty_output",
+  "exit_code",
+  "signal",
+  "spawn_error",
+  "timeout",
+]);
+const WORKER_PROCESS_SIGNALS = new Set([
+  "SIGABRT",
+  "SIGBUS",
+  "SIGFPE",
+  "SIGHUP",
+  "SIGILL",
+  "SIGINT",
+  "SIGKILL",
+  "SIGPIPE",
+  "SIGQUIT",
+  "SIGSEGV",
+  "SIGSYS",
+  "SIGTERM",
+  "SIGTRAP",
+]);
+const WORKER_PROCESS_ERRNOS = new Set([
+  "E2BIG",
+  "EACCES",
+  "EAGAIN",
+  "EBADF",
+  "EFAULT",
+  "EMFILE",
+  "ENAMETOOLONG",
+  "ENFILE",
+  "ENOENT",
+  "ENOEXEC",
+  "ENOMEM",
+  "ENOTDIR",
+  "EPERM",
+  "ETXTBSY",
+]);
+const WORKER_PROCESS_EXIT_CODES = new Set([
+  0,
+  1,
+  2,
+  ...Array.from({ length: 15 }, (_value, index) => 64 + index),
+  ...Array.from({ length: 18 }, (_value, index) => 126 + index),
+  255,
+]);
+const WORKER_PROCESS_FLAGS = new Set([
+  "auth_marker_seen",
+  "errno_unrecognized",
+  "exit_code_unrecognized",
+  "init_seen",
+  "permission_marker_seen",
+  "signal_unrecognized",
+  "stderr_seen",
+  "stdout_seen",
+]);
 const TELEGRAM_TRANSPORT_ERROR_CODES = Object.freeze([
   "CERT_HAS_EXPIRED",
   "DEPTH_ZERO_SELF_SIGNED_CERT",
@@ -250,8 +307,68 @@ class BoundedByteMatcher {
   }
 }
 
+function normalizeWorkerFailureTelemetry({
+  failure_kind: failureKind,
+  signal = null,
+  errno = null,
+  exit_code: exitCode = null,
+  flags = [],
+} = {}) {
+  if (!WORKER_PROCESS_FAILURE_KINDS.has(failureKind)) {
+    throw new Error("Antigravity worker process failure kind is not allowlisted");
+  }
+  const safeFlags = new Set(
+    Array.isArray(flags)
+      ? flags.filter((flag) => WORKER_PROCESS_FLAGS.has(flag))
+      : [],
+  );
+  const telemetry = { failure_kind: failureKind };
+  if (signal !== null) {
+    if (typeof signal === "string" && WORKER_PROCESS_SIGNALS.has(signal)) {
+      telemetry.signal = signal;
+    } else {
+      safeFlags.add("signal_unrecognized");
+    }
+  }
+  if (errno !== null) {
+    if (typeof errno === "string" && WORKER_PROCESS_ERRNOS.has(errno)) {
+      telemetry.errno = errno;
+    } else {
+      safeFlags.add("errno_unrecognized");
+    }
+  }
+  if (exitCode !== null) {
+    if (Number.isSafeInteger(exitCode) && WORKER_PROCESS_EXIT_CODES.has(exitCode)) {
+      telemetry.exit_code = exitCode;
+    } else {
+      safeFlags.add("exit_code_unrecognized");
+    }
+  }
+  telemetry.flags = Object.freeze([...safeFlags].sort());
+  return Object.freeze(telemetry);
+}
+
+function attachWorkerFailureTelemetry(error, telemetry) {
+  Object.defineProperty(error, "workerFailure", {
+    configurable: false,
+    enumerable: false,
+    value: normalizeWorkerFailureTelemetry(telemetry),
+    writable: false,
+  });
+  return error;
+}
+
+function workerFailureAuditFields(error) {
+  if (!isPlainObject(error?.workerFailure)) return {};
+  try {
+    return normalizeWorkerFailureTelemetry(error.workerFailure);
+  } catch {
+    return {};
+  }
+}
+
 class AntigravityWorkerError extends Error {
-  constructor(reasonClass) {
+  constructor(reasonClass, workerFailure = null) {
     if (!WORKER_FAILURE_REASONS.includes(reasonClass)) {
       throw new Error("Antigravity worker failure reason is not allowlisted");
     }
@@ -270,6 +387,7 @@ class AntigravityWorkerError extends Error {
     super(messages[reasonClass]);
     this.name = "AntigravityWorkerError";
     this.reasonClass = reasonClass;
+    if (workerFailure !== null) attachWorkerFailureTelemetry(this, workerFailure);
   }
 }
 
@@ -1358,11 +1476,15 @@ async function runAntigravityPrompt(prompt, {
     let initProbe = Buffer.alloc(0);
     let initConversationId = null;
     let initError = null;
+    let stderrSeen = false;
     const authRequiredMatcher = new BoundedByteMatcher(ANTIGRAVITY_AUTH_REQUIRED_MARKER);
     const headlessPermissionMatcher = new BoundedByteMatcher(
       ANTIGRAVITY_HEADLESS_PERMISSION_MARKER,
     );
     child.stderr.on("data", (chunk) => {
+      if ((Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(String(chunk))) > 0) {
+        stderrSeen = true;
+      }
       authRequiredMatcher.push(chunk);
       headlessPermissionMatcher.push(chunk);
     });
@@ -1422,14 +1544,18 @@ async function runAntigravityPrompt(prompt, {
           child.once("error", reject);
           child.once("close", (exitCode, exitSignal) => resolve({ code: exitCode, signal: exitSignal }));
         });
-      } catch {
+      } catch (error) {
         workerRuntimeStatus = "worker_failed";
-        throw new AntigravityWorkerError("worker_failed");
+        throw new AntigravityWorkerError("worker_failed", {
+          failure_kind: "spawn_error",
+          errno: error?.code ?? null,
+          flags: [],
+        });
       }
     } finally {
       clearTimeout(timer);
     }
-    const { code } = closeResult;
+    const { code, signal: exitSignal } = closeResult;
     activeChildren.delete(runId);
     throwIfSignalCancelled(signal);
     if (initError !== null) {
@@ -1442,21 +1568,54 @@ async function runAntigravityPrompt(prompt, {
     }
     if (timedOut) {
       workerRuntimeStatus = "worker_failed";
-      throw new Error("Antigravity request timed out");
+      throw attachWorkerFailureTelemetry(
+        new Error("Antigravity request timed out"),
+        {
+          failure_kind: "timeout",
+          flags: [
+            ...(stdoutBytes > 0 ? ["stdout_seen"] : []),
+            ...(stderrSeen ? ["stderr_seen"] : []),
+            ...(initConversationId !== null ? ["init_seen"] : []),
+          ],
+        },
+      );
+    }
+    const processFlags = [
+      ...(stdoutBytes > 0 ? ["stdout_seen"] : []),
+      ...(stderrSeen ? ["stderr_seen"] : []),
+      ...(initConversationId !== null ? ["init_seen"] : []),
+      ...(authRequiredMatcher.matched ? ["auth_marker_seen"] : []),
+      ...(headlessPermissionMatcher.matched ? ["permission_marker_seen"] : []),
+    ];
+    if (exitSignal !== null) {
+      workerRuntimeStatus = "worker_failed";
+      throw new AntigravityWorkerError("worker_failed", {
+        failure_kind: "signal",
+        signal: exitSignal,
+        flags: processFlags,
+      });
     }
     if (code !== 0) {
       const reasonClass = code === 1 && authRequiredMatcher.matched
           ? "authentication_required"
           : "worker_failed";
       workerRuntimeStatus = reasonClass;
-      throw new AntigravityWorkerError(reasonClass);
+      throw new AntigravityWorkerError(reasonClass, {
+        failure_kind: Number.isSafeInteger(code) ? "exit_code" : "close_unknown",
+        exit_code: code,
+        flags: processFlags,
+      });
     }
     if (stdoutBytes === 0) {
       const reasonClass = headlessPermissionMatcher.matched
         ? "headless_permission_denied"
         : "worker_failed";
       workerRuntimeStatus = reasonClass;
-      throw new AntigravityWorkerError(reasonClass);
+      throw new AntigravityWorkerError(reasonClass, {
+        failure_kind: "empty_output",
+        exit_code: code,
+        flags: processFlags,
+      });
     }
     let parsed;
     try {
@@ -3824,6 +3983,7 @@ async function handleMessage(config, message, {
       audit("request_failed", {
         chat: opaqueId(chatId),
         reason_class: requestFailureReason(error),
+        ...workerFailureAuditFields(error),
       });
       await send(config.botToken, chatId, renderRequestFailure(error));
     } finally {
@@ -4200,6 +4360,7 @@ export {
   waitForTelegramPermissionBoundary,
   waitForExecution,
   waitForTelegramAuthorization,
+  workerFailureAuditFields,
   workerStatusSnapshot,
 };
 
