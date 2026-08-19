@@ -21,7 +21,7 @@ Telegram API ─ poller ─ auth ─ session ───┘
          validated memory                                  headless Chromium
 ```
 
-Supervisor가 `/config`를 read-write로 mount하고 Core/Supervisor API 접근용
+Supervisor가 `/config`, `/share`, `/media`를 read-write로 mount하고 Core/Supervisor API 접근용
 credential을 App init에 제공한다. 현재 구현에는 별도 `credential-broker` longrun이
 없다. init이 원본 credential을 root-only
 `/run/antigravity-ha/supervisor.token`에 만들고 read/change broker bootstrap이 검증된
@@ -43,6 +43,7 @@ Web/SSH/Telegram Antigravity, browser와 memory process는 원문 대신 scoped 
 | Telegram action coordinator/executor | 최소권한 proposal/실행 경계 | run-bound proposal 등록, durable commit 뒤 exact command/script 한 번 실행; App token/OAuth 없음 |
 | browser gateway/Chromium | 비신뢰 web content 처리 | loopback HA frontend와 read-only identity |
 | memory daemon/MCP | 제한된 data processor | bounded catalog와 semantic memory. raw credential 없음 |
+| `ha_files` MCP | credential-free confined file broker | 고정 ordinary root의 bounded UTF-8 list/read/atomic write; no-follow/link/type/TOCTOU와 sensitive deny |
 | `/config` 내용과 web/log 응답 | data | 지침으로 실행하지 않음 |
 
 AppArmor는 이 표의 커널 강제 경계이며 Antigravity permission과 broker는 별도
@@ -112,6 +113,7 @@ base
 │  ├─ agents/
 │  ├─ rules/
 │  └─ skills/
+├─ ha-files-mcp.py
 ├─ ha-read-broker.mjs
 ├─ ha-change-broker.mjs
 ├─ ha-change-proposal-mcp.mjs
@@ -128,6 +130,7 @@ base
 ├─ ha-config-check
 ├─ ha-core-logs
 ├─ ha-addon-logs
+├─ ha-files-mcp
 ├─ ha-memory
 ├─ ha-browser-auth-status
 ├─ ha-read-broker
@@ -250,12 +253,16 @@ Telegram token을 파일명, argv 또는 persisted queue에 넣지 않는다. `s
    `interactive-runtime-restricted` 또는 `interactive-runtime-sensitive-read`에서 shared
    HOME/OAuth와 global customization을 로드한다. 두 경우 모두 AppArmor는 enforce이며
    true runtime만 Recorder DB 진단 read를 추가한다.
-9. runtime profile에서 시작하는 `/bin`, `/usr/bin`, `/usr/sbin`, `/config`, `/tmp`와
-   executable global customization은 discrete `Px` transition으로
+9. runtime profile은 `/bin`, `/usr/bin`, `/usr/sbin`, `/config`, `/share`, `/media`,
+   credential이 아닌 persistent HOME, `/tmp`, `/var/tmp`, installed MCP와 supported
+   Core/Supervisor manager API를 ordinary operational default-allow로 다룬다. 실행되는
+   system binary와 executable global customization은 discrete `Px` transition으로
    `antigravity_home_assistant-command` profile에 들어간다. managed helper는 더 좁은
-   기존 specialized profile을 유지한다. command descendant는 일반 `/config`, network와
-   제한 helper를 쓸 수 있지만 OAuth backend, App 관리 settings/MCP config와 runtime
-   credential을 읽거나 쓸 수 없다.
+   기존 specialized profile을 유지한다. command descendant는 ordinary operational
+   surface와 network를 쓸 수 있지만 OAuth/backend credential, App 관리 settings/MCP
+   policy, secrets/storage, credential-bearing cross-process `/proc`와 Recorder write를
+   읽거나 쓸 수 없다. raw host root/PID/journal, Docker socket, backup/SSL/다른 App config는
+   mount 또는 권한으로 추가하지 않는다.
 
 ## 6. 주요 데이터 흐름
 
@@ -283,12 +290,21 @@ browser, memory, broker, 일반 shell과 SSH key/App token/backup/SSL/cloud auth
 않는다.
 
 native CLI의 built-in file tool처럼 runtime process 안에서 끝나는 동작과 future/user
-extension은 executable transition으로 투명하게 가로챌 수 없다. App 관리
-`settings.json`과 native MCP config의 raw write는 native permission exact deny다.
+extension은 executable transition으로 투명하게 가로챌 수 없다. lexical path 승인 뒤
+symlink가 protected inode를 가리킬 수 있으므로 native `read_file(*)`와
+`write_file(*)`는 두 mode 모두 mandatory deny다. ordinary file은 별도
+`antigravity-ha-files` server의 `ha_files_list`, `ha_files_read_text`,
+`ha_files_write_text`로만 다룬다. 이 broker는 `/config`, `/share`, `/media`, ordinary
+`/data/home`, `/tmp`, `/var/tmp` root를 descriptor-relative/no-follow로 열고, UTF-8
+1 MiB·listing 200개 상한, single-link regular-file, same-directory atomic write와
+optional `expected_sha256`를 강제한다. App 관리 `settings.json`과 native MCP/permission
+policy, secrets/storage/.gemini/credential 경로와 Recorder write는 항상 거부한다.
 spawned command와 stdio MCP는 command profile에 둔다. 인증된 Web/SSH의 현재 명시적
 요청은 native review 아래 direct tool 경로를 사용할 수 있으며 Telegram button으로
-자동 변환하지 않는다. Telegram에서 지원되는 mutation은 두 proposal MCP를 먼저 거쳐야
-하고 그 밖의 side effect는 fail closed한다.
+자동 변환하지 않는다. 기본 `request-review`의 Telegram mutation은 두 proposal MCP를
+먼저 거쳐야 하고 그 밖의 side effect는 fail closed한다. explicit `always-proceed`는
+current user request 범위의 ordinary command/URL/installed MCP를
+autonomous-admin으로 실행하지만 mandatory deny를 해제하지 않는다.
 
 SSH daemon은 `/usr/local/libexec/ha-sshd-runtime`이 `Px`로 전환한 별도 top-level
 실행 프로필에서 host private key와 `authorized_keys`만 read한다. 인증된 shell은 root
@@ -306,20 +322,23 @@ Update → normalize → user/chat auth → session bind → per-session queue �
                                   │                              │
                                   │                              ├→ sealed reply outbox → Telegram ack
                                   │                              └→ binary/multi-choice approval in same conversation
-                                  └──────────── explicit /new rotates conversation
+                                  └──────────── explicit /new rotates healthy conversation
+                                                   worker failure → quarantine; next request rebinds
 ```
 
 prompt는 child stdin으로만 전달한다. NDJSON stdout은 event schema, byte limit와
 terminal result를 검증한 뒤 Telegram-safe text로 변환한다. 이 실행은 Web/SSH와 같은
 `HOME=/data/home`, cwd `/config`, OAuth, plugin/agent/rule/MCP와 native permission을
-사용한다. 첫 prompt 전에 conversation binding을 영속화하고 실패를 이유로 자동
-회전하지 않는다. 결과는 암호화된 영속 outbox에 기록한 뒤 Telegram API가 전송을
+사용한다. 첫 prompt 전에 conversation binding을 영속화한다. 정상 conversation은
+명시적 `/new`만 회전하지만 native worker terminal failure는 해당 conversation을
+quarantine하고 failed update를 durable ACK한다. 다음 사용자 요청은 새 generation을
+결합하며 실패한 prompt, 특히 mutation request를 자동 replay하지 않는다. 결과는 암호화된 영속 outbox에 기록한 뒤 Telegram API가 전송을
 확인하면 제거한다. 429처럼 미전송이 명확한 실패만 bounded retry하고 crash·network·
 timeout·5xx처럼 전달 여부가 모호한 send는 `/retry`까지 격리한다.
 
-Telegram bridge 시작 전 effective settings gate는 `toolPermission=request-review`만
-수용한다. `strict`, `always-proceed`, `proceed-in-sandbox`는 config schema의 upgrade
-입력 호환 값이며 user-files updater가 모두 `request-review`로 정규화한다. 2.0.12는
+Telegram bridge 시작 전 effective settings gate는 기본 `request-review`와 explicit
+`always-proceed` 두 policy를 검증한다. `strict`와 `proceed-in-sandbox`는 config schema의
+legacy upgrade 입력이며 user-files updater가 `request-review`로 정규화한다. 2.0.12는
 Telegram-enabled init에서 같은 shared policy definition으로 다섯 App 관리 보안 key와
 permission 세 bucket까지 canonicalize한다. bridge 재검증이 이 경계를 수용하지 못하면
 `permission_boundary_blocked` 뒤 Bot API를 호출하지 않는 live hold로 들어가며 process
@@ -331,7 +350,8 @@ exit와 S6 restart loop를 만들지 않는다.
 conversation, requester, chat, proposal/digest/expiry를 모두 다시 맞춘다. restart와
 duplicate callback에도 broker의 idempotency key가 같은 mutation을 한 번만 접수한다.
 이는 session/control routing 원칙이며 native headless tool prompt의 resume protocol은
-아니다. 관리형 runtime rule은 HA service/config 변경을 `ha_change_propose`, terminal
+아니다. `request-review`의 관리형 runtime rule은 HA service/config 변경을
+`ha_change_propose`, terminal
 command·bounded script·command choice·finite question을 `telegram_action_propose` 경계로
 라우팅한다.
 이 경계의 durable Telegram 확인은 모든 App-managed broker `service_call`/
@@ -347,6 +367,9 @@ durable approval을 commit한 뒤 exact source/cwd/timeout만 credential-free ex
 증명할 수 없으면 `in_doubt`이며 재실행하지 않는다. pinned CLI 1.1.13은 native prompt
 external resume를 지원하지 않으므로 임의 future/plugin MCP는 transparent interception
 대상이 아니며 unsupported side effect는 fail closed한다.
+explicit `always-proceed`는 current user request 범위의 ordinary direct
+read/write/command/URL, installed MCP와 Playwright interaction을 autonomous-admin으로
+허용하지만 AppArmor/native mandatory blacklist와 broker 고위험 분류를 낮추지 않는다.
 proposal coordinator의 register 응답만 받은 단계는 durable state가 아니다. encrypted
 approval/card sealing 전에 bridge가 crash하면 기존 등록을 실행하거나 재구성하지 않고
 사용자에게 새 요청을 요구한다.
@@ -360,12 +383,15 @@ Antigravity → filtered Playwright MCP → Chromium → 127.0.0.1:8099 gateway
 ```
 
 gateway는 외부 interface에 bind하지 않는다. browser child는 Supervisor token을
-받지 않고, 임시 profile 외의 credential 경로를 읽지 못한다. Telegram auto-allow는
+받지 않고, 임시 profile 외의 credential 경로를 읽지 못한다. `request-review`의
+Telegram auto-allow는
 upstream `readOnly: true`인 `browser_console_messages`,
 `browser_network_requests`, `browser_snapshot`, `browser_take_screenshot` 네 도구뿐이다.
 `browser_navigate`, `browser_navigate_back`, `browser_tabs`, `browser_hover`,
 `browser_wait_for`, `browser_resize`, `browser_close` 등 mutation-capable 도구는 typed
 approval adapter 전까지 fail closed한다.
+explicit `always-proceed`에서는 current request의 installed Playwright navigation과
+interaction도 허용한다.
 
 ### 6.4 메모리
 
@@ -387,6 +413,17 @@ caller-selected endpoint를 받지 않는다.
 `ha-read-broker`가 Core REST/Supervisor GET과 고정 read-only WebSocket command의
 owner다. 공유 broker failure injection은 세 consumer가 모두 bounded unavailable
 결과로 fail closed하는지 검증한다.
+Host/Supervisor log tool은 fixed official endpoint만 호출하고 raw response를 caller에게
+넘기지 않는다. broker는 line/byte 상한 뒤 exact App token과 알려진
+credential-shaped line/block을 제거한다. arbitrary unkeyed application text가 secret인지
+완전 판별할 수는 없으므로 sanitized projection도 관리자 검토 대상이다. raw journald나
+host filesystem은 mount하지 않는다.
+
+ordinary file transport는 `ha_files` MCP가 별도로 소유한다. native process는 raw file
+tool을 사용할 수 없으며 broker가 고정 root, no-follow descriptor walk, link count,
+file type, size/list limit와 write 전후 inode snapshot을 검사한다. 따라서 read/list/write
+positive와 protected alias·hardlink·path-swap negative를 read transport나 command
+profile의 우연한 권한에 의존하지 않고 같은 surface에서 검증한다.
 
 `ha_validate_config`는 read transport가 아니라 Supervisor의 non-activating config-check
 POST를 호출하는 기존 scoped helper다. reload/restart를 수행하지 않으며 이를 read

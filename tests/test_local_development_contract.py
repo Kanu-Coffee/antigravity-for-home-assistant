@@ -87,7 +87,7 @@ def test_host_and_runtime_guidance_are_explicitly_separated(
 
     for fragment in (
         "runs inside a live Home Assistant App",
-        "Treat that access as production administrator access",
+        "Treat the remaining access as production administrator access",
         "/data/antigravity-ha-memory/memory.sqlite3",
         "/usr/local/bin/ha-feedback",
         "call `memory_search`",

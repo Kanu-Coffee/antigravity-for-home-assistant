@@ -2,7 +2,7 @@
   "altScreenMode": "never",
   "toolPermission": "request-review",
   "artifactReviewPolicy": "agent-decides",
-  "allowNonWorkspaceAccess": false,
+  "allowNonWorkspaceAccess": true,
   "enableTerminalSandbox": false,
   "showTips": false,
   "showFeedbackSurvey": false

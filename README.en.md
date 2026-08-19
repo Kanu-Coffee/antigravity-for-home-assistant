@@ -32,27 +32,47 @@
 > consult each release's evidence for complete install, update, and rollback
 > verification on both real HAOS architectures.
 
-**2.0.18 Telegram MCP and approval-path correction:** On public 2.0.17 on real
-HAOS 18.2 amd64, App startup, Ingress/Web terminal, the native CLI and basic
-conversation, Telegram transport, and a one-line no-tool reply passed. Managed
-MCP and `telegram_action_propose` approval-card requests failed. Kernel audit
-identified the exact AppArmor denial: `change-proposal-client` could not read the
-image-owned transitive module
-`/usr/local/share/antigravity-ha/supervisor-credential-fd.mjs`. Independently,
-both restricted and sensitive-read launchers discarded the five requester/run
-binding values required for an approval proposal. Approved write execution was
-therefore `NOT RUN`, and public 2.0.17 amd64 acceptance is `FAIL` overall.
+**2.1.0 operational-permission redesign:** Public 2.0.18 on real HAOS 18.2
+amd64 passed App startup, native `antigravity --version` with status 0,
+Telegram transport, and a no-tool chat. Web `agy`/`antigravity` interactive I/O
+failed; current kernel audit records the confined interactive profile denying
+inherited/open `rw` access to `/dev/pts/0`. The first managed Telegram tool
+request also ended in a terminal error. Tests 3 through 7 then reused that
+failed conversation, so they are not independent PASS/FAIL evidence for each
+feature. Approved write execution remained `NOT RUN`; public 2.0.18 amd64
+acceptance is `FAIL` overall.
 
-Version 2.0.18 grants only that exact module read and makes both launchers
-validate and preserve all five binding values as one complete unit while
-rejecting partial bindings. It adds no broad AppArmor or native-tool permission;
-unapproved direct writes and commands and existing sensitive-data denies remain
-unchanged. Automated regressions are not HAOS evidence. Real-device 2.0.18
-acceptance on amd64 and aarch64 is `NOT RUN` before release, overall v2
-acceptance remains `PARTIAL`, and only 2.0.13 remains the breaking
-security-boundary transition.
+Version 2.1.0 opens ordinary operational work on `/config`, `/share`, `/media`,
+non-credential persistent HOME paths, temporary workspaces, ordinary system
+commands, installed MCPs, supported Core/Supervisor manager APIs, and bounded
+Host/Supervisor log projections. Raw logs are unavailable. The broker removes
+the exact App token and known credential-shaped lines or blocks, but does not
+claim that arbitrary unkeyed application text can always be classified as
+non-secret. It retains mandatory denies for
+`secrets.yaml`, `.storage`, OAuth/tokens/keys, App-owned permission and MCP
+policy, credential-bearing cross-process `/proc`, Recorder writes, and raw
+backup/SSL/other-App configuration. `request-review` remains the safe default
+and binds mutations to review or approval; explicit `always-proceed` is an
+autonomous-administrator mode outside that blacklist. `strict` and
+`proceed-in-sandbox` remain legacy inputs and normalize to `request-review`.
+No `full_access`, `docker_api`, Docker socket, host-root/PID mount, or protection
+disablement is added. This breaking transition adds 2.1.0 to
+`breaking_versions`.
 
-Downgrading to 2.0.12 is not an automatic, lossless recovery path. Its public
+Native `read_file` and `write_file` are denied globally in both modes because a
+symlink alias can bypass their lexical-path decision. Ordinary file work uses
+only the confined `ha_files` MCP tools `ha_files_list`, `ha_files_read_text`,
+and `ha_files_write_text`. They are limited to `/config`, `/share`, `/media`,
+ordinary `/data/home`, `/tmp`, and `/var/tmp`, with a 1 MiB UTF-8 file limit, a
+200-entry list limit, no-link/single-link regular-file checks, same-directory
+atomic writes, and optional `expected_sha256` conflict detection.
+
+Automated regressions are not HAOS evidence. Real-device 2.1.0 acceptance on
+amd64 and aarch64 is `NOT RUN` at publication and overall v2 acceptance remains
+`PARTIAL`.
+
+Downgrading to 2.0.12 is neither the normal repair for the 2.0.18 permission
+failure nor an automatic, lossless recovery path. Its public
 image failed to attach the custom AppArmor policy, and its real-device success
 evidence is limited to amd64 under `docker-default`. Supervisor does not support
 a direct downgrade; restoring an exact 2.0.12 App backup replaces App `/data`
@@ -62,7 +82,7 @@ such a backup, do not uninstall the App or manipulate Docker state.
 ## What v2 provides
 
 - A pinned native Google Antigravity CLI and the `agy` command
-- Image-managed Home Assistant plugin, rules, skills, and bounded read MCP
+- Image-managed Home Assistant plugin, rules, skills, and bounded read/file MCP
 - `/config` validation, Core/App logs, and scoped Supervisor API helpers
 - Headless Playwright MCP using a managed read-only user to view HA dashboards
 - Bounded HA memory that retains only explicit facts and verified candidates
@@ -112,10 +132,11 @@ attach OAuth material to an issue.
 > customizations, and can approve device, configuration, terminal, and script
 > actions. OAuth material, App-owned permission settings, and sensitive paths
 > cannot be modified directly. Protect the bot token, authorized chats, and
-> Telegram accounts as Home Assistant administrator credentials. Basic amd64
-> Bot API transport and no-tool chat passed on 2.0.17 amd64, but managed MCP and
-> approval proposal failed. The corrected 2.0.18 MCP, approval/mutation path and
-> aarch64 real-device E2E remain `NOT RUN`.
+> Telegram accounts as Home Assistant administrator credentials. Public 2.0.18
+> amd64 passed Bot API transport and no-tool chat, but the first managed tool
+> request ended in a terminal error and later requests reused the failed
+> conversation. The 2.1.0 managed read/write, approval, session-quarantine, and
+> aarch64 real-device E2E paths remain `NOT RUN`.
 
 Complete official native first-run OAuth once with `ha-antigravity-login` in the
 Web UI or SSH, then enable the bot. There is no separate Telegram identity,
@@ -183,20 +204,21 @@ input; both `true` and `false` normalize to `false`, and the wrapper rejects
 native sandbox flag overrides. A `telegram_access_mode` value from 2.0.6 or
 earlier is migration-only input and is not an authorization source.
 
-Version 2.0.11 new installs and Telegram have one effective native value:
-`request-review`. Because of the pinned CLI's headless availability boundary,
-the user-files updater normalizes `strict`, `always-proceed`, and
-`proceed-in-sandbox` options to `request-review`. The schema continues to accept
-those three legacy values only so an upgrade can start with previously stored
-Supervisor options. When safely identified,
-the App-owned 2.0.9/2.0.10 `always-proceed`, `mcp(*)`, and `command(*)`
-broad-allow layout is migrated to bounded native reads and the exact managed
-proposal MCPs. With Telegram disabled, the existing preserve-mode ownership
-rules continue to retain user permissions. Starting in 2.0.12, enabling
+Version 2.1.0 defaults to the effective native value `request-review`. It permits
+URL reads, managed read/validate/memory/proposal MCPs, and `ha_files` list/read,
+while `ha_files` writes, commands, URL execution, and mutation-capable MCPs
+require native review or a requester-bound Telegram proposal. Explicitly
+selecting `always-proceed` enables autonomous-administrator access to ordinary
+commands, URLs, and installed MCPs outside the mandatory blacklist. Native
+`read_file` and `write_file` remain denied in that mode; files still go through
+`ha_files`. `strict` and `proceed-in-sandbox` are legacy compatibility
+inputs for stored Supervisor options and normalize to `request-review`.
+
+Starting in 2.0.12, enabling
 Telegram transactionally backs up a root-owned, single-link regular, parseable
-settings file of at most 256 KiB. It restores `allowNonWorkspaceAccess=false`,
+settings file of at most 256 KiB. Version 2.1.0 restores `allowNonWorkspaceAccess=true`,
 `artifactReviewPolicy=agent-decides`, `enableTerminalSandbox=false`,
-`toolPermission=request-review`, and the exact 29 allow/0 ask/33 deny buckets.
+the selected effective `toolPermission`, and that mode's exact permission buckets.
 Unknown custom allow/ask/deny rules are removed, while top-level settings outside
 those five App-managed security keys, global MCP, plugins, OAuth, and `/config`
 remain preserved. A non-0600 mode is hardened to 0600 by the transaction.
@@ -204,20 +226,20 @@ Symlinks, hardlinks, non-root ownership, oversized files, or unparsable JSON are
 left untouched; the bridge records one
 sanitized `permission_boundary_blocked` event and waits without contacting the
 Bot API or entering a restart loop. Repair with `reset_v2` or another safe file
-recovery and restart the App. Ordinary commands, native writes, URL
-execution, interactive browser tools, and arbitrary mutation-capable MCPs are
-not on the unattended allow list.
-Exact denies continue to protect `secrets.yaml`, `.storage`, App-owned
-runtime/browser/bot tokens, SSH/private keys, native MCP configuration, and
-standard cloud-auth paths.
+recovery and restart the App. Exact denies in both modes protect `secrets.yaml`,
+`.storage`, OAuth and cloud credentials, App-owned runtime/browser/bot tokens,
+SSH/private keys, native MCP and permission policy, credential-bearing `/proc`,
+Recorder writes, and raw backup/SSL/other-App configuration.
 
-Telegram automatically allows only the four Playwright tools that upstream
+In `request-review`, Telegram automatically allows only the four Playwright tools that upstream
 declares `readOnly: true`: `browser_console_messages`,
 `browser_network_requests`, `browser_snapshot`, and `browser_take_screenshot`.
 Mutation-capable browser tools including `browser_navigate`,
 `browser_navigate_back`, `browser_tabs`, `browser_hover`, `browser_wait_for`,
 `browser_resize`, and `browser_close` fail closed until a typed approval adapter
-exists.
+exists. Explicit `always-proceed` permits installed Playwright navigation and
+interaction within the current authenticated user request, but does not open
+the mandatory credential or file blacklist.
 
 The bridge receives the prompt through piped stdin and runs the shared
 `antigravity --output-format stream-json` launcher with the same `/data/home` and
@@ -329,11 +351,12 @@ native OAuth, live Bot API cards/callbacks, and real-device HA changes remain
   cloud-auth paths stay denied in both modes. Do not put inline secrets in
   global plugin/MCP configuration; use a credential-aware wrapper or protected
   environment reference.
-- The native default and Telegram's only effective value is `request-review`.
-  The user-files updater also normalizes `strict` and legacy autonomous options
-  to this value; other schema values are upgrade-input compatibility only.
-  AppArmor command-profile transitions and proposal approvals cannot be
-  disabled by an App option. The native terminal sandbox is not used.
+- The native default is `request-review`, which binds mutations to review or a
+  proposal approval. Explicit `always-proceed` autonomously runs ordinary work
+  outside the blacklist. Only `strict` and `proceed-in-sandbox` are legacy
+  upgrade inputs normalized to `request-review`. Both effective modes retain
+  the AppArmor command-profile transition and mandatory blacklist. The native
+  terminal sandbox is not used.
 - Web, SSH, and Telegram Antigravity intentionally share `/data/home` OAuth and
   user settings plus the `/config` project. AppArmor cannot distinguish a
   legitimate credential or settings read from one induced by a Telegram prompt;

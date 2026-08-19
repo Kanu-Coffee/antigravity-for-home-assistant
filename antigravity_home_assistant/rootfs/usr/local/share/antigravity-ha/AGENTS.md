@@ -1,13 +1,17 @@
 # Antigravity for Home Assistant operating guidance
 
-This antigravity session runs inside a live Home Assistant App. It can write all of
-`/config` and call the Home Assistant Core API and Supervisor `manager` API.
-Treat that access as production administrator access.
+This antigravity session runs inside a live Home Assistant App. It can operate on
+ordinary files under `/config`, `/share`, `/media`, and its persistent HOME, and
+call the Home Assistant Core API and Supervisor `manager` API. Protected secrets,
+credentials, policy files, `.storage`, and integrity-critical database writes are
+blocked. Treat the remaining access as production administrator access.
 
 This file is defense-in-depth guidance, not an enforcement boundary. Antigravity
-permissions, the mandatory Home Assistant AppArmor command boundary, and human
-review remain the controls for high-risk actions. The native nested-namespace
-sandbox is not used because HAOS does not grant its privileged capabilities.
+permissions and the mandatory Home Assistant AppArmor blacklist are the
+enforcement controls. `request-review` adds human review for mutations;
+`always-proceed` is an explicit autonomous-administrator choice. The native
+nested-namespace sandbox is not used because HAOS does not grant its privileged
+capabilities.
 
 ## Safety boundaries
 
@@ -19,9 +23,8 @@ sandbox is not used because HAOS does not grant its privileged capabilities.
   `/data/home/.gemini`, SSH private keys, or API authorization headers.
 - Avoid commands such as `env`, `printenv`, `set`, `export -p`, and `curl -v`
   that can expose the runtime token in terminal output or logs.
-- Prefer Home Assistant UI, supported APIs, and YAML over direct `.storage`
-  edits. Do not edit `.storage` while Core is running unless the user explicitly
-  requests it and a recoverable backup or checkpoint exists.
+- Prefer Home Assistant UI, supported APIs, and YAML. Direct `.storage` access is
+  outside this App's operational boundary and remains blocked even when requested.
 - Open the Recorder SQLite database read-only for diagnosis. Do not repair,
   replace, truncate, or delete it without an explicit request and backup.
 - A diagnostic finding alone does not authorize repairs, permission changes,
@@ -50,6 +53,16 @@ sandbox is not used because HAOS does not grant its privileged capabilities.
 
 - Prefer `ha-api`, `supervisor-api`, `ha-config-check`, `ha-core-logs`, and
   `ha-addon-logs` so authentication headers stay out of commands and output.
+- Use managed read tools for bounded Core, Supervisor, and HAOS host logs. They
+  are fetched through the authenticated Supervisor API and sanitized; do not
+  claim that raw journal tampering or arbitrary host-root access is available.
+- In Telegram `request-review` mode, register Home Assistant mutations with
+  `ha_change_propose` and terminal commands or scripts with
+  `telegram_action_propose`, then stop for the requester-bound card. In explicit
+  `always-proceed` mode, ordinary requested reads, writes, commands, and installed
+  MCP operations may run directly. Safety-critical, destructive, restore,
+  restart, update, and removal actions still require an explicit current request;
+  use the proposal card when a separate high-risk confirmation is required.
 - Before a low-risk device test, record the target and prior state; verify the
   result and restore the prior state when that is safe and well-defined.
 - Require an explicit current request or confirmation before unlocking doors,
@@ -129,12 +142,15 @@ sandbox is not used because HAOS does not grant its privileged capabilities.
   do not probe `localhost:8123` or an external Home Assistant URL as an
   alternate login path. Check a 1440x900 desktop viewport and resize the same
   page to 390x844 for a mobile layout check when practical.
-- In requester-bound Telegram work, automatic browser access is narrower:
-  only console messages, network-request history, snapshots, and screenshots
-  are upstream read-only and allowed. Navigation, tab creation, hover, wait,
-  resize, close, and interaction tools are fail-closed until a typed Telegram
-  browser adapter exists. If the required page is not already open, report the
-  limitation instead of invoking a direct browser tool or terminal workaround.
+- In requester-bound Telegram `request-review` work, automatic browser access is
+  narrower: only console messages, network-request history, snapshots, and
+  screenshots are upstream read-only and allowed. Navigation, tab creation,
+  hover, wait, resize, close, and interaction tools are fail-closed until a typed
+  Telegram browser adapter exists. If the required page is not already open,
+  report the limitation instead of invoking a direct browser tool or terminal
+  workaround. An explicitly selected `always-proceed` session may use the
+  installed browser MCP for the user's ordinary requested operation, subject to
+  the same secret and destructive-action boundaries.
 - For each relevant page, confirm the URL and visible snapshot, take a
   screenshot, review warning/error console messages, and inspect network
   requests for failed, blocked, or 4xx/5xx resources. A successful build alone

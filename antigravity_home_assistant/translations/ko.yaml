@@ -23,7 +23,15 @@ configuration:
     description: 브라우저 재접속 후 터미널을 복원하는 공유 세션 이름입니다.
   antigravity_tool_permission:
     name: Antigravity 도구 권한
-    description: Web, SSH와 Telegram이 공유하는 Antigravity 네이티브 toolPermission 입력입니다. 고정 CLI의 headless 가용성 때문에 effective 값은 request-review 하나이며 strict, always-proceed, proceed-in-sandbox도 user-files updater가 request-review로 정규화합니다. 다른 schema 값은 저장된 Supervisor option의 upgrade 입력 호환용입니다.
+    description: >-
+      Web, SSH와 Telegram이 공유하는 Antigravity 네이티브 toolPermission입니다.
+      request-review는 기본값으로 URL 읽기와 관리형 읽기, ha_files 목록·읽기를
+      허용하고 ha_files 쓰기·명령·URL 실행·mutation 도구는 검토 또는 Telegram 승인
+      제안을 요구합니다. always-proceed를 명시적으로 선택하면 보호된 비밀·정책
+      경계 밖의 명령·URL·설치 MCP를 자율 관리자 모드로 실행합니다. native
+      read_file/write_file은 두 모드 모두 차단되고 일반 파일은 confined ha_files만
+      사용합니다. strict와 proceed-in-sandbox는
+      저장된 Supervisor option의 upgrade 입력 호환용이며 request-review로 정규화합니다.
   antigravity_terminal_sandbox:
     name: Antigravity 터미널 샌드박스(폐기 예정)
     description: 비특권 HAOS App과 호환되지 않는 네이티브 샌드박스의 이전 옵션입니다. 2.0.9에서는 어느 값이든 false로 정규화하며 AppArmor command 경계를 항상 사용합니다.

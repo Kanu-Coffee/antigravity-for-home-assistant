@@ -185,6 +185,83 @@ def assert_geometry(
         )
 
 
+def query_antigravity_canary(
+    stream: socket.socket,
+) -> tuple[int, int, int, int, str]:
+    """Run the public launcher and a bounded native TUI on the real Web PTY."""
+    marker = f"__antigravity_HA_CLI_{secrets.token_hex(8)}__"
+    command = (
+        "0set +e; "
+        '__agy_version="$(/usr/bin/timeout 20 '
+        '/usr/local/bin/antigravity --version 2>&1)"; '
+        "__agy_version_status=$?; "
+        "/usr/bin/timeout --kill-after=2 5 /usr/local/bin/antigravity; "
+        "__agy_tui_status=$?; "
+        "/usr/bin/timeout --kill-after=2 15 /usr/local/bin/ha-config-check; "
+        "__agy_helper_status=$?; "
+        "/usr/bin/timeout --kill-after=2 15 /usr/local/bin/ha-core-logs 1; "
+        "__agy_log_status=$?; "
+        f"printf '\n{marker}%s|%s|%s|%s|%s\n' "
+        '"$__agy_version_status" "$__agy_tui_status" '
+        '"$__agy_helper_status" "$__agy_log_status" "$__agy_version"\r'
+    ).encode("utf-8")
+    pattern = re.compile(
+        re.escape(marker)
+        + r"(?P<version_status>\d+)\|(?P<tui_status>\d+)\|"
+        + r"(?P<helper_status>\d+)\|"
+        + r"(?P<log_status>\d+)\|"
+        + r"(?P<version>[0-9]+\.[0-9]+\.[0-9]+)"
+    )
+    output = bytearray()
+    deadline = time.monotonic() + 70
+    send_frame(stream, 2, command)
+    while time.monotonic() < deadline:
+        try:
+            opcode, payload = receive_frame(stream)
+        except socket.timeout:
+            continue
+        if opcode == 8:
+            break
+        if opcode == 9:
+            send_frame(stream, 10, payload)
+            continue
+        if opcode not in (1, 2) or not payload:
+            continue
+        output.extend(payload[1:] if payload[:1] in b"01234567" else payload)
+        if len(output) > 1024 * 1024:
+            raise RuntimeError("Antigravity Web PTY canary output exceeded 1 MiB")
+        decoded = output.decode("utf-8", "replace")
+        decoded = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", decoded)
+        match = pattern.search(decoded)
+        if match:
+            version_status = int(match.group("version_status"))
+            tui_status = int(match.group("tui_status"))
+            helper_status = int(match.group("helper_status"))
+            log_status = int(match.group("log_status"))
+            version = match.group("version")
+            if version_status != 0:
+                raise RuntimeError(
+                    f"Antigravity Web PTY version command failed: {version_status}"
+                )
+            if tui_status not in (1, 124):
+                raise RuntimeError(
+                    f"Antigravity Web PTY TUI returned an unsafe status: {tui_status}"
+                )
+            if not 0 <= helper_status <= 124:
+                raise RuntimeError(
+                    "Home Assistant helper on the Web PTY returned an unsafe "
+                    f"status: {helper_status}"
+                )
+            if not 0 <= log_status <= 124:
+                raise RuntimeError(
+                    "Managed log reader on the Web PTY returned an unsafe "
+                    f"status: {log_status}"
+                )
+            return version_status, tui_status, helper_status, log_status, version
+    decoded = output.decode("utf-8", "replace")
+    raise RuntimeError(f"Antigravity Web PTY canary marker not found; output={decoded!r}")
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(f"Usage: {sys.argv[0]} ws://HOST:PORT/ws", file=sys.stderr)
@@ -213,13 +290,23 @@ def main() -> int:
         assert_geometry(resized_state, 96, 32)
         if resized_state[:3] != first_state[:3]:
             raise RuntimeError("tmux pane identity changed during resize")
+        (
+            version_status,
+            tui_status,
+            helper_status,
+            log_status,
+            version,
+        ) = query_antigravity_canary(second_stream)
     finally:
         second_stream.close()
 
     print(
         "ttyd WebSocket shell passed: "
         f"session={first_state[0]} pane={first_state[1]} pid={first_state[2]} "
-        "reconnect=same resize=96x32 cwd=/config"
+        "reconnect=same resize=96x32 cwd=/config "
+        f"antigravity={version} version_status={version_status} "
+        f"tui_status={tui_status} helper_status={helper_status} "
+        f"log_status={log_status}"
     )
     return 0
 

@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -213,7 +214,14 @@ def test_supervisor_self_options_are_recursively_redacted(
     assert '"data": "[REDACTED]"' in result.stdout
 
 
-@pytest.mark.parametrize("path", ["/addons/self/options", "/apps/example/config"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/addons/self/options",
+        "/apps/example/config",
+        "/v2/apps/self/options/config",
+    ],
+)
 def test_direct_supervisor_options_and_config_responses_redact_whole_data(
     api_harness: tuple[str, Path, Path], path: str
 ) -> None:
@@ -237,14 +245,15 @@ def test_direct_supervisor_options_and_config_responses_redact_whole_data(
     assert '"data":"[REDACTED]"' in result.stdout
 
 
+@pytest.mark.parametrize("path", ["/addons/self/info", "/v2/apps/self/info"])
 def test_non_json_supervisor_info_response_is_fail_closed(
-    api_harness: tuple[str, Path, Path]
+    api_harness: tuple[str, Path, Path], path: str
 ) -> None:
     synthetic_option = "synthetic-non-json-option-should-never-print"
     result = run_api(
         api_harness,
         "GET",
-        "/addons/self/info?verbose=true",
+        f"{path}?verbose=true",
         body=f"innocent_label={synthetic_option}",
         status="500",
         program_name="supervisor-api",
@@ -275,15 +284,16 @@ def test_raw_json_cannot_bypass_sensitive_response_redaction(
 
 
 @pytest.mark.parametrize("raw_arg", [(), ("--raw",)])
+@pytest.mark.parametrize("path", ["/addons/self/info", "/v2/apps/self/info"])
 def test_query_cannot_bypass_whole_options_redaction_for_benign_keys(
-    api_harness: tuple[str, Path, Path], raw_arg: tuple[str, ...]
+    api_harness: tuple[str, Path, Path], raw_arg: tuple[str, ...], path: str
 ) -> None:
     synthetic_option = "synthetic-benign-option-secret-should-never-print"
     result = run_api(
         api_harness,
         *raw_arg,
         "GET",
-        "/addons/self/info?verbose=true",
+        f"{path}?verbose=true",
         body=(
             '{"result":"ok","data":{"options":'
             f'{{"innocent_label":"{synthetic_option}"}}'
@@ -305,8 +315,22 @@ def test_query_cannot_bypass_whole_options_redaction_for_benign_keys(
     ("method", "path", "expected_code"),
     [
         ("GET", "/backups/fixture/download", 77),
+        ("GET", "/v2/backups/fixture/download", 77),
         ("POST", "/ingress/session", 77),
+        ("POST", "/v2/ingress/session", 77),
         ("POST", "/ingress/validate_session", 77),
+        ("GET", "/core/logs", 77),
+        ("GET", "/v2/core/logs", 77),
+        ("GET", "/supervisor/logs", 77),
+        ("GET", "/v2/supervisor/logs", 77),
+        ("GET", "/homeassistant/logs/latest", 77),
+        ("GET", "/dns/logs/boots/current", 77),
+        ("GET", "/audio/logs/follow", 77),
+        ("GET", "/multicast/logs", 77),
+        ("GET", "/host/logs/identifiers/audit", 77),
+        ("GET", "/v2/host/logs/identifiers/audit", 77),
+        ("GET", "/addons/example/logs/latest", 77),
+        ("GET", "/v2/apps/example/logs/latest", 77),
         ("GET", "/backups/fixture/../secret/download", 64),
         ("GET", "/backups/%66ixture/download", 64),
         ("GET", "/backups//fixture/download", 64),
@@ -358,6 +382,150 @@ def test_ha_api_rejects_cross_namespace_path_traversal_before_request(
         result.stdout + result.stderr
     )
     assert not (api_harness[1].parent / "curl-called").exists()
+
+
+@pytest.mark.parametrize(
+    ("program_name", "method", "path"),
+    [
+        ("ha-api", "GET", "/states/sensor.api_token"),
+        ("ha-api", "GET", "/history/period/2026-08-19"),
+        ("ha-api", "GET", "/logbook/2026-08-19"),
+        ("ha-api", "GET", "/error_log"),
+        ("ha-api", "GET", "/stream"),
+        ("ha-api", "GET", "/events"),
+        ("ha-api", "GET", "/camera_proxy/camera.private"),
+        ("ha-api", "POST", "/template"),
+        ("supervisor-api", "GET", "/core/api/states/sensor.api_token"),
+        ("supervisor-api", "GET", "/homeassistant/api/error_log"),
+        ("supervisor-api", "GET", "/v2/core/api/states/sensor.api_token"),
+        ("supervisor-api", "POST", "/v2/core/api/template"),
+    ],
+)
+def test_secret_prone_raw_core_reads_require_the_projected_broker(
+    api_harness: tuple[str, Path, Path], program_name: str, method: str, path: str
+) -> None:
+    result = run_api(
+        api_harness,
+        method,
+        path,
+        body="plain-unkeyed-secret-must-not-print",
+        program_name=program_name,
+    )
+
+    assert result.returncode == 77
+    assert "plain-unkeyed-secret-must-not-print" not in result.stdout + result.stderr
+    assert not (api_harness[1].parent / "curl-called").exists()
+
+
+@pytest.mark.parametrize(
+    ("program_name", "path"),
+    [
+        ("supervisor-api", "/v2/core/api/state[s-s]"),
+        ("supervisor-api", "/backups/fixture/downloa[d-d]"),
+        ("supervisor-api", "/ingres{s,s}/session"),
+        ("supervisor-api", "/core/log[s-s]"),
+        ("ha-api", "/state[s-s]"),
+    ],
+)
+def test_curl_url_glob_syntax_cannot_bypass_sensitive_endpoint_policy(
+    api_harness: tuple[str, Path, Path], program_name: str, path: str
+) -> None:
+    result = run_api(
+        api_harness,
+        "GET",
+        path,
+        body="sensitive-endpoint-glob-canary",
+        program_name=program_name,
+    )
+
+    assert result.returncode == 64
+    assert "sensitive-endpoint-glob-canary" not in result.stdout + result.stderr
+    assert not (api_harness[1].parent / "curl-called").exists()
+
+
+def test_camel_case_credential_keys_are_redacted(api_harness: tuple[str, Path, Path]) -> None:
+    canaries = {
+        "accessToken": "ACCESS_TOKEN_CANARY",
+        "refreshToken": "REFRESH_TOKEN_CANARY",
+        "authorizationCode": "AUTH_CODE_CANARY",
+        "webhookId": "WEBHOOK_CANARY",
+    }
+    result = run_api(
+        api_harness,
+        "GET",
+        "/safe-projected-fixture",
+        body=str(canaries).replace("'", '"'),
+    )
+
+    assert result.returncode == 0
+    for canary in canaries.values():
+        assert canary not in result.stdout + result.stderr
+    assert result.stdout.count("[REDACTED]") == len(canaries)
+
+
+def test_unkeyed_common_credential_shapes_are_redacted(
+    api_harness: tuple[str, Path, Path]
+) -> None:
+    synthetic_github_token = "".join(("gh", "p_", "a" * 30))
+    synthetic_telegram_token = "".join(("123456789:", "A" * 36))
+    synthetic_aws_access_key = "".join(("AK", "IA", "A" * 16))
+    synthetic_google_key = "".join(("AI", "za", "a" * 35))
+    synthetic_slack_token = "".join(("xo", "xb-1234567890-", "a" * 16))
+    synthetic_stripe_key = "".join(("sk_", "live_", "a" * 24))
+    canaries = [
+        "Basic dTpw",
+        "Basic dXNlcjpwYXNzd29yZA==",
+        "Basic mode Basic dTpw",
+        "https://user:password@example.invalid/path",
+        synthetic_telegram_token,
+        synthetic_github_token,
+        synthetic_aws_access_key,
+        synthetic_google_key,
+        synthetic_slack_token,
+        synthetic_stripe_key,
+    ]
+    result = run_api(
+        api_harness,
+        "GET",
+        "/safe-projected-fixture",
+        body=json.dumps({"ordinary_values": canaries}),
+    )
+
+    assert result.returncode == 0
+    for canary in canaries:
+        assert canary not in result.stdout + result.stderr
+    assert result.stdout.count("[REDACTED]") == len(canaries)
+
+
+def test_noncredential_key_substrings_are_not_overredacted(
+    api_harness: tuple[str, Path, Path]
+) -> None:
+    ordinary = {
+        "author": "Ada",
+        "keyboard": "compact",
+        "monkey": "capuchin",
+        "compass": "north",
+        "passage": "open",
+        "decode": "complete",
+        "statusCode": "ok",
+        "errorCode": "none",
+        "countryCode": "KR",
+        "refresh": "complete",
+        "basicStatus": "Basic authentication enabled",
+        "basicMode": "Basic mode2",
+        "bearerStatus": "Bearer authentication enabled",
+    }
+    result = run_api(
+        api_harness,
+        "GET",
+        "/safe-projected-fixture",
+        body=str(ordinary).replace("'", '"'),
+    )
+
+    assert result.returncode == 0
+    assert "[REDACTED]" not in result.stdout
+    for value in ordinary.values():
+        assert value in result.stdout
 
 
 def test_canonical_query_is_preserved_for_non_sensitive_endpoint(
@@ -519,12 +687,16 @@ def test_api_transport_ignores_caller_routing_environment(rootfs: Path) -> None:
     assert "SUPERVISOR_URL" not in permit_environment
 
 
-def test_log_helpers_request_supported_log_media_type(rootfs: Path) -> None:
+def test_log_helpers_use_only_the_token_isolated_sanitized_broker(rootfs: Path) -> None:
     core_logs = (rootfs / "usr/local/bin/ha-core-logs").read_text(encoding="utf-8")
     addon_logs = (rootfs / "usr/local/bin/ha-addon-logs").read_text(
         encoding="utf-8"
     )
 
-    expected_options = "supervisor-api --raw --accept text/x-log"
-    assert f"{expected_options} GET /core/logs" in core_logs
-    assert f'{expected_options} GET "/addons/$1/logs"' in addon_logs
+    for helper in (core_logs, addon_logs):
+        assert "supervisor-api" not in helper
+        assert "/usr/local/share/antigravity-ha/ha-read-log-cli.mjs" in helper
+        assert "SUPERVISOR_TOKEN" in helper
+        assert "/usr/bin/env -i" in helper
+    assert 'core "${1:-200}"' in core_logs
+    assert 'addon "$1" "${2:-200}"' in addon_logs

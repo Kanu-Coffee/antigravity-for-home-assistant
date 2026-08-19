@@ -489,10 +489,13 @@ def test_native_plugin_has_home_assistant_safety_rules(rootfs: Path) -> None:
     assert "live Home Assistant App" in guidance
     assert "Diagnosis does not authorize" in guidance
     assert "run `ha-config-check`" in normalized_guidance
-    assert "requester-bound Telegram session" in guidance
+    assert "requester-bound Telegram work" in guidance
+    assert "explicitly selected `always-proceed`" in guidance
     assert "ha_change_propose" in guidance
     assert "telegram_action_propose" in guidance
-    assert "Never call `run_command`" in guidance
+    assert "direct writes, terminal commands" in guidance
+    assert "are not an approval path" in guidance
+    assert "ordinary requested operations may use direct write, command" in guidance
     assert "MCP result is not approval" in guidance
     assert "authenticated interactive Web-terminal or SSH session" in guidance
     assert "shared native home" in normalized_guidance
@@ -532,13 +535,15 @@ def test_boolean_option_reader_accepts_an_explicit_false(rootfs: Path) -> None:
     ) in config_helpers
 
 
-def test_runtime_snapshot_normalizes_every_legacy_tool_policy(rootfs: Path) -> None:
+def test_runtime_snapshot_preserves_explicit_autonomous_policy(rootfs: Path) -> None:
     init_script = (rootfs / "usr/local/bin/antigravity-ha-init").read_text(
         encoding="utf-8"
     )
 
-    assert '.antigravity_tool_permission != "request-review"' in init_script
-    assert 'if . == "request-review" then . else "request-review" end' in init_script
+    assert '.antigravity_tool_permission == "strict"' in init_script
+    assert '.antigravity_tool_permission == "proceed-in-sandbox"' in init_script
+    assert '. == "request-review" or . == "always-proceed"' in init_script
+    assert 'then "request-review"' in init_script
     assert "normalized to request-review" in init_script
 
 

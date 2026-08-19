@@ -41,7 +41,13 @@ def test_validate_mcp_dynamic_contract(repository_root: Path) -> None:
 def test_read_broker_is_image_managed_and_token_isolated(rootfs: Path) -> None:
     bin_root = rootfs / "usr/local/bin"
     share_root = rootfs / "usr/local/share/antigravity-ha"
-    for name in ("ha-read-broker", "ha-read-mcp", "ha-validate-mcp"):
+    for name in (
+        "ha-read-broker",
+        "ha-read-mcp",
+        "ha-validate-mcp",
+        "ha-core-logs",
+        "ha-addon-logs",
+    ):
         wrapper = bin_root / name
         assert wrapper.is_file()
         assert wrapper.read_text(encoding="utf-8").splitlines()[:3] == [
@@ -54,6 +60,7 @@ def test_read_broker_is_image_managed_and_token_isolated(rootfs: Path) -> None:
     for name in (
         "ha-read-broker.mjs",
         "ha-read-client.mjs",
+        "ha-read-log-cli.mjs",
         "ha-read-mcp.mjs",
         "ha-validate-mcp.mjs",
     ):
@@ -130,12 +137,16 @@ def test_apparmor_separates_read_worker_client_and_token_broker(
             "antigravity_home_assistant-read-client," in interactive
         assert "/usr/local/bin/ha-validate-mcp Px -> " \
             "antigravity_home_assistant-read-client," in interactive
+        assert "/usr/local/bin/{ha-addon-logs,ha-core-logs} Px -> " \
+            "antigravity_home_assistant-read-client," in interactive
         assert "deny /run/antigravity-ha/ha-read.sock rwklm," in interactive
     assert "/run/antigravity-ha/ha-read.sock rw," in read_client
     assert "/usr/local/bin/ha-config-check Px -> " \
         "antigravity_home_assistant-ha-helper," in read_client
     assert "/usr/local/bin/ha-validate-mcp rix," in read_client
-    assert "/usr/local/share/antigravity-ha/ha-validate-mcp.mjs r," in read_client
+    assert "/usr/local/bin/{ha-addon-logs,ha-core-logs} rix," in read_client
+    assert "/usr/local/share/antigravity-ha/** r," in read_client
+    assert "/usr/local/share/antigravity-ha/ha-read-log-cli.mjs r," in read_client
     assert "deny /run/antigravity-ha/supervisor.token rwklm," in read_client
     assert "/run/antigravity-ha/ha-read.sock rwk," in read_broker
     assert "/run/antigravity-ha/supervisor.token r," in bootstrap
@@ -178,12 +189,22 @@ def test_read_broker_source_is_fixed_get_only_and_bounded(rootfs: Path) -> None:
     assert "readOnlyHint: true" in mcp
     assert "ha_read_state" in mcp
     assert "ha_read_core_logs" in mcp
+    assert "ha_read_addon_logs" in mcp
     assert "ha_read_registry" in mcp
     assert "ha_read_history" in mcp
     assert "ha_read_traces" in mcp
     assert "ha_read_storage_usage" in mcp
     assert "ha_read_app_logs" in mcp
+    assert "ha_read_supervisor_logs" in mcp
+    assert "ha_read_host_logs" in mcp
     assert '"/host/disks/default/usage"' in source
+    assert '"/host/info"' in source
+    assert '"/host/logs"' in source
+    assert "LOG_CONTEXT_LINES = 128" in source
+    assert "/supervisor/logs?lines=${lines + LOG_CONTEXT_LINES}&no_colors" in source
+    assert "/core/logs?lines=${lines + LOG_CONTEXT_LINES}&no_colors" in source
+    assert "/addons/self/logs?lines=${lines + LOG_CONTEXT_LINES}&no_colors" in source
+    assert "encodeURIComponent(identifier)" in source
     assert "STORAGE_USAGE_CATEGORY_IDS" in source
 
 

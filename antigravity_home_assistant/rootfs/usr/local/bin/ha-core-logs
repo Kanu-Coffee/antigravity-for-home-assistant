@@ -2,4 +2,15 @@
 set -Eeuo pipefail
 unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
 
-exec supervisor-api --raw --accept text/x-log GET /core/logs
+if (( $# > 1 )); then
+  printf 'Usage: ha-core-logs [LINES]\n' >&2
+  exit 64
+fi
+
+exec /usr/bin/env -i \
+  HOME=/tmp \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  /usr/bin/node /usr/local/share/antigravity-ha/ha-read-log-cli.mjs \
+  core "${1:-200}"

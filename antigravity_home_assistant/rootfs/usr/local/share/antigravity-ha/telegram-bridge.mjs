@@ -64,6 +64,7 @@ import {
   queueResponseDelivery,
   recoverAttemptingDeliveries,
   registerSealedUpdateBatch,
+  resetSession,
   resetDeliveryForRetry,
   saveTerminalTurn,
   saveToolApproval,
@@ -480,6 +481,32 @@ function requestFailureReason(error) {
   return REQUEST_FAILURE_REASONS.includes(reasonClass) ? reasonClass : "request_failed";
 }
 
+function quarantineFailedWorkerSession(error, userId, chatId, {
+  statePath,
+  auditEvent = audit,
+} = {}) {
+  if (!(error instanceof AntigravityWorkerError)) return null;
+  const stateOptions = statePath === undefined ? {} : { path: statePath };
+  const session = getSession(userId, chatId, stateOptions);
+  if (session === null || session.conversation_id === null) return null;
+  const reset = resetSession(userId, chatId, stateOptions);
+  auditEvent("worker_session_quarantined", {
+    chat: opaqueId(chatId),
+    generation: reset.generation,
+    reason_class: requestFailureReason(error),
+  });
+  return reset;
+}
+
+function acknowledgeRegisteredWorkerFailure(updateId, { statePath } = {}) {
+  const stateOptions = statePath === undefined ? {} : { path: statePath };
+  const state = loadBridgeState(stateOptions.path);
+  if (updateId < state.update_offset) return true;
+  if (!state.update_ledger.some((entry) => entry.update_id === updateId)) return false;
+  acknowledgeUpdate(updateId, stateOptions);
+  return true;
+}
+
 function renderRequestFailure(error) {
   switch (requestFailureReason(error)) {
     case "authentication_required":
@@ -644,7 +671,7 @@ function loadRuntimeConfig(options) {
   if (!TOOL_PERMISSIONS.has(requestedToolPermission)) {
     throw new Error("antigravity_tool_permission is invalid");
   }
-  const toolPermission = requestedToolPermission === "request-review"
+  const toolPermission = ["request-review", "always-proceed"].includes(requestedToolPermission)
     ? requestedToolPermission
     : "request-review";
   const allowedUsers = normalizeIds(
@@ -3891,6 +3918,7 @@ async function handleMessage(config, message, {
   statePath,
   api = telegramApi,
   send = sendMessage,
+  promptProcessor = processPrompt,
 } = {}) {
   const chatId = String(message.chat?.id ?? "");
   const userId = String(message.from?.id ?? "");
@@ -4025,7 +4053,7 @@ async function handleMessage(config, message, {
     let completion = "success";
     try {
       const stateOptions = statePath === undefined ? {} : { path: statePath };
-      await processPrompt(config, { ...message, text, updateId: message.updateId }, ticket, {
+      await promptProcessor(config, { ...message, text, updateId: message.updateId }, ticket, {
         statePath,
         api,
         acknowledgeInput: () => acknowledgeUpdate(message.updateId, stateOptions),
@@ -4034,6 +4062,12 @@ async function handleMessage(config, message, {
       completion = ticket.cancelled ? "cancelled" : jobResultClass(error);
       if (error instanceof RequestCancelledError || ticket.cancelled) return;
       if (error instanceof ExecutionResultDeliveryError) throw error;
+      if (error instanceof AntigravityWorkerError) {
+        // A failed mutation must not replay if the process stops while its
+        // conversation binding is being quarantined.
+        acknowledgeRegisteredWorkerFailure(message.updateId, { statePath });
+        quarantineFailedWorkerSession(error, userId, chatId, { statePath });
+      }
       audit("request_failed", {
         chat: opaqueId(chatId),
         reason_class: requestFailureReason(error),

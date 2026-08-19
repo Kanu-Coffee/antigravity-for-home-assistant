@@ -94,7 +94,7 @@
 
 ## ADR-006 — proposal-first universal managed Telegram approval
 
-- 상태: `Accepted`
+- 상태: `Superseded for 2.1.0 by ADR-012`; 2.0.11~2.0.18 역사 계약으로 보존
 - 2.0.11 새 설치와 Telegram의 유일한 effective native permission은
   `request-review`다. `strict`, `always-proceed`, `proceed-in-sandbox` schema 값은 기존
   Supervisor option의 upgrade input 호환용이며 updater가 모두 `request-review`로
@@ -261,3 +261,46 @@
 - exact module/broad-rule negative와 두 launcher complete/partial binding 자동 회귀는
   HAOS 증거가 아니다. 2.0.18 amd64의 managed read MCP, 승인카드와 승인된 bounded write,
   그리고 aarch64 실기기 수용은 릴리스 전 `NOT RUN`이며 전체 v2 수용은 `PARTIAL`이다.
+
+## ADR-012 — 2.1.0 operational blacklist와 dual native mode
+
+- 상태: `Accepted`
+- 공개 2.0.18 실제 HAOS 18.2 amd64는 App startup, native
+  `antigravity --version` status 0, Telegram transport/no-tool chat을 `PASS`했지만 Web
+  `agy`/`antigravity` interactive I/O와 첫 managed Telegram tool을 `FAIL`했다. current
+  audit의 `/dev/pts/0` inherited/open `rw` denial은 Web failure의 직접 증거다. 후속
+  3~7은 failed conversation reuse라 각 tool의 독립 판정이 아니며 approved write는
+  `NOT RUN`이다. 2.0.18 전체 수용은 `FAIL`이다.
+- supported operational scope는 `/config`, `/share`, `/media`, credential이 아닌
+  persistent HOME/temp, ordinary system command, installed MCP, supported
+  Core/Supervisor manager API와 bounded Host/Supervisor log다. Host log는 raw endpoint를
+  공개하지 않고 exact App token과 알려진 credential-shaped line/block을 제거한다.
+  arbitrary unkeyed application text의 secret 여부를 완전 판별한다고 주장하지 않는다.
+- raw native `read_file`/`write_file`은 symlink alias로 OAuth 또는 `.storage` 경계를
+  우회할 수 있으므로 2.1.0 managed policy에서 전역 deny한다. ordinary operational file
+  access는 별도 confined server `ha_files`(`serverInfo.name=antigravity-ha-files`)의
+  `ha_files_list`, `ha_files_read_text`, `ha_files_write_text`만 사용한다. 이 broker는
+  `/config`, `/share`, `/media`, ordinary `/data/home`, `/tmp`, `/var/tmp`에 UTF-8
+  1 MiB·listing 200개 상한, no-link regular-file, same-directory atomic write와 optional
+  `expected_sha256`를 적용한다. secrets/.storage/.gemini/credential/policy와 Recorder
+  write를 거부하며 symlink, hardlink와 path/TOCTOU 교체를 fail closed한다.
+- 기본 `request-review`는 URL read, confined file list/read와 managed read/validate/memory/proposal을
+  허용하고 mutation을 native ask 또는 requester-bound proposal로 보낸다. explicit
+  `always-proceed`는 mandatory blacklist 밖의 ordinary command/URL,
+  `mcp(*)`와 installed Playwright interaction을 autonomous-admin으로 허용한다.
+  `strict`와 `proceed-in-sandbox`는 legacy 입력으로 `request-review`에 정규화한다.
+- mandatory blacklist는 두 mode에서 secrets/storage/OAuth/token/key, App-owned
+  permission/MCP policy, credential-bearing `/proc`, Recorder write, raw backup/SSL/
+  other-App config를 보호한다. raw host root/PID/journal, Docker socket, `full_access`,
+  `docker_api`, privileged capability와 protection disablement는 추가하지 않는다.
+- native worker terminal failure 뒤 conversation을 quarantine하고 failed update를
+  durable ACK한다. 다음 user request는 새 generation에 bind하고 failed prompt/mutation을
+  replay하지 않는다. healthy conversation의 explicit rotation command는 `/new`다.
+- 이 permission/trust-model 전환은 breaking change이므로 `2.1.0`을
+  `breaking_versions`에 추가한다. automated source/container/kernel evidence는 HAOS
+  evidence가 아니며 2.1.0 amd64/aarch64 실기기 수용은 배포 시점 `NOT RUN`, 전체 v2
+  수용은 `PARTIAL`이다.
+- 2.0.12는 clean/safe rollback이 아니다. custom AppArmor attach가 실패했고 Supervisor
+  direct downgrade는 지원되지 않으며 exact old backup restore는 newer `/data`를
+  교체한다. 추가 복구가 필요하면 현재 `/data`를 보존하는 최소 2.1.1 higher-version
+  patch를 사용하고 별도 Candidate/HAOS 증거를 요구한다.

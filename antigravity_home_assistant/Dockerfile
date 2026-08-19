@@ -153,7 +153,7 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 
 # Release-only metadata must stay after the dependency layer so routine App
 # updates can reuse its content-addressed layers on Home Assistant hosts.
-ARG BUILD_VERSION=2.0.18
+ARG BUILD_VERSION=2.1.0
 ARG SOURCE_REVISION=""
 ARG SOURCE_ROOTFS_SHA256=""
 
@@ -254,6 +254,7 @@ RUN manifest=/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
       /usr/local/share/antigravity-ha/ha-change-broker.mjs \
       /usr/local/share/antigravity-ha/ha-change-proposal-mcp.mjs \
       /usr/local/share/antigravity-ha/ha-feedback.mjs \
+      /usr/local/share/antigravity-ha/ha-files-mcp.py \
       /usr/local/share/antigravity-ha/ha-telegram-pair.mjs \
       /usr/local/share/antigravity-ha/ha-read-broker.mjs \
       /usr/local/share/antigravity-ha/ha-read-client.mjs \

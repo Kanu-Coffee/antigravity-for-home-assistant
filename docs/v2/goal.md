@@ -32,23 +32,37 @@ Antigravity native plugin으로 제공한다.
    `service_call`/`multi_choice_service_call`/`config_patch`에 고위험 확인과
    exactly-once broker 접수를 강제한다. multi-choice는 최대 31개 사전 검증 선택지 중
    하나만 requester/session/digest/choice/idempotency binding으로 실행한다.
-   관리형 runtime rule은 HA service/config 변경을 `ha_change_propose`, terminal
-   command·bounded script·명령 선택지·유한 질문을 `telegram_action_propose`로 먼저
-   등록한다. action은 requester/session/update/conversation/digest에 결합된 Telegram
-   승인 뒤에만 credential-free executor 또는 HA broker가 실행한다. pinned CLI의 native
-   permission prompt는 외부 승인 뒤 재개할 수 없으므로 임의 future/plugin MCP를
-   투명하게 intercept한다고 주장하지 않고 지원하지 않는 side effect는 fail closed한다.
-   Telegram effective native permission은 `request-review` 하나이며 schema의
-   `strict`/autonomous 값은 upgrade 입력으로만 수용하고 updater에서 정규화한다.
-   Playwright는 upstream read-only 네 도구만 auto-allow하고 mutation-capable 도구는
-   typed adapter 전까지 fail closed한다. proposal registration 뒤 approval/card sealing
-   전 crash는 durable로 가장하지 않고 사용자 재시도를 요구한다.
-5. AppArmor는 항상 활성화된다. 민감정보 option이 꺼지면 보호 경로를 읽지
-   못하고, 켜져도 Recorder 자료만 진단 read-only로 허용한다. secrets, `.storage`,
-   raw App·SSH credential은 계속 직접 차단하고, 공유 native OAuth는
-   Antigravity 실행에만 사용하며 model output·로그·Telegram reply로 노출하지 않는다.
-6. HA API, 로그, 메모리와 브라우저 기능이 비밀을 model, 로그, artifact 또는
-   Telegram으로 노출하지 않는다.
+   기본 `request-review`에서는 관리형 runtime rule이 HA service/config 변경을
+   `ha_change_propose`, terminal command·bounded script·명령 선택지·유한 질문을
+   `telegram_action_propose`로 먼저 등록한다. action은 requester/session/update/
+   conversation/digest에 결합된 Telegram 승인 뒤에만 credential-free executor 또는
+   HA broker가 실행한다. 사용자가 App option에서 `always-proceed`를 명시적으로 선택한
+   경우에는 일반 운영 command/URL과 installed MCP를 자율 관리자 권한으로
+   실행할 수 있지만, credential·비밀·정책 경계는 같은 blacklist로 계속 차단한다.
+   `strict`와 `proceed-in-sandbox`는 지원하지 않는 legacy 입력으로만 수용하고
+   `request-review`로 정규화한다.
+   `request-review`의 Playwright는 upstream read-only 네 도구만 auto-allow하고
+   mutation-capable 도구는 typed adapter 전까지 fail closed한다. 명시적
+   `always-proceed`에서는 current user request 범위의 installed Playwright navigation과
+   interaction도 자율 관리자 정책에 포함된다. proposal registration 뒤 approval/card
+   sealing 전 crash는 durable로 가장하지 않고 사용자 재시도를 요구한다.
+   native `read_file`/`write_file`은 symlink alias로 보호 경계를 우회할 수 있어 두
+   mode에서 전역 deny한다. 일반 파일 작업은 confined `ha_files`의
+   `ha_files_list`, `ha_files_read_text`, `ha_files_write_text`만 사용하며 허용 root,
+   크기·목록 상한, no-link/regular-file, atomic-write·digest 조건을 broker가 강제한다.
+5. AppArmor는 항상 활성화된다. `/config`, `/share`, `/media`, Antigravity HOME과
+   임시 작업공간의 일반 운영 파일은 기본 허용하고, ordinary system binaries와
+   supported Core/Supervisor manager API를 사용할 수 있게 한다. blacklist는
+   `secrets.yaml`, `.storage`, raw App·browser·Telegram·SSH·cloud credential,
+   App-owned permission/MCP policy, 다른 프로세스의 credential-bearing `/proc` surface와
+   Recorder write처럼 직접 노출 또는 손상이 치명적인 경계에 집중한다. 민감정보
+   option을 켜도 Recorder 자료는 진단 read-only이며, 공유 native OAuth는 Antigravity
+   실행에만 사용하고 model output·로그·Telegram reply로 노출하지 않는다.
+6. HA API, 메모리와 브라우저 기능은 raw credential을 반환하지 않는다. Host/Supervisor
+   로그는 raw endpoint를 직접 노출하지 않고 exact App token과 알려진 credential-shaped
+   line/block을 제거한 bounded 결과만 제공한다. arbitrary unkeyed application text의
+   비밀 여부를 완전 판별할 수 있다고 주장하지 않으며 관리자는 출력 공유 전에 다시
+   검토한다.
 7. amd64와 aarch64가 동일한 numeric tag와 GHCR multi-arch manifest로
    설치된다.
 8. 모든 필수 자동 검사와 실제 HAOS/AppArmor E2E에 재현 가능한 증거가 있다.
@@ -57,8 +71,12 @@ Antigravity native plugin으로 제공한다.
 
 - Home Assistant Core, OS 또는 Supervisor 자체를 fork하지 않는다.
 - AppArmor 비활성 옵션이나 보호 모드 해제를 제공하지 않는다.
-- Telegram에 raw root shell 또는 TUI를 노출하지 않는다. 대신 exact command/script를
-  preview·digest·승인에 결합하는 관리형 action executor를 제공한다.
+- Docker socket, host PID namespace, HAOS root filesystem mount, `full_access` 또는
+  privileged capability를 제공하지 않는다. Supervisor가 지원하는 mount와 manager API
+  밖의 raw host filesystem 접근을 지원한다고 주장하지 않는다.
+- Telegram에 raw root TUI를 노출하지 않는다. `request-review`에서는 exact
+  command/script를 preview·digest·승인에 결합하는 관리형 action executor를 제공하고,
+  `always-proceed`에서는 명시적으로 선택된 자율 관리자 정책을 적용한다.
 - 사용자별 Home Assistant 의미 정보를 image나 `AGENTS.md`에 미리 넣지 않는다.
 - `.storage`, Recorder DB 또는 credential 파일을 직접 수정하는 기능을 만들지
   않는다.

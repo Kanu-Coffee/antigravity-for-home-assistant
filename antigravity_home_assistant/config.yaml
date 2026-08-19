@@ -1,6 +1,6 @@
 ---
 name: Antigravity for Home Assistant
-version: "2.0.18"
+version: "2.1.0"
 breaking_versions:
   - "2.0.0"
   - "2.0.7"
@@ -8,6 +8,7 @@ breaking_versions:
   - "2.0.11"
   - "2.0.12"
   - "2.0.13"
+  - "2.1.0"
 slug: antigravity_home_assistant
 description: Antigravity CLI with verified feedback, browser, terminal, and SSH for Home Assistant
 url: https://github.com/Kanu-Coffee/antigravity-for-home-assistant
@@ -33,6 +34,12 @@ ports_description:
 map:
   - type: homeassistant_config
     path: /config
+    read_only: false
+  - type: share
+    path: /share
+    read_only: false
+  - type: media
+    path: /media
     read_only: false
 
 homeassistant_api: true
@@ -65,8 +72,9 @@ schema:
     - str
   web_terminal_auto_start_antigravity: bool
   tmux_session_name: "match(^[A-Za-z0-9._-]{1,64}$)"
-  # Non-request-review values are accepted only so stored upgrade input can be
-  # normalized by user-files-update; request-review is the sole effective value.
+  # request-review keeps requester-bound review for mutations. always-proceed
+  # is an explicit autonomous administrator mode. The remaining values are
+  # accepted only so older stored input can be normalized safely on upgrade.
   antigravity_tool_permission: "list(request-review|proceed-in-sandbox|always-proceed|strict)"
   antigravity_terminal_sandbox: bool
   antigravity_sensitive_data_access: bool

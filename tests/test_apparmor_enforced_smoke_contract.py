@@ -32,7 +32,7 @@ def test_enforced_smoke_loads_and_cleans_up_a_real_kernel_profile() -> None:
 
     assert "Mirror Supervisor's adjust_profile implementation" in smoke
     assert 'r"^profile antigravity_home_assistant(?= )"' in smoke
-    assert "len(declarations) != 23" in smoke
+    assert "len(declarations) != 24" in smoke
     assert 'source.replace("antigravity_home_assistant", profile_name)' not in smoke
     host_checks = smoke.split("require_enforcement_host() {", 1)[1].split(
         "\n}", 1
@@ -164,6 +164,15 @@ def test_enforced_smoke_exercises_ssh_browser_feedback_and_accounting() -> None:
         "second_state[:3] != first_state[:3]",
         "send_resize(second_stream, 96, 32)",
         "resized_state[:3] != first_state[:3]",
+        "query_antigravity_canary(",
+        "/usr/local/bin/antigravity --version",
+        "/usr/bin/timeout --kill-after=2 5 /usr/local/bin/antigravity",
+        "/usr/bin/timeout --kill-after=2 15 /usr/local/bin/ha-config-check",
+        "/usr/bin/timeout --kill-after=2 15 /usr/local/bin/ha-core-logs 1",
+        "tui_status not in (1, 124)",
+        "not 0 <= helper_status <= 124",
+        "not 0 <= log_status <= 124",
+        "Antigravity Web PTY canary output exceeded 1 MiB",
         "reconnect=same resize=96x32 cwd=/config",
     ):
         assert lifecycle_token in ttyd_client
@@ -311,6 +320,105 @@ def test_enforced_smoke_bootstraps_the_managed_change_proposal_mcp() -> None:
     )
     final_audit = smoke.rindex("assert_relevant_audit_denials\n")
     assert native_call < proposal_call < final_audit
+
+
+def test_enforced_smoke_proves_the_operational_blacklist_and_every_managed_mcp(
+) -> None:
+    smoke = read("tests/apparmor-enforced-smoke.sh")
+
+    for volume in (
+        '"${SHARE_VOLUME}:/share"',
+        '"${MEDIA_VOLUME}:/media"',
+        '"${BACKUP_VOLUME}:/backup"',
+    ):
+        assert volume in smoke
+    for token in (
+        "run_operational_blacklist_probe",
+        "APPARMOR_OPERATIONAL_BLACKLIST_PASS",
+        "exercise_write_and_exec",
+        "for root in /config /data/home /share /media /tmp /var/tmp",
+        "/config/ordinary-secret-link",
+        "/config/ordinary-storage-link",
+        "/config/.storage/core.config",
+        "/config/home-assistant_v2.db",
+        "/data/options.json",
+        "/run/antigravity-ha/supervisor.token",
+        "/data/home/.gemini/antigravity-cli/oauth-unknown-backend.json",
+        "/data/home/.gemini/antigravity-cli/auth.json",
+        "/data/home/.gemini/antigravity-cli/cli.log",
+        "/data/home/.gemini/config/mcp_config.json",
+        "/config/ha-files-storage-link",
+        "/config/ha-files-oauth-link",
+        "/config/ha-files-cloud-link",
+        "/config/ha-files-storage-hardlink",
+        "/config/ha-files-nonroot-readable.txt",
+        "ordinary-nonroot-file-mcp-canary",
+        "managed-nonroot-file-write-pass",
+        "65534:65534:600",
+        "cloud-credential-denial-canary",
+        "/data/home/.config/gh/hosts.yml",
+        "/data/home/.gnupg/private-keys-v1.d",
+        "/data/home/.pypirc",
+        "/data/home/.git-credentials",
+        "/usr/local/share/antigravity-ha/AGENTS.md",
+        '"/proc/${other_pid}/environ"',
+        '"/proc/${other_pid}/fd"',
+        '"/proc/${other_pid}/root"',
+        '"/proc/${other_pid}/map_files"',
+        '"/proc/${other_pid}/task/${other_tid}/environ"',
+        '"/proc/${other_pid}/task/${other_tid}/fd"',
+        '"/proc/${other_pid}/task/${other_tid}/root"',
+        '"/proc/${other_pid}/task/${other_tid}/map_files"',
+        "/proc/thread-self/environ",
+        "/proc/thread-self/fd",
+        "/proc/thread-self/root",
+        "/proc/thread-self/map_files",
+    ):
+        assert token in smoke
+
+    for token in (
+        "run_managed_read_validate_memory_mcp_probes",
+        "run_managed_file_mcp_probe",
+        "antigravity-ha-files",
+        "ha_files_read_text",
+        "ha_files_list",
+        "ha_files_write_text",
+        "APPARMOR_ARBITRARY_MCP_CHILD_PASS",
+        "apparmor=antigravity_home_assistant-file-client",
+        "ha-read-mcp|antigravity-ha-read|ha_read_system_info|",
+        "ha-validate-mcp|antigravity-ha-validate|ha_validate_config|{}",
+        '"id":"call","method":"tools/call"',
+        '"name":"memory_status"',
+        "the managed memory MCP did not complete its synthetic actual call",
+        "run_managed_change_proposal_mcp_probe",
+        "run_managed_telegram_action_proposal_mcp_probe",
+        "antigravity-telegram-action-proposal",
+        'index("telegram_action_propose")',
+    ):
+        assert token in smoke
+
+    final_audit = smoke.rindex("assert_relevant_audit_denials\n")
+    for unconditional_call in (
+        "run_operational_blacklist_probe\n",
+        'run_managed_read_validate_memory_mcp_probes "$FIRST_CONTAINER"\n',
+        'run_managed_file_mcp_probe "$FIRST_CONTAINER"\n',
+        'run_managed_change_proposal_mcp_probe "$FIRST_CONTAINER"\n',
+        'run_managed_telegram_action_proposal_mcp_probe "$FIRST_CONTAINER"\n',
+        'run_ttyd_websocket_probe "$FIRST_CONTAINER"\n',
+    ):
+        assert smoke.rindex(unconditional_call) < final_audit
+
+    ttyd_probe = smoke.split("run_ttyd_websocket_probe() {", 1)[1].split(
+        "\n}", 1
+    )[0]
+    assert "antigravity=${EXPECTED_ANTIGRAVITY_VERSION} version_status=0" in (
+        ttyd_probe
+    )
+    assert (
+        "tui_status=(1|124) helper_status=([0-9]|[1-9][0-9]|1[01][0-9]|12[0-4]) "
+        "log_status=([0-9]|[1-9][0-9]|1[01][0-9]|12[0-4])"
+        in ttyd_probe
+    )
 
 
 def test_ci_and_candidate_require_enforcement_against_exact_images() -> None:

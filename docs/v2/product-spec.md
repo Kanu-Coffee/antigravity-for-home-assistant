@@ -56,7 +56,11 @@ canonical cwd, timeout 또는 1~31개의 완성된 선택지를 등록하고 bri
 뒤 credential-free executor로 한 번만 보낸다. completion을 확정할 수 없으면
 `in_doubt`이며 재실행하지 않는다. pinned CLI가 native permission prompt를 external
 approval 뒤 resume할 수 없으므로 임의 future/user plugin MCP는 transparent intercept
-대상이 아니고 지원하지 않는 Telegram side effect는 fail closed한다.
+대상이 아니고 지원하지 않는 Telegram side effect는 fail closed한다. 이 proposal-first
+계약은 기본 `request-review`에 적용된다. 사용자가 App option에서 `always-proceed`를
+명시적으로 선택하면 current request 범위의 일반 운영 command/URL,
+installed MCP와 Playwright interaction을 자율 관리자 권한으로 실행하지만 mandatory
+credential/storage/policy blacklist는 우회하지 않는다.
 proposal coordinator 등록 자체는 crash-durable하지 않다. 등록 성공 뒤 bridge가
 encrypted approval/card state를 봉인하기 전에 종료되면 사용자가 원 요청을 다시 보내야
 하며, durability는 봉인된 decision/result와 이미 접수된 execution부터 적용한다.
@@ -67,6 +71,9 @@ Antigravity는 image-managed browser MCP로
 `http://127.0.0.1:8099/`의 Home Assistant dashboard를 열어 desktop
 1440×900과 mobile 390×844를 검사한다. visible snapshot, screenshot, console과
 실패한 network resource를 함께 검토한다.
+`request-review`에서는 upstream read-only 네 도구만 자동 허용하고 navigation/
+interaction은 typed adapter 전까지 fail closed한다. explicit `always-proceed`는 current
+user request 범위의 installed Playwright navigation/interaction을 허용한다.
 
 ### US-006 검증형 메모리
 
@@ -92,7 +99,7 @@ App은 기존 복구 표면을 유지하고 rollback 절차를 안내한다.
   multi-arch manifest를 사용한다.
 - `config.yaml`의 `image`는 tag 없는 generic image 이름이다.
 - custom `apparmor.txt`를 포함하고 AppArmor는 항상 켠다.
-- `/config`는 `homeassistant_config`를 read-write로 정확히 한 번 mount한다.
+- `/config`, `/share`, `/media`는 Supervisor-supported map으로 read-write mount한다.
 - `homeassistant_api: true`, `hassio_api: true`, `hassio_role: manager`를 사용한다.
 - `full_access`, Docker API, host network, privileged capability와 host journal mount는
   기본적으로 사용하지 않는다.
@@ -122,11 +129,20 @@ plugin은 다음 capability를 분리해 제공한다.
 - `ha_read`: Core/Supervisor 정보, state, registry, history, trace, logs
 - `ha_validate`: configuration check와 변경 후 fresh verification
 - `ha_memory`: bounded search, explicit memory, candidate와 change verification
-- `playwright`: loopback dashboard. Telegram auto-allow는 upstream `readOnly: true`인
-  console, network, snapshot, screenshot 네 도구만 제공하며 navigate/back, tabs, hover,
-  wait, resize, close 등 mutation-capable 도구는 typed adapter 전까지 fail closed
+- `playwright`: loopback dashboard. `request-review`의 Telegram auto-allow는 upstream
+  `readOnly: true`인 console, network, snapshot, screenshot 네 도구만 제공하며
+  navigate/back, tabs, hover, wait, resize, close 등 mutation-capable 도구는 typed
+  adapter 전까지 fail closed. explicit `always-proceed`는 installed Playwright
+  interaction을 autonomous-admin 범위에 포함
 - `ha_change_propose`: typed 변경 preview 생성
 - `telegram_action_propose`: terminal/script/choice/question의 non-executing typed proposal
+- `ha_files`: `ha_files_list`, `ha_files_read_text`, `ha_files_write_text`로 `/config`,
+  `/share`, `/media`, ordinary `/data/home`, `/tmp`, `/var/tmp`만 다루는 confined file
+  surface. UTF-8 1 MiB·목록 200개 상한, no-symlink/non-regular/multi-hardlink,
+  same-directory atomic write와 optional `expected_sha256`를 강제
+- `ha_read`: raw Host/Supervisor log endpoint를 노출하지 않고 exact App token과 알려진
+  credential-shaped line/block을 제거한 bounded log projection 제공. arbitrary unkeyed
+  application text의 비밀 여부를 완전 판별한다고 주장하지 않음
 
 Telegram Antigravity는 CLI와 같은 `/config` 및 native 사용자 설정 권한을 가지지만
 raw Supervisor token을 직접 받지는 않는다. broker 기반 작업은 검증된 proposal과
@@ -199,11 +215,20 @@ preset으로 복사하지 않는다. 사용자 `/config/AGENTS.md`와 다른 프
 - 자식 프로세스 환경은 capability별 allowlist로 새로 구성한다.
 - 로그는 event type, opaque correlation ID, duration, result code만 기본 기록한다.
 - 사용자 prompt와 model raw output은 기본 기록하지 않는다.
+- Host/Supervisor log read는 raw endpoint/bytes를 native tool에 주지 않는다. broker가
+  line/byte 상한을 적용하고 exact App token과 알려진 credential-shaped line/block을
+  제거한다. arbitrary unkeyed application text가 secret인지 완전 판별할 수는 없으므로
+  출력은 다시 검토하며 원문 로그를 자동으로 Telegram/artifact에 복사하지 않는다.
 - AppArmor는 항상 enforce한다. `antigravity_sensitive_data_access`는 AppArmor를
   끄지 않고 Web/SSH/Telegram Antigravity의 top-level named `Px` 실행 프로필을 선택한다.
-- `secrets.yaml`, `.storage`, runtime token/options와 SSH/private key는 option과
-  관계없이 read/write를 거부한다. 기본 `false`는 Recorder DB도 거부하고 `true`만
-  Recorder DB의 진단용 read를 허용한다.
+- `/config`, `/share`, `/media`, credential이 아닌 persistent HOME, `/tmp`, `/var/tmp`,
+  ordinary system binaries, installed MCP와 supported Core/Supervisor manager API는
+  operational default-allow다. raw host root/PID/journal mount, Docker socket,
+  `full_access`와 다른 App config는 이 범위에 포함되지 않는다.
+- `secrets.yaml`, `.storage`, OAuth/cloud credential, runtime token/options,
+  App-owned permission/MCP policy, SSH/private key와 credential-bearing cross-process
+  `/proc`는 option과 관계없이 read/write를 거부한다. 기본 `false`는 Recorder DB도
+  거부하고 `true`만 Recorder DB의 진단용 read를 허용하며 Recorder write는 항상 거부한다.
 - browser, memory와 broker에는 이 option을 적용하지 않는다. SSH key, App token,
   backup, SSL private material과 표준 cloud-auth 경로는 두 값 모두 계속 거부한다.
 
@@ -233,7 +258,7 @@ log_level: info
 | `telegram_bot_token` | secret App option. 로그나 진단 payload에서 제외 |
 | `telegram_allowed_user_ids` | Telegram numeric user ID allowlist |
 | `telegram_allowed_chat_ids` | Telegram numeric chat ID allowlist |
-| `antigravity_tool_permission` | effective native 값은 `request-review` 하나. schema의 `strict`/`proceed-in-sandbox`/`always-proceed`는 upgrade 입력 호환용이며 user-files updater가 모두 정규화 |
+| `antigravity_tool_permission` | 기본 `request-review`는 URL·managed read와 `ha_files` list/read 허용, `ha_files` write·mutation 검토/proposal-first. explicit `always-proceed`는 mandatory blacklist 밖 command/URL/installed MCP/Playwright interaction의 autonomous-admin mode. native raw file은 두 mode 모두 deny. `strict`/`proceed-in-sandbox`는 legacy upgrade 입력이며 `request-review`로 정규화 |
 | `antigravity_terminal_sandbox` | deprecated/no-op compatibility 입력. 어느 값도 native sandbox를 켜지 않으며 모두 `false`로 정규화 |
 | `antigravity_sensitive_data_access` | 기본 `false`. AppArmor는 유지한 채 Web/SSH/Telegram child의 Recorder DB 진단용 read-only 여부 선택 |
 | `antigravity_user_files_update_mode` | `preserve`, `refresh_managed`, `reset_v2` |
@@ -291,22 +316,25 @@ write deny는 option 값과 무관한 불변조건이다.
 - 권한은 global `antigravity_tool_permission`과 민감정보 option에서 온다. native
   sandbox는 Web/SSH/Telegram 모두 사용하지 않으며 AppArmor command 경계는 option으로
   완화할 수 없다.
-- 2.0.11 새 설치 및 Telegram effective managed policy는 유일하게 `request-review`, bounded native/HA reads와 exact
-  `ha_change_propose`/`telegram_action_propose` allow를 사용한다. 2.0.9/2.0.10 App-owned
-  `mcp(*)`/`command(*)` broad allow는 안전하게 식별된 경우 retire하며 user-owned rule과
-  stronger deny는 보존한다. native headless permission prompt는 Telegram에서 resume하지
-  않는다. 관리형 HA·terminal·script·question proposal이 App-managed approval 경계이고,
-  표현할 수 없는 side effect는 direct fallback 없이 fail closed한다.
+- 2.1.0 기본 `request-review`는 URL read, confined `ha_files` list/read와 exact managed
+  `ha_change_propose`/`telegram_action_propose`를 사용한다. native headless permission
+  prompt는 Telegram에서 resume하지 않는다. 관리형 HA·terminal·script·question
+  proposal이 mutation approval 경계이고 표현할 수 없는 side effect는 direct fallback
+  없이 fail closed한다. `ha_files_write_text`는 ask다. explicit `always-proceed`는
+  mandatory blacklist 밖의 command/URL과 `mcp(*)`를 autonomous-admin으로 허용한다.
+  native `read_file(*)`/`write_file(*)`는 두 mode 모두 mandatory deny이고 ordinary file은
+  `ha_files`만 사용한다.
 - 2.0.12에서 Telegram이 활성화되면 위 effective policy는 일반 preserve merge보다
   우선하는 startup 경계다. 다섯 App 관리 보안 key drift와 permission 세 bucket의
   user-owned rule/stronger deny도 canonical policy로 교체하되 그 밖의 customization과
   별도 global MCP/OAuth는 보존한다. bridge가 init 뒤 이 경계를 재검증하지 못하면
   `permission_boundary_blocked`를 한 번 기록하고 Bot API 요청과 S6 restart 없이 살아
   있는 fail-closed hold에 머문다. 복구한 설정은 App restart 뒤 다시 검증한다.
-- Telegram auto-allow의 Playwright는 upstream `readOnly: true`인
+- `request-review`의 Telegram auto-allow Playwright는 upstream `readOnly: true`인
   `browser_console_messages`, `browser_network_requests`, `browser_snapshot`,
   `browser_take_screenshot`만 포함한다. navigate/back, tabs, hover, wait, resize, close는
-  typed approval adapter 전까지 fail closed한다.
+  typed approval adapter 전까지 fail closed한다. explicit `always-proceed`에서는 current
+  request의 installed Playwright navigation/interaction도 허용한다.
 - App 관리 `settings.json`과 native MCP config의 직접 mutation은 self-bypass를 막는
   exact deny다. Telegram customization 변경은 지원되는 root에서 exact
   terminal/script proposal로 승인한 경우에만 실행하며 protected security key/path는
@@ -318,8 +346,10 @@ write deny는 option 값과 무관한 불변조건이다.
   살아 있는 bridge-only restart는 proposal을 재검증해 이어갈 수 있지만 full
   App/broker restart로 미접수 in-memory proposal이 사라지면 오래된 card를 실행하지
   않고 새 요청을 요구한다. 이미 접수된 execution은 durable status/result만 회수한다.
-- `/new`가 아니면 conversation ID를 교체하거나 worker 실패를 이유로 자동 회전하지
-  않는다.
+- 정상 conversation은 `/new`가 아니면 교체하지 않는다. native worker가 terminal
+  failure로 끝나면 해당 conversation을 quarantine하고 failed update를 durable ACK한 뒤
+  다음 사용자 요청에 새 generation/conversation을 결합한다. 실패한 mutation prompt를
+  자동 replay하지 않는다.
 - model 결과는 암호화된 영속 reply outbox에 먼저 기록하고 Telegram API가 전달을
   확인한 뒤 제거한다. 429처럼 미전송이 명확한 오류만 bounded backoff로 재시도하고,
   crash·network·timeout·5xx처럼 전달 여부가 모호하면 `/retry`까지 격리한다.

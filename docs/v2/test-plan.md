@@ -11,6 +11,11 @@
   않는다. fresh API와 필요한 rendered/browser 검증을 사용한다.
 - 테스트 fixture에는 실제 token, entity name, state, memory DB와 대화 원문을
   넣지 않는다.
+- source checkout의 `ha-feedback-development` skill과
+  `tools/development/ha-feedback` test mode가 만든 collect/validate/render 결과는 sanitized
+  report format의 local 개발 증거일 뿐이다. 이 helper에는 live Supervisor token, HA
+  configuration 또는 App runtime data가 없으므로 실제 HAOS 재현·수용은 계속 `NOT RUN`으로
+  분리한다.
 
 ## 2. 현재 기준선
 
@@ -246,18 +251,59 @@ requester/run binding 다섯 값을 버렸다.
   ephemeral disappearance로 처리한다. deterministic zero-link fixture와 two-link
   negative fixture를 모두 실행한다.
 
-실제 HAOS 2.0.18 amd64에서는 최초 기동·stop/start·restart 뒤 단일 read MCP,
-Telegram 승인카드, requester-bound callback과 승인된 bounded `/config` 쓰기를 순서대로
-검증하고 예상 밖 `DENIED`가 없어야 한다. 2.0.18 amd64와 aarch64 실기기 결과는 릴리스
-전 `NOT RUN`이다. aarch64 owner waiver는 PASS가 아니며 전체 v2 수용은 `PARTIAL`이다.
-automated Linux-container result는 HAOS 증거로 승격하지 않는다.
+실제 공개 2.0.18 HAOS amd64는 App startup, `antigravity --version` status 0,
+Telegram transport와 no-tool chat을 `PASS`했지만 Web `agy`/`antigravity` interactive
+I/O와 첫 managed Telegram tool은 `FAIL`했다. current audit는 `/dev/pts/0`
+inherited/open `rw` denial을 기록한다. 후속 시험 3~7은 failed conversation을
+재사용했으므로 각 tool의 독립 PASS/FAIL 판정이 아니며 approved write는 `NOT RUN`이다.
+따라서 2.0.18 amd64 수용은 `FAIL`이다. aarch64는 `NOT RUN`이며 owner waiver는 PASS가
+아니다. automated Linux-container result는 HAOS 증거로 승격하지 않는다.
 
-2.0.12 rollback rehearsal은 Supervisor direct downgrade가 지원된다고 가정하지 않는다.
+### 2.1.0 operational blacklist, confined files와 failed-session quarantine
+
+2.1.0 자동 수용은 다음을 모두 검사한다.
+
+- request-review는 URL read, confined file list/read와 managed read/validate/memory/proposal을
+  허용하고 confined file write/command/URL execute를 ask/proposal-first로 보낸다.
+  explicit always-proceed는 mandatory blacklist 밖의 command/URL, `mcp(*)`와 installed
+  Playwright interaction을 허용한다. strict/proceed-in-sandbox는 request-review로
+  정규화한다.
+- raw native read_file/write_file은 모든 mode에서 deny한다. confined `ha_files` MCP의
+  `ha_files_list`, `ha_files_read_text`, `ha_files_write_text`가 `/config`, `/share`,
+  `/media`, ordinary `/data/home`, `/tmp`, `/var/tmp`의 list/read/write positive canary를
+  처리하되 secrets/.storage/.gemini/credential/policy/Recorder-write, symlink, hardlink,
+  path swap과 TOCTOU canary를 mutation 전에 fail closed한다. UTF-8 1 MiB·listing 200개,
+  same-directory atomic write와 optional `expected_sha256` 경계도 검사한다.
+- AppArmor의 operational profiles에서 Web PTY inherit/open/read/write, ordinary
+  supported mount/HOME/temp/system command/installed MCP/API positive matrix를 실행한다.
+  같은 profile은 OAuth/token/key/policy, credential-bearing cross-process `/proc`, Recorder
+  write와 raw backup/SSL/other-App/host-root/PID/journal/Docker surface를 거부한다.
+- Host/Supervisor log tool은 fixed official endpoint와 bounded Accept/query만 쓰고 raw
+  response를 반환하지 않는다. exact App token, authorization/private-key marker,
+  credential key/value, CLI secret option, YAML credential block canary를 제거한다.
+  arbitrary unkeyed application text의 secret 판별을 보장하지 않는 계약도 유지한다.
+- 첫 native worker terminal failure를 durable ACK하고 conversation을 quarantine한다.
+  다음 user request는 새 generation에서 성공하며 failed prompt/mutation을 replay하지
+  않는다. healthy conversation과 explicit `/new`, outbox/idempotency 계약은 유지한다.
+- 2.1.0이 `breaking_versions`에 있고 `full_access`, `docker_api`, Docker socket,
+  host-root/PID/journal mount, privileged capability와 protection disablement가 없는지
+  정적으로 검증한다.
+
+실제 HAOS 2.1.0 amd64는 first start·stop/start·restart, Web PTY interactive I/O/reconnect,
+request-review no-tool/read/proposal/approved `ha_files` write, explicit always-proceed
+ordinary command/installed-MCP/Playwright interaction, confined file positive/negative,
+raw-unavailable bounded Host/Supervisor log projection과 known-credential redaction,
+failed-session recovery를 순서대로 검증해야 한다.
+aarch64도 같은 acceptance를 요구한다. 배포 시점 두 architecture는 `NOT RUN`이고 전체
+v2 수용은 `PARTIAL`이다.
+
+2.0.12 rollback rehearsal은 이를 2.0.18 permission failure의 clean/safe fix로 간주하거나
+Supervisor direct downgrade가 지원된다고 가정하지 않는다.
 exact 2.0.12 App backup이 있는 경우에만 backup restore가 App image와 `/data`를 함께
 되돌리는지, post-backup OAuth·memory·approval/outbox·identity 손실을 사용자가 수용했는지
 확인한다. backup 없는 uninstall/Docker 조작은 시험하지 않는다. current `/data`를
-보존하는 higher-version security-degraded compatibility fallback도 실제 Candidate와
-HAOS 수용 전에는 `NOT RUN` contingency다.
+보존하는 최소 2.1.1 higher-version compatibility fallback도 실제 Candidate와 HAOS 수용
+전에는 `NOT RUN` contingency다.
 
 ### 2.1 2026-08-11 local v2 working-tree 증거
 
@@ -340,13 +386,13 @@ candidate와 HAOS evidence가 생기기 전에는 관련 마일스톤을 `VERIFI
 | AG-004 | settings merge | managed key 갱신, unknown/user key byte-semantic 보존 |
 | AG-005 | plugin validation | source와 installed plugin이 공식 schema 통과 |
 | AG-006 | duplicate plugin | global/staged/workspace 이름 충돌 시 fail closed |
-| AG-007 | MCP discovery | `ha_change`, `telegram_action`, `ha_memory`, `ha_read`, `ha_validate`, `playwright` 여섯 managed server가 secret env 없이 발견 |
+| AG-007 | MCP discovery | `ha_change`, `telegram_action`, `ha_files`, `ha_memory`, `ha_read`, `ha_validate`, `playwright` 일곱 managed server가 secret env 없이 발견 |
 | AG-008 | OAuth persistence | login 후 restart/update에서 native session 보존 |
 | AG-009 | print stdin | 값 없는 `--print` 없이 pipe된 prompt가 argv/log에 없고 stdin으로 처리 |
 | AG-010 | stream parser | top-level `event`, init/progress/SUCCESS native free-text result, exact completed HA/action proposal receipt, optional bounded `toolAction`/`toolSummary`, kind-specific single-proposal empty-text fallback, conversation binding, typed terminal/headless-permission failures, invalid JSON, unknown event, size limit |
-| AG-011 | headless permissions | effective `request-review` 하나, bounded-read/proposal-only settings와 AppArmor command 경계가 print mode에도 적용되고 `strict`/legacy autonomous option과 sandbox true/false가 보수적으로 정규화 |
+| AG-011 | headless permissions | 기본 `request-review`의 managed read/proposal + mutation ask, explicit `always-proceed` autonomous-admin, 두 mode의 raw native file deny와 mandatory blacklist, `strict`/`proceed-in-sandbox` 정규화, sandbox true/false no-op |
 | AG-012 | forbidden flags | skip-permissions와 Telegram override 거부 |
-| AG-013 | Telegram customization inheritance | user global/workspace plugin·agent·rule·MCP를 Web/SSH와 동일하게 실행·노출; Telegram mutation은 exact action proposal, shared settings policy 상속, raw/protected settings/MCP-config write deny |
+| AG-013 | Telegram customization inheritance | user global/workspace plugin·agent·rule·MCP를 Web/SSH와 동일하게 실행·노출; mode별 mutation, shared settings policy 상속, raw native file read/write deny, confined `ha_files` positive/negative, protected settings/MCP-config deny |
 | AG-014 | runtime auto-update disabled | 모든 native launch가 opt-out을 강제하고 updater spawn·binary version/digest 변동이 없음 |
 
 AG-009와 AG-010은 실제 고정 binary의 authenticated test account 또는 비밀 없는
@@ -356,7 +402,8 @@ AG-013의 2026-08-11 actual 1.1.11 control은 shared `/data/home`에서 user glo
 MCP가 Google OAuth 인증 완료 전 launch됨을 재현했다. 2.0.7은 이 positive control을
 의도된 관리자 채널 inheritance로 채택한다. global/workspace plugin·agent·rule·MCP
 수정 canary, shared settings policy read canary와 `agy-settings patch` 일반 설정 수정
-canary가 Web/SSH/Telegram에서 같은 결과를 내야 한다. raw `settings.json` write와
+canary가 Web/SSH/Telegram에서 같은 결과를 내야 한다. raw native file read/write,
+raw `settings.json` read/write와
 `permissions`, `enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`,
 `artifactReviewPolicy` patch는 모두 거부되어야 한다. primary OAuth backend/path, 실제
 로그인 뒤 credential 비유출과 HAOS AppArmor enforce는 아직 `NOT RUN`이다.
@@ -373,10 +420,14 @@ current amd64 image와 current-source QEMU aarch64 packaging canary는 이 경�
 
 ### 5.1 API와 broker
 
-- Core/Supervisor config, state, service, registry, history, trace, Core/App
-  log의 고정 read allowlist, 입력·시간·개수·응답 크기 상한
+- Core/Supervisor config, state, service, registry, history, trace, Core/App 및
+  Host/Supervisor log의 고정 endpoint, 입력·시간·개수·응답 크기 상한
 - trace detail에서 raw config/action/result/trigger/context 제거, history/state attribute
-  projection, bounded sensitive-state signal과 모든 로그 credential canary redaction
+  projection, bounded sensitive-state signal, exact token/known credential-shaped log
+  canary redaction과 raw log response 부재
+- confined `ha_files` ordinary-root list/read/write, raw native file tool deny,
+  secrets/storage/OAuth/credential/policy/Recorder-write 및 symlink/hardlink/path-swap/TOCTOU
+  fail-closed
 - `ha_validate_config`가 reload/restart 없이 고정 config check만 실행하고
   `ha_verify_state`가 exact entity fresh timestamp/state를 비교
 - endpoint/method/tool allowlist와 unknown operation 거부
@@ -461,9 +512,11 @@ current amd64 image와 current-source QEMU aarch64 packaging canary는 이 경�
 - `v4a`/`v4d`/`v4c`, 31 action choices+cancel 4×8 layout, encrypted action/opaque token,
   commit-before-executor, bounded output, sealed same-conversation continuation,
   committed replay no-respawn `in_doubt`, `/cancel` state boundary
-- first-run pre-binding, worker/restart/idle 뒤 같은 conversation과 explicit `/new` rotation
-- 유일한 effective `request-review`/bounded-read/proposal-only managed permission과 sensitive option 적용,
-  `strict`/legacy autonomous option normalization, native sandbox flag 부재/override 거부,
+- first-run pre-binding, healthy conversation과 explicit `/new` rotation, terminal worker
+  failure quarantine/durable ACK/next-generation recovery와 failed mutation no-replay
+- 기본 `request-review` read/proposal+mutation ask, explicit `always-proceed`
+  autonomous-admin과 두 mode의 mandatory blacklist 적용, `strict`/`proceed-in-sandbox`
+  normalization, native sandbox flag 부재/override 거부,
   sandbox true/false 입력의 false 정규화, legacy Telegram mode 무시
 - Telegram-enabled preserve가 safe legacy settings의 boundary key와 permission 세
   bucket만 transaction backup 뒤 canonicalize하고 unrelated settings/global MCP/OAuth를
@@ -471,12 +524,14 @@ current amd64 image와 current-source QEMU aarch64 packaging canary는 이 경�
 - unsafe effective permission은 shared validator에서 거부되고
   `permission_boundary_blocked` 한 건 뒤 Bot API call과 process exit 없이 live hold하는지
   검증
-- Playwright upstream read-only 네 도구의 auto-allow와 navigate/back/tabs/hover/wait/
-  resize/close fail-closed
+- `request-review` Playwright upstream read-only 네 도구의 auto-allow와
+  navigate/back/tabs/hover/wait/resize/close fail-closed, explicit `always-proceed`의
+  installed Playwright interaction positive canary
 - actual CLI print mode의 native permission/external resume 부재와 unsupported arbitrary
   plugin MCP side effect fail-closed
 - bootstrap → runtime → command AppArmor policy, PATH shell/stdio MCP의 command 전환,
-  command OAuth/settings/MCP-config/token deny와 일반 `/config`/network/helper positive path
+  PTY와 supported operational mount/HOME/temp/system command/MCP/API positive path,
+  OAuth/settings/MCP-policy/token/proc/Recorder-write/raw-host deny
 - encrypted reply outbox의 pre-send fsync, chunk ack, 429 bounded retry,
   crash/network/timeout/5xx ambiguity 격리와 명시적 `/retry`, 최종 제거
 - App-managed broker high-risk always-confirm matrix와 모든 broker
@@ -506,12 +561,12 @@ publish하지 않는다.
 | IM-003 | s6 init dependency, service readiness와 clean shutdown |
 | IM-004 | Ingress ttyd WebSocket, resize와 tmux reconnect |
 | IM-005 | SSH public-key success, password/empty key failure, host-key persistence |
-| IM-006 | fake Core/Supervisor read API와 log media type |
+| IM-006 | fake Core/Supervisor read API, fixed Host/Supervisor log endpoint/media type, bounded known-credential redaction과 raw-response 부재 |
 | IM-007 | broker mutation/rollback fixture와 token canary |
 | IM-008 | memory bootstrap/restart/degraded isolation |
 | IM-009 | Playwright desktop/mobile, console/network/WebSocket |
-| IM-010 | Telegram full component smoke with fake Bot API, shared permission validator와 `permission_boundary_blocked` no-API/no-exit hold |
-| IM-011 | AppArmor policy compile/static profile coverage |
+| IM-010 | Telegram dual-mode component smoke, failed-conversation quarantine/no-replay, shared permission validator와 `permission_boundary_blocked` no-API/no-exit hold |
+| IM-011 | AppArmor operational-blacklist compile/static/kernel profile coverage, PTY positive와 sensitive/raw-host negative matrix |
 | IM-012 | preserve/refresh/reset/update/rollback 및 Telegram-enabled boundary reconciliation/idempotency fixture |
 
 QEMU에서 IM suite를 통과하면 image compatibility 증거로 기록하되 native runtime

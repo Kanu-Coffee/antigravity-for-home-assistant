@@ -164,6 +164,7 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/telegram-act
 !rootfs/usr/local/bin/ha-config-check
 !rootfs/usr/local/bin/ha-core-logs
 !rootfs/usr/local/bin/ha-feedback
+!rootfs/usr/local/bin/ha-files-mcp
 !rootfs/usr/local/bin/ha-memory
 !rootfs/usr/local/bin/ha-memory-mcp
 !rootfs/usr/local/bin/ha-playwright-mcp
@@ -200,12 +201,14 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/telegram-act
 !rootfs/usr/local/share/antigravity-ha/ha-change-broker.mjs
 !rootfs/usr/local/share/antigravity-ha/ha-change-proposal-mcp.mjs
 !rootfs/usr/local/share/antigravity-ha/ha-feedback.mjs
+!rootfs/usr/local/share/antigravity-ha/ha-files-mcp.py
 !rootfs/usr/local/share/antigravity-ha/ha-memory-core.mjs
 !rootfs/usr/local/share/antigravity-ha/ha-memory-ha-client.mjs
 !rootfs/usr/local/share/antigravity-ha/ha-memory-mcp.mjs
 !rootfs/usr/local/share/antigravity-ha/ha-memory.mjs
 !rootfs/usr/local/share/antigravity-ha/ha-read-broker.mjs
 !rootfs/usr/local/share/antigravity-ha/ha-read-client.mjs
+!rootfs/usr/local/share/antigravity-ha/ha-read-log-cli.mjs
 !rootfs/usr/local/share/antigravity-ha/ha-read-mcp.mjs
 !rootfs/usr/local/share/antigravity-ha/ha-telegram-pair.mjs
 !rootfs/usr/local/share/antigravity-ha/ha-validate-mcp.mjs

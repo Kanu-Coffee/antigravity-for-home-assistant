@@ -15,6 +15,7 @@ EXPECTED_APPARMOR_PROFILES = {
     "antigravity_home_assistant-change-broker",
     "antigravity_home_assistant-change-proposal-client",
     "antigravity_home_assistant-command",
+    "antigravity_home_assistant-file-client",
     "antigravity_home_assistant-ha-helper",
     "antigravity_home_assistant-init",
     "antigravity_home_assistant-interactive-restricted",
@@ -96,6 +97,7 @@ def test_release_is_multi_arch_with_generic_registry_image(
         "2.0.11",
         "2.0.12",
         "2.0.13",
+        "2.1.0",
     ]
 
 
@@ -318,10 +320,14 @@ def test_apparmor_directed_transitions_resolve_to_loaded_top_level_profiles(
     )
 
     assert loaded_profiles == EXPECTED_APPARMOR_PROFILES
-    assert len(directed_transitions) == 81
-    assert transition_modes.count("Px") == 79
+    # The two operational native profiles intentionally add broad command
+    # transitions. Five user entry profiles also route raw log wrappers through
+    # the sanitized read client instead of the credential-bearing helper, and
+    # four operational profiles route the managed file wrapper to its client.
+    assert len(directed_transitions) == 108
+    assert transition_modes.count("Px") == 106
     assert transition_modes.count("rPx") == 3
-    assert len(transition_modes) == 82
+    assert len(transition_modes) == 109
     assert re.search(r"\b(?:c|C)x\b", source) is None
     assert {target for _, target in directed_transitions} <= loaded_profiles
 
@@ -491,6 +497,7 @@ def test_apparmor_allows_only_resolved_cold_start_executable_targets(
     narrow_bash_profiles = {
         "antigravity_home_assistant-broker-bootstrap",
         "antigravity_home_assistant-change-proposal-client",
+        "antigravity_home_assistant-file-client",
         "antigravity_home_assistant-interactive-restricted",
         "antigravity_home_assistant-interactive-sensitive-read",
         "antigravity_home_assistant-memory",
@@ -610,10 +617,11 @@ def test_apparmor_allows_only_resolved_cold_start_executable_targets(
         "aare: /package/admin/s6-overlay-3.2.2.0/command/with-contenv"
         "   ->   /package/admin/s6-overlay-3\\.2\\.2\\.0/command/with-contenv"
     ) == 1
+    # One init read rule plus four operational deny rules compile this path.
     assert parser_rules.count(
         "aare: /run/s6/container_environment/   ->   "
         "/run/s6/container_environment/"
-    ) == 1
+    ) == 5
     assert parser_rules.count(
         "aare: /run/s6/container_environment/*   ->   "
         "/run/s6/container_environment/[^/\\x00][^/\\x00]*"
@@ -691,6 +699,7 @@ def test_apparmor_limits_cold_start_mutations_to_traced_init_paths(
         "antigravity_home_assistant-broker-bootstrap",
         "antigravity_home_assistant-browser",
         "antigravity_home_assistant-change-broker",
+        "antigravity_home_assistant-file-client",
         "antigravity_home_assistant-ha-helper",
         "antigravity_home_assistant-memory",
         "antigravity_home_assistant-playwright-bootstrap",
@@ -794,6 +803,7 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
             "antigravity_home_assistant",
             "antigravity_home_assistant-browser",
             "antigravity_home_assistant-command",
+            "antigravity_home_assistant-file-client",
             "antigravity_home_assistant-init",
             "antigravity_home_assistant-interactive-runtime-restricted",
             "antigravity_home_assistant-interactive-runtime-sensitive-read",
@@ -804,11 +814,22 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
         "/dev/pts/ r,": {
             "antigravity_home_assistant",
             "antigravity_home_assistant-browser",
+            "antigravity_home_assistant-change-proposal-client",
             "antigravity_home_assistant-command",
+            "antigravity_home_assistant-file-client",
+            "antigravity_home_assistant-ha-helper",
+            "antigravity_home_assistant-interactive-restricted",
             "antigravity_home_assistant-interactive-runtime-restricted",
             "antigravity_home_assistant-interactive-runtime-sensitive-read",
+            "antigravity_home_assistant-interactive-sensitive-read",
+            "antigravity_home_assistant-memory",
+            "antigravity_home_assistant-playwright-bootstrap",
+            "antigravity_home_assistant-read-client",
+            "antigravity_home_assistant-settings-update",
             "antigravity_home_assistant-shell",
             "antigravity_home_assistant-sshd",
+            "antigravity_home_assistant-telegram-action-proposal-client",
+            "antigravity_home_assistant-telegram-admin",
         },
         "/dev/ptmx rw,": {
             "antigravity_home_assistant",
@@ -875,8 +896,15 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
     assert "/usr/share/** r," not in browser_profile
     assert "/var/cache/** rwkl," not in source
     assert "/var/cache/fontconfig/** rwkl," not in source
-    assert "/var/tmp/** rwk," not in source
-    assert "/var/tmp/** rwkl," not in source
+    for operational_profile in (
+        "antigravity_home_assistant-interactive-runtime-restricted",
+        "antigravity_home_assistant-interactive-runtime-sensitive-read",
+    ):
+        assert "/var/tmp/** rwkl," in profiles[operational_profile]
+    assert "/var/tmp/** rwklix," in profiles[
+        "antigravity_home_assistant-command"
+    ]
+    assert "/var/tmp/** rwklix," in profiles["antigravity_home_assistant-shell"]
     assert "/var/log/** rwk," not in source
     assert "/dev/** r," not in source
     assert "/dev/pts/** r," not in source
@@ -1112,8 +1140,11 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
         assert "/usr/local/libexec/antigravity-real r," not in runtime_profile
         assert "/usr/local/libexec/antigravity-real rix," not in runtime_profile
         assert (
-            "deny /data/home/.gemini/antigravity-cli/settings.json wklm,"
+            "deny /data/home/.gemini/antigravity-cli/settings.json wkl,"
             in runtime_profile
+        )
+        assert "deny /data/home/.gemini/config/mcp_config.json wkl," in (
+            runtime_profile
         )
     assert profile.count("  /usr/local/libexec/antigravity-real rm,\n") == 2
     for credential_profile in (
@@ -1228,15 +1259,8 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
     assert "/run/antigravity-ha/change-proposal.sock rw," in (
         proposal_client_profile
     )
-    assert (
-        "/usr/local/share/antigravity-ha/supervisor-credential-fd.mjs r,"
-        in proposal_client_profile
-    )
-    for broad_module_grant in (
-        "/usr/local/share/antigravity-ha/** r,",
-        "/usr/local/share/** r,",
-    ):
-        assert broad_module_grant not in proposal_client_profile
+    assert "/usr/local/share/antigravity-ha/** r," in proposal_client_profile
+    assert "/usr/local/share/** r," not in proposal_client_profile
     assert "Px -> antigravity_home_assistant-ha-helper" not in (
         proposal_client_profile
     )
@@ -1307,9 +1331,13 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
         assert f"deny {sensitive_path} rwklmx," in restricted_profile
         assert f"deny {sensitive_path} rwklmx," in sensitive_profile
         assert f"{sensitive_path} r," not in sensitive_profile
-    assert f"deny {recorder_glob} rwklmx," in restricted_profile
-    assert f"{recorder_glob} r," in sensitive_profile
     assert f"deny {recorder_glob} wklmx," in sensitive_profile
+    for recorder_blocked_profile in (
+        restricted_profile,
+        command_profile,
+        shell_profile,
+    ):
+        assert f"deny {recorder_glob} rwklmx," in recorder_blocked_profile
 
     # One recursive AppArmor rule covers the default Recorder name, configured
     # nested SQLite locations, runtime journals, and adjacent recovery copies.
@@ -1354,11 +1382,23 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
         assert f"deny {sensitive_path} rwklm" in sensitive_profile
 
     assert "deny /data/home/.gemini/** rwklm," in main_profile
-    assert "deny /data/home/.gemini/** rwklm," in shell_profile
     assert "/data/home/** rwkl," in restricted_profile
     assert "/data/home/** rwkl," in sensitive_profile
-    assert "/data/home/**" not in command_profile
-    assert "/data/home/.gemini/GEMINI.md rwkl," in command_profile
+    assert "/data/home/[^.]** rwklix," in command_profile
+    assert "/data/home/[^.]** rwklix," in shell_profile
+    for child_profile in (command_profile, shell_profile):
+        assert "deny /data/home/.gemini/antigravity-cli/oauth* rwklm," in (
+            child_profile
+        )
+        assert (
+            "deny /data/home/.gemini/antigravity-cli/auth.json rwklm,"
+            in child_profile
+        )
+        assert (
+            "deny /data/home/.gemini/antigravity-cli/*credential* rwklm,"
+            in child_profile
+        )
+    assert "/data/home/.gemini/GEMINI.md r," in command_profile
     assert (
         "deny /data/home/.gemini/antigravity-cli/settings.json rwklm,"
         in command_profile
@@ -1384,6 +1424,14 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
         "deny @{PROC}@{pid}/root/** rwklm,",
         "deny @{PROC}@{pid}/map_files/ r,",
         "deny @{PROC}@{pid}/map_files/** rwklm,",
+        "deny @{PROC}[0-9]*/task/[0-9]*/{cmdline,environ,mem} rwklm,",
+        "deny @{PROC}[0-9]*/task/[0-9]*/fd/** rwklm,",
+        "deny @{PROC}[0-9]*/task/[0-9]*/root/** rwklm,",
+        "deny @{PROC}[0-9]*/task/[0-9]*/map_files/** rwklm,",
+        "deny @{PROC}thread-self/{cmdline,environ,mem} rwklm,",
+        "deny @{PROC}thread-self/fd/** rwklm,",
+        "deny @{PROC}thread-self/root/** rwklm,",
+        "deny @{PROC}thread-self/map_files/** rwklm,",
     )
     helper_profile_exact = _apparmor_profile(
         profile, "antigravity_home_assistant-ha-helper"
@@ -1415,6 +1463,160 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
     for isolated_profile in isolated_profiles:
         for deny_rule in proc_denies:
             assert deny_rule in isolated_profile
+
+
+def test_apparmor_operational_profiles_use_a_fail_closed_path_blacklist(
+    addon_root: Path,
+) -> None:
+    source = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
+    operational_names = (
+        "antigravity_home_assistant-interactive-runtime-restricted",
+        "antigravity_home_assistant-interactive-runtime-sensitive-read",
+        "antigravity_home_assistant-command",
+        "antigravity_home_assistant-shell",
+    )
+    operational = {
+        name: _apparmor_profile(source, name) for name in operational_names
+    }
+
+    for name, profile in operational.items():
+        assert "  / r," in profile
+        for mount_path in ("config", "share", "media"):
+            assert f"/{mount_path}/ rw," in profile
+        assert "/data/home/ rw," in profile
+        assert "/tmp/ rw," in profile
+        assert "/var/tmp/ rw," in profile
+        for journal_path in ("/var/log/journal", "/run/log/journal"):
+            assert f"deny {journal_path}/ rwklmx," in profile
+            assert f"deny {journal_path}/** rwklmx," in profile
+
+        for deny_rule in (
+            "deny /data/options.json rwklm,",
+            "deny /data/antigravity-ha/** rwklm,",
+            "deny /data/antigravity-ha-memory/** rwklm,",
+            "deny /run/antigravity-ha/supervisor.token rwklm,",
+            "deny /run/antigravity-ha/home-assistant-browser.token rwklm,",
+            "deny /run/s6/container_environment/** rwklmx,",
+            "deny /config/secrets.yaml rwklmx,",
+            "deny /config/secrets.yaml.* rwklmx,",
+            "deny /config/.storage/** rwklmx,",
+            "deny /backup/** rwklmx,",
+            "deny /ssl/** rwklmx,",
+            "deny /addon_configs/** rwklmx,",
+            "deny /usr/local/bin/** wkl,",
+            "deny /usr/local/libexec/** wkl,",
+            "deny /usr/local/share/antigravity-ha/** wkl,",
+            "deny /etc/antigravity/** wkl,",
+            "deny /etc/s6-overlay/** wkl,",
+            "deny @{PROC}@{pid}/{cmdline,environ,mem} rwklm,",
+            "deny @{PROC}@{pid}/fd/** rwklm,",
+            "deny @{PROC}@{pid}/root/** rwklm,",
+            "deny @{PROC}@{pid}/map_files/** rwklm,",
+            "deny @{PROC}[0-9]*/task/[0-9]*/{cmdline,environ,mem} rwklm,",
+            "deny @{PROC}[0-9]*/task/[0-9]*/fd/** rwklm,",
+            "deny @{PROC}[0-9]*/task/[0-9]*/root/** rwklm,",
+            "deny @{PROC}[0-9]*/task/[0-9]*/map_files/** rwklm,",
+            "deny @{PROC}thread-self/{cmdline,environ,mem} rwklm,",
+            "deny @{PROC}thread-self/fd/** rwklm,",
+            "deny @{PROC}thread-self/root/** rwklm,",
+            "deny @{PROC}thread-self/map_files/** rwklm,",
+        ):
+            assert deny_rule in profile, f"{name} omitted {deny_rule}"
+
+        assert "  mount," not in profile
+        assert "  umount," not in profile
+        assert "  pivot_root," not in profile
+        assert "  ptrace," not in profile
+        assert "  capability," not in profile
+        assert "capability sys_admin," not in profile
+        assert "capability sys_ptrace," not in profile
+        assert "capability dac_read_search," not in profile
+
+    for runtime_name in operational_names[:2]:
+        profile = operational[runtime_name]
+        assert "  /** rm," in profile
+        for path in ("config", "data/home", "share", "media", "tmp", "var/tmp"):
+            assert (
+                f"/{path}/** Px -> antigravity_home_assistant-command,"
+                in profile
+            )
+        assert "deny /data/home/.gemini/antigravity-cli/settings.json wkl," in (
+            profile
+        )
+        assert "deny /data/home/.gemini/config/mcp_config.json wkl," in profile
+        assert "deny /data/home/.gemini/GEMINI.md wkl," in profile
+
+    for child_name in operational_names[2:]:
+        profile = operational[child_name]
+        assert "  /** rm," not in profile
+        assert "/usr/** rm," in profile
+        assert "/var/** rm," in profile
+        assert "/data/home/[^.]** rwklix," in profile
+        assert "/data/home/.gemini/GEMINI.md r," in profile
+        assert "/data/home/.gemini/config/** rwklix," in profile
+        assert "/data/home/.gemini/antigravity-cli/agents/** rwklix," in profile
+        assert "/data/home/.gemini/antigravity-cli/plugins/** rwklix," in profile
+        assert "/data/home/.gemini/antigravity-cli/skills/** rwklix," in profile
+        assert "deny /data/home/.gemini/antigravity-cli/oauth* rwklm," in profile
+        assert "deny /data/home/.gemini/config/mcp_config.json rwklm," in profile
+
+    recorder = "/config/{,**/}*.{db,sqlite,sqlite3}{,.*,-*,~}"
+    assert f"deny {recorder} wklmx," in operational[operational_names[1]]
+    for blocked_name in (
+        operational_names[0],
+        operational_names[2],
+        operational_names[3],
+    ):
+        assert f"deny {recorder} rwklmx," in operational[blocked_name]
+
+    for bootstrap_name in (
+        "antigravity_home_assistant-interactive-restricted",
+        "antigravity_home_assistant-interactive-sensitive-read",
+    ):
+        bootstrap = _apparmor_profile(source, bootstrap_name)
+        assert "/dev/pts/ r," in bootstrap
+        assert "/dev/pts/** rw," in bootstrap
+        assert "/dev/ptmx" not in bootstrap
+
+    for helper_name in (
+        "antigravity_home_assistant-settings-update",
+        "antigravity_home_assistant-ha-helper",
+        "antigravity_home_assistant-telegram-admin",
+        "antigravity_home_assistant-telegram-action-proposal-client",
+        "antigravity_home_assistant-change-proposal-client",
+        "antigravity_home_assistant-read-client",
+        "antigravity_home_assistant-memory",
+        "antigravity_home_assistant-playwright-bootstrap",
+    ):
+        helper = _apparmor_profile(source, helper_name)
+        assert "/dev/pts/ r," in helper
+        assert "/dev/pts/** rw," in helper
+        assert "/dev/ptmx" not in helper
+
+    for client_name in (
+        "antigravity_home_assistant-telegram-action-proposal-client",
+        "antigravity_home_assistant-change-proposal-client",
+        "antigravity_home_assistant-read-client",
+        "antigravity_home_assistant-memory",
+    ):
+        client = _apparmor_profile(source, client_name)
+        assert "/usr/local/share/antigravity-ha/** r," in client
+        assert "/usr/local/share/** r," not in client
+
+    log_transition = (
+        "/usr/local/bin/{ha-addon-logs,ha-core-logs} Px -> "
+        "antigravity_home_assistant-read-client,"
+    )
+    for entry_name in ("antigravity_home_assistant", *operational_names):
+        assert log_transition in _apparmor_profile(source, entry_name)
+    helper = _apparmor_profile(source, "antigravity_home_assistant-ha-helper")
+    assert "ha-addon-logs" not in helper
+    assert "ha-core-logs" not in helper
+    read_client = _apparmor_profile(
+        source, "antigravity_home_assistant-read-client"
+    )
+    assert "/usr/local/bin/{ha-addon-logs,ha-core-logs} rix," in read_client
+    assert "/usr/local/share/antigravity-ha/ha-read-log-cli.mjs r," in read_client
 
 
 def test_universal_telegram_approval_has_one_way_apparmor_boundaries(

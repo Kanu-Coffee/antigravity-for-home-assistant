@@ -5,7 +5,7 @@ description: Register a requester-bound terminal command, script, multi-choice c
 
 # Telegram action proposal
 
-In a requester-bound Telegram session, use only
+In a requester-bound Telegram session using `request-review`, use only
 `telegram_action_propose` for terminal commands, inline shell scripts,
 mutually exclusive terminal actions, and finite questions. Do not call
 `run_command`, a native write tool, URL execution tool, interactive browser
@@ -38,3 +38,8 @@ command, or dispatch a committed action again. Report `denied`, `expired`,
 `failed`, or `in_doubt` exactly; never claim completion from intent or partial
 output. If the proposal tool rejects the operation or the bridge cannot
 represent it, report that no action ran and do not bypass the approval path.
+
+When the App is explicitly configured for `always-proceed`, this skill remains
+appropriate for high-risk operations that need a separate confirmation card,
+but ordinary requested operations may use their direct tools. The protected
+credential, policy, `.storage`, and integrity boundaries are unchanged.

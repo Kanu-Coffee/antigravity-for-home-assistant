@@ -16,6 +16,9 @@ readonly FIRST_CONTAINER="${TEST_ID}-cold"
 readonly RESTART_CONTAINER="${TEST_ID}-restart"
 readonly DATA_VOLUME="${TEST_ID}-data"
 readonly CONFIG_VOLUME="${TEST_ID}-config"
+readonly SHARE_VOLUME="${TEST_ID}-share"
+readonly MEDIA_VOLUME="${TEST_ID}-media"
+readonly BACKUP_VOLUME="${TEST_ID}-backup"
 readonly HELPER_RUNTIME_VOLUME="${TEST_ID}-helper-runtime"
 readonly SUPERVISOR_TOKEN=apparmor-enforced-smoke-token-do-not-use
 readonly EXPECTED_ANTIGRAVITY_VERSION=1.1.13
@@ -101,6 +104,7 @@ cleanup() {
   docker rm --force "$FIRST_CONTAINER" "$RESTART_CONTAINER" \
     >/dev/null 2>&1 || true
   docker volume rm --force "$DATA_VOLUME" "$CONFIG_VOLUME" \
+    "$SHARE_VOLUME" "$MEDIA_VOLUME" "$BACKUP_VOLUME" \
     "$HELPER_RUNTIME_VOLUME" \
     >/dev/null 2>&1 || true
   if [[ $PROFILE_LOADED == true ]]; then
@@ -186,7 +190,7 @@ rendered = primary + separator + secondary
 declarations = re.findall(
     r"^[ ]*profile ([^ ]+)", rendered, flags=re.MULTILINE
 )
-if len(declarations) != 23 or declarations[0] != profile_name:
+if len(declarations) != 24 or declarations[0] != profile_name:
     raise SystemExit(f"unexpected rendered profile set: {declarations!r}")
 output_path.write_text(rendered, encoding="utf-8")
 output_path.chmod(0o600)
@@ -218,6 +222,9 @@ load_and_verify_profiles() {
 seed_volumes() {
   docker volume create "$DATA_VOLUME" >/dev/null
   docker volume create "$CONFIG_VOLUME" >/dev/null
+  docker volume create "$SHARE_VOLUME" >/dev/null
+  docker volume create "$MEDIA_VOLUME" >/dev/null
+  docker volume create "$BACKUP_VOLUME" >/dev/null
   docker volume create "$HELPER_RUNTIME_VOLUME" >/dev/null
 
   python3 - "$SSH_PUBLIC_KEY" <<'PY' \
@@ -273,6 +280,57 @@ PY
       --volume "${HELPER_RUNTIME_VOLUME}:/run/antigravity-ha" \
       "$IMAGE" \
       -c 'umask 077; cat > /run/antigravity-ha/supervisor.token; chmod 0600 /run/antigravity-ha/supervisor.token'
+
+  docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --entrypoint /bin/bash \
+    --volume "${DATA_VOLUME}:/data" \
+    --volume "${CONFIG_VOLUME}:/config" \
+    --volume "${SHARE_VOLUME}:/share" \
+    --volume "${BACKUP_VOLUME}:/backup" \
+    "$IMAGE" -p -c '
+      set -Eeuo pipefail
+      install -d -m 0755 /config/.storage
+      printf "%s\n" storage-denial-canary > /config/.storage/core.config
+      printf "%s\n" recorder-read-canary > /config/home-assistant_v2.db
+      printf "%s\n" ordinary-file-mcp-canary > /config/ha-files-readable.txt
+      printf "%s\n" ordinary-nonroot-file-mcp-canary \
+        > /config/ha-files-nonroot-readable.txt
+      printf "%s\n" ordinary-share-mcp-canary > /share/ha-files-readable.txt
+      printf "%s\n" backup-denial-canary > /backup/archive.tar
+      install -d -m 0700 /data/home/.gemini/antigravity-cli
+      install -d -m 0700 /data/home/.config/gh
+      install -d -m 0700 /data/home/.gnupg
+      printf "%s\n" oauth-file-mcp-denial-canary \
+        > /data/home/.gemini/antigravity-cli/oauth-file-mcp-canary.json
+      printf "%s\n" auth-file-mcp-denial-canary \
+        > /data/home/.gemini/antigravity-cli/auth.json
+      printf "%s\n" cloud-credential-denial-canary \
+        > /data/home/.config/gh/hosts.yml
+      printf "%s\n" gpg-credential-denial-canary \
+        > /data/home/.gnupg/private-keys-v1.d
+      printf "%s\n" package-credential-denial-canary \
+        > /data/home/.pypirc
+      printf "%s\n" git-credential-denial-canary \
+        > /data/home/.git-credentials
+      ln -s secrets.yaml /config/ha-files-secret-link
+      ln -s .storage/core.config /config/ha-files-storage-link
+      ln -s /data/home/.gemini/antigravity-cli/oauth-file-mcp-canary.json \
+        /config/ha-files-oauth-link
+      ln -s /data/home/.config/gh/hosts.yml /config/ha-files-cloud-link
+      ln /config/.storage/core.config /config/ha-files-storage-hardlink
+      chmod 0644 /config/.storage/core.config \
+        /config/home-assistant_v2.db /config/ha-files-readable.txt \
+        /share/ha-files-readable.txt /backup/archive.tar
+      chown 65534:65534 /config/ha-files-nonroot-readable.txt
+      chmod 0600 /config/ha-files-nonroot-readable.txt
+      chmod 0600 \
+        /data/home/.gemini/antigravity-cli/oauth-file-mcp-canary.json \
+        /data/home/.gemini/antigravity-cli/auth.json \
+        /data/home/.config/gh/hosts.yml \
+        /data/home/.gnupg/private-keys-v1.d \
+        /data/home/.pypirc /data/home/.git-credentials
+    '
 }
 
 run_helper_credential_boundary_probe() {
@@ -299,6 +357,156 @@ run_helper_credential_boundary_probe() {
   if grep -Fq "$SUPERVISOR_TOKEN" <<< "$output"; then
     fail 'the ha-helper credential boundary probe exposed the fake token'
   fi
+}
+
+run_operational_blacklist_probe() {
+  local output
+
+  docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --entrypoint /bin/bash \
+    --volume "${DATA_VOLUME}:/data" \
+    "$IMAGE" -p -c '
+      set -Eeuo pipefail
+      install -d -m 0700 /data/home/.gemini/antigravity-cli
+      printf "%s\n" unknown-oauth-denial-canary \
+        > /data/home/.gemini/antigravity-cli/oauth-unknown-backend.json
+      printf "%s\n" native-log-denial-canary \
+        > /data/home/.gemini/antigravity-cli/cli.log
+      chmod 0600 \
+        /data/home/.gemini/antigravity-cli/oauth-unknown-backend.json \
+        /data/home/.gemini/antigravity-cli/cli.log
+    '
+
+  if ! output=$(docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --security-opt apparmor=antigravity_home_assistant-command \
+    --entrypoint /bin/bash \
+    --volume "${DATA_VOLUME}:/data" \
+    --volume "${CONFIG_VOLUME}:/config" \
+    --volume "${SHARE_VOLUME}:/share" \
+    --volume "${MEDIA_VOLUME}:/media" \
+    --volume "${BACKUP_VOLUME}:/backup" \
+    --volume "${HELPER_RUNTIME_VOLUME}:/run/antigravity-ha" \
+    "$IMAGE" -p -c '
+      set -Eeuo pipefail
+
+      must_fail() {
+        if "$@" >/dev/null 2>&1; then
+          printf "unexpectedly allowed: %s\n" "$1" >&2
+          exit 97
+        fi
+      }
+      exercise_write_and_exec() {
+        local root=$1
+        local work="${root}/apparmor-operational-canary"
+        install -d -m 0755 "$work"
+        printf "#!/bin/sh\nprintf operational-exec-pass\n" > "$work/run"
+        chmod 0755 "$work/run"
+        [[ $("$work/run") == operational-exec-pass ]]
+        mv -- "$work/run" "$work/renamed"
+        grep -Fq operational-exec-pass "$work/renamed"
+        rm -f -- "$work/renamed"
+        rmdir -- "$work"
+      }
+
+      for root in /config /data/home /share /media /tmp /var/tmp; do
+        exercise_write_and_exec "$root"
+      done
+      grep -Fq "=" /etc/os-release
+      /usr/bin/jq --version >/dev/null
+
+      must_fail /bin/cat /config/secrets.yaml
+      must_fail /bin/rm -f /config/secrets.yaml
+      must_fail /bin/mv /config/secrets.yaml /config/secret-moved
+      if printf tampered > /config/secrets.yaml 2>/dev/null; then exit 97; fi
+      ln -s secrets.yaml /config/ordinary-secret-link
+      must_fail /bin/cat /config/ordinary-secret-link
+      if printf tampered > /config/ordinary-secret-link 2>/dev/null; then exit 97; fi
+      rm -f /config/ordinary-secret-link
+
+      must_fail /bin/cat /config/.storage/core.config
+      must_fail /bin/rm -f /config/.storage/core.config
+      must_fail /bin/mv /config/.storage/core.config /config/storage-moved
+      if printf tampered > /config/.storage/core.config 2>/dev/null; then exit 97; fi
+      ln -s .storage/core.config /config/ordinary-storage-link
+      must_fail /bin/cat /config/ordinary-storage-link
+      if printf tampered > /config/ordinary-storage-link 2>/dev/null; then
+        exit 97
+      fi
+      rm -f /config/ordinary-storage-link
+      must_fail /bin/cat /config/home-assistant_v2.db
+      if printf tampered > /config/home-assistant_v2.db 2>/dev/null; then exit 97; fi
+      must_fail /bin/rm -f /config/home-assistant_v2.db
+
+      must_fail /bin/cat /data/options.json
+      must_fail /bin/rm -f /data/options.json
+      must_fail /bin/mv /data/options.json /data/options-moved.json
+      must_fail /bin/cat /run/antigravity-ha/supervisor.token
+      must_fail /bin/rm -f /run/antigravity-ha/supervisor.token
+      must_fail /bin/mv /run/antigravity-ha/supervisor.token \
+        /run/antigravity-ha/token-moved
+      must_fail /bin/cat /backup/archive.tar
+      must_fail /bin/cat /data/home/.gemini/antigravity-cli/settings.json
+      must_fail /bin/cat /data/home/.gemini/config/mcp_config.json
+      ln -s /data/home/.gemini/config/mcp_config.json \
+        /config/ordinary-policy-link
+      must_fail /bin/cat /config/ordinary-policy-link
+      if printf tampered > /config/ordinary-policy-link 2>/dev/null; then
+        exit 97
+      fi
+      rm -f /config/ordinary-policy-link
+      must_fail /bin/cat \
+        /data/home/.gemini/antigravity-cli/oauth-unknown-backend.json
+      must_fail /bin/cat /data/home/.gemini/antigravity-cli/cli.log
+      must_fail /bin/rm -f /data/home/.gemini/antigravity-cli/settings.json
+      must_fail /bin/mv /data/home/.gemini/antigravity-cli/settings.json \
+        /data/home/settings-moved.json
+      must_fail /bin/rm -f /data/home/.gemini/config/mcp_config.json
+      if printf tampered > /data/home/.gemini/config/mcp_config.json 2>/dev/null; then
+        exit 97
+      fi
+      if printf tampered > /usr/local/share/antigravity-ha/AGENTS.md 2>/dev/null; then
+        exit 97
+      fi
+
+      sleep 30 &
+      other_pid=$!
+      trap "kill ${other_pid} >/dev/null 2>&1 || true" EXIT
+      must_fail /bin/cat "/proc/${other_pid}/environ"
+      must_fail /bin/ls "/proc/${other_pid}/fd"
+      must_fail /usr/bin/readlink "/proc/${other_pid}/root"
+      must_fail /bin/ls "/proc/${other_pid}/map_files"
+      other_tid=$(/bin/ls "/proc/${other_pid}/task" | /usr/bin/head -n 1)
+      [[ $other_tid =~ ^[0-9]+$ ]]
+      must_fail /bin/cat "/proc/${other_pid}/task/${other_tid}/environ"
+      must_fail /bin/ls "/proc/${other_pid}/task/${other_tid}/fd"
+      must_fail /usr/bin/readlink "/proc/${other_pid}/task/${other_tid}/root"
+      must_fail /bin/ls "/proc/${other_pid}/task/${other_tid}/map_files"
+      must_fail /bin/cat /proc/thread-self/environ
+      must_fail /bin/ls /proc/thread-self/fd
+      must_fail /usr/bin/readlink /proc/thread-self/root
+      must_fail /bin/ls /proc/thread-self/map_files
+      kill "$other_pid"
+      wait "$other_pid" 2>/dev/null || true
+      trap - EXIT
+      printf "%s\n" APPARMOR_OPERATIONAL_BLACKLIST_PASS
+    ' 2>&1); then
+    printf '%s\n' "$output" | redact_probe_output >&2
+    fail 'the broad operational path blacklist probe failed'
+  fi
+  grep -Fqx APPARMOR_OPERATIONAL_BLACKLIST_PASS <<< "$output" \
+    || fail 'the operational path blacklist probe omitted its pass marker'
+  if grep -Fq "$SUPERVISOR_TOKEN" <<< "$output"; then
+    fail 'the operational path blacklist probe exposed the fake Supervisor token'
+  fi
+  docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --entrypoint /bin/rm \
+    --volume "${DATA_VOLUME}:/data" \
+    "$IMAGE" -f -- \
+      /data/home/.gemini/antigravity-cli/oauth-unknown-backend.json \
+      /data/home/.gemini/antigravity-cli/cli.log
 }
 
 run_ssh_and_accounting_probe() {
@@ -372,6 +580,14 @@ run_ttyd_websocket_probe() {
   grep -Fq \
     'reconnect=same resize=96x32 cwd=/config' <<< "$output" \
     || fail 'the ttyd probe did not prove tmux reconnect and resize behavior'
+  grep -Fq \
+    "antigravity=${EXPECTED_ANTIGRAVITY_VERSION} version_status=0" \
+    <<< "$output" \
+    || fail 'the ttyd WebSocket PTY did not execute the real public launcher'
+  grep -Eq \
+    'tui_status=(1|124) helper_status=([0-9]|[1-9][0-9]|1[01][0-9]|12[0-4]) log_status=([0-9]|[1-9][0-9]|1[01][0-9]|12[0-4])$' \
+    <<< "$output" \
+    || fail 'the ttyd WebSocket PTY did not complete its bounded TUI canary'
 }
 
 run_playwright_probe() {
@@ -565,6 +781,265 @@ run_managed_change_proposal_mcp_probe() {
   fi
 }
 
+run_managed_read_validate_memory_mcp_probes() {
+  local container=$1
+  local executable
+  local expected_server
+  local expected_tool
+  local call_arguments
+  local call_request
+  local output
+
+  while IFS='|' read -r executable expected_server expected_tool call_arguments; do
+    call_request=$(printf \
+      '{"jsonrpc":"2.0","id":"call","method":"tools/call","params":{"name":"%s","arguments":%s}}' \
+      "$expected_tool" "$call_arguments")
+    if ! output=$(printf '%s\n' \
+        '{"jsonrpc":"2.0","id":"init","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"apparmor-smoke","version":"1"}}}' \
+        '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
+        '{"jsonrpc":"2.0","id":"list","method":"tools/list","params":{}}' \
+        "$call_request" \
+      | docker exec --interactive --workdir /config "$container" \
+        /usr/bin/env "/usr/local/bin/${executable}" 2>&1); then
+      printf '%s\n' "$output" | redact_probe_output >&2
+      fail "the managed ${executable} MCP handshake failed under enforcement"
+    fi
+    if ! printf '%s\n' "$output" \
+      | docker exec --interactive "$container" /usr/bin/jq \
+        --exit-status --slurp \
+        --arg server "$expected_server" --arg tool "$expected_tool" '
+          length == 3
+          and .[0].id == "init"
+          and .[0].result.serverInfo.name == $server
+          and .[1].id == "list"
+          and ([.[1].result.tools[].name] | index($tool)) != null
+          and .[2].id == "call"
+          and (.[2].result.content | type) == "array"
+          and (.[2].result.content | length) >= 1
+        ' >/dev/null; then
+      printf '%s\n' "$output" | redact_probe_output >&2
+      fail "the managed ${executable} MCP returned an invalid handshake"
+    fi
+  done <<'EOF'
+ha-read-mcp|antigravity-ha-read|ha_read_system_info|{"scope":"host"}
+ha-validate-mcp|antigravity-ha-validate|ha_validate_config|{}
+EOF
+
+  # Exercise a real, bounded tool call against the initialized persistent
+  # memory service. This is read-only and never exposes memory contents.
+  if ! output=$(printf '%s\n' \
+      '{"jsonrpc":"2.0","id":"init","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"apparmor-smoke","version":"1"}}}' \
+      '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
+      '{"jsonrpc":"2.0","id":"list","method":"tools/list","params":{}}' \
+      '{"jsonrpc":"2.0","id":"call","method":"tools/call","params":{"name":"memory_status","arguments":{}}}' \
+    | docker exec --interactive --workdir /config "$container" \
+      /usr/bin/env /usr/local/bin/ha-memory-mcp 2>&1); then
+    printf '%s\n' "$output" | redact_probe_output >&2
+    fail 'the managed memory MCP synthetic call failed under enforcement'
+  fi
+  if ! printf '%s\n' "$output" \
+    | docker exec --interactive "$container" /usr/bin/jq \
+      --exit-status --slurp '
+        length == 3
+        and .[0].result.serverInfo.name == "antigravity-ha-memory"
+        and ([.[1].result.tools[].name] | index("memory_status")) != null
+        and .[2].id == "call"
+        and (.[2].result.content | type) == "array"
+        and (.[2].result.content | length) >= 1
+      ' >/dev/null; then
+    printf '%s\n' "$output" | redact_probe_output >&2
+    fail 'the managed memory MCP did not complete its synthetic actual call'
+  fi
+  if grep -Fq "$SUPERVISOR_TOKEN" <<< "$output"; then
+    fail 'a managed read/validate/memory MCP exposed the fake Supervisor token'
+  fi
+}
+
+run_managed_file_mcp_probe() {
+  local container=$1
+  local output
+  local child_output
+
+  # Enter through the real native runtime so the wrapper's directed transition
+  # into the dedicated file-client profile is enforced exactly as it is for a
+  # managed MCP child. Exercise actual calls, including three resolved symlink
+  # aliases and a pre-seeded hardlink alias.
+  if ! output=$(printf '%s\n' \
+      '{"jsonrpc":"2.0","id":"init","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"apparmor-smoke","version":"1"}}}' \
+      '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
+      '{"jsonrpc":"2.0","id":"list","method":"tools/list","params":{}}' \
+      '{"jsonrpc":"2.0","id":"read","method":"tools/call","params":{"name":"ha_files_read_text","arguments":{"path":"/config/ha-files-readable.txt"}}}' \
+      '{"jsonrpc":"2.0","id":"list-dir","method":"tools/call","params":{"name":"ha_files_list","arguments":{"path":"/config","limit":50}}}' \
+      '{"jsonrpc":"2.0","id":"write","method":"tools/call","params":{"name":"ha_files_write_text","arguments":{"path":"/config/ha-files-written.txt","text":"managed-file-write-pass\\n"}}}' \
+      '{"jsonrpc":"2.0","id":"nonroot-read","method":"tools/call","params":{"name":"ha_files_read_text","arguments":{"path":"/config/ha-files-nonroot-readable.txt"}}}' \
+      '{"jsonrpc":"2.0","id":"nonroot-write","method":"tools/call","params":{"name":"ha_files_write_text","arguments":{"path":"/config/ha-files-nonroot-readable.txt","text":"managed-nonroot-file-write-pass\\n"}}}' \
+      '{"jsonrpc":"2.0","id":"secret-link","method":"tools/call","params":{"name":"ha_files_read_text","arguments":{"path":"/config/ha-files-secret-link"}}}' \
+      '{"jsonrpc":"2.0","id":"storage-link","method":"tools/call","params":{"name":"ha_files_read_text","arguments":{"path":"/config/ha-files-storage-link"}}}' \
+      '{"jsonrpc":"2.0","id":"oauth-link","method":"tools/call","params":{"name":"ha_files_read_text","arguments":{"path":"/config/ha-files-oauth-link"}}}' \
+      '{"jsonrpc":"2.0","id":"cloud-link","method":"tools/call","params":{"name":"ha_files_read_text","arguments":{"path":"/config/ha-files-cloud-link"}}}' \
+      '{"jsonrpc":"2.0","id":"storage-hardlink","method":"tools/call","params":{"name":"ha_files_read_text","arguments":{"path":"/config/ha-files-storage-hardlink"}}}' \
+      '{"jsonrpc":"2.0","id":"oauth-direct","method":"tools/call","params":{"name":"ha_files_read_text","arguments":{"path":"/data/home/.gemini/antigravity-cli/oauth-file-mcp-canary.json"}}}' \
+      '{"jsonrpc":"2.0","id":"storage-link-write","method":"tools/call","params":{"name":"ha_files_write_text","arguments":{"path":"/config/ha-files-storage-link","text":"must-not-land"}}}' \
+    | docker run --rm --interactive \
+      --platform "$TEST_PLATFORM" \
+      --security-opt \
+        apparmor=antigravity_home_assistant-interactive-runtime-restricted \
+      --entrypoint /usr/bin/env \
+      --volume "${DATA_VOLUME}:/data" \
+      --volume "${CONFIG_VOLUME}:/config" \
+      --volume "${SHARE_VOLUME}:/share" \
+      --volume "${MEDIA_VOLUME}:/media" \
+      --workdir /config \
+      "$IMAGE" /usr/local/bin/ha-files-mcp 2>&1); then
+    printf '%s\n' "$output" | redact_probe_output >&2
+    fail 'the managed ordinary-file MCP failed under AppArmor enforcement'
+  fi
+  if ! printf '%s\n' "$output" \
+    | docker exec --interactive "$container" /usr/bin/jq \
+      --exit-status --slurp '
+        length == 14
+        and .[0].result.serverInfo.name == "antigravity-ha-files"
+        and ([.[1].result.tools[].name]
+          | (index("ha_files_read_text") != null)
+          and (index("ha_files_list") != null)
+          and (index("ha_files_write_text") != null))
+        and .[2].result.isError == false
+        and .[2].result.structuredContent.result.text
+          == "ordinary-file-mcp-canary\n"
+        and .[3].result.isError == false
+        and ([.[3].result.structuredContent.result.entries[].name]
+          | index("ha-files-readable.txt")) != null
+        and .[4].result.isError == false
+        and .[4].result.structuredContent.result.created == true
+        and .[5].result.isError == false
+        and .[5].result.structuredContent.result.text
+          == "ordinary-nonroot-file-mcp-canary\n"
+        and .[6].result.isError == false
+        and .[6].result.structuredContent.result.created == false
+        and ([.[7:11].result.structuredContent.error] | unique)
+          == ["unsafe_path"]
+        and .[11].result.structuredContent.error == "unsafe_file"
+        and .[12].result.structuredContent.error == "access_denied"
+        and .[13].result.structuredContent.error == "unsafe_path"
+      ' >/dev/null; then
+    printf '%s\n' "$output" | redact_probe_output >&2
+    fail 'the managed ordinary-file MCP returned an invalid safety result'
+  fi
+  grep -Fqx managed-file-write-pass < <(
+    docker exec "$container" /bin/cat /config/ha-files-written.txt
+  ) || fail 'the managed ordinary-file MCP did not persist its ordinary write'
+  grep -Fqx managed-nonroot-file-write-pass < <(
+    docker exec "$container" /bin/cat /config/ha-files-nonroot-readable.txt
+  ) || fail 'the managed ordinary-file MCP did not replace a non-root-owned 0600 file'
+  [[ $(docker exec "$container" /usr/bin/stat -c '%u:%g:%a' \
+      /config/ha-files-nonroot-readable.txt) == 65534:65534:600 ]] \
+    || fail 'the managed ordinary-file MCP did not preserve non-root ownership and mode'
+  if grep -Eq \
+    'storage-denial-canary|oauth-file-mcp-denial-canary|cloud-credential-denial-canary|apparmor-denial-canary' \
+    <<< "$output"; then
+    fail 'the managed ordinary-file MCP exposed a protected canary'
+  fi
+
+  # Positive controls for the kernel half of the boundary: bypass the helper's
+  # no-follow open and prove that AppArmor still denies each resolved target.
+  for alias in \
+    /config/ha-files-storage-link \
+    /config/ha-files-oauth-link \
+    /config/ha-files-cloud-link; do
+    if docker run --rm \
+      --platform "$TEST_PLATFORM" \
+      --security-opt apparmor=antigravity_home_assistant-file-client \
+      --entrypoint /usr/bin/python3 \
+      --volume "${DATA_VOLUME}:/data" \
+      --volume "${CONFIG_VOLUME}:/config" \
+      "$IMAGE" -I -B -c 'import sys; open(sys.argv[1], "rb").read()' \
+        "$alias" >/dev/null 2>&1; then
+      fail "the file-client AppArmor profile followed a protected alias: ${alias}"
+    fi
+  done
+
+  # `mcp(*)` in explicit always-proceed mode may start a user-installed MCP,
+  # but every executable child of the native runtime must enter the credential-
+  # blind command profile. Prove ordinary output works while OAuth, policy and
+  # their symlink aliases remain inaccessible.
+  if ! child_output=$(docker run --rm \
+      --platform "$TEST_PLATFORM" \
+      --security-opt \
+        apparmor=antigravity_home_assistant-interactive-runtime-restricted \
+      --entrypoint /usr/bin/env \
+      --volume "${DATA_VOLUME}:/data" \
+      --volume "${CONFIG_VOLUME}:/config" \
+      "$IMAGE" /usr/bin/node -e '
+        const fs = require("node:fs");
+        const protectedPaths = [
+          "/data/home/.gemini/antigravity-cli/settings.json",
+          "/data/home/.gemini/antigravity-cli/oauth-file-mcp-canary.json",
+          "/data/home/.gemini/antigravity-cli/auth.json",
+          "/config/ha-files-oauth-link",
+          "/data/home/.config/gh/hosts.yml",
+          "/config/ha-files-cloud-link",
+          "/data/home/.gnupg/private-keys-v1.d",
+          "/data/home/.pypirc",
+          "/data/home/.git-credentials",
+        ];
+        for (const path of protectedPaths) {
+          let denied = false;
+          try { fs.readFileSync(path); } catch { denied = true; }
+          if (!denied) process.exit(97);
+        }
+        fs.writeFileSync("/config/arbitrary-mcp-child.txt", "ordinary-child-pass\\n");
+        const profile = fs.readFileSync("/proc/self/attr/current", "utf8");
+        if (!profile.startsWith("antigravity_home_assistant-command ")) process.exit(98);
+        process.stdout.write("APPARMOR_ARBITRARY_MCP_CHILD_PASS\\n");
+      ' 2>&1); then
+    printf '%s\n' "$child_output" | redact_probe_output >&2
+    fail 'an arbitrary MCP child did not enter the credential-blind command profile'
+  fi
+  [[ $child_output == APPARMOR_ARBITRARY_MCP_CHILD_PASS ]] \
+    || fail 'the arbitrary MCP child omitted its pass marker'
+}
+
+run_managed_telegram_action_proposal_mcp_probe() {
+  local container=$1
+  local output
+
+  if ! output=$(printf '%s\n' \
+      '{"jsonrpc":"2.0","id":"init","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"apparmor-smoke","version":"1"}}}' \
+      '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
+      '{"jsonrpc":"2.0","id":"list","method":"tools/list","params":{}}' \
+    | docker run --rm --interactive \
+      --platform "$TEST_PLATFORM" \
+      --security-opt \
+        apparmor=antigravity_home_assistant-interactive-runtime-restricted \
+      --entrypoint /usr/bin/env \
+      --env ANTIGRAVITY_HA_CHANNEL=telegram \
+      --env HA_TELEGRAM_USER_ID=10001 \
+      --env HA_TELEGRAM_CHAT_ID=-10001 \
+      --env HA_TELEGRAM_SESSION_GENERATION=1 \
+      --env HA_TELEGRAM_UPDATE_ID=1 \
+      --env HA_TELEGRAM_RUN_NONCE=abcdefghijklmnopqrstuvwx \
+      --volume "${DATA_VOLUME}:/data" \
+      --volume "${CONFIG_VOLUME}:/config" \
+      --workdir /config \
+      "$IMAGE" /usr/local/bin/telegram-action-proposal-mcp 2>&1); then
+    printf '%s\n' "$output" | redact_probe_output >&2
+    fail 'the managed Telegram action proposal MCP failed under enforcement'
+  fi
+  if ! printf '%s\n' "$output" \
+    | docker exec --interactive "$container" /usr/bin/jq \
+      --exit-status --slurp '
+        length == 2
+        and .[0].result.serverInfo.name == "antigravity-telegram-action-proposal"
+        and ([.[1].result.tools[].name] | index("telegram_action_propose")) != null
+      ' >/dev/null; then
+    printf '%s\n' "$output" | redact_probe_output >&2
+    fail 'the managed Telegram action proposal MCP returned an invalid handshake'
+  fi
+  if grep -Fq "$SUPERVISOR_TOKEN" <<< "$output"; then
+    fail 'the managed Telegram action proposal MCP exposed the fake Supervisor token'
+  fi
+}
+
 enable_sensitive_data_access_fixture() {
   local output
 
@@ -689,6 +1164,9 @@ start_container() {
     --env "SUPERVISOR_TOKEN=${SUPERVISOR_TOKEN}" \
     --volume "${DATA_VOLUME}:/data" \
     --volume "${CONFIG_VOLUME}:/config" \
+    --volume "${SHARE_VOLUME}:/share" \
+    --volume "${MEDIA_VOLUME}:/media" \
+    --volume "${BACKUP_VOLUME}:/backup" \
     "$IMAGE" >/dev/null
 }
 
@@ -750,7 +1228,11 @@ run_helper_credential_boundary_probe
 start_container "$FIRST_CONTAINER"
 assert_enforced_container_ready "$FIRST_CONTAINER"
 run_native_cli_probe "$FIRST_CONTAINER" restricted
+run_operational_blacklist_probe
+run_managed_read_validate_memory_mcp_probes "$FIRST_CONTAINER"
+run_managed_file_mcp_probe "$FIRST_CONTAINER"
 run_managed_change_proposal_mcp_probe "$FIRST_CONTAINER"
+run_managed_telegram_action_proposal_mcp_probe "$FIRST_CONTAINER"
 run_ttyd_websocket_probe "$FIRST_CONTAINER"
 run_confined_feature_probes "$FIRST_CONTAINER"
 

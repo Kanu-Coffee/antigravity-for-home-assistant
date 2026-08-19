@@ -20,6 +20,9 @@ import {
   createHaReadMcpHandler,
 } from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/ha-read-mcp.mjs";
 import {
+  runHaReadLogCli,
+} from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/ha-read-log-cli.mjs";
+import {
   fetchHomeAssistantSnapshot,
   HomeAssistantUnavailableError,
 } from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/ha-memory-ha-client.mjs";
@@ -97,6 +100,17 @@ function fixtureFetch(calls) {
         addons: [{ slug: "private" }],
       } });
     }
+    if (url.endsWith("/host/info")) {
+      return response(200, { result: "ok", data: {
+        agent_version: "1.7.2",
+        apparmor_version: "4.1.0",
+        kernel: "6.18.39-haos",
+        operating_system: "Home Assistant OS 17.0",
+        startup_time: 8.5,
+        hostname: "private-hostname",
+        features: ["private-feature"],
+      } });
+    }
     if (url.endsWith("/host/disks/default/usage")) {
       return response(200, { result: "ok", data: {
         id: "root",
@@ -118,7 +132,7 @@ function fixtureFetch(calls) {
         ],
       } });
     }
-    if (url.endsWith("/core/logs")) {
+    if (url.includes("/core/logs?")) {
       return response(200, [
         "ordinary line",
         `Authorization: Bearer ${TOKEN}`,
@@ -126,11 +140,32 @@ function fixtureFetch(calls) {
         "final line",
       ].join("\n"), { raw: true });
     }
-    if (url.endsWith("/addons/self/logs")) {
+    if (url.includes("/addons/self/logs?")) {
       return response(200, [
         "App started",
         `token=${TOKEN}`,
         "App ready",
+      ].join("\n"), { raw: true });
+    }
+    if (url.includes("/supervisor/logs?")) {
+      return response(200, [
+        "Supervisor started",
+        `Authorization: Bearer ${TOKEN}`,
+        "Supervisor ready",
+      ].join("\n"), { raw: true });
+    }
+    if (url.includes("/host/logs")) {
+      return response(200, [
+        "Host started",
+        `password=${TOKEN}`,
+        "Host ready",
+      ].join("\n"), { raw: true });
+    }
+    if (url.includes("/addons/example_addon/logs?")) {
+      return response(200, [
+        "Example App started",
+        `X-Api-Token ${TOKEN}`,
+        "Example App ready",
       ].join("\n"), { raw: true });
     }
     if (url.includes("/history/period/")) {
@@ -230,6 +265,13 @@ test("broker exposes only bounded projected GET reads", async () => {
     healthy: true,
     version: "2026.08.0",
   });
+  assert.deepEqual(await broker.dispatch("host_info", {}), {
+    agent_version: "1.7.2",
+    apparmor_version: "4.1.0",
+    kernel: "6.18.39-haos",
+    operating_system: "Home Assistant OS 17.0",
+    startup_time: 8.5,
+  });
   assert.deepEqual(await broker.dispatch("storage_usage", {}), {
     total_bytes: 1_000_000,
     used_bytes: 750_000,
@@ -247,6 +289,16 @@ test("broker exposes only bounded projected GET reads", async () => {
   assert.equal(JSON.stringify(logs).includes("do-not-return"), false);
   const appLogs = await broker.dispatch("app_logs", { lines: 3 });
   assert.equal(JSON.stringify(appLogs).includes(TOKEN), false);
+  const supervisorLogs = await broker.dispatch("supervisor_logs", { lines: 3 });
+  assert.equal(JSON.stringify(supervisorLogs).includes(TOKEN), false);
+  const hostLogs = await broker.dispatch("host_logs", { identifier: "audit", lines: 3 });
+  assert.equal(JSON.stringify(hostLogs).includes(TOKEN), false);
+  const addonLogs = await broker.dispatch("addon_logs", { slug: "example_addon", lines: 3 });
+  assert.equal(JSON.stringify(addonLogs).includes(TOKEN), false);
+  assert.equal(
+    calls.some(({ url }) => url.endsWith("/host/logs/identifiers/audit?lines=131&no_colors")),
+    true,
+  );
 
   const registry = await broker.dispatch("registry", {
     kind: "area",
@@ -298,6 +350,11 @@ test("broker exposes only bounded projected GET reads", async () => {
 });
 
 test("log reads fail closed for structured credentials and multiline private material", async () => {
+  const syntheticGithubToken = `gh${"p"}_${"a".repeat(36)}`;
+  const syntheticTelegramToken = `123456789:${"A".repeat(35)}`;
+  const syntheticAwsAccessKey = `AK${"IA"}${"A".repeat(16)}`;
+  const syntheticGoogleKey = `AI${"za"}${"a".repeat(35)}`;
+  const syntheticSlackToken = `xo${"xb"}-1234567890-${"a".repeat(16)}`;
   const canaries = [
     "JSON_SECRET_CANARY",
     "BASIC_SECRET_CANARY",
@@ -305,6 +362,32 @@ test("log reads fail closed for structured credentials and multiline private mat
     "PRIVATE_KEY_CANARY",
     "CONTINUATION_SECRET_CANARY",
     "JWT_SIGNATURE_CANARY",
+    "YAML_BLOCK_SECRET_CANARY",
+    "YAML_BLOCK_SECOND_SECRET_CANARY",
+    "YAML_INDENT_SECRET_CANARY",
+    "YAML_ANCHOR_SECRET_CANARY",
+    "YAML_TAG_SECRET_CANARY",
+    "YAML_INDENTLESS_SEQUENCE_CANARY",
+    "JSON_ARRAY_CANARY",
+    "JSON_NESTED_LATER_CANARY",
+    "YAML_ANCHORED_CONTAINER_CANARY",
+    "YAML_TAGGED_CONTAINER_CANARY",
+    "YAML_COMMENT_CONTAINER_CANARY",
+    "YAML_SEQUENCE_COMMENT_CANARY",
+    "YAML_INLINE_FLOW_LATER_CANARY",
+    "YAML_PLAIN_CONTINUATION_CANARY",
+    "YAML_QUOTED_CONTINUATION_CANARY",
+    "YAML_SAME_INDENT_QUOTED_CANARY",
+    "PREFIXED_CONTAINER_CANARY",
+    "CLI_SECRET_CANARY",
+    "HEADER_SECRET_CANARY",
+    "PREFIXED_HEADER_CANARY",
+    "Basic dTpw",
+    syntheticTelegramToken,
+    syntheticGithubToken,
+    syntheticAwsAccessKey,
+    syntheticGoogleKey,
+    syntheticSlackToken,
   ];
   const body = [
     "ordinary before",
@@ -316,24 +399,172 @@ test("log reads fail closed for structured credentials and multiline private mat
     "-----END PRIVATE KEY-----",
     '"password":',
     '  "CONTINUATION_SECRET_CANARY"',
+    "token: |",
+    "  YAML_BLOCK_SECRET_CANARY",
+    "  YAML_BLOCK_SECOND_SECRET_CANARY",
+    "api_token: |2-",
+    "    YAML_INDENT_SECRET_CANARY",
+    "token: &fixture |",
+    "  YAML_ANCHOR_SECRET_CANARY",
+    "token: !!str >+",
+    "  YAML_TAG_SECRET_CANARY",
+    "token:",
+    "- YAML_INDENTLESS_SEQUENCE_CANARY",
+    '"token": [',
+    '  "JSON_ARRAY_CANARY"',
+    "]",
+    '"token": {',
+    '  "nested": {',
+    '    "value": "ordinary nested value"',
+    "  },",
+    '  "later": "JSON_NESTED_LATER_CANARY"',
+    "}",
+    "token: &fixture {",
+    "  value: YAML_ANCHORED_CONTAINER_CANARY",
+    "}",
+    "token: !!map {",
+    "  value: YAML_TAGGED_CONTAINER_CANARY",
+    "}",
+    "token: {",
+    "  # } is comment text, not a structural closer",
+    "  value: YAML_COMMENT_CONTAINER_CANARY",
+    "}",
+    "token:",
+    "# comment before an indentless sequence",
+    "- YAML_SEQUENCE_COMMENT_CANARY",
+    "token: [ordinary first value,",
+    "  YAML_INLINE_FLOW_LATER_CANARY]",
+    "token: ordinary first value",
+    "  YAML_PLAIN_CONTINUATION_CANARY",
+    'token: "ordinary first value',
+    '  YAML_QUOTED_CONTINUATION_CANARY"',
+    'token: "ordinary first value',
+    'YAML_SAME_INDENT_QUOTED_CANARY"',
+    "INFO payload token: [",
+    "  PREFIXED_CONTAINER_CANARY",
+    "]",
+    "argv: worker --password CLI_SECRET_CANARY",
+    "X-Api-Token HEADER_SECRET_CANARY",
+    "2026-08-19T00:00:00Z INFO X-Api-Token PREFIXED_HEADER_CANARY",
+    "transport Basic dTpw",
+    `telegram=${syntheticTelegramToken}`,
+    `github=${syntheticGithubToken}`,
+    `aws=${syntheticAwsAccessKey}`,
+    `google=${syntheticGoogleKey}`,
+    `slack=${syntheticSlackToken}`,
     `session=${syntheticJwt("JWT_SIGNATURE_CANARY")}`,
     "ordinary after",
   ].join("\n");
   const broker = new HaReadBroker({
     supervisorToken: TOKEN,
     fetchImpl: async (url, options) => {
-      assert.equal(url, "http://supervisor/core/logs");
+      assert.equal(url, "http://supervisor/core/logs?lines=228&no_colors");
       assert.equal(options.redirect, "error");
       return response(200, body, { raw: true });
     },
   });
 
-  const logs = await broker.dispatch("core_logs", { lines: 50 });
+  const logs = await broker.dispatch("core_logs", { lines: 100 });
   const serialized = JSON.stringify(logs);
   for (const canary of canaries) assert.equal(serialized.includes(canary), false);
   assert.equal(logs.lines.includes("ordinary before"), true);
   assert.equal(logs.lines.includes("ordinary after"), true);
-  assert(logs.lines.filter((line) => line === "[REDACTED_SENSITIVE_LOG_LINE]").length >= 9);
+  assert(logs.lines.filter((line) => line === "[REDACTED_SENSITIVE_LOG_LINE]").length >= 21);
+});
+
+test("log tails preserve the last real line and do not over-redact ordinary status text", async () => {
+  const broker = new HaReadBroker({
+    supervisorToken: TOKEN,
+    fetchImpl: async (url) => {
+      assert.equal(url, "http://supervisor/core/logs?lines=129&no_colors");
+      return response(
+        200,
+        "Authorization failed for user\nCookie storage ready\nBasic authentication enabled\nBearer authentication enabled\nBasic mode2\n",
+        { raw: true },
+      );
+    },
+  });
+
+  const logs = await broker.dispatch("core_logs", { lines: 1 });
+  assert.deepEqual(logs, { lines: ["Basic mode2"], truncated: true });
+});
+
+test("log tails fail closed when the upstream window starts inside a sensitive block", async () => {
+  const cappedSensitiveWindow = Array.from(
+    { length: 129 },
+    (_, index) => `  ORPHAN_BLOCK_CANARY_${index}`,
+  ).join("\n");
+  const broker = new HaReadBroker({
+    supervisorToken: TOKEN,
+    fetchImpl: async (url) => {
+      assert.equal(url, "http://supervisor/core/logs?lines=129&no_colors");
+      return response(200, `${cappedSensitiveWindow}\n`, { raw: true });
+    },
+  });
+
+  const logs = await broker.dispatch("core_logs", { lines: 1 });
+  assert.deepEqual(logs, {
+    lines: ["[REDACTED_SENSITIVE_LOG_LINE]"],
+    truncated: true,
+  });
+  assert.equal(JSON.stringify(logs).includes("ORPHAN_BLOCK_CANARY"), false);
+});
+
+test("complete short log windows preserve ordinary indented lines", async () => {
+  const broker = new HaReadBroker({
+    supervisorToken: TOKEN,
+    fetchImpl: async (url) => {
+      assert.equal(url, "http://supervisor/core/logs?lines=129&no_colors");
+      return response(200, "  retrying connection\n", { raw: true });
+    },
+  });
+
+  const logs = await broker.dispatch("core_logs", { lines: 1 });
+  assert.deepEqual(logs, { lines: ["  retrying connection"], truncated: false });
+});
+
+test("credential keys in logger prose do not turn earlier apostrophes into flow quotes", async () => {
+  const broker = new HaReadBroker({
+    supervisorToken: TOKEN,
+    fetchImpl: async (url) => {
+      assert.equal(url, "http://supervisor/core/logs?lines=131&no_colors");
+      return response(
+        200,
+        "INFO user's token: expired\nINFO service recovered\nINFO healthy\n",
+        { raw: true },
+      );
+    },
+  });
+
+  const logs = await broker.dispatch("core_logs", { lines: 3 });
+  assert.deepEqual(logs, {
+    lines: ["[REDACTED_SENSITIVE_LOG_LINE]", "INFO service recovered", "INFO healthy"],
+    truncated: false,
+  });
+});
+
+test("a folded YAML quote closes without hiding later ordinary log records", async () => {
+  const broker = new HaReadBroker({
+    supervisorToken: TOKEN,
+    fetchImpl: async (url) => {
+      assert.equal(url, "http://supervisor/core/logs?lines=131&no_colors");
+      return response(
+        200,
+        'token: "ordinary\\\n"\nINFO healthy\n',
+        { raw: true },
+      );
+    },
+  });
+
+  const logs = await broker.dispatch("core_logs", { lines: 3 });
+  assert.deepEqual(logs, {
+    lines: [
+      "[REDACTED_SENSITIVE_LOG_LINE]",
+      "[REDACTED_SENSITIVE_LOG_LINE]",
+      "INFO healthy",
+    ],
+    truncated: false,
+  });
 });
 
 test("state reads redact bounded credential signals without hiding ordinary diagnostics", async () => {
@@ -433,6 +664,14 @@ test("broker request validation and upstream cap fail closed", async () => {
   );
   await assert.rejects(
     broker.dispatch("traces", { domain: "automation", run_id: "run_1" }),
+    (error) => error instanceof HaReadError && error.code === "invalid_request",
+  );
+  await assert.rejects(
+    broker.dispatch("host_logs", { identifier: "audit/../../shadow", lines: 10 }),
+    (error) => error instanceof HaReadError && error.code === "invalid_request",
+  );
+  await assert.rejects(
+    broker.dispatch("supervisor_logs", { lines: 501 }),
     (error) => error instanceof HaReadError && error.code === "invalid_request",
   );
   await assert.rejects(
@@ -669,7 +908,7 @@ test("MCP publishes only read-only tools and maps fixed broker actions", async (
     },
   });
   const listed = await handler({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-  assert.equal(listed.result.tools.length, 11);
+  assert.equal(listed.result.tools.length, 14);
   for (const tool of listed.result.tools) {
     assert.equal(tool.annotations.readOnlyHint, true);
     assert.equal(tool.annotations.destructiveHint, false);
@@ -691,6 +930,40 @@ test("MCP publishes only read-only tools and maps fixed broker actions", async (
     params: { name: "ha_read_system_info", arguments: { scope: "supervisor" } },
   });
   assert.deepEqual(calls.pop(), { action: "supervisor_info", payload: {} });
+  await handler({
+    jsonrpc: "2.0",
+    id: 7,
+    method: "tools/call",
+    params: { name: "ha_read_system_info", arguments: { scope: "host" } },
+  });
+  assert.deepEqual(calls.pop(), { action: "host_info", payload: {} });
+  await handler({
+    jsonrpc: "2.0",
+    id: 8,
+    method: "tools/call",
+    params: { name: "ha_read_host_logs", arguments: { identifier: "audit", lines: 50 } },
+  });
+  assert.deepEqual(calls.pop(), {
+    action: "host_logs",
+    payload: { identifier: "audit", lines: 50 },
+  });
+  await handler({
+    jsonrpc: "2.0",
+    id: 9,
+    method: "tools/call",
+    params: { name: "ha_read_supervisor_logs", arguments: { lines: 25 } },
+  });
+  assert.deepEqual(calls.pop(), { action: "supervisor_logs", payload: { lines: 25 } });
+  await handler({
+    jsonrpc: "2.0",
+    id: 10,
+    method: "tools/call",
+    params: { name: "ha_read_addon_logs", arguments: { slug: "example_addon", lines: 30 } },
+  });
+  assert.deepEqual(calls.pop(), {
+    action: "addon_logs",
+    payload: { slug: "example_addon", lines: 30 },
+  });
   await handler({
     jsonrpc: "2.0",
     id: 6,
@@ -719,4 +992,29 @@ test("MCP publishes only read-only tools and maps fixed broker actions", async (
   });
   assert.equal(invalid.result.isError, true);
   assert.equal(calls.length, 0);
+});
+
+test("managed log CLI uses only the token-isolated read broker", async () => {
+  const calls = [];
+  let stdout = "";
+  let stderr = "";
+  const code = await runHaReadLogCli({
+    argv: ["addon", "example_addon", "25"],
+    brokerRequest: async (action, payload) => {
+      calls.push({ action, payload });
+      return { lines: ["ordinary line", "[REDACTED_SENSITIVE_LOG_LINE]"], truncated: false };
+    },
+    output: { write: (value) => { stdout += value; } },
+    errorOutput: { write: (value) => { stderr += value; } },
+  });
+  assert.equal(code, 0);
+  assert.deepEqual(calls, [{ action: "addon_logs", payload: { slug: "example_addon", lines: 25 } }]);
+  assert.equal(stdout, "ordinary line\n[REDACTED_SENSITIVE_LOG_LINE]\n");
+  assert.equal(stderr, "");
+  assert.equal(await runHaReadLogCli({
+    argv: ["addon", "../unsafe", "25"],
+    brokerRequest: async () => assert.fail("invalid CLI arguments reached broker"),
+    output: { write: () => assert.fail("invalid CLI arguments wrote stdout") },
+    errorOutput: { write: () => {} },
+  }), 64);
 });

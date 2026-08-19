@@ -161,10 +161,14 @@ def test_playwright_approval_policy_uses_native_settings_permissions(
         rootfs / "usr/local/lib/antigravity-ha/browser-approval.sh"
     ).read_text(encoding="utf-8")
 
-    assert "browserPermissionRules" in updater
-    assert "mcp(playwright/${tool})" in updater
+    assert "canonicalTelegramPermissionRules" in updater
+    assert 'canonicalTelegramPermissionRules("request-review")' in updater
+    assert 'canonicalTelegramPermissionRules("always-proceed")' in updater
     assert "Legacy browser_approval_policy was retired" in updater
-    assert 'browserPermissionRules()' in updater
+    assert (
+        "value.permissions = "
+        "canonicalTelegramPermissionRules(options.toolPermission);"
+    ) in updater
     assert "browser-approval.sh" not in wrapper
     assert "mcp_servers.playwright" not in wrapper
     assert " -c " not in wrapper
