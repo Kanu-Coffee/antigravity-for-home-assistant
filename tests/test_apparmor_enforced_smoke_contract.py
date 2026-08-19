@@ -389,6 +389,8 @@ def test_enforced_smoke_proves_the_operational_blacklist_and_every_managed_mcp(
         "ha_files_list",
         "ha_files_write_text",
         "APPARMOR_ARBITRARY_MCP_CHILD_PASS",
+        '"ordinary-child-pass\\n"',
+        '"APPARMOR_ARBITRARY_MCP_CHILD_PASS\\n"',
         "apparmor=antigravity_home_assistant-file-client",
         "ha-read-mcp|antigravity-ha-read|ha_read_system_info|",
         "ha-validate-mcp|antigravity-ha-validate|ha_validate_config|{}",
@@ -404,6 +406,8 @@ def test_enforced_smoke_proves_the_operational_blacklist_and_every_managed_mcp(
 
     assert '"text":"managed-file-write-pass\\\\n"' not in smoke
     assert '"text":"managed-nonroot-file-write-pass\\\\n"' not in smoke
+    assert '"ordinary-child-pass\\\\n"' not in smoke
+    assert '"APPARMOR_ARBITRARY_MCP_CHILD_PASS\\\\n"' not in smoke
 
     final_audit = smoke.rindex("assert_relevant_audit_denials\n")
     for unconditional_call in (

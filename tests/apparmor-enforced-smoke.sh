@@ -993,10 +993,10 @@ run_managed_file_mcp_probe() {
           try { fs.readFileSync(path); } catch { denied = true; }
           if (!denied) process.exit(97);
         }
-        fs.writeFileSync("/config/arbitrary-mcp-child.txt", "ordinary-child-pass\\n");
+        fs.writeFileSync("/config/arbitrary-mcp-child.txt", "ordinary-child-pass\n");
         const profile = fs.readFileSync("/proc/self/attr/current", "utf8");
         if (!profile.startsWith("antigravity_home_assistant-command ")) process.exit(98);
-        process.stdout.write("APPARMOR_ARBITRARY_MCP_CHILD_PASS\\n");
+        process.stdout.write("APPARMOR_ARBITRARY_MCP_CHILD_PASS\n");
       ' 2>&1); then
     printf '%s\n' "$child_output" | redact_probe_output >&2
     fail 'an arbitrary MCP child did not enter the credential-blind command profile'
