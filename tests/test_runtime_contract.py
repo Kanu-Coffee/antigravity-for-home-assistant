@@ -288,6 +288,43 @@ def test_ci_builds_and_smokes_both_supported_architectures(
     assert "chromium --version" in arm64_smoke
 
 
+def test_ci_image_handoff_uses_only_bounded_conditional_package_installs(
+    repository_root: Path,
+) -> None:
+    workflow = (repository_root / ".github/workflows/ci.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    def step_body(name: str) -> str:
+        marker = f"      - name: {name}\n"
+        body = workflow.split(marker, 1)[1]
+        return body.split("\n      - name: ", 1)[0]
+
+    export_step = step_body("Export the image once for independent smoke jobs")
+    load_step = step_body("Load the workflow image")
+    conditional = "if ((${#packages[@]} > 0)); then"
+
+    for step in (export_step, load_step):
+        assert "packages=()" in step
+        assert "command -v zstd >/dev/null 2>&1 || packages+=(zstd)" in step
+        assert conditional in step
+        assert step.index("command -v zstd") < step.index(conditional)
+        assert "sudo apt-get update" not in step
+        assert "Acquire::Retries=2" in step
+        assert "Acquire::http::Timeout=15" in step
+        assert "Acquire::https::Timeout=15" in step
+        assert step.count("timeout --signal=TERM --kill-after=10s 120s") == 2
+        install_block = step.split(conditional, 1)[1].split("\n          fi", 1)[0]
+        assert 'apt-get "${apt_options[@]}" update' in install_block
+        assert 'apt-get "${apt_options[@]}" install' in install_block
+        assert "--yes --no-install-recommends" in install_block
+
+    assert "apparmor" not in export_step
+    assert "! command -v apparmor_parser >/dev/null 2>&1" in load_step
+    assert "packages+=(apparmor)" in load_step
+    assert load_step.count("command -v apparmor_parser >/dev/null 2>&1") == 2
+
+
 def test_ci_checks_committed_whitespace_and_generated_artifacts(
     repository_root: Path,
 ) -> None:

@@ -460,8 +460,20 @@ jobs:
       - name: Install AppArmor enforcement tooling
         if: matrix.suite == 'apparmor-enforced'
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes apparmor
+          if ! command -v apparmor_parser >/dev/null 2>&1; then
+            apt_options=(
+              -o Acquire::Retries=2
+              -o Acquire::http::Timeout=15
+              -o Acquire::https::Timeout=15
+            )
+            sudo timeout --signal=TERM --kill-after=10s 120s \
+              apt-get "${apt_options[@]}" update
+            sudo timeout --signal=TERM --kill-after=10s 120s \
+              env DEBIAN_FRONTEND=noninteractive \
+              apt-get "${apt_options[@]}" install \
+                --yes --no-install-recommends apparmor
+          fi
+          command -v apparmor_parser >/dev/null 2>&1
 
       - name: Run full feasible suite against exact digest
         env:

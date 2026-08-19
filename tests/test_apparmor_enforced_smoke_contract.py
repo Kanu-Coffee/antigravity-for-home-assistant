@@ -236,8 +236,10 @@ def test_ci_and_candidate_require_enforcement_against_exact_images() -> None:
         "exec bash tests/apparmor-enforced-smoke.sh "
         "antigravity-for-home-assistant:test"
     ) in ci
+    assert "! command -v apparmor_parser >/dev/null 2>&1" in ci
     assert "packages+=(apparmor)" in ci
-    assert "sudo apt-get install --yes \"${packages[@]}\"" in ci
+    assert "if ((${#packages[@]} > 0)); then" in ci
+    assert "timeout --signal=TERM --kill-after=10s 120s" in ci
 
     assert candidate.count("suite: apparmor-enforced") == 2
     assert (
@@ -249,7 +251,26 @@ def test_ci_and_candidate_require_enforcement_against_exact_images() -> None:
         "suite: apparmor-enforced}"
     ) in candidate
     assert "if: matrix.suite == 'apparmor-enforced'" in candidate
-    assert "sudo apt-get install --yes apparmor" in candidate
+    candidate_install = candidate.split(
+        "      - name: Install AppArmor enforcement tooling\n", 1
+    )[1].split("\n      - name: ", 1)[0]
+    assert "if ! command -v apparmor_parser >/dev/null 2>&1; then" in (
+        candidate_install
+    )
+    assert "sudo apt-get update" not in candidate_install
+    assert "Acquire::Retries=2" in candidate_install
+    assert "Acquire::http::Timeout=15" in candidate_install
+    assert "Acquire::https::Timeout=15" in candidate_install
+    assert (
+        candidate_install.count("timeout --signal=TERM --kill-after=10s 120s")
+        == 2
+    )
+    assert 'apt-get "${apt_options[@]}" update' in candidate_install
+    assert 'apt-get "${apt_options[@]}" install' in candidate_install
+    assert "--yes --no-install-recommends apparmor" in candidate_install
+    assert candidate_install.rstrip().endswith(
+        "command -v apparmor_parser >/dev/null 2>&1"
+    )
     assert (
         'apparmor-enforced) exec bash tests/apparmor-enforced-smoke.sh "$image"'
         in candidate
