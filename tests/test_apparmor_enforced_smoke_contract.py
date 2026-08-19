@@ -383,6 +383,8 @@ def test_enforced_smoke_proves_the_operational_blacklist_and_every_managed_mcp(
         "run_managed_read_validate_memory_mcp_probes",
         "run_managed_file_mcp_probe",
         "antigravity-ha-files",
+        '"text":"managed-file-write-pass\\n"',
+        '"text":"managed-nonroot-file-write-pass\\n"',
         "ha_files_read_text",
         "ha_files_list",
         "ha_files_write_text",
@@ -399,6 +401,9 @@ def test_enforced_smoke_proves_the_operational_blacklist_and_every_managed_mcp(
         'index("telegram_action_propose")',
     ):
         assert token in smoke
+
+    assert '"text":"managed-file-write-pass\\\\n"' not in smoke
+    assert '"text":"managed-nonroot-file-write-pass\\\\n"' not in smoke
 
     final_audit = smoke.rindex("assert_relevant_audit_denials\n")
     for unconditional_call in (

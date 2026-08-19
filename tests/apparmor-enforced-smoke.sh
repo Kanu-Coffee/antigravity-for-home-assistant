@@ -876,9 +876,9 @@ run_managed_file_mcp_probe() {
       '{"jsonrpc":"2.0","id":"list","method":"tools/list","params":{}}' \
       '{"jsonrpc":"2.0","id":"read","method":"tools/call","params":{"name":"ha_files_read_text","arguments":{"path":"/config/ha-files-readable.txt"}}}' \
       '{"jsonrpc":"2.0","id":"list-dir","method":"tools/call","params":{"name":"ha_files_list","arguments":{"path":"/config","limit":50}}}' \
-      '{"jsonrpc":"2.0","id":"write","method":"tools/call","params":{"name":"ha_files_write_text","arguments":{"path":"/config/ha-files-written.txt","text":"managed-file-write-pass\\n"}}}' \
+      '{"jsonrpc":"2.0","id":"write","method":"tools/call","params":{"name":"ha_files_write_text","arguments":{"path":"/config/ha-files-written.txt","text":"managed-file-write-pass\n"}}}' \
       '{"jsonrpc":"2.0","id":"nonroot-read","method":"tools/call","params":{"name":"ha_files_read_text","arguments":{"path":"/config/ha-files-nonroot-readable.txt"}}}' \
-      '{"jsonrpc":"2.0","id":"nonroot-write","method":"tools/call","params":{"name":"ha_files_write_text","arguments":{"path":"/config/ha-files-nonroot-readable.txt","text":"managed-nonroot-file-write-pass\\n"}}}' \
+      '{"jsonrpc":"2.0","id":"nonroot-write","method":"tools/call","params":{"name":"ha_files_write_text","arguments":{"path":"/config/ha-files-nonroot-readable.txt","text":"managed-nonroot-file-write-pass\n"}}}' \
       '{"jsonrpc":"2.0","id":"secret-link","method":"tools/call","params":{"name":"ha_files_read_text","arguments":{"path":"/config/ha-files-secret-link"}}}' \
       '{"jsonrpc":"2.0","id":"storage-link","method":"tools/call","params":{"name":"ha_files_read_text","arguments":{"path":"/config/ha-files-storage-link"}}}' \
       '{"jsonrpc":"2.0","id":"oauth-link","method":"tools/call","params":{"name":"ha_files_read_text","arguments":{"path":"/config/ha-files-oauth-link"}}}' \
