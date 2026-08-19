@@ -363,15 +363,15 @@ def test_enforced_smoke_proves_the_operational_blacklist_and_every_managed_mcp(
         "/usr/local/share/antigravity-ha/AGENTS.md",
         '"/proc/${other_pid}/environ"',
         '"/proc/${other_pid}/fd"',
-        '"/proc/${other_pid}/root"',
+        '"/proc/${other_pid}/root/etc/os-release"',
         '"/proc/${other_pid}/map_files"',
         '"/proc/${other_pid}/task/${other_tid}/environ"',
         '"/proc/${other_pid}/task/${other_tid}/fd"',
-        '"/proc/${other_pid}/task/${other_tid}/root"',
+        '"/proc/${other_pid}/task/${other_tid}/root/etc/os-release"',
         '"/proc/${other_pid}/task/${other_tid}/map_files"',
         "/proc/thread-self/environ",
         "/proc/thread-self/fd",
-        "/proc/thread-self/root",
+        "/proc/thread-self/root/etc/os-release",
         "/proc/thread-self/map_files",
     ):
         assert token in smoke
