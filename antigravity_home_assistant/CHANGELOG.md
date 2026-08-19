@@ -2,6 +2,61 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.0.17] - 2026-08-19
+
+### Fixed
+
+- Restore the native Antigravity CLI under the two enforced interactive runtime
+  profiles. Public 2.0.16 on real HAOS 18.2 amd64 started the full App service
+  graph, authenticated Ingress terminal, and Telegram Bot API connection, but
+  `agy` and `antigravity --version` immediately exited with SIGSEGV/status 139.
+  Every accepted Telegram request reached `session_ready` and then failed within
+  the worker with the same native crash; this was not an Ingress, Bot API,
+  pairing, or conversation-reset failure.
+- Reproduce the fault with the exact public 2.0.16 image under its custom
+  AppArmor profiles. Kernel audit records `file_mmap` permission `m` denied for
+  `/usr/local/libexec/antigravity-real` under `interactive-runtime-restricted`;
+  `interactive-runtime-sensitive-read` contains the same `r`-only rule.
+  Version 2.0.17 changes those two existing exact native-binary rules from read
+  (`r`) to read plus executable memory-map (`rm`). The full blank-auth worker
+  trace also requires exact bootstrap nsswitch/passwd identity reads and runtime
+  `/usr/share/ca-certificates/**` TLS trust-store reads, which are added only to
+  the two interactive transition chains. It adds no new broad `/etc/**` or
+  `/usr/share/**` rule, preserves existing runtime `/etc/** r` and required
+  system-library mappings, and leaves proc, native settings, credentials, and
+  sensitive-path denies unchanged.
+- Preserve the Telegram native termination signal in bounded bridge diagnostics
+  so a SIGSEGV is no longer flattened into an unexplained `worker_failed` event.
+  No stderr, prompt, OAuth material, token, or user content is added to logs.
+- Keep 2.0.13 as the sole breaking AppArmor security-boundary transition.
+  Version 2.0.17 is another corrective patch inside that boundary and is not
+  added to `breaking_versions`.
+
+### Verification and limitations
+
+- The exact public 2.0.16 image reproduces status 139 under the project custom
+  AppArmor policy. With only the two exact `r` to `rm` changes, the local
+  kernel-enforced regression reaches status 0 for `antigravity --version`.
+  The complete corrected profile, including the trace-derived exact identity
+  and TLS trust-store reads, also lets a blank-auth worker traverse its bounded
+  startup while new-broad-rule negative assertions and the existing proc/settings
+  deny canaries remain unchanged. These automated Linux-container results are
+  not HAOS evidence.
+- Real-HAOS acceptance of 2.0.16 is `FAIL`. Real-HAOS 2.0.17 first start,
+  stop/start, restart, native OAuth/session, Web terminal, and Telegram worker
+  acceptance are `NOT RUN` at publication. Real-device aarch64 testing is also
+  `NOT RUN`; the owner waiver is risk acceptance, not an aarch64 `PASS`. Overall
+  v2 acceptance remains `PARTIAL`.
+- Public 2.0.12 is not an automatic or issue-free rollback. Its exact image and
+  tag exist, but the custom 23-profile policy was rejected; the narrow field
+  success was amd64 under `docker-default`, while aarch64 remained `NOT RUN`.
+  Supervisor direct downgrade is unsupported. Restoring an exact 2.0.12 App
+  backup replaces App `/data` and loses post-backup OAuth, memory, approvals,
+  outbox, and identities. Without that backup, do not uninstall the App or
+  manipulate Docker state. A future higher-version compatibility fallback that
+  preserves current `/data` while intentionally reverting custom attachment
+  would be security-degraded and remains an audited `NOT RUN` contingency.
+
 ## [2.0.16] - 2026-08-19
 
 ### Fixed

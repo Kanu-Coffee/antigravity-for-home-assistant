@@ -22,7 +22,7 @@ def test_main_release_is_manual_main_only_and_minimally_authorized() -> None:
         "candidate_run_attempt",
         "confirm",
     }
-    assert inputs["version"]["default"] == "2.0.16"
+    assert inputs["version"]["default"] == "2.0.17"
     assert workflow["permissions"] == {"contents": "read"}
     publish = workflow["jobs"]["publish"]
     assert publish["if"] == "github.ref == 'refs/heads/main'"
@@ -105,21 +105,35 @@ def test_main_release_creates_annotated_tag_and_prerelease_without_fake_evidence
         "continues after publication.\\n'" in text
     )
     assert (
-        "Public 2.0.15 real amd64 HAOS acceptance: `FAIL` (Ingress HTTP and "
-        "WebSocket upgrade succeeded, but ttyd PTY allocation returned EACCES; "
-        "`refresh_managed` rejected malformed `permissions.ask` before "
-        "Telegram-safe normalization and the bridge remained permission-boundary "
-        "blocked)" in text
+        "Public 2.0.16 real amd64 HAOS acceptance: `FAIL` (Ingress, Web terminal, "
+        "and Telegram transport started, but the native CLI exited with "
+        "SIGSEGV/status 139 before `--version` or a Telegram worker could "
+        "complete)" in text
     )
     assert (
-        "2.0.16 correction: add only the exact primary-profile PTY multiplexor "
-        "access required by ttyd, and normalize Telegram-managed permission "
-        "buckets before typed merge validation while preserving fail-closed "
-        "unsafe-file handling" in text
+        "Root cause reproduced from the exact public 2.0.16 image under its "
+        "custom AppArmor profiles: kernel audit denied `file_mmap` permission "
+        "`m` for `/usr/local/libexec/antigravity-real` under "
+        "`interactive-runtime-restricted`; the sensitive-read profile had the "
+        "same `r`-only rule" in text
     )
     assert (
-        "2.0.16 automated kernel-enforced terminal and updater regression gates: "
+        "2.0.17 correction: add exact native ELF memory-map permission plus "
+        "trace-derived bootstrap identity and runtime TLS trust-store reads, "
+        "scoped only to the two interactive transition chains; no broad grants "
+        "are added and existing proc/settings/credential denies remain unchanged"
+        in text
+    )
+    assert (
+        "2.0.17 automated kernel-enforced native CLI/terminal and Telegram "
+        "signal-diagnostic regression gates: "
         "`PASS` for this exact Candidate; this is not HAOS evidence" in text
+    )
+    assert (
+        "Rollback warning: 2.0.12 is not a direct or lossless downgrade; its "
+        "custom AppArmor attachment failed, Supervisor direct downgrade is "
+        "unsupported, and restoring an exact old App backup replaces newer App "
+        "`/data`" in text
     )
     assert "amd64 HAOS acceptance at publication: `NOT RUN`" in text
     assert (
@@ -140,7 +154,7 @@ def test_repository_advertises_the_numeric_tag_published_by_main_release() -> No
         )
     )
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
-    assert config["version"] == inputs["version"]["default"] == "2.0.16"
+    assert config["version"] == inputs["version"]["default"] == "2.0.17"
     assert (
         config["image"]
         == "ghcr.io/kanu-coffee/antigravity-for-home-assistant"

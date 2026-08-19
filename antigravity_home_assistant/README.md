@@ -27,17 +27,23 @@ Home Assistant 안에서 antigravity와 대화하며 설정을 살펴보고 대�
 > [!WARNING]
 > 이 앱은 Home Assistant 설정을 직접 바꿀 수 있는 강한 관리자 도구입니다. Telegram도 CLI와 동등한 관리자 채널이므로 bot token, 허용 chat과 Telegram 계정을 보호하세요. 중요한 변경 전에는 backup을 만들고 계획과 diff를 확인하며 SSH 포트를 인터넷에 직접 공개하지 마세요.
 
-**2.0.16 Web terminal·Telegram 복구:** 실제 HAOS amd64의 공개 2.0.15에서 App과
-Ingress HTTP/WebSocket은 시작됐지만 ttyd PTY 생성이 EACCES로 실패해 Web UI가
-reconnect를 반복했습니다. 같은 시작에서 `refresh_managed`는 malformed
-`permissions.ask`를 Telegram 안전 정규화 전에 거부했고 bridge는
-`permission_boundary_blocked`에 머물렀습니다. 2.0.16은 primary AppArmor profile에
-exact `/dev/ptmx` read/write만 추가하고, 지원되는 안전한 settings에서는 세 permission
-bucket을 typed merge 검증 전에 exact 29/0/33 정책으로 정규화합니다. unsafe 파일은
-계속 fail closed하고 unrelated settings, global MCP, plugin, OAuth와 `/config`는
-보존합니다. 2.0.16 실제 HAOS는 `NOT RUN`, aarch64 장비 부재 면제는 PASS가 아니며
-전체 수용은 `PARTIAL`입니다. 자동 Linux-container gate는 HAOS 증거가 아니고 breaking
-보안 전환은 계속 2.0.13뿐입니다.
+**2.0.17 native CLI 복구:** 실제 HAOS 18.2 amd64의 공개 2.0.16에서 App, Ingress,
+Web terminal과 Telegram Bot API 연결은 기동했지만 `agy`와
+`antigravity --version`이 `Segmentation fault`/status 139로 즉시 종료되고 Telegram
+worker도 같은 native crash로 실패했습니다. exact public 2.0.16 image와 custom
+AppArmor profile 재현의 kernel audit는 `interactive-runtime-restricted`에서
+`/usr/local/libexec/antigravity-real` `file_mmap` permission `m` 거부를 확인했고,
+`interactive-runtime-sensitive-read`에도 동일한 `r`-only rule이 있었습니다.
+2.0.17은 두 exact native-binary rule을 `r`에서 `rm`으로 바꾸고 full blank-auth worker
+trace의 exact bootstrap nsswitch/passwd identity read와 runtime
+`/usr/share/ca-certificates/**` TLS trust-store read만 두 transition chain에 추가합니다.
+새로운 broad `/etc/**`·`/usr/share/**` rule은 추가하지 않고, runtime의 기존
+`/etc/** r`와 필수 system-library mapping 및 proc/settings/credential deny는 유지합니다.
+local kernel-enforced `--version`은 status
+0이지만 2.0.17 실제 HAOS는 `NOT RUN`, aarch64 면제는 PASS가 아니며 전체 수용은
+`PARTIAL`입니다. breaking 목록은 custom security boundary를 활성화한 2.0.13만
+유지합니다. 2.0.12 직접 downgrade는 지원되지 않고 exact App backup 복원은 이후 App
+`/data` 상태를 잃을 수 있으므로 무손실 fallback으로 취급하지 않습니다.
 
 ## 빠른 시작
 

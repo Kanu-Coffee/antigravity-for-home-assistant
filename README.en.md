@@ -32,21 +32,32 @@
 > consult each release's evidence for complete install, update, and rollback
 > verification on both real HAOS architectures.
 
-**2.0.16 Web-terminal and Telegram recovery:** On public 2.0.15 on real HAOS
-18.2 amd64, the App service graph and Ingress HTTP/WebSocket started, but ttyd
-PTY creation returned EACCES and the Web UI repeatedly reconnected. On the same
-device, `refresh_managed` stopped before Telegram-safe normalization when the
-existing `permissions.ask` value was not a string array, so the bridge correctly
-remained `permission_boundary_blocked`. Version 2.0.16 adds only the exact
-`/dev/ptmx` read/write access ttyd needs to the primary AppArmor profile, and on
-an otherwise safe supported settings file it canonicalizes all three permission
-buckets to the exact 29/0/33 policy before typed merge validation. Symlinks,
-hardlinks, non-root ownership, oversized files, and invalid JSON remain
-fail-closed; unrelated settings, global MCP, plugins, OAuth, and `/config` are
-preserved. Real-HAOS 2.0.16 remains `NOT RUN`, the unavailable aarch64-device
-waiver is not a PASS, and overall v2 acceptance is `PARTIAL`. Automated Linux
-container gates are not HAOS evidence. Only 2.0.13 remains the breaking
-security-boundary transition.
+**2.0.17 native-CLI recovery:** On public 2.0.16 on real HAOS 18.2 amd64, the
+App, Ingress, Web terminal, and Telegram Bot API connection started, but `agy`
+and `antigravity --version` immediately exited with `Segmentation fault`/status
+139, and every Telegram worker failed with the same native CLI crash. Reproducing
+the failure with the exact public 2.0.16 image and its custom AppArmor profiles
+showed a kernel-audit denial of `file_mmap` permission `m` on
+`/usr/local/libexec/antigravity-real` under `interactive-runtime-restricted`;
+`interactive-runtime-sensitive-read` contained the same `r`-only rule.
+Version 2.0.17 changes those two exact native-binary rules from `r` to `rm` and
+adds only the full blank-auth worker trace's exact bootstrap nsswitch/passwd
+identity reads plus runtime `/usr/share/ca-certificates/**` TLS trust-store reads
+to the two transition chains. It adds no new broad `/etc/**` or `/usr/share/**`
+rule; existing runtime `/etc/** r`, required system-library mappings, and
+proc/settings/credential denies are unchanged,
+and Telegram now reports a bounded native termination signal instead of hiding
+it behind a generic `worker_failed`. A local kernel-enforced regression reaches
+status 0 for `antigravity --version`, but real-HAOS 2.0.17 remains `NOT RUN`.
+The unavailable aarch64-device waiver is not a PASS, overall v2 acceptance is
+`PARTIAL`, and only 2.0.13 remains the breaking security-boundary transition.
+
+Downgrading to 2.0.12 is not an automatic, lossless recovery path. Its public
+image failed to attach the custom AppArmor policy, and its real-device success
+evidence is limited to amd64 under `docker-default`. Supervisor does not support
+a direct downgrade; restoring an exact 2.0.12 App backup replaces App `/data`
+and can lose later OAuth, memory, approvals, outbox, and identity state. Without
+such a backup, do not uninstall the App or manipulate Docker state.
 
 ## What v2 provides
 
@@ -103,7 +114,7 @@ attach OAuth material to an issue.
 > cannot be modified directly. Protect the bot token, authorized chats, and
 > Telegram accounts as Home Assistant administrator credentials. Basic amd64
 > Bot API reconnect/delivery and App restart passed on 2.0.12, but OAuth, the
-> complete approval/mutation matrix, corrected 2.0.16 terminal/Telegram paths, and
+> complete approval/mutation matrix, corrected 2.0.17 native CLI/Telegram paths, and
 > aarch64 real-device E2E remain incomplete.
 
 Complete official native first-run OAuth once with `ha-antigravity-login` in the

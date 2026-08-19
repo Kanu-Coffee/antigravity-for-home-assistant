@@ -131,9 +131,18 @@ Antigravity 명령이나 설정을 추정하지 않는다. 문서와 고정 bina
   PTY multiplexor 접근 누락으로 ttyd `pty_spawn`이 EACCES를 반환했다. 같은 시작의
   `refresh_managed`는 malformed `permissions.ask`를 Telegram 안전 정규화보다 먼저
   거부해 bridge가 `permission_boundary_blocked`에 머물렀다. 따라서 공개 2.0.15의
-  amd64 HAOS 수용은 `FAIL`이다. 2.0.16은 exact `/dev/ptmx` read/write와 지원되는 안전한
-  settings의 managed permission bucket을 typed merge 검증 전 29/0/33으로 정규화하는
-  교정만 적용한다. 2.0.16 실제 HAOS는 `NOT RUN`이다. aarch64 실기기 `NOT RUN`은
+  amd64 HAOS 수용은 `FAIL`이다. 2.0.16은 이 두 결함을 복구해 App, terminal과 Telegram
+  transport를 시작했지만 `agy`/`antigravity --version`이 SIGSEGV/status 139로 즉시
+  종료되고 Telegram worker도 실패했다. exact public image와 custom profile로 재현한
+  kernel audit는 `interactive-runtime-restricted`에서 exact
+  `/usr/local/libexec/antigravity-real` rule의 `file_mmap` permission `m` 거부를
+  확인했고 sensitive-read에는 동일한 `r`-only rule이 있었다. 2.0.17은 두 rule을
+  `r`에서 `rm`으로 바꾸고 full blank-auth trace의 exact
+  bootstrap nsswitch/passwd identity read와 runtime `/usr/share/ca-certificates/**` TLS
+  trust-store read만 두 transition chain에 추가한다. 새로운 broad `/etc/**`·`/usr/share/**`
+  rule은 추가하지 않고, runtime의 기존 `/etc/** r`와 필수 system-library mapping 및
+  proc/settings/credential deny는 유지한다. local kernel-enforced status 0은 HAOS
+  증거가 아니며 2.0.17 실제 HAOS는 `NOT RUN`이다. aarch64 실기기 `NOT RUN`은
   owner-waived experimental 배포 결정이지 PASS가 아니며 전체 v2 수용은 `PARTIAL`이다.
 - proposal registration만으로 crash durability를 주장하지 않는다. encrypted
   approval/card sealing 전 bridge crash는 사용자가 원 요청을 반복해야 한다.

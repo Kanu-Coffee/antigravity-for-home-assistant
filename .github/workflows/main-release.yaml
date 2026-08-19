@@ -7,7 +7,7 @@ name: Main release
       version:
         description: Numeric App version already present on main
         required: true
-        default: "2.0.16"
+        default: "2.0.17"
         type: string
       candidate_run_id:
         description: Successful Candidate build run ID
@@ -197,9 +197,11 @@ jobs:
               "$RUN_ID" "$RUN_ATTEMPT"
             printf -- '- Multi-arch OCI digest: `%s`\n' \
               "$(jq --raw-output .images.generic.digest "$candidate")"
-            printf -- '- Public 2.0.15 real amd64 HAOS acceptance: `FAIL` (Ingress HTTP and WebSocket upgrade succeeded, but ttyd PTY allocation returned EACCES; `refresh_managed` rejected malformed `permissions.ask` before Telegram-safe normalization and the bridge remained permission-boundary blocked).\n'
-            printf -- '- 2.0.16 correction: add only the exact primary-profile PTY multiplexor access required by ttyd, and normalize Telegram-managed permission buckets before typed merge validation while preserving fail-closed unsafe-file handling.\n'
-            printf -- '- 2.0.16 automated kernel-enforced terminal and updater regression gates: `PASS` for this exact Candidate; this is not HAOS evidence.\n'
+            printf -- '- Public 2.0.16 real amd64 HAOS acceptance: `FAIL` (Ingress, Web terminal, and Telegram transport started, but the native CLI exited with SIGSEGV/status 139 before `--version` or a Telegram worker could complete).\n'
+            printf -- '- Root cause reproduced from the exact public 2.0.16 image under its custom AppArmor profiles: kernel audit denied `file_mmap` permission `m` for `/usr/local/libexec/antigravity-real` under `interactive-runtime-restricted`; the sensitive-read profile had the same `r`-only rule.\n'
+            printf -- '- 2.0.17 correction: add exact native ELF memory-map permission plus trace-derived bootstrap identity and runtime TLS trust-store reads, scoped only to the two interactive transition chains; no broad grants are added and existing proc/settings/credential denies remain unchanged.\n'
+            printf -- '- 2.0.17 automated kernel-enforced native CLI/terminal and Telegram signal-diagnostic regression gates: `PASS` for this exact Candidate; this is not HAOS evidence.\n'
+            printf -- '- Rollback warning: 2.0.12 is not a direct or lossless downgrade; its custom AppArmor attachment failed, Supervisor direct downgrade is unsupported, and restoring an exact old App backup replaces newer App `/data`.\n'
             printf -- '- Status: experimental prerelease; real-device acceptance continues after publication.\n'
             printf -- '- amd64 HAOS acceptance at publication: `NOT RUN`.\n'
             printf -- '- aarch64 HAOS acceptance at publication: `NOT RUN`; owner-waived for experimental deployment, not a PASS.\n'

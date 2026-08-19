@@ -37,11 +37,22 @@ App service graph and Ingress HTTP/WebSocket, but the primary profile lacked PTY
 multiplexor access, so ttyd `pty_spawn` returned EACCES. During the same startup,
 `refresh_managed` rejected malformed `permissions.ask` before Telegram-safe
 normalization and the bridge remained `permission_boundary_blocked`. Real-HAOS
-amd64 acceptance of 2.0.15 is therefore `FAIL`. Version 2.0.16 adds only exact
-`/dev/ptmx` read/write access and pre-validation canonicalization of the managed
-permission buckets to 29/0/33. Real-HAOS 2.0.16 remains `NOT RUN`. Real-device
-aarch64 testing is also `NOT RUN`; its owner waiver covers experimental
-deployment only and is not a PASS. Overall v2 acceptance remains `PARTIAL`.
+amd64 acceptance of 2.0.15 is therefore `FAIL`. Version 2.0.16 repaired both
+faults and started the App, Ingress, Web terminal, and Telegram Bot API
+connection, but `agy` and `antigravity --version` immediately exited with
+SIGSEGV/status 139 and Telegram workers failed with the same native crash. An
+exact public-2.0.16-image/custom-AppArmor reproduction recorded a kernel-audit
+`file_mmap` permission `m` denial on `/usr/local/libexec/antigravity-real` under
+`interactive-runtime-restricted`; `interactive-runtime-sensitive-read` had the
+same `r`-only rule. Version 2.0.17 changes those two exact
+native-binary rules from `r` to `rm` and adds only trace-derived bootstrap
+nsswitch/passwd identity reads and runtime `/usr/share/ca-certificates/**` TLS
+trust-store reads to the two transition chains. It adds no new broad `/etc/**`
+or `/usr/share/**` rule; existing runtime `/etc/** r`, required system-library
+mappings, and proc/settings/credential denies are unchanged. Local kernel-enforced status 0
+for `--version` is not HAOS evidence. Real-HAOS 2.0.17 and real-device aarch64
+testing remain `NOT RUN`; the owner waiver is not a PASS. Overall v2 acceptance
+remains `PARTIAL`.
 
 ### Runtime surfaces
 
@@ -560,8 +571,16 @@ execute rule. Version 2.0.15 also confined the subsequently traced S6/execline
 and Bash, account/nginx, Telegram pause, SSH accounting/OOM, Chromium-child,
 and feedback-subtree accesses to their exact profiles and paths, but omitted
 primary-profile `/dev/ptmx` access and caused PTY allocation EACCES on real
-HAOS. Version 2.0.16 adds only exact `/dev/ptmx rw` to that profile. After
-updating, check `/proc/self/attr/current` from the App terminal and
+HAOS. Version 2.0.16 added exact `/dev/ptmx rw` and started the terminal and
+Telegram transport, but the two interactive runtime profiles' exact
+native-binary rules lacked executable `mmap` permission. The native process
+therefore exited with SIGSEGV/status 139 on real HAOS, and kernel audit recorded
+denied `file_mmap` permission `m`. Version 2.0.17 changes those two rules from
+`r` to `rm` and adds only the full blank-auth trace's exact bootstrap identity
+and runtime `/usr/share/ca-certificates/**` TLS trust-store reads to the two
+transition chains. It adds no new broad `/etc/**` or `/usr/share/**` rule while
+leaving existing runtime `/etc/** r`, required system-library mappings, and
+proc/settings/credential denies unchanged. After updating, check `/proc/self/attr/current` from the App terminal and
 relevant service paths plus Supervisor state for an enforced
 `antigravity_home_assistant` named profile, and review `s6-mkdir` failures and
 unexpected `DENIED` events. Do not disable protection mode or AppArmor as a
@@ -745,6 +764,17 @@ occurs.
 Do not delete `/config`, restore a database, or restore a Home Assistant backup
 without the user's explicit current confirmation.
 
+In particular, do not treat 2.0.12 as an unconditional last-known-good,
+lossless fallback. Its public image and tag exist, but custom 23-profile policy
+attachment failed; narrow field success was amd64 under `docker-default`, and
+aarch64 was `NOT RUN`. Supervisor does not support direct downgrade. Restoring
+an exact 2.0.12 App backup replaces App `/data` and loses post-backup OAuth,
+memory, approvals, outbox, and identities. Without that backup, do not uninstall
+the App or manipulate Docker state. A future higher-version compatibility patch
+that preserves current `/data` while intentionally reverting custom attachment
+would be explicitly security-degraded and remains an audited `NOT RUN`
+contingency.
+
 ## Troubleshooting
 
 ### App installation or startup fails
@@ -757,6 +787,12 @@ without the user's explicit current confirmation.
 - On public 2.0.15, repeated `pty_spawn: 13` and ttyd restarts after Ingress HTTP
   200 and WebSocket 101 cannot be repaired by selecting Reconnect. Update to
   2.0.16 or later, then retest actual terminal input and reconnection.
+- On public 2.0.16, if the Web terminal connects but `agy` or
+  `antigravity --version` exits with `Segmentation fault` and status 139 while
+  Telegram requests immediately become `worker_failed`, do not classify it as
+  a session-reset or reconnect problem. Update to 2.0.17 or later, then verify
+  `antigravity --version` status 0 before testing an interactive conversation
+  and a Telegram worker. Do not disable AppArmor or protection mode.
 
 ### OAuth fails
 
@@ -793,6 +829,10 @@ without the user's explicit current confirmation.
 - If `request_failed` has `reason_class=authentication_required`, do not repeat
   Bot pairing. Run `ha-antigravity-login` from a trusted App Web terminal or SSH
   session.
+- When `request_failed` includes a bounded native termination signal, use that
+  class to distinguish a CLI crash from an ordinary exit. Never share stderr,
+  prompts, OAuth material, or token text. The public-2.0.16 SIGSEGV cannot be
+  repaired with `/new`, pairing, or reconnect.
 - `reason_class=headless_read_denied` means a non-allowlisted headless file read
   was blocked. If it repeats for an ordinary question, do not edit user settings
   or add `read_file(*)`; update to the latest App version and restart.
@@ -861,9 +901,9 @@ these items `VERIFIED`:
 
 - Clean install on real HAOS amd64, and install/start/update on aarch64
 - Native Antigravity OAuth and plugin discovery on both architectures
-- Corrected 2.0.16 custom AppArmor profiles attached in enforce mode with
-  successful first start, stop/start, restart, Web-terminal PTY/reconnect, and
-  Telegram reconciliation on HAOS
+- Corrected 2.0.17 custom AppArmor profiles attached in enforce mode with
+  successful native `--version`/conversation, first start, stop/start, restart,
+  Web-terminal PTY/reconnect, and Telegram worker completion on HAOS
 - Actual pull of the public GHCR generic manifest and per-architecture digests
 - End-to-end dashboard, live Telegram cards/callbacks/commands/HA actions, all
   migration modes, and rollback
@@ -876,7 +916,8 @@ The current narrow field record is: 2.0.12 amd64 Telegram reconcile/reconnect
 and App restart/reconnect `PASS`, custom AppArmor attachment on that image
 `FAIL`, public 2.0.13 S6 runtime startup `FAIL`, public 2.0.14 resolved Bashio
 execute startup `FAIL`, public 2.0.15 Web-terminal PTY EACCES plus Telegram
-`refresh_managed` ordering `FAIL`, and 2.0.16 plus aarch64 real-device acceptance
+`refresh_managed` ordering `FAIL`, public 2.0.16 native `file_mmap` denial plus
+SIGSEGV/status 139 `FAIL`, and 2.0.17 plus aarch64 real-device acceptance
 `NOT RUN`. The aarch64 waiver is not a PASS and overall v2 acceptance is
 `PARTIAL`. This does not pass the complete HA-001 through HA-008 or AA-001
 matrices.
