@@ -659,6 +659,7 @@ def test_apparmor_limits_cold_start_mutations_to_traced_init_paths(
 
     expected_profiles_by_rule = {
         "deny capability fsetid,": {"antigravity_home_assistant-init"},
+        "capability fsetid,": {"antigravity_home_assistant-file-client"},
         "/etc/.pwd.lock rwk,": {"antigravity_home_assistant-init"},
         "/etc/{passwd,shadow}{,+,-,.lock,.[0-9]*} rwkl,": {
             "antigravity_home_assistant-init"
@@ -689,9 +690,6 @@ def test_apparmor_limits_cold_start_mutations_to_traced_init_paths(
         }
         assert actual_profiles == expected_profiles
         assert source.count(f"  {rule}\n") == len(expected_profiles)
-
-    for rules in rules_by_profile.values():
-        assert "capability fsetid," not in rules
 
     # Bash probes /dev/tty even in noninteractive mode. Keep those probes
     # denied without audit noise instead of granting daemon profiles a TTY.

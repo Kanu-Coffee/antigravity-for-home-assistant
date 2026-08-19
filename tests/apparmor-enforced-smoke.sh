@@ -922,7 +922,7 @@ run_managed_file_mcp_probe() {
           == "ordinary-nonroot-file-mcp-canary\n"
         and .[6].result.isError == false
         and .[6].result.structuredContent.result.created == false
-        and ([.[7:11].result.structuredContent.error] | unique)
+        and ([.[7:11][] | .result.structuredContent.error] | unique)
           == ["unsafe_path"]
         and .[11].result.structuredContent.error == "unsafe_file"
         and .[12].result.structuredContent.error == "access_denied"

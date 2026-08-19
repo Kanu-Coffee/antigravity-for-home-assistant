@@ -110,6 +110,8 @@ def test_file_mcp_has_a_dedicated_resolved_target_apparmor_boundary(
         ) in section
     for broad in (
         "capability dac_override,",
+        "capability fsetid,",
+        "/usr/local/lib/python3.11/dist-packages/ r,",
         "/data/home/** rwkl,",
         "/config/** rwkl,",
         "/share/** rwkl,",

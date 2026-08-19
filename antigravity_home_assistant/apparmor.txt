@@ -2037,6 +2037,10 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   signal,
   capability chown,
   capability dac_override,
+  # Atomic replacement of an ordinary file owned by another uid may ask the
+  # kernel to preserve its set-ID bits even when none are currently set. Keep
+  # this capability confined to the descriptor-safe file helper.
+  capability fsetid,
   capability fowner,
 
   # This is the only model-facing file implementation. The native file tools
@@ -2051,6 +2055,9 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   /usr/bin/python3 rix,
   /usr/bin/python3.* rix,
   /usr/lib/** rm,
+  # Python's isolated site initialization probes this directory before the
+  # helper starts. Directory enumeration is not required.
+  /usr/local/lib/python3.11/dist-packages/ r,
   /usr/local/bin/ha-files-mcp rix,
   /usr/local/share/antigravity-ha/ha-files-mcp.py r,
   /lib/** rm,
