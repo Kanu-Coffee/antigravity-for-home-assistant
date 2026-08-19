@@ -266,7 +266,7 @@ def test_apparmor_docs_describe_discrete_px_profiles() -> None:
         )
 
 
-def test_v215_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> None:
+def test_v216_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> None:
     changelog = re.sub(
         r"\s+",
         " ",
@@ -274,9 +274,20 @@ def test_v215_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> 
     )
     assert changelog.startswith(
         "# Changelog All notable changes to this App are documented in this file. "
-        "## [2.0.15] - 2026-08-19"
+        "## [2.0.16] - 2026-08-19"
     )
     for fragment in (
+        "public 2.0.15 on real HAOS 18.2 amd64",
+        "ttyd could not allocate a PTY",
+        "exact `/dev/ptmx` read/write access",
+        "existing `permissions.ask` value is malformed",
+        "canonicalizes all three managed permission buckets before typed merge validation",
+        "exact 29 allow/0 ask/33 deny policy",
+        "Preserve fail-closed handling for symlink, hardlink, non-root-owned, oversized, and invalid-JSON settings",
+        "public 2.0.15 acceptance as `FAIL`",
+        "Real-HAOS acceptance of the corrected 2.0.16 image is `NOT RUN`",
+        "Overall v2 acceptance remains `PARTIAL`",
+        "## [2.0.15] - 2026-08-19",
         "public 2.0.14 amd64 HAOS update failed at `antigravity-ha-init`",
         "`/usr/lib/bashio/bashio`",
         "`/package/admin/s6-overlay-3.2.2.0/command/with-contenv`",
@@ -311,11 +322,11 @@ def test_v215_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> 
         "owner explicitly waived",
         "is not an aarch64 `PASS`",
     ):
-        assert fragment in changelog, f"2.0.15 changelog evidence drift: {fragment}"
+        assert fragment in changelog, f"2.0.16 changelog evidence drift: {fragment}"
 
     plan = re.sub(r"\s+", " ", read(V2 / "test-plan.md"))
     for fragment in (
-        "2.0.13~2.0.15 Supervisor AppArmor와 startup 회귀",
+        "2.0.13~2.0.16 Supervisor AppArmor와 startup 회귀",
         "2.0.11→2.0.12 `preserve` update",
         "App restart/reconnect는 `PASS`",
         "`docker-default (enforce)`여서 `FAIL`",
@@ -336,10 +347,14 @@ def test_v215_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> 
         "실제 `/data/options.json`을 denial canary로 사용하지 않는다",
         "`Kernel-enforced AppArmor startup smoke`",
         "Candidate native amd64/aarch64에서 필수지만 HAOS 증거로 승격하지 않는다",
-        "2.0.15 실기기 AppArmor 결과는 현재 `NOT RUN`",
+        "2.0.15 Web terminal/AppArmor 수용은 `FAIL`",
+        "primary profile에 exact `/dev/ptmx rw`",
+        "ttyd WebSocket→PTY→tmux 연결",
+        "malformed allow/ask/deny fixture",
+        "2.0.16 실기기 결과는 현재 `NOT RUN`",
         "aarch64 장비 부재 owner waiver는 PASS가 아니며 전체 v2 수용은 `PARTIAL`",
     ):
-        assert fragment in plan, f"2.0.15 test-plan evidence drift: {fragment}"
+        assert fragment in plan, f"2.0.16 test-plan evidence drift: {fragment}"
 
     security = re.sub(r"\s+", " ", read(V2 / "security.md"))
     for fragment in (
@@ -355,8 +370,11 @@ def test_v215_docs_preserve_the_real_haos_result_and_owner_waiver_boundary() -> 
         "`/var/cache/fontconfig/*`",
         "`/package/admin/**` 전체 execute",
         "`/etc/**` 전체 write",
+        "primary profile의 `/dev/ptmx` 접근 누락",
+        "exact `/dev/ptmx rw`",
+        "2.0.16 실기기 enforce·재시작은 `NOT RUN`",
     ):
-        assert fragment in security, f"2.0.15 security scope drift: {fragment}"
+        assert fragment in security, f"2.0.16 security scope drift: {fragment}"
 
 
 def test_telegram_shared_context_inheritance_is_local_and_haos_gate_remains() -> None:
@@ -713,7 +731,7 @@ def test_v210_docs_define_receipt_fallback_multi_choice_and_restart_boundary() -
     assert "## [2.0.10]" in changelog
     assert "full App or broker restart rejects an unstarted in-memory proposal" in changelog
     assert "live Telegram/OAuth E2E" not in changelog
-    assert 'version: "2.0.15"' in documents["migration"]
+    assert 'version: "2.0.16"' in documents["migration"]
 
 
 def test_v209_docs_match_native_sandbox_and_mediated_settings_policy() -> None:
@@ -884,7 +902,7 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
         "telegram_session_delivery",
     }
     template = json.loads(read(V2 / "release-evidence-template.json"))
-    assert template["version"] == "2.0.15"
+    assert template["version"] == "2.0.16"
     assert set(template["gates"]) == expected_gates
     assert "HA-008" not in json.dumps(template, sort_keys=True)
     for gate in template["gates"].values():

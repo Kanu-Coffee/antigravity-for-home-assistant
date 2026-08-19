@@ -125,6 +125,49 @@ def test_enforced_smoke_requires_two_clean_startups_and_a_denial_canary() -> Non
 def test_enforced_smoke_exercises_ssh_browser_feedback_and_accounting() -> None:
     smoke = read("tests/apparmor-enforced-smoke.sh")
 
+    for ttyd_token in (
+        "run_ttyd_websocket_probe",
+        "tests/ttyd_websocket_smoke.py",
+        'nsenter --target "$container_pid" --net --',
+        "ws://127.0.0.1:7682/ws",
+        "reconnect=same resize=96x32 cwd=/config",
+        "the confined loopback ttyd WebSocket/PTY probe failed",
+    ):
+        assert ttyd_token in smoke
+    ttyd_probe = smoke.split("run_ttyd_websocket_probe() {", 1)[1].split(
+        "\n}", 1
+    )[0]
+    preflight = smoke.split("require_enforcement_host() {", 1)[1].split(
+        "\n}", 1
+    )[0]
+    assert preflight.count("command -v python3") == 1
+    assert "PYTHON3_BIN=$(command -v python3 2>/dev/null || true)" in preflight
+    assert "[[ -n $PYTHON3_BIN && -x $PYTHON3_BIN ]]" in preflight
+    assert "readonly PYTHON3_BIN" in preflight
+    assert '"$PYTHON3_BIN" "$TTYD_WEBSOCKET_SMOKE"' in ttyd_probe
+    assert "/usr/bin/python3" not in ttyd_probe
+    assert "--mount" not in ttyd_probe
+    assert "docker port" not in ttyd_probe
+    assert smoke.count('run_ttyd_websocket_probe "$FIRST_CONTAINER"') == 1
+    assert smoke.index(
+        'assert_enforced_container_ready "$FIRST_CONTAINER"'
+    ) < smoke.index('run_ttyd_websocket_probe "$FIRST_CONTAINER"')
+    assert smoke.index(
+        'run_ttyd_websocket_probe "$FIRST_CONTAINER"'
+    ) < smoke.index('run_confined_feature_probes "$FIRST_CONTAINER"')
+
+    ttyd_client = read("tests/ttyd_websocket_smoke.py")
+    for lifecycle_token in (
+        "first_stream, _ = connect(sys.argv[1])",
+        "send_resize(first_stream, 120, 40)",
+        "second_stream, _ = connect(sys.argv[1], columns=88, rows=28)",
+        "second_state[:3] != first_state[:3]",
+        "send_resize(second_stream, 96, 32)",
+        "resized_state[:3] != first_state[:3]",
+        "reconnect=same resize=96x32 cwd=/config",
+    ):
+        assert lifecycle_token in ttyd_client
+
     for ssh_token in (
         "generate_disposable_ssh_key",
         "ssh-keygen -q -t ed25519",
@@ -193,8 +236,25 @@ def test_ci_and_candidate_require_enforcement_against_exact_images() -> None:
         "exec bash tests/apparmor-enforced-smoke.sh "
         "antigravity-for-home-assistant:test"
     ) in ci
+    static_parse = ci.split(
+        "      - name: Parse the enforcing AppArmor profile\n", 1
+    )[1].split("\n      - name: ", 1)[0]
+    assert "if ! command -v apparmor_parser >/dev/null 2>&1; then" in static_parse
+    assert "sudo apt-get update" not in static_parse
+    assert "Acquire::Retries=2" in static_parse
+    assert "Acquire::http::Timeout=15" in static_parse
+    assert "Acquire::https::Timeout=15" in static_parse
+    assert static_parse.count("timeout --signal=TERM --kill-after=10s 120s") == 2
+    assert 'apt-get "${apt_options[@]}" update' in static_parse
+    assert 'apt-get "${apt_options[@]}" install' in static_parse
+    assert "--yes --no-install-recommends apparmor" in static_parse
+    assert static_parse.count("command -v apparmor_parser >/dev/null 2>&1") == 2
+    assert static_parse.rindex("command -v apparmor_parser") < static_parse.index(
+        "sudo apparmor_parser"
+    )
     assert "packages+=(apparmor)" in ci
-    assert "sudo apt-get install --yes \"${packages[@]}\"" in ci
+    assert "if ((${#packages[@]} > 0)); then" in ci
+    assert "timeout --signal=TERM --kill-after=10s 120s" in ci
 
     assert candidate.count("suite: apparmor-enforced") == 2
     assert (
@@ -206,7 +266,26 @@ def test_ci_and_candidate_require_enforcement_against_exact_images() -> None:
         "suite: apparmor-enforced}"
     ) in candidate
     assert "if: matrix.suite == 'apparmor-enforced'" in candidate
-    assert "sudo apt-get install --yes apparmor" in candidate
+    candidate_install = candidate.split(
+        "      - name: Install AppArmor enforcement tooling\n", 1
+    )[1].split("\n      - name: ", 1)[0]
+    assert "if ! command -v apparmor_parser >/dev/null 2>&1; then" in (
+        candidate_install
+    )
+    assert "sudo apt-get update" not in candidate_install
+    assert "Acquire::Retries=2" in candidate_install
+    assert "Acquire::http::Timeout=15" in candidate_install
+    assert "Acquire::https::Timeout=15" in candidate_install
+    assert (
+        candidate_install.count("timeout --signal=TERM --kill-after=10s 120s")
+        == 2
+    )
+    assert 'apt-get "${apt_options[@]}" update' in candidate_install
+    assert 'apt-get "${apt_options[@]}" install' in candidate_install
+    assert "--yes --no-install-recommends apparmor" in candidate_install
+    assert candidate_install.rstrip().endswith(
+        "command -v apparmor_parser >/dev/null 2>&1"
+    )
     assert (
         'apparmor-enforced) exec bash tests/apparmor-enforced-smoke.sh "$image"'
         in candidate

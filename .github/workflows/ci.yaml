@@ -117,8 +117,20 @@ jobs:
       - name: Run ShellCheck
         if: matrix.check == 'shellcheck'
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes shellcheck
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            apt_options=(
+              -o Acquire::Retries=2
+              -o Acquire::http::Timeout=15
+              -o Acquire::https::Timeout=15
+            )
+            sudo timeout --signal=TERM --kill-after=10s 120s \
+              apt-get "${apt_options[@]}" update
+            sudo timeout --signal=TERM --kill-after=10s 120s \
+              env DEBIAN_FRONTEND=noninteractive \
+              apt-get "${apt_options[@]}" install \
+                --yes --no-install-recommends shellcheck
+          fi
+          command -v shellcheck >/dev/null 2>&1
           git grep -Il -E \
             '^#!.*((ba|da|k|z)?sh|bashio)([[:space:]]|$)' \
             -- .github/scripts antigravity_home_assistant/rootfs tests \
@@ -145,8 +157,20 @@ jobs:
       - name: Parse the enforcing AppArmor profile
         if: matrix.check == 'apparmor'
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes apparmor
+          if ! command -v apparmor_parser >/dev/null 2>&1; then
+            apt_options=(
+              -o Acquire::Retries=2
+              -o Acquire::http::Timeout=15
+              -o Acquire::https::Timeout=15
+            )
+            sudo timeout --signal=TERM --kill-after=10s 120s \
+              apt-get "${apt_options[@]}" update
+            sudo timeout --signal=TERM --kill-after=10s 120s \
+              env DEBIAN_FRONTEND=noninteractive \
+              apt-get "${apt_options[@]}" install \
+                --yes --no-install-recommends apparmor
+          fi
+          command -v apparmor_parser >/dev/null 2>&1
           sudo apparmor_parser --skip-kernel-load --skip-cache \
             antigravity_home_assistant/apparmor.txt
 
@@ -273,8 +297,22 @@ jobs:
 
       - name: Export the image once for independent smoke jobs
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes zstd
+          packages=()
+          command -v zstd >/dev/null 2>&1 || packages+=(zstd)
+          if ((${#packages[@]} > 0)); then
+            apt_options=(
+              -o Acquire::Retries=2
+              -o Acquire::http::Timeout=15
+              -o Acquire::https::Timeout=15
+            )
+            sudo timeout --signal=TERM --kill-after=10s 120s \
+              apt-get "${apt_options[@]}" update
+            sudo timeout --signal=TERM --kill-after=10s 120s \
+              env DEBIAN_FRONTEND=noninteractive \
+              apt-get "${apt_options[@]}" install \
+                --yes --no-install-recommends "${packages[@]}"
+          fi
+          command -v zstd >/dev/null 2>&1
           docker save antigravity-for-home-assistant:test \
             | zstd --threads=0 --fast=3 \
               -o antigravity-for-home-assistant-amd64.tar.zst
@@ -321,12 +359,29 @@ jobs:
         env:
           SUITE: ${{ matrix.suite }}
         run: |
-          sudo apt-get update
-          packages=(zstd)
-          if [[ "$SUITE" == apparmor-enforced ]]; then
-            packages+=(apparmor)
+          packages=()
+          command -v zstd >/dev/null 2>&1 || packages+=(zstd)
+          if [[ "$SUITE" == apparmor-enforced ]] \
+            && ! command -v apparmor_parser >/dev/null 2>&1; then
+              packages+=(apparmor)
           fi
-          sudo apt-get install --yes "${packages[@]}"
+          if ((${#packages[@]} > 0)); then
+            apt_options=(
+              -o Acquire::Retries=2
+              -o Acquire::http::Timeout=15
+              -o Acquire::https::Timeout=15
+            )
+            sudo timeout --signal=TERM --kill-after=10s 120s \
+              apt-get "${apt_options[@]}" update
+            sudo timeout --signal=TERM --kill-after=10s 120s \
+              env DEBIAN_FRONTEND=noninteractive \
+              apt-get "${apt_options[@]}" install \
+                --yes --no-install-recommends "${packages[@]}"
+          fi
+          command -v zstd >/dev/null 2>&1
+          if [[ "$SUITE" == apparmor-enforced ]]; then
+            command -v apparmor_parser >/dev/null 2>&1
+          fi
           zstd --decompress --stdout \
             antigravity-for-home-assistant-amd64.tar.zst | docker load
 

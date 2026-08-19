@@ -27,19 +27,19 @@ Use antigravity inside Home Assistant to inspect your setup and improve dashboar
 > [!WARNING]
 > This app is a powerful administrative tool that can directly change your Home Assistant configuration. Telegram is equivalent to the CLI as an administrator channel, so protect the bot token, authorized chats, and Telegram accounts. Back up important data, review plans and diffs, and never expose the SSH port directly to the internet.
 
-**2.0.15 Bashio/AppArmor init recovery:** On real HAOS amd64, the public 2.0.14
-image reached the S6 service graph but custom AppArmor denied execution of the
-resolved `/usr/lib/bashio/bashio` target, so init exited 126.
-`/command/with-contenv` in the init path also resolves to an image-owned S6
-package target. Full cold-start tracing then identified the bounded runtime
-closure for resolved S6/execline and Bash execution, init account/nginx state,
-Telegram pause, SSH accounting/OOM, Chromium children, and the feedback-report
-subtree. Version 2.0.15 permits only those profile-scoped exact paths, without
-adding new broad execute or write access to `/usr/lib/**`, `/package/admin/**`, or
-`/etc/**`. A required kernel-enforced cold-start and fresh-container restart
-smoke is automated Linux evidence, not HAOS evidence. Real-HAOS 2.0.15 remains
-`NOT RUN`, the unavailable aarch64-device waiver is not a PASS, and overall
-acceptance is `PARTIAL`. Only 2.0.13 remains the breaking security transition.
+**2.0.16 Web-terminal and Telegram recovery:** On public 2.0.15 on real HAOS
+amd64, the App and Ingress HTTP/WebSocket started, but ttyd PTY creation returned
+EACCES and the Web UI repeatedly reconnected. During the same startup,
+`refresh_managed` rejected malformed `permissions.ask` before Telegram-safe
+normalization, so the bridge remained `permission_boundary_blocked`. Version
+2.0.16 adds only exact `/dev/ptmx` read/write access to the primary AppArmor
+profile and, for an otherwise safe supported settings file, canonicalizes all
+three permission buckets to the exact 29/0/33 policy before typed merge
+validation. Unsafe files remain fail-closed; unrelated settings, global MCP,
+plugins, OAuth, and `/config` are preserved. Real-HAOS 2.0.16 remains `NOT RUN`,
+the unavailable aarch64-device waiver is not a PASS, and overall acceptance is
+`PARTIAL`. Automated Linux-container gates are not HAOS evidence. Only 2.0.13
+remains the breaking security transition.
 
 ## Quick start
 

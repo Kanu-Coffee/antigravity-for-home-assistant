@@ -2,6 +2,50 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.0.16] - 2026-08-19
+
+### Fixed
+
+- Restore the Ingress Web terminal under the enforced custom AppArmor boundary.
+  On public 2.0.15 on real HAOS 18.2 amd64, authenticated Ingress HTTP and token
+  requests returned 200 and the WebSocket upgraded with 101, but ttyd could not
+  allocate a PTY: `pty_spawn` returned EACCES and S6 repeatedly restarted ttyd.
+  The primary profile now grants only the exact `/dev/ptmx` read/write access
+  needed for PTY allocation; sensitive files, credentials, and broader device
+  paths remain denied.
+- Repair Telegram-enabled `refresh_managed` for a safe, parseable settings file
+  whose existing `permissions.ask` value is malformed. Version 2.0.15 validated
+  the stale bucket as a string array before the Telegram-safe replacement could
+  canonicalize it, so refresh failed and the bridge correctly remained at
+  `permission_boundary_blocked`. Version 2.0.16 canonicalizes all three managed
+  permission buckets before typed merge validation, then applies the exact
+  29 allow/0 ask/33 deny policy while preserving unrelated top-level settings,
+  global MCP, plugins, OAuth, and `/config`.
+- Preserve fail-closed handling for symlink, hardlink, non-root-owned,
+  oversized, and invalid-JSON settings. This recovery does not broaden which
+  files are eligible for automatic repair and does not bypass the bridge's
+  effective permission-boundary check.
+- Keep 2.0.13 as the sole breaking AppArmor security-boundary transition.
+  Version 2.0.16 is a corrective patch inside that boundary and is not added to
+  `breaking_versions`.
+
+### Verification and limitations
+
+- Regression coverage requires an actual PTY allocation through the enforced
+  primary profile and supported Telegram `refresh_managed` fixtures with
+  malformed allow/ask/deny bucket shapes, while retaining unsafe-file negative
+  cases and exact permission-policy assertions.
+- A sanitized real-HAOS 18.2 amd64 report records public 2.0.15 acceptance as
+  `FAIL`: the App service graph reached ready state, but the Web terminal could
+  not create a PTY and Telegram refresh stopped before safe policy
+  normalization, leaving the bridge blocked. This is neither an Ingress
+  transport outage nor a Telegram Bot API outage.
+- Real-HAOS acceptance of the corrected 2.0.16 image is `NOT RUN` at this source
+  cutoff. Automated Linux-container gates are not HAOS evidence. Real-device
+  aarch64 testing also remains `NOT RUN`; the project owner's experimental
+  deployment waiver is a risk acceptance, not an aarch64 `PASS`. Overall v2
+  acceptance remains `PARTIAL`.
+
 ## [2.0.15] - 2026-08-19
 
 ### Fixed

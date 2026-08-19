@@ -134,6 +134,10 @@ card/callback 또는 실제 HA/command E2E가 아니다. 이 항목들은 계속
   idempotency, prepared/commit crash recovery
 - image default generator, user-files updater와 bridge가 같은 policy validator를 쓰며
   canonical output은 bridge gate를 통과
+- 2.0.16은 안전한 기존 settings의 allow/ask/deny 각 bucket이 non-array이거나 array 안
+  항목이 non-string인 fixture에서도 managed 세 bucket을 typed merge 검증 전에 exact
+  canonical policy로 교체한다. unrelated settings 보존, backup/ownership state와 두 번째
+  실행 no-write/no-backup idempotency를 각 malformed bucket마다 검사한다.
 - invalid effective settings는 Bot API 호출 전 `permission_boundary_blocked` 한 건을
   만들고 bridge process를 exit시키거나 S6 restart loop를 만들지 않는 live hold
 
@@ -146,7 +150,7 @@ restart/reconnect는 `PASS`했다. 이 좁은 결과는 unrelated settings/globa
 `FAIL`이고, aarch64 실기기 결과는 장비 부재로 `NOT RUN`이다. 소유자가 experimental
 배포에서 aarch64 결과를 면제했지만 이 면제를 PASS 증거로 기록하지 않는다.
 
-### 2.0.13~2.0.15 Supervisor AppArmor와 startup 회귀
+### 2.0.13~2.0.16 Supervisor AppArmor와 startup 회귀
 
 2.0.12 `apparmor.txt`의 들여쓰기 없는 최상위 `profile` 선언 23개는 Supervisor
 2026.07.5의 App policy primary scanner가 요구하는 정확히 한 개의 `^profile[ ]` 선언과
@@ -191,10 +195,21 @@ denial 부재를 검사한 뒤 profile을 unload한다. 실제 `/data/options.js
 canary로 사용하지 않는다. 일반 CI amd64와 Candidate native amd64/aarch64에서
 필수지만 HAOS 증거로 승격하지 않는다.
 
-실제 HAOS에서는 2.0.15 설치 뒤 최초 기동, stop/start와 restart, root와 각 서비스
-경로의 named profile enforce, option false/true positive/negative AA-001 matrix와 예상
-밖 `DENIED` 0건을 새로 관찰한다. 2.0.15 실기기 AppArmor 결과는 현재 `NOT RUN`이다.
-aarch64 장비 부재 owner waiver는 PASS가 아니며 전체 v2 수용은 `PARTIAL`이다.
+공개 2.0.15의 실제 HAOS amd64에서는 service graph, Ingress HTTP 200과 WebSocket 101
+뒤 ttyd `pty_spawn`이 EACCES를 반환하고 S6가 ttyd를 반복 재시작했다. 따라서 2.0.15
+Web terminal/AppArmor 수용은 `FAIL`이다.
+
+2.0.16 정적·kernel-enforced 수용은 primary profile에 exact `/dev/ptmx rw`가 있고 broad
+`/dev/**` grant는 없는지 확인한다. 실제 profile 아래에서 PTY를 allocate하여 양방향
+입출력을 검증하고, ttyd WebSocket→PTY→tmux 연결과 fresh connection을 연속 수행한 뒤
+예상 밖 AppArmor denial과 ttyd 재시작이 없어야 한다. updater 수용은 위의 malformed
+allow/ask/deny fixture와 unsafe-file fail-closed matrix를 함께 통과해야 한다.
+
+실제 HAOS에서는 2.0.16 설치 뒤 최초 기동, stop/start와 restart, Web terminal 입력·
+reconnect, Telegram `permission_boundary_ready` 29/33와 `connected`, 실제 승인 1회,
+root와 각 서비스 경로의 named profile enforce 및 예상 밖 `DENIED` 0건을 관찰한다.
+2.0.16 실기기 결과는 현재 `NOT RUN`이다. aarch64 장비 부재 owner waiver는 PASS가
+아니며 전체 v2 수용은 `PARTIAL`이다.
 
 ### 2.1 2026-08-11 local v2 working-tree 증거
 

@@ -31,21 +31,17 @@ on real HAOS.
 On a real HAOS 18.2 amd64 host, the 2.0.12 `preserve` update passed Telegram
 permission reconciliation, Bot reconnect/delivery, and App restart/reconnect,
 while custom AppArmor attachment failed with `docker-default (enforce)`. Public
-2.0.13 corrected attachment presentation but then failed the next container
-start because its custom profile blocked creation of `/run/s6` and
-`/run/service`; `s6-overlay-suexec` exited 111. Public 2.0.14 corrected those
-runtime paths and reached the S6 service graph, but execution of the resolved
-`/usr/lib/bashio/bashio` target was denied and `antigravity-ha-init` exited 126;
-init's `with-contenv` also needs exact execute access on its resolved S6 package
-target. Full cold-start tracing also identified the bounded S6/execline and
-Bash, init account/nginx, Telegram pause, SSH accounting/OOM, Chromium-child,
-and feedback-report paths. Version 2.0.15 permits that runtime closure only in
-the exact profiles and paths that use it, without adding new broad library, package, or
-configuration access. It also requires a kernel-enforced cold-start/restart
-smoke. That automation is not HAOS evidence, so real-HAOS 2.0.15 remains
-`NOT RUN`. Real-device aarch64 testing is also `NOT RUN`; its owner waiver covers
-experimental deployment only and is not a PASS. Overall v2 acceptance remains
-`PARTIAL`.
+2.0.13 then failed on S6 runtime directories with exit 111, and public 2.0.14
+failed on resolved Bashio execution with init exit 126. Public 2.0.15 started the
+App service graph and Ingress HTTP/WebSocket, but the primary profile lacked PTY
+multiplexor access, so ttyd `pty_spawn` returned EACCES. During the same startup,
+`refresh_managed` rejected malformed `permissions.ask` before Telegram-safe
+normalization and the bridge remained `permission_boundary_blocked`. Real-HAOS
+amd64 acceptance of 2.0.15 is therefore `FAIL`. Version 2.0.16 adds only exact
+`/dev/ptmx` read/write access and pre-validation canonicalization of the managed
+permission buckets to 29/0/33. Real-HAOS 2.0.16 remains `NOT RUN`. Real-device
+aarch64 testing is also `NOT RUN`; its owner waiver covers experimental
+deployment only and is not a PASS. Overall v2 acceptance remains `PARTIAL`.
 
 ### Runtime surfaces
 
@@ -194,6 +190,9 @@ settings file of at most 256 KiB and restores the five App-managed security keys
 plus the exact 29 allow/0 ask/33 deny policy. Unknown custom allow/ask/deny rules
 are removed, while top-level settings outside those keys, global MCP/plugins/
 OAuth, and `/config` remain preserved; an existing mode is hardened to 0600.
+Starting in 2.0.16, even a non-array existing permission bucket in an otherwise
+safe supported settings file is replaced by the canonical managed policy before
+typed merge validation.
 Symlinks, hardlinks, non-root ownership, oversized files, or unparsable JSON are
 left untouched; the startup gate records one
 `permission_boundary_blocked` event and waits without Bot API contact or a
@@ -557,10 +556,12 @@ directory entries required by S6, causing exit 111 on the next start. Public
 2.0.14 passed that point but did not permit the resolved
 `/usr/lib/bashio/bashio` execution target, so init exited 126; the S6 package
 target resolved from `/command/with-contenv` also needs an exact init-profile
-execute rule. Version 2.0.15 also confines the subsequently traced S6/execline
+execute rule. Version 2.0.15 also confined the subsequently traced S6/execline
 and Bash, account/nginx, Telegram pause, SSH accounting/OOM, Chromium-child,
-and feedback-subtree accesses to their exact profiles and paths. After updating
-to 2.0.15, check `/proc/self/attr/current` from the App terminal and
+and feedback-subtree accesses to their exact profiles and paths, but omitted
+primary-profile `/dev/ptmx` access and caused PTY allocation EACCES on real
+HAOS. Version 2.0.16 adds only exact `/dev/ptmx rw` to that profile. After
+updating, check `/proc/self/attr/current` from the App terminal and
 relevant service paths plus Supervisor state for an enforced
 `antigravity_home_assistant` named profile, and review `s6-mkdir` failures and
 unexpected `DENIED` events. Do not disable protection mode or AppArmor as a
@@ -753,6 +754,9 @@ without the user's explicit current confirmation.
 - Inspect App/Supervisor logs for init and per-service errors without sharing
   tokens or response bodies.
 - Never work around a failed AppArmor profile attach by disabling protection mode.
+- On public 2.0.15, repeated `pty_spawn: 13` and ttyd restarts after Ingress HTTP
+  200 and WebSocket 101 cannot be repaired by selecting Reconnect. Update to
+  2.0.16 or later, then retest actual terminal input and reconnection.
 
 ### OAuth fails
 
@@ -780,7 +784,9 @@ without the user's explicit current confirmation.
   App options before restarting. The same 4xx request is not retried.
 - `permission_boundary_blocked` means a symlink, hardlink, non-root owner,
   oversized/unparsable file, or non-canonical native security boundary prevented
-  automatic reconciliation. The bridge has not contacted
+  automatic reconciliation. If public 2.0.15 `refresh_managed` reported this for
+  a parseable settings file with a malformed permission bucket, update to 2.0.16
+  or later. The bridge has not contacted
   the Bot API and remains alive without an S6 restart loop. Apply `reset_v2` or
   another safe settings recovery, then restart the App; never add broad allow
   rules to bypass this hold.
@@ -855,8 +861,9 @@ these items `VERIFIED`:
 
 - Clean install on real HAOS amd64, and install/start/update on aarch64
 - Native Antigravity OAuth and plugin discovery on both architectures
-- Corrected 2.0.15 custom AppArmor execution profiles attached in enforce mode
-  with successful first start, stop/start, and restart on HAOS
+- Corrected 2.0.16 custom AppArmor profiles attached in enforce mode with
+  successful first start, stop/start, restart, Web-terminal PTY/reconnect, and
+  Telegram reconciliation on HAOS
 - Actual pull of the public GHCR generic manifest and per-architecture digests
 - End-to-end dashboard, live Telegram cards/callbacks/commands/HA actions, all
   migration modes, and rollback
@@ -867,10 +874,11 @@ unit tests in these documents as validation on a real device.
 
 The current narrow field record is: 2.0.12 amd64 Telegram reconcile/reconnect
 and App restart/reconnect `PASS`, custom AppArmor attachment on that image
-`FAIL`, public 2.0.13 S6 runtime startup `FAIL`, public 2.0.14 resolved
-observed resolved Bashio execute startup `FAIL`, and 2.0.15 plus aarch64 real-device
-acceptance `NOT RUN`. The aarch64 waiver is not a PASS and overall v2 acceptance
-is `PARTIAL`. This does not pass the complete HA-001 through HA-008 or AA-001
+`FAIL`, public 2.0.13 S6 runtime startup `FAIL`, public 2.0.14 resolved Bashio
+execute startup `FAIL`, public 2.0.15 Web-terminal PTY EACCES plus Telegram
+`refresh_managed` ordering `FAIL`, and 2.0.16 plus aarch64 real-device acceptance
+`NOT RUN`. The aarch64 waiver is not a PASS and overall v2 acceptance is
+`PARTIAL`. This does not pass the complete HA-001 through HA-008 or AA-001
 matrices.
 
 ## Support reports

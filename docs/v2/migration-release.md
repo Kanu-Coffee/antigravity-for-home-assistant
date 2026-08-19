@@ -9,7 +9,7 @@ public App은 사용자의 HAOS에서 source build하지 않고 GHCR prebuilt im
 받는다.
 
 ```yaml
-version: "2.0.15"
+version: "2.0.16"
 arch:
   - amd64
   - aarch64
@@ -68,9 +68,19 @@ credential·민감정보 경계를 넓히지 않는다. 실제 custom profile을
 attach하는 kernel-enforced cold start·fresh-container restart와 안전하게 준비한
 `/config/secrets.yaml` read-denial canary 자동 smoke를 일반 CI amd64와 Candidate native
 amd64/aarch64에 필수화한다. 이 자동 Linux-container 증거는 HAOS 증거가 아니다.
-2.0.15 실제 HAOS 수용은 `NOT RUN`, aarch64 장비 부재
-owner waiver는 not a PASS이며 전체 v2 수용은 `PARTIAL`이다. 이 corrective patch도
-새 migration이 아니므로 `breaking_versions`에는 2.0.13만 유지한다.
+공개 2.0.15의 실제 HAOS amd64에서는 service graph와 Ingress HTTP/WebSocket은
+시작됐지만 primary profile의 PTY multiplexor 접근 누락으로 ttyd `pty_spawn`이
+EACCES를 반환했다. 또한 `refresh_managed`가 malformed `permissions.ask`를
+Telegram-safe canonical replacement 전에 검증해 update를 적용하지 못했고 bridge는
+`permission_boundary_blocked`에 머물렀다. 따라서 2.0.15 실기기 수용은 `FAIL`이다.
+
+2.0.16은 primary profile에 exact `/dev/ptmx rw`만 추가하고, 지원되는 안전한
+settings의 allow/ask/deny managed bucket을 typed merge validation 전에 exact 29/0/33
+policy로 정규화한다. unrelated top-level settings, global MCP, plugin, OAuth와
+`/config`를 보존하고 symlink·hardlink·non-root owner·크기 초과·invalid JSON은 계속
+fail closed한다. 2.0.16 실제 HAOS 수용은 `NOT RUN`, aarch64 장비 부재 owner waiver는
+not a PASS이며 전체 v2 수용은 `PARTIAL`이다. 이 corrective patch도 새 migration이
+아니므로 `breaking_versions`에는 2.0.13만 유지한다.
 
 image에 고정한 Antigravity binary는 App runtime에서 자체 갱신하지 않는다. 모든
 native launch와 `env -i` child allowlist는 공식 opt-out

@@ -96,6 +96,8 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   /dev/stdout rw,
   /dev/urandom r,
   /dev/tty rw,
+  # ttyd allocates the PTY master before its child enters the shell profile.
+  /dev/ptmx rw,
   /dev/pts/ r,
   /dev/pts/** rw,
   /dev/shm/ rw,

@@ -32,21 +32,21 @@
 > consult each release's evidence for complete install, update, and rollback
 > verification on both real HAOS architectures.
 
-**2.0.15 Bashio/AppArmor init recovery:** On real HAOS 18.2 amd64, the public
-2.0.14 image reached the S6 service graph but `antigravity-ha-init` failed with
-`unable to exec bashio: Permission denied` and exit 126. AppArmor checks the
-resolved `/usr/lib/bashio/bashio` target rather than its `/usr/bin/bashio`
-symlink, and init's `/command/with-contenv` resolves to the image-owned S6
-package path. Follow-up cold-start tracing found a bounded runtime closure beyond
-that observed Bashio denial: resolved S6/execline and Bash executables, init
-account/nginx state, Telegram pause, SSH accounting/OOM, Chromium children, and
-the feedback-report subtree. Version 2.0.15 grants only those profile-scoped
-exact paths; it does not add new broad execute or write access to `/usr/lib/**`,
-`/package/admin/**`, or `/etc/**`. A kernel-enforced cold-start and
-fresh-container restart smoke is now a required automated gate, but it is not
-HAOS evidence. Real-HAOS 2.0.15 remains `NOT RUN`, the unavailable
-aarch64-device waiver is not a PASS, and overall v2 acceptance is `PARTIAL`.
-Only 2.0.13 remains the breaking security-boundary transition.
+**2.0.16 Web-terminal and Telegram recovery:** On public 2.0.15 on real HAOS
+18.2 amd64, the App service graph and Ingress HTTP/WebSocket started, but ttyd
+PTY creation returned EACCES and the Web UI repeatedly reconnected. On the same
+device, `refresh_managed` stopped before Telegram-safe normalization when the
+existing `permissions.ask` value was not a string array, so the bridge correctly
+remained `permission_boundary_blocked`. Version 2.0.16 adds only the exact
+`/dev/ptmx` read/write access ttyd needs to the primary AppArmor profile, and on
+an otherwise safe supported settings file it canonicalizes all three permission
+buckets to the exact 29/0/33 policy before typed merge validation. Symlinks,
+hardlinks, non-root ownership, oversized files, and invalid JSON remain
+fail-closed; unrelated settings, global MCP, plugins, OAuth, and `/config` are
+preserved. Real-HAOS 2.0.16 remains `NOT RUN`, the unavailable aarch64-device
+waiver is not a PASS, and overall v2 acceptance is `PARTIAL`. Automated Linux
+container gates are not HAOS evidence. Only 2.0.13 remains the breaking
+security-boundary transition.
 
 ## What v2 provides
 
@@ -103,7 +103,7 @@ attach OAuth material to an issue.
 > cannot be modified directly. Protect the bot token, authorized chats, and
 > Telegram accounts as Home Assistant administrator credentials. Basic amd64
 > Bot API reconnect/delivery and App restart passed on 2.0.12, but OAuth, the
-> complete approval/mutation matrix, corrected 2.0.15 custom AppArmor, and
+> complete approval/mutation matrix, corrected 2.0.16 terminal/Telegram paths, and
 > aarch64 real-device E2E remain incomplete.
 
 Complete official native first-run OAuth once with `ha-antigravity-login` in the

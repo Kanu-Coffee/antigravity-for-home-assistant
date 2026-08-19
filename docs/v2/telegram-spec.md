@@ -745,6 +745,9 @@ reason/result/status class만 허용하며 재시작 시 0부터 시작한다. �
   permission boundary를 transaction backup 뒤 canonicalize하고 그 밖의 top-level
   settings, global MCP와 OAuth를
   보존하며, 두 번째 실행은 write/backup 없이 idempotent하다.
+- 2.0.16 `refresh_managed`는 safe parseable settings의 기존 allow/ask/deny bucket이
+  malformed여도 managed 세 bucket을 typed merge validation 전에 exact 29/0/33으로
+  canonicalize한다. unsafe-file preflight와 unrelated-state 보존 범위는 바꾸지 않는다.
 - unsafe effective permission fixture는 Bot API 호출 전에
   `permission_boundary_blocked` 한 건을 만들고 bridge process를 exit시키거나 S6 restart
   loop를 만들지 않는다.
@@ -782,7 +785,11 @@ OAuth/unrelated-state 보존과 나머지 HA-004 E2E는 `NOT RUN`이며, aarch64
 수정 profile은 다음 startup에서 `/run/s6`·`/run/service` 생성 거부와 exit 111로
 `FAIL`했다. 공개 2.0.14도 관찰된 resolved Bashio execute 거부와 exit 126으로 startup
 `FAIL`했고, 후속 trace는 init의 resolved `with-contenv` target도 확인했다. 2.0.15는
-전체 trace-derived runtime closure 중 Telegram의 resolved
-`s6-pause`를 Telegram profile에만 exact execute로 추가하며 새 broad package execute나
-mutation fallback을 열지 않는다. corrected profile의 실제 HAOS enforce·재시작은
-`NOT RUN`이며, kernel-enforced 자동 smoke는 HAOS 증거가 아니다.
+전체 trace-derived runtime closure 중 Telegram의 resolved `s6-pause`를 Telegram
+profile에만 exact execute로 추가했지만, 실제 HAOS의 `refresh_managed`가 malformed
+`permissions.ask`를 safe-policy replacement 전에 거부해 bridge가
+`permission_boundary_blocked`에 머물렀다. 따라서 2.0.15 Telegram 수용은 `FAIL`이다.
+2.0.16은 supported safe settings에서 managed bucket을 검증 전에 canonicalize하지만
+unsafe file과 unsafe effective boundary는 계속 Bot API 접촉 없이 fail closed한다.
+2.0.16 실제 HAOS reconcile/connect/approval은 `NOT RUN`이며 kernel-enforced·fixture
+자동 smoke는 HAOS 증거가 아니다.

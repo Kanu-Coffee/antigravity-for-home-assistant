@@ -66,6 +66,9 @@ canonical policy로 교체한다. 이때 bucket 안의 user-owned rule과 strong
 대상이 아니지만 이 다섯 보안 key 밖의 unrelated top-level settings, global MCP/plugin,
 OAuth와 `/config`는 변경하지 않는다. 기존 mode는 0600으로 강화하고 option mode는
 자동으로 `reset_v2`가 되지 않는다.
+2.0.16은 safe parseable settings 안의 allow/ask/deny bucket shape가 malformed여도
+managed bucket을 먼저 exact 29/0/33 policy로 교체한 뒤 typed merge validation을
+수행한다. safe-file preflight와 unrelated-state 보존 범위는 그대로다.
 
 ## SEC-004 — AppArmor 항상 ON
 
@@ -112,11 +115,14 @@ cold-start trace는 다음 profile-scoped closure를 요구한다.
   credential·민감정보 경계를 넓히는 우회는 추가하지 않는다.
 
 kernel-enforced 자동 startup/restart smoke는 실제 profile attach와 안전하게 준비한
-`/config/secrets.yaml` read-denial canary를 검사하지만 HAOS 증거가 아니며, 2.0.15 HAOS
-enforce 수용은 `NOT RUN`이다.
+`/config/secrets.yaml` read-denial canary를 검사하지만 HAOS 증거가 아니다. 공개
+2.0.15의 실제 HAOS에서는 primary profile의 `/dev/ptmx` 접근 누락으로 ttyd PTY 생성이
+EACCES를 반환했다. 2.0.16은 그 profile에 exact `/dev/ptmx rw`만 추가하고 broad
+`/dev/**` 권한은 열지 않는다. 2.0.16 HAOS enforce 수용은 `NOT RUN`이다.
 
 | profile | 허용 | 주요 deny |
 | --- | --- | --- |
+| primary | S6 service graph와 ttyd의 exact `/dev/ptmx` read/write | broad device access, credential·민감정보, 임의 host path |
 | init | options, exact resolved startup executable, passwd/shadow lock·nginx runtime state | broad library/package execute, broad `/etc` write, 임의 host path |
 | broker | 제한된 `/data`, Supervisor socket/API | 임의 host path, kernel/admin capability |
 | ordinary shell | 일반 `/config`, shell 도구, exact `utempter`와 login accounting | native OAuth Home, SSH/App credential, broker state, 다른 PID의 env/fd/root |
@@ -399,6 +405,9 @@ broker에서 저위험 자동 실행하는 mutation은 없다. `expected_state`/
   backup/write 없이 idempotent해야 하며 global MCP는 byte-preserve하고 unrelated
   settings와 OAuth를 보존한다. preflight·parse·policy validation·transaction 중 하나라도
   안전하지 않으면 partial write나 permissive fallback을 허용하지 않는다.
+- 2.0.16은 eligible settings의 malformed allow/ask/deny bucket을 replacement 전에 읽어
+  실패하지 않고 세 managed bucket을 먼저 canonicalize한다. symlink/hardlink/non-root
+  owner/oversize/invalid JSON은 여전히 ineligible하며 permissive fallback은 없다.
 - bridge의 init 후 검증이 실패하면 `permission_boundary_blocked`를 한 번만 정제해
   기록하고 Bot API에 접촉하지 않는 live hold로 들어간다. 같은 unsafe settings로 fatal
   exit/S6 restart를 반복하지 않으며 운영자가 안전하게 복구하고 App을 재시작해야 한다.
@@ -497,7 +506,10 @@ OAuth/unrelated-state 보존과 전체 Telegram security matrix는 `NOT RUN`이�
 현장의 custom AppArmor attach는 `docker-default (enforce)` 관찰로 `FAIL`했고,
 공개 2.0.13은 S6 runtime directory 생성 거부와 exit 111로 startup `FAIL`했다.
 공개 2.0.14는 관찰된 resolved Bashio execute 거부와 exit 126으로 startup `FAIL`했다.
-후속 trace는 init의 resolved `with-contenv` target도 별도 exact execute가 필요함을 확인했다.
-2.0.15 corrected profile의 실기기 enforce·재시작은 아직 `NOT RUN`이다. aarch64
-실기기 `NOT RUN`은 experimental 배포에 한해 owner-waived됐지만 PASS가 아니며 전체
-v2 수용은 `PARTIAL`이다.
+후속 trace는 init의 resolved `with-contenv` target도 별도 exact execute가 필요함을
+확인했다. 공개 2.0.15는 App service graph를 시작했지만 Web terminal PTY EACCES와
+Telegram `refresh_managed`의 malformed-bucket ordering 때문에 실기기 수용 `FAIL`이다.
+2.0.16의 exact PTY rule과 검증 전 managed-bucket canonicalization은 기존
+credential·민감정보 deny와 unsafe-file fail-closed 경계를 유지한다. 2.0.16 실기기
+enforce·재시작은 `NOT RUN`이다. aarch64 실기기 `NOT RUN`은 experimental 배포에 한해
+owner-waived됐지만 PASS가 아니며 전체 v2 수용은 `PARTIAL`이다.

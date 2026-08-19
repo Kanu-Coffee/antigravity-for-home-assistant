@@ -802,6 +802,11 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
             "antigravity_home_assistant-shell",
             "antigravity_home_assistant-sshd",
         },
+        "/dev/ptmx rw,": {
+            "antigravity_home_assistant",
+            "antigravity_home_assistant-shell",
+            "antigravity_home_assistant-sshd",
+        },
         "/root/.bashrc r,": {
             "antigravity_home_assistant-shell"
         },

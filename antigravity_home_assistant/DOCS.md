@@ -29,19 +29,17 @@
 
 2.0.12의 실제 HAOS 18.2 amd64 `preserve` 업데이트에서는 Telegram 권한 자동 복구,
 Bot 재연결·전달과 App 재시작/재연결이 통과했고 custom AppArmor attach는
-`docker-default (enforce)`로 실패했습니다. 이를 고친 공개 2.0.13은 다음 컨테이너
-기동에서 custom profile이 `/run/s6`와 `/run/service` 생성을 막아
-`s6-overlay-suexec` exit 111로 실패했습니다. 이 runtime 경로를 고친 공개 2.0.14는
-S6 service graph까지 진행했지만 실제 `/usr/lib/bashio/bashio` 실행이 거부되어
-`antigravity-ha-init`이 exit 126으로 실패했고, init의 `with-contenv`도 실제 S6 package
-경로에 exact execute가 필요합니다. 전체 cold-start trace는 이 두 오류 외에도
-S6/execline·실제 Bash, init 계정/nginx, Telegram pause, SSH accounting/OOM, Chromium
-child와 feedback 보고서 경로를 확인했습니다. 2.0.15는 이 runtime closure를 profile별
-exact 경로로만 허용하고 broad library/package/config 권한은 추가하지 않습니다.
-kernel-enforced cold-start/restart 자동 smoke는 필수지만 HAOS 증거가 아니며 2.0.15
-실제 HAOS는 아직 `NOT RUN`입니다. aarch64 실기기 시험도 장비 부재로 `NOT RUN`이며,
-소유자가 experimental 배포에 한해 면제했지만 PASS로 간주하지 않습니다. 전체 v2
-수용은 `PARTIAL`입니다.
+`docker-default (enforce)`로 실패했습니다. 공개 2.0.13은 custom profile의 S6 runtime
+directory 거부로 exit 111, 2.0.14는 resolved Bashio 실행 거부로 init exit 126을
+기록했습니다. 이를 보완한 공개 2.0.15는 App service graph와 Ingress HTTP/WebSocket을
+시작했지만 primary profile에 PTY multiplexor 접근이 없어 ttyd의 `pty_spawn`이
+EACCES로 실패했습니다. 같은 시작에서 `refresh_managed`는 malformed
+`permissions.ask`를 Telegram 안전 정규화보다 먼저 거부해 bridge가
+`permission_boundary_blocked`에 머물렀습니다. 따라서 2.0.15 실제 amd64 HAOS 수용은
+`FAIL`입니다. 2.0.16은 exact `/dev/ptmx` read/write와 managed permission bucket의
+검증 전 29/0/33 정규화만 추가합니다. 2.0.16 실제 HAOS는 아직 `NOT RUN`이고 aarch64
+시험도 장비 부재로 `NOT RUN`입니다. 소유자의 experimental 배포 면제는 PASS가 아니며
+전체 v2 수용은 `PARTIAL`입니다.
 
 ### 실행 표면
 
@@ -186,6 +184,8 @@ root-owned single-link regular·256 KiB 이하·parse 가능한 settings를 시�
 backup하고 다섯 App 관리 보안 key 및 permission 세 bucket을 exact 29/0/33 safe policy로
 정규화합니다. unknown custom allow/ask/deny는 제거하지만 그 다섯 key 밖의 top-level
 설정, global MCP/plugin/OAuth와 `/config`는 보존하고 기존 mode는 0600으로 강화합니다.
+2.0.16부터 지원되는 안전한 settings의 기존 permission bucket이 배열이 아니어도 세
+managed bucket을 먼저 canonical policy로 교체한 뒤 typed merge를 검증합니다.
 symlink/hardlink/non-root owner, 크기 초과나 parse 불가능한 JSON은 수정하지 않고 gate가
 `permission_boundary_blocked`를 한 번 기록한 뒤 Bot API 연결과 재시작 loop 없이
 대기합니다. 관리자가 `reset_v2` 또는 안전한 파일 복구를 적용하고 App을 재시작해야
@@ -520,8 +520,9 @@ PASS가 아니라 attach `FAIL`입니다. 공개 2.0.13에서는 custom policy �
 `/command/with-contenv`가 해석되는 S6 package target도 init profile에 exact execute가
 필요했습니다. 2.0.15는 후속 trace에서 확인된 S6/execline·Bash, 계정/nginx 상태,
 Telegram pause, SSH accounting/OOM, Chromium child와 feedback subtree도 각각 필요한
-profile과 exact 경로에만 허용합니다. 2.0.15 업데이트 뒤 App terminal과 관련 service
-실행 경로의
+profile과 exact 경로에만 허용했지만 primary profile의 `/dev/ptmx` 접근을 빠뜨려 실제
+HAOS Web terminal의 PTY 생성이 EACCES로 실패했습니다. 2.0.16은 그 profile에 exact
+`/dev/ptmx rw`만 추가합니다. 업데이트 뒤 App terminal과 관련 service 실행 경로의
 `/proc/self/attr/current` 및 Supervisor 상태에서 `antigravity_home_assistant` named
 profile이 enforce인지 확인하고, `s6-mkdir` 오류와 예상하지 않은 `DENIED`를 검토하세요.
 문제를 우회하려고 보호 mode나 AppArmor를 끄지 마세요.
@@ -694,6 +695,9 @@ sync는 계속 보존합니다. refresh 중 비정상 종료로 남은 `running`
 - App/Supervisor 로그에서 init과 service별 오류를 찾되 token이나 response body를
   공유하지 않습니다.
 - AppArmor profile attach 실패를 보호 모드 해제로 우회하지 않습니다.
+- 공개 2.0.15에서 Ingress HTTP 200·WebSocket 101 뒤 `pty_spawn: 13`과 ttyd 재시작이
+  반복되면 reconnect만으로 복구되지 않습니다. 2.0.16 이상으로 업데이트하고 실제
+  terminal 입력과 재접속을 다시 확인합니다.
 
 ### OAuth 실패
 
@@ -721,7 +725,9 @@ sync는 계속 보존합니다. refresh 중 비정상 종료로 남은 `running`
   다시 시작합니다. 같은 4xx 요청은 자동 반복하지 않습니다.
 - `permission_boundary_blocked`이면 symlink/hardlink/non-root owner, 256 KiB 초과,
   parse 불가능 또는 canonical 보안 경계를 만족하지 않는 native settings 때문에 자동
-  정규화를 적용하지 못한 것입니다. bridge는 Bot API에 접속하지
+  정규화를 적용하지 못한 것입니다. 공개 2.0.15의 `refresh_managed`에서 parse 가능한
+  settings의 malformed permission bucket 때문에 발생했다면 2.0.16 이상으로
+  업데이트합니다. bridge는 Bot API에 접속하지
   않았고 S6 재시작 loop 없이 살아서 대기합니다. broad allow를 추가하지 말고
   `reset_v2` 또는 다른 안전한 settings 복구를 적용한 뒤 App을 재시작합니다.
 - `request_failed`의 `reason_class=authentication_required`이면 Bot pairing을
@@ -791,8 +797,9 @@ fresh-container restart, S6 init과 안전한 canary 내용으로 준비한
 
 - 실제 HAOS amd64의 clean install과 aarch64의 install·start·update
 - 양쪽 아키텍처의 native Antigravity OAuth와 plugin discovery
-- 2.0.15에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되고 S6가
-  최초 기동·stop/start·restart를 완료하는지
+- 2.0.16에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되고 S6,
+  Web terminal PTY·reconnect와 Telegram reconcile이 최초 기동·stop/start·restart를
+  완료하는지
 - 공개 GHCR generic manifest와 per-arch digest의 실제 pull
 - 실제 dashboard, live Telegram card/callback/command/HA action, migration 세 mode와
   rollback E2E
@@ -803,8 +810,9 @@ manifest와 HAOS acceptance 기록에서 해당 항목이 통과했는지 확인
 
 현재 좁은 현장 증거는 2.0.12 amd64 Telegram reconcile/reconnect와 App
 restart/reconnect `PASS`, 같은 image의 custom AppArmor attach `FAIL`, 공개 2.0.13의
-S6 runtime startup `FAIL`, 공개 2.0.14의 관찰된 resolved Bashio execute startup `FAIL`,
-2.0.15와 aarch64 실기기 `NOT RUN`입니다. aarch64 면제는 PASS가 아니며 전체 v2 수용은
+S6 runtime startup `FAIL`, 공개 2.0.14의 resolved Bashio execute startup `FAIL`, 공개
+2.0.15의 Web terminal PTY EACCES와 Telegram `refresh_managed` ordering `FAIL`, 그리고
+2.0.16·aarch64 실기기 `NOT RUN`입니다. aarch64 면제는 PASS가 아니며 전체 v2 수용은
 `PARTIAL`입니다. 이 결과를 전체 HA-001~HA-008 또는 AA-001 PASS로 확대하지 않습니다.
 
 ## 지원 보고서

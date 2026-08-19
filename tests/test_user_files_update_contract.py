@@ -299,6 +299,128 @@ def test_user_file_update_has_fixed_scopes_and_private_recovery_state(
         assert excluded_path not in helper
 
 
+def test_telegram_refresh_reconciles_malformed_owned_permissions_before_merge(
+    rootfs: Path,
+    repository_root: Path,
+) -> None:
+    helper = (
+        rootfs / "usr/local/share/antigravity-ha/user-files-update.mjs"
+    ).read_text(encoding="utf-8")
+    smoke_path = repository_root / "tests/user-files-update-smoke.sh"
+    smoke = smoke_path.read_text(encoding="utf-8")
+
+    managed_branch = helper.index("const managedMergeBase = options.telegramEnabled")
+    generic_merge = helper.index(
+        "candidates.settings = mergeManagedSettings(", managed_branch
+    )
+    final_reconciliation = helper.index(
+        "if (options.telegramEnabled && preflight.targets.settings.existed)",
+        generic_merge,
+    )
+    assert managed_branch < generic_merge < final_reconciliation
+    assert (
+        "options.telegramEnabled\n"
+        "        ? TELEGRAM_SETTINGS_MAX_BYTES\n"
+        "        : MAX_USER_FILE_BYTES"
+    ) in helper
+    assert (
+        "const managedMergeBase = options.telegramEnabled\n"
+        "      ? reconcileTelegramManagedSettings("
+    ) in helper
+    assert (
+        "candidates.settings = mergeManagedSettings(\n"
+        "      managedMergeBase,"
+    ) in helper
+
+    subprocess.run(["bash", "-n", str(smoke_path)], check=True)
+    for required in (
+        'TELEGRAM_MALFORMED_REFRESH_VOLUME="${TEST_ID}-telegram-malformed-refresh"',
+        "9.9.9-telegramold",
+        "9.9.9-telegramnew",
+        '.permissions.ask = {synthetic_malformed_bucket: true}',
+        '"${TELEGRAM_MALFORMED_BACKUP}/settings.before"',
+        'synthetic_refresh_marker = "preserve-unrelated-setting"',
+        'synthetic_mcp_marker: "preserve-byte-exact"',
+        "and (.permissions.allow | length) == 29",
+        "and .permissions.ask == []",
+        "and (.permissions.deny | length) == 33",
+        "loadTelegramPermissionBoundary",
+        "Telegram malformed-refresh repair was not restart-idempotent",
+        "Telegram-disabled managed refresh accepted a malformed permission bucket",
+        "Existing settings.json permissions.ask must be a string array",
+    ):
+        assert required in smoke
+
+    matrix_case_block = smoke.split(
+        "TELEGRAM_MALFORMED_MATRIX_CASES=(", 1
+    )[1].split("\n)", 1)[0]
+    assert re.findall(r'^\s+"([^"]+)"$', matrix_case_block, re.MULTILINE) == [
+        "allow:non-array",
+        "allow:array-non-string",
+        "ask:non-array",
+        "ask:array-non-string",
+        "deny:non-array",
+        "deny:array-non-string",
+    ]
+    for required in (
+        '"${TELEGRAM_MALFORMED_MATRIX_VOLUMES[@]}"',
+        'for TELEGRAM_MATRIX_CASE in "${TELEGRAM_MALFORMED_MATRIX_CASES[@]}"',
+        'TELEGRAM_MATRIX_BUCKET=${TELEGRAM_MATRIX_CASE%%:*}',
+        'TELEGRAM_MATRIX_SHAPE=${TELEGRAM_MATRIX_CASE#*:}',
+        "9.9.9-matrixold",
+        "9.9.9-matrixnew",
+        ".permissions[$bucket] = (",
+        "{synthetic_malformed_bucket: true}",
+        '["synthetic-string", {synthetic_non_string_entry: true}]',
+        '(.permissions[$bucket] | type) != "array"',
+        '(.permissions[$bucket] | any(.[]; type != "string"))',
+        '"${backup}/settings.before"',
+        'synthetic_matrix_marker = $case_name',
+        'synthetic_mcp_marker: $case_name',
+        'cmp --silent /data/telegram-matrix-mcp.before "${mcp}"',
+        'throw new Error("malformed matrix settings did not load in the bridge")',
+    ):
+        assert required in smoke
+
+    matrix_runtime_block = smoke.split(
+        "# Exercise the complete malformed-bucket contract", 1
+    )[1].split(
+        "# A compact, bounded legacy file can expand", 1
+    )[0]
+    assert {
+        token: matrix_runtime_block.count(token)
+        for token in (
+            "TELEGRAM_MATRIX_SETTINGS_AFTER",
+            "TELEGRAM_MATRIX_STATE_AFTER",
+            "TELEGRAM_MATRIX_MCP_AFTER",
+            "TELEGRAM_MATRIX_BACKUP_COUNT",
+            "TELEGRAM_MATRIX_IDEMPOTENT",
+        )
+    } == {
+        "TELEGRAM_MATRIX_SETTINGS_AFTER": 2,
+        "TELEGRAM_MATRIX_STATE_AFTER": 2,
+        "TELEGRAM_MATRIX_MCP_AFTER": 2,
+        "TELEGRAM_MATRIX_BACKUP_COUNT": 2,
+        "TELEGRAM_MATRIX_IDEMPOTENT": 3,
+    }
+    idempotent_block = matrix_runtime_block.split(
+        "TELEGRAM_MATRIX_IDEMPOTENT=$(", 1
+    )[1]
+    for required in (
+        "9.9.9-matrixnew",
+        "Telegram malformed matrix repair was not idempotent",
+        'assert_json "${TELEGRAM_MATRIX_IDEMPOTENT}"',
+        ".created == []",
+        ".refreshed == []",
+        ".backup_directory == null",
+        '"${TELEGRAM_MATRIX_SETTINGS_AFTER}"',
+        '"${TELEGRAM_MATRIX_STATE_AFTER}"',
+        '"${TELEGRAM_MATRIX_MCP_AFTER}"',
+        '"${TELEGRAM_MATRIX_BACKUP_COUNT}"',
+    ):
+        assert required in idempotent_block
+
+
 def test_user_file_backup_retention_requires_exact_app_ownership(
     rootfs: Path,
     repository_root: Path,
