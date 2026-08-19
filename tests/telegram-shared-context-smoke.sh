@@ -78,6 +78,10 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       ANTIGRAVITY_HA_CHANNEL=telegram \
       HA_TELEGRAM_USER_ID=123456789 \
       HA_TELEGRAM_CHAT_ID=-100123456789 \
+      HA_TELEGRAM_SESSION_GENERATION=7 \
+      HA_TELEGRAM_UPDATE_ID=76 \
+      HA_TELEGRAM_RUN_NONCE=telegram-global-mcp-canary-123456 \
+      HA_TELEGRAM_ACTION_PROPOSAL_SOCKET=/run/antigravity-ha/telegram-action-proposal.sock \
       timeout 12s /usr/local/bin/antigravity \
         --output-format stream-json \
         --print-timeout 5s \
@@ -102,6 +106,11 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       "[[ \"\${ANTIGRAVITY_HA_CHANNEL:-}\" == telegram ]]" \
       "[[ \"\${HA_TELEGRAM_USER_ID:-}\" == 123456789 ]]" \
       "[[ \"\${HA_TELEGRAM_CHAT_ID:-}\" == -100123456789 ]]" \
+      "[[ \"\${HA_TELEGRAM_SESSION_GENERATION:-}\" == 7 ]]" \
+      "[[ \"\${HA_TELEGRAM_UPDATE_ID:-}\" == 77 ]]" \
+      "[[ \"\${HA_TELEGRAM_RUN_NONCE:-}\" == telegram-run-binding-canary-123456 ]]" \
+      "[[ \"\${HA_ANTIGRAVITY_CONVERSATION_ID:-}\" == conversation.shared-context-1 ]]" \
+      "[[ \"\${HA_TELEGRAM_ACTION_PROPOSAL_SOCKET:-}\" == /run/antigravity-ha/telegram-action-proposal.sock ]]" \
       "[[ ! -v SUPERVISOR_TOKEN && ! -v NODE_OPTIONS && ! -v NODE_PATH ]]" \
       "[[ \"\${PATH%%:*}\" == /usr/local/libexec/antigravity-command-bin ]]" \
       "grep -Fxq \"shared global rule marker\" /data/home/.gemini/config/rules/shared-context.md" \
@@ -121,7 +130,30 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       ANTIGRAVITY_HA_CHANNEL=telegram \
       HA_TELEGRAM_USER_ID=123456789 \
       HA_TELEGRAM_CHAT_ID=-100123456789 \
+      HA_TELEGRAM_SESSION_GENERATION=7 \
+      HA_TELEGRAM_UPDATE_ID=77 \
+      HA_TELEGRAM_RUN_NONCE=telegram-run-binding-canary-123456 \
+      HA_ANTIGRAVITY_CONVERSATION_ID=conversation.shared-context-1 \
+      HA_TELEGRAM_ACTION_PROPOSAL_SOCKET=/run/antigravity-ha/telegram-action-proposal.sock \
       /usr/local/bin/antigravity --version
+    [[ -f /data/home/.gemini/config/rules/telegram-wrote-rule.marker ]]
+    [[ -f /data/home/.gemini/config/plugins/user-global-marker/telegram-wrote-plugin.marker ]]
+    ! grep -Eq -- "(^|=)(--|-)?(no-)?sandbox($|=)" /tmp/shared-launcher-args
+
+    install -d -m 0755 /run/antigravity-ha
+    install -m 0400 /dev/null /run/antigravity-ha/sensitive-data-access.enabled
+    SUPERVISOR_TOKEN=must-not-cross \
+      NODE_OPTIONS=must-not-cross \
+      NODE_PATH=/must-not-cross \
+      ANTIGRAVITY_HA_CHANNEL=telegram \
+      HA_TELEGRAM_USER_ID=123456789 \
+      HA_TELEGRAM_CHAT_ID=-100123456789 \
+      HA_TELEGRAM_SESSION_GENERATION=7 \
+      HA_TELEGRAM_UPDATE_ID=77 \
+      HA_TELEGRAM_RUN_NONCE=telegram-run-binding-canary-123456 \
+      HA_ANTIGRAVITY_CONVERSATION_ID=conversation.shared-context-1 \
+      HA_TELEGRAM_ACTION_PROPOSAL_SOCKET=/run/antigravity-ha/telegram-action-proposal.sock \
+      /usr/local/libexec/antigravity-interactive-sensitive-read --version
     [[ -f /data/home/.gemini/config/rules/telegram-wrote-rule.marker ]]
     [[ -f /data/home/.gemini/config/plugins/user-global-marker/telegram-wrote-plugin.marker ]]
     ! grep -Eq -- "(^|=)(--|-)?(no-)?sandbox($|=)" /tmp/shared-launcher-args
@@ -136,6 +168,23 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
     set -e
     [[ "${invalid_status}" == 78 ]]
     grep -Fq "invalid Telegram requester binding" /tmp/invalid-binding.err
+
+    set +e
+    ANTIGRAVITY_HA_CHANNEL=telegram \
+      HA_TELEGRAM_USER_ID=123456789 \
+      HA_TELEGRAM_CHAT_ID=-100123456789 \
+      HA_TELEGRAM_SESSION_GENERATION=7 \
+      HA_TELEGRAM_UPDATE_ID=77 \
+      HA_TELEGRAM_RUN_NONCE=partial-run-binding-canary-123456 \
+      /usr/local/bin/antigravity --version \
+      >/tmp/partial-action-binding.out 2>/tmp/partial-action-binding.err
+    partial_status=$?
+    set -e
+    [[ "${partial_status}" == 78 ]]
+    grep -Fxq "antigravity: invalid Telegram requester binding" \
+      /tmp/partial-action-binding.err
+    ! grep -Fq "partial-run-binding-canary-123456" \
+      /tmp/partial-action-binding.err
 
     install -m 0755 /tmp/antigravity-real.native \
       /usr/local/libexec/antigravity-real

@@ -31,23 +31,21 @@
 > 확인하세요. 현재 `experimental`이며 실제 HAOS 양쪽 아키텍처의 전체 설치·업데이트·
 > rollback 검증은 릴리스별 증거를 확인해야 합니다.
 
-**2.0.17 native CLI 복구:** 공개 2.0.16을 설치한 실제 HAOS 18.2 amd64에서 App,
-Ingress, Web terminal과 Telegram Bot API 연결은 정상 기동했지만 `agy`와
-`antigravity --version`이 `Segmentation fault`/status 139로 즉시 종료되고 모든 Telegram
-worker도 같은 native CLI crash로 실패했습니다. exact public 2.0.16 image와 custom
-AppArmor profile로 이를 재현한 kernel audit는 `interactive-runtime-restricted`에서
-`/usr/local/libexec/antigravity-real`의 `file_mmap` permission `m` 거부를 확인했고,
-`interactive-runtime-sensitive-read`에도 동일한 `r`-only rule이 있었습니다.
-2.0.17은 두 exact native-binary rule의 `r`을 `rm`으로 바꾸고, full blank-auth worker
-trace가 요구한 bootstrap의 exact nsswitch/passwd identity read와 runtime의 exact
-`/usr/share/ca-certificates/**` TLS trust-store read만 두 transition chain에 추가합니다.
-새로운 broad `/etc/**`·`/usr/share/**` rule은 추가하지 않고, runtime의 기존
-`/etc/** r`와 필수 system-library mapping 및 proc/settings/credential deny는 그대로이며,
-Telegram은 native 종료 signal을
-`worker_failed`로 숨기지 않고 제한된 진단으로 분류합니다. local kernel-enforced
-회귀에서는 `antigravity --version` status 0을 확인했지만 실제 HAOS 2.0.17은 아직
-`NOT RUN`입니다. aarch64 장비 부재 면제는 PASS가 아니며 전체 v2 수용은 `PARTIAL`,
-breaking 목록은 보안 경계를 활성화한 2.0.13만 유지합니다.
+**2.0.18 Telegram MCP·승인 경로 교정:** 공개 2.0.17의 실제 HAOS 18.2 amd64에서
+App 기동, Ingress/Web terminal, native CLI·기본 대화, Telegram transport와 도구 없는
+한 줄 답변은 통과했지만 managed MCP 요청과 `telegram_action_propose` 승인카드 생성은
+실패했습니다. kernel audit는 `change-proposal-client`가 image-owned
+`/usr/local/share/antigravity-ha/supervisor-credential-fd.mjs` 전이 module을 읽지 못한
+exact AppArmor 거부를 확인했습니다. 별도로 restricted와 sensitive-read 두 launcher가
+승인 제안에 필요한 requester/run binding 다섯 값을 버려 승인카드 전에 실패했으며,
+승인된 쓰기 실행은 `NOT RUN`입니다. 따라서 2.0.17 amd64 수용은 전체 `FAIL`입니다.
+
+2.0.18은 proposal client에 해당 exact module read만 추가하고, 두 launcher가 다섯 값을
+완전한 한 묶음으로 검증·보존하며 일부만 있는 binding은 거부합니다. broad AppArmor나
+native tool 권한을 열지 않고, 승인 없는 직접 쓰기·명령 차단과 기존 민감정보 deny를
+유지합니다. 자동 회귀는 HAOS 증거가 아니며 2.0.18 amd64와 aarch64 실기기 수용은
+릴리스 전 `NOT RUN`, 전체 v2 수용은 `PARTIAL`입니다. breaking 목록은 보안 경계를
+활성화한 2.0.13까지만 유지합니다.
 
 2.0.12로의 downgrade는 자동·무손실 복구 경로가 아닙니다. 그 공개 image는 custom
 AppArmor attach에 실패했고 실제 성공 증거도 amd64 `docker-default`에 한정됩니다.
@@ -107,9 +105,9 @@ Supervisor 직접 downgrade는 지원되지 않으며, exact 2.0.12 시점 App b
 > 공유 OAuth identity와 `/config`, 전역 customization을 사용하며, 승인 카드를 통해
 > 기기·설정·terminal/script 작업을 실행할 수 있습니다. OAuth 자료, App 소유 권한
 > 설정과 민감 경로는 직접 수정할 수 없습니다. bot token, 허용된 chat과 Telegram
-> 계정을 HA 관리자 credential처럼 보호하세요. amd64의 기본 Bot API 재연결·전달과
-> App 재시작은 2.0.12에서 확인됐지만, OAuth, 전체 승인/mutation 행렬, corrected
-> 2.0.17 native CLI·Telegram 경로와 aarch64 실기기 E2E는 아직 완료되지 않았습니다.
+> 계정을 HA 관리자 credential처럼 보호하세요. 2.0.17 amd64에서 Bot API와 도구 없는
+> 대화는 통과했지만 managed MCP와 승인 제안은 실패했습니다. 2.0.18의 corrected MCP·
+> 승인·mutation 경로와 aarch64 실기기 E2E는 아직 `NOT RUN`입니다.
 
 Web UI 또는 SSH에서 `ha-antigravity-login`으로 공식 native first-run OAuth를 한 번
 완료한 뒤 bot을 활성화합니다. 별도 Telegram identity, `ha-telegram-login`, 전용 HOME

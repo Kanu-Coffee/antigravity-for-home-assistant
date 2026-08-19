@@ -127,8 +127,12 @@ image/custom profile 재현의 kernel audit는 `/usr/local/libexec/antigravity-r
 runtime `/usr/share/ca-certificates/**` TLS trust-store read만 두 transition chain에
 추가한다. 새로운 broad `/etc/**`·`/usr/share/**` rule은 추가하지 않고, runtime의 기존
 `/etc/** r`와 필수 system-library mapping 및 proc/settings/credential deny를 변경하지 않는다.
-local kernel-enforced `--version` status 0은 HAOS 증거가 아니며 2.0.17 HAOS enforce
-수용은 `NOT RUN`이다.
+local kernel-enforced `--version` status 0은 HAOS 증거가 아니다. 실제 2.0.17 amd64는
+native 기본 대화와 Telegram no-tool reply까지 통과했지만 managed MCP에서
+`change-proposal-client`의 exact image-owned `supervisor-credential-fd.mjs` module read가
+거부됐다. 두 confined launcher도 proposal의 requester/run binding 다섯 값을 버렸다.
+2.0.18은 proposal client의 이 exact module read와 두 launcher의 complete-binding
+검증·보존만 추가하며 broad AppArmor/native-tool 권한과 직접 write/command를 열지 않는다.
 
 | profile | 허용 | 주요 deny |
 | --- | --- | --- |
@@ -140,7 +144,7 @@ local kernel-enforced `--version` status 0은 HAOS 증거가 아니며 2.0.17 HA
 | interactive-runtime-restricted | exact `antigravity-real rm`, Web/SSH/Telegram의 `/config` 일반 프로젝트 파일, native CLI/OAuth Home read, 사용자 customization, plugin socket, 매개 settings update helper 실행 | native binary re-exec와 허가되지 않은 application-library execute/map, raw settings direct write; secrets/storage/Recorder read/write; runtime token/options, SSH/private key, broker state |
 | interactive-runtime-sensitive-read | exact `antigravity-real rm`, restricted runtime 허용 범위 + Recorder DB 진단용 read | native binary re-exec와 허가되지 않은 application-library execute/map, raw settings direct write; secrets/storage read/write; Recorder write, runtime token/options, SSH/private key, broker state |
 | `antigravity_home_assistant-command` | 일반 `/config`, network, user plugin/agent/rule/skill과 scoped helper | OAuth backend, App 관리 settings/MCP config, token, secrets/storage/Recorder, broker state |
-| Telegram action proposal client | active run-bound private proposal socket write | `/config`/`/data` content, token, OAuth, final executor |
+| Telegram action proposal client | exact image-owned credential-FD support module read와 active run-bound private proposal socket write | `/config`/`/data` content, broad application-library read, token, OAuth, final executor |
 | Telegram action executor | exact committed action envelope와 fixed shell transition | Supervisor/bot token, OAuth, App settings/MCP config, proposal socket |
 | Telegram runtime | exact resolved `s6-pause`와 bridge runtime | settings write, Supervisor credential, direct mutation fallback |
 | sshd daemon | public-key 인증용 exact key read와 own OOM-score/accounting state | `/config`, key write/exec, App credential와 broker socket |
@@ -524,8 +528,13 @@ credential·민감정보 deny와 unsafe-file fail-closed 경계를 유지했지�
 native `file_mmap` denial과 SIGSEGV/status 139로 수용은 `FAIL`이다. 2.0.17의 두 exact
 `antigravity-real rm` rule, trace-derived exact bootstrap identity/TLS trust-store reads와
 bounded Telegram signal 진단은 새로운 broad rule이나 기존 deny를 변경하지 않으며,
-runtime의 기존 `/etc/** r`와 필수 system-library mapping도 그대로 둔다. 2.0.17
-실기기 enforce·재시작은 `NOT RUN`이다. aarch64 실기기
+runtime의 기존 `/etc/** r`와 필수 system-library mapping도 그대로 둔다. 실제 2.0.17
+amd64는 startup/Web terminal/native 기본 대화/Telegram transport/no-tool reply를
+통과했지만 managed MCP와 `telegram_action_propose`가 `FAIL`, 승인된 쓰기는 `NOT RUN`이라
+전체 수용은 `FAIL`이다. kernel audit의 exact proposal-client module read denial과 두
+launcher의 다섯 run-binding 손실은 2.0.18에서 exact read 하나와 complete-tuple
+검증·보존으로만 닫는다. automated regression은 HAOS 증거가 아니며 2.0.18 amd64와
+aarch64 실기기 수용은 릴리스 전 `NOT RUN`이다. aarch64 실기기
 `NOT RUN`은 experimental 배포에 한해
 owner-waived됐지만 PASS가 아니며 전체 v2 수용은 `PARTIAL`이다.
 2.0.12 direct downgrade를 보안 복구로 간주하지 않는다. 그 image의 custom 23-profile

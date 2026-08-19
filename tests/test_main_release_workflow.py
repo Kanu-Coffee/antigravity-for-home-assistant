@@ -22,7 +22,7 @@ def test_main_release_is_manual_main_only_and_minimally_authorized() -> None:
         "candidate_run_attempt",
         "confirm",
     }
-    assert inputs["version"]["default"] == "2.0.17"
+    assert inputs["version"]["default"] == "2.0.18"
     assert workflow["permissions"] == {"contents": "read"}
     publish = workflow["jobs"]["publish"]
     assert publish["if"] == "github.ref == 'refs/heads/main'"
@@ -105,28 +105,28 @@ def test_main_release_creates_annotated_tag_and_prerelease_without_fake_evidence
         "continues after publication.\\n'" in text
     )
     assert (
-        "Public 2.0.16 real amd64 HAOS acceptance: `FAIL` (Ingress, Web terminal, "
-        "and Telegram transport started, but the native CLI exited with "
-        "SIGSEGV/status 139 before `--version` or a Telegram worker could "
-        "complete)" in text
+        "Public 2.0.17 real amd64 HAOS acceptance: `FAIL` overall. App startup, "
+        "Ingress/Web terminal, native CLI/basic conversation, Telegram "
+        "transport, and a no-tool Telegram reply passed; managed MCP requests "
+        "and the Telegram approval-proposal path failed" in text
     )
     assert (
-        "Root cause reproduced from the exact public 2.0.16 image under its "
-        "custom AppArmor profiles: kernel audit denied `file_mmap` permission "
-        "`m` for `/usr/local/libexec/antigravity-real` under "
-        "`interactive-runtime-restricted`; the sensitive-read profile had the "
-        "same `r`-only rule" in text
+        "Exact field root causes: AppArmor denied the change-proposal client "
+        "reading the exact image-owned `supervisor-credential-fd.mjs` module, "
+        "while both confined interactive launchers discarded five required "
+        "requester/run bindings before `telegram_action_propose`; approved "
+        "write execution was therefore `NOT RUN`" in text
     )
     assert (
-        "2.0.17 correction: add exact native ELF memory-map permission plus "
-        "trace-derived bootstrap identity and runtime TLS trust-store reads, "
-        "scoped only to the two interactive transition chains; no broad grants "
-        "are added and existing proc/settings/credential denies remain unchanged"
+        "2.0.18 correction: grant only the exact image-owned module read to the "
+        "change-proposal client and strictly validate and preserve the complete "
+        "five-variable run binding through both confined launchers. No broad "
+        "AppArmor or native-tool permission expansion is added"
         in text
     )
     assert (
-        "2.0.17 automated kernel-enforced native CLI/terminal and Telegram "
-        "signal-diagnostic regression gates: "
+        "2.0.18 automated AppArmor/module and complete-run-binding regression "
+        "gates: "
         "`PASS` for this exact Candidate; this is not HAOS evidence" in text
     )
     assert (
@@ -135,7 +135,7 @@ def test_main_release_creates_annotated_tag_and_prerelease_without_fake_evidence
         "unsupported, and restoring an exact old App backup replaces newer App "
         "`/data`" in text
     )
-    assert "amd64 HAOS acceptance at publication: `NOT RUN`" in text
+    assert "amd64 2.0.18 HAOS acceptance at publication: `NOT RUN`" in text
     assert (
         "aarch64 HAOS acceptance at publication: `NOT RUN`; owner-waived for "
         "experimental deployment, not a PASS" in text
@@ -154,7 +154,7 @@ def test_repository_advertises_the_numeric_tag_published_by_main_release() -> No
         )
     )
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
-    assert config["version"] == inputs["version"]["default"] == "2.0.17"
+    assert config["version"] == inputs["version"]["default"] == "2.0.18"
     assert (
         config["image"]
         == "ghcr.io/kanu-coffee/antigravity-for-home-assistant"

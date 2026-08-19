@@ -273,6 +273,46 @@ def test_enforced_smoke_executes_both_native_cli_px_paths() -> None:
     assert restricted_call < option_change < restart < sensitive_call < final_audit
 
 
+def test_enforced_smoke_bootstraps_the_managed_change_proposal_mcp() -> None:
+    smoke = read("tests/apparmor-enforced-smoke.sh")
+
+    for token in (
+        "run_managed_change_proposal_mcp_probe",
+        'run_managed_change_proposal_mcp_probe "$FIRST_CONTAINER"',
+        "apparmor=antigravity_home_assistant-interactive-runtime-restricted",
+        "--entrypoint /usr/bin/env",
+        '"$IMAGE" /usr/local/bin/ha-change-proposal-mcp',
+        "ANTIGRAVITY_HA_CHANNEL=telegram",
+        '"method":"initialize"',
+        '"method":"tools/list"',
+        'serverInfo.name == "antigravity-ha-change-proposal"',
+        'index("ha_change_propose")',
+        "failed under AppArmor enforcement",
+        "returned an invalid handshake",
+    ):
+        assert token in smoke
+
+    probe = smoke.split(
+        "run_managed_change_proposal_mcp_probe() {", 1
+    )[1].split("\n}", 1)[0]
+    assert "Docker/runc applies the requested profile to the first exec" in probe
+    assert probe.index("--entrypoint /usr/bin/env") < probe.index(
+        '"$IMAGE" /usr/local/bin/ha-change-proposal-mcp'
+    )
+    assert "tools/call" not in probe
+    assert "SUPERVISOR_TOKEN=" not in probe
+    assert 'grep -Fq "$SUPERVISOR_TOKEN"' in probe
+    assert '--volume "${CONFIG_VOLUME}:/config"' in probe
+    assert '--volume "${DATA_VOLUME}:/data"' in probe
+
+    native_call = smoke.index('run_native_cli_probe "$FIRST_CONTAINER" restricted')
+    proposal_call = smoke.index(
+        'run_managed_change_proposal_mcp_probe "$FIRST_CONTAINER"'
+    )
+    final_audit = smoke.rindex("assert_relevant_audit_denials\n")
+    assert native_call < proposal_call < final_audit
+
+
 def test_ci_and_candidate_require_enforcement_against_exact_images() -> None:
     ci = read(".github/workflows/ci.yaml")
     candidate = read(".github/workflows/build-app.yaml")

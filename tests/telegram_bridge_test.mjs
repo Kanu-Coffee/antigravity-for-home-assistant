@@ -543,8 +543,9 @@ assert.deepEqual(parseStreamResult(stream), {
   proposalReceipts: [],
   conversationId: "conversation.fixture-1",
 });
-assert.throws(
-  () => parseStreamResult([
+let terminalStatusFailure;
+try {
+  parseStreamResult([
     JSON.stringify({ event: "init", conversation_id: "conversation.failed" }),
     JSON.stringify({
       event: "result",
@@ -554,9 +555,73 @@ assert.throws(
         response: JSON.stringify({ response: "must not escape", proposal_ids: [] }),
       },
     }),
+  ].join("\n"));
+  assert.fail("failed terminal stream unexpectedly succeeded");
+} catch (error) {
+  terminalStatusFailure = error;
+}
+assert.ok(terminalStatusFailure instanceof AntigravityWorkerError);
+assert.equal(terminalStatusFailure.reasonClass, "terminal_status_failed");
+assert.deepEqual(workerFailureAuditFields(terminalStatusFailure), {
+  failure_kind: "terminal_status",
+  flags: [],
+});
+assert.throws(
+  () => parseStreamResult([
+    JSON.stringify({ event: "init", conversation_id: "conversation.unknown-status" }),
+    JSON.stringify({
+      event: "result",
+      result: {
+        conversation_id: "conversation.unknown-status",
+        status: "FAILED",
+      },
+    }),
   ].join("\n")),
   (error) => error instanceof AntigravityWorkerError &&
-    error.reasonClass === "terminal_status_failed",
+    error.reasonClass === "stream_contract_failed",
+);
+
+const terminalToolErrorCanary = "PRIVATE_TOOL_ERROR_OUTPUT_PATH_AND_ID_CANARY";
+let terminalToolStatusFailure;
+try {
+  parseStreamResult([
+    JSON.stringify({ event: "init", conversation_id: "conversation.tool-failed" }),
+    JSON.stringify({
+      event: "step_update",
+      step_update: {
+        step_index: 2,
+        step_type: "tool",
+        state: "ERROR",
+        tool_name: "call_mcp_tool",
+        tool_info: {
+          output: terminalToolErrorCanary,
+          error: { message: terminalToolErrorCanary },
+        },
+      },
+    }),
+    JSON.stringify({
+      event: "result",
+      result: {
+        conversation_id: "conversation.tool-failed",
+        status: "ERROR",
+        response: terminalToolErrorCanary,
+      },
+    }),
+  ].join("\n"));
+  assert.fail("tool-error terminal stream unexpectedly succeeded");
+} catch (error) {
+  terminalToolStatusFailure = error;
+}
+assert.ok(terminalToolStatusFailure instanceof AntigravityWorkerError);
+assert.equal(terminalToolStatusFailure.reasonClass, "terminal_status_failed");
+assert.deepEqual(workerFailureAuditFields(terminalToolStatusFailure), {
+  failure_kind: "terminal_status",
+  flags: ["tool_error_seen"],
+});
+assert.equal(
+  JSON.stringify(workerFailureAuditFields(terminalToolStatusFailure))
+    .includes(terminalToolErrorCanary),
+  false,
 );
 assert.throws(
   () => parseStreamResult([
@@ -810,6 +875,36 @@ assert.throws(
       "conversation.permission-denied-with-response",
       "명령을 실행하지 못했습니다.",
     )),
+  ].join("\n")),
+  (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "headless_permission_denied",
+);
+assert.throws(
+  () => parseStreamResult([
+    JSON.stringify({
+      event: "init",
+      conversation_id: "conversation.permission-denied-terminal-error",
+    }),
+    JSON.stringify({
+      event: "step_update",
+      step_update: {
+        step_index: 10,
+        step_type: "tool",
+        state: "ERROR",
+        tool_name: "run_command",
+        tool_info: {
+          name: "run_command",
+          error: { message: "Permission was denied" },
+        },
+      },
+    }),
+    JSON.stringify({
+      event: "result",
+      result: {
+        conversation_id: "conversation.permission-denied-terminal-error",
+        status: "ERROR",
+      },
+    }),
   ].join("\n")),
   (error) => error instanceof AntigravityWorkerError &&
     error.reasonClass === "headless_permission_denied",
@@ -1115,7 +1210,7 @@ assert.deepEqual(workerFailureAuditFields({
     signal: "SECRET_SIGNAL_CANARY",
     errno: "SECRET_ERRNO_CANARY",
     exit_code: 42,
-    flags: ["stdout_seen", "SECRET_FLAG_CANARY"],
+    flags: ["stdout_seen", "tool_error_seen", "SECRET_FLAG_CANARY"],
   },
 }), {
   failure_kind: "spawn_error",
@@ -1125,6 +1220,18 @@ assert.deepEqual(workerFailureAuditFields({
     "signal_unrecognized",
     "stdout_seen",
   ],
+});
+assert.deepEqual(workerFailureAuditFields({
+  workerFailure: {
+    failure_kind: "terminal_status",
+    signal: "SIGSEGV",
+    errno: "ENOENT",
+    exit_code: 1,
+    flags: ["tool_error_seen", "stdout_seen", "SECRET_FLAG_CANARY"],
+  },
+}), {
+  failure_kind: "terminal_status",
+  flags: ["tool_error_seen"],
 });
 
 let releaseDispatch;
@@ -1651,6 +1758,44 @@ process.exitCode = 1;
     assert.equal(authFailureMessage.includes(forbidden), false);
   }
 
+  const authTerminalErrorFake = join(fixtureDir, "auth-terminal-error-agy.mjs");
+  await writeFile(authTerminalErrorFake, `
+for await (const _chunk of process.stdin) { /* drain stdin */ }
+process.stdout.write(JSON.stringify({
+  event: "init",
+  conversation_id: "conversation.auth-terminal-error",
+}) + "\\n");
+process.stdout.write(JSON.stringify({
+  event: "result",
+  result: {
+    conversation_id: "conversation.auth-terminal-error",
+    status: "ERROR",
+  },
+}) + "\\n");
+process.stderr.write(${JSON.stringify(ANTIGRAVITY_AUTH_REQUIRED_MARKER.toString("utf8"))});
+process.exitCode = 1;
+`, "utf8");
+  let authTerminalErrorFailure;
+  try {
+    await runAntigravityPrompt("private auth terminal error canary", {
+      binary: process.execPath,
+      prefixArgs: [authTerminalErrorFake],
+      cwd: fixtureDir,
+      timeoutMs: 5_000,
+      requester: { user_id: "100", chat_id: "-200" },
+    });
+    assert.fail("authenticated terminal error unexpectedly succeeded");
+  } catch (error) {
+    authTerminalErrorFailure = error;
+  }
+  assert.ok(authTerminalErrorFailure instanceof AntigravityWorkerError);
+  assert.equal(authTerminalErrorFailure.reasonClass, "authentication_required");
+  assert.deepEqual(workerFailureAuditFields(authTerminalErrorFailure), {
+    failure_kind: "exit_code",
+    exit_code: 1,
+    flags: ["auth_marker_seen", "init_seen", "stderr_seen", "stdout_seen"],
+  });
+
   const permissionFailureFake = join(fixtureDir, "permission-failure-agy.mjs");
   await writeFile(permissionFailureFake, `
 for await (const _chunk of process.stdin) { /* drain stdin */ }
@@ -1766,6 +1911,156 @@ process.stdout.write("not-json\\n");
   );
   assert.equal(workerStatusSnapshot(), "stream_contract_failed");
 
+  const terminalFailureCanary = "PRIVATE_TERMINAL_TOOL_ERROR_STDOUT_CANARY";
+  const terminalErrorFake = join(fixtureDir, "terminal-error-agy.mjs");
+  await writeFile(terminalErrorFake, `
+for await (const _chunk of process.stdin) { /* drain stdin */ }
+process.stdout.write(JSON.stringify({
+  event: "init",
+  conversation_id: "conversation.terminal-error-zero",
+}) + "\\n");
+process.stdout.write(JSON.stringify({
+  event: "step_update",
+  step_update: {
+    step_index: 4,
+    step_type: "tool",
+    state: "ERROR",
+    tool_name: "call_mcp_tool",
+    tool_info: { output: ${JSON.stringify(terminalFailureCanary)} },
+  },
+}) + "\\n");
+process.stdout.write(JSON.stringify({
+  event: "result",
+  result: {
+    conversation_id: "conversation.terminal-error-zero",
+    status: "ERROR",
+    response: ${JSON.stringify(terminalFailureCanary)},
+  },
+}) + "\\n");
+`, "utf8");
+  let terminalErrorFailure;
+  try {
+    await runAntigravityPrompt("private terminal error prompt canary", {
+      binary: process.execPath,
+      prefixArgs: [terminalErrorFake],
+      cwd: fixtureDir,
+      timeoutMs: 5_000,
+      requester: { user_id: "100", chat_id: "-200" },
+    });
+    assert.fail("terminal-error worker unexpectedly succeeded");
+  } catch (error) {
+    terminalErrorFailure = error;
+  }
+  assert.ok(terminalErrorFailure instanceof AntigravityWorkerError);
+  assert.equal(terminalErrorFailure.reasonClass, "terminal_status_failed");
+  assert.equal(workerStatusSnapshot(), "terminal_status_failed");
+  assert.deepEqual(workerFailureAuditFields(terminalErrorFailure), {
+    failure_kind: "terminal_status",
+    flags: ["tool_error_seen"],
+  });
+  assert.equal(
+    JSON.stringify(workerFailureAuditFields(terminalErrorFailure))
+      .includes(terminalFailureCanary),
+    false,
+  );
+
+  const terminalErrorExitOneFake = join(fixtureDir, "terminal-error-exit-one-agy.mjs");
+  await writeFile(terminalErrorExitOneFake, `
+for await (const _chunk of process.stdin) { /* drain stdin */ }
+process.stdout.write(JSON.stringify({
+  event: "init",
+  conversation_id: "conversation.terminal-error-one",
+}) + "\\n");
+process.stdout.write(JSON.stringify({
+  event: "step_update",
+  step_update: {
+    step_index: 5,
+    step_type: "tool",
+    state: "ERROR",
+    tool_name: "call_mcp_tool",
+    tool_info: { error: { message: ${JSON.stringify(terminalFailureCanary)} } },
+  },
+}) + "\\n");
+process.stdout.write(JSON.stringify({
+  event: "result",
+  result: {
+    conversation_id: "conversation.terminal-error-one",
+    status: "ERROR",
+  },
+}) + "\\n");
+process.exitCode = 1;
+`, "utf8");
+  let terminalErrorExitOneFailure;
+  try {
+    await runAntigravityPrompt("private terminal error exit-one canary", {
+      binary: process.execPath,
+      prefixArgs: [terminalErrorExitOneFake],
+      cwd: fixtureDir,
+      timeoutMs: 5_000,
+      requester: { user_id: "100", chat_id: "-200" },
+    });
+    assert.fail("exit-one terminal-error worker unexpectedly succeeded");
+  } catch (error) {
+    terminalErrorExitOneFailure = error;
+  }
+  assert.ok(terminalErrorExitOneFailure instanceof AntigravityWorkerError);
+  assert.equal(terminalErrorExitOneFailure.reasonClass, "terminal_status_failed");
+  assert.equal(workerStatusSnapshot(), "terminal_status_failed");
+  assert.deepEqual(workerFailureAuditFields(terminalErrorExitOneFailure), {
+    failure_kind: "terminal_status",
+    flags: ["tool_error_seen"],
+  });
+
+  const malformedExitOneFake = join(fixtureDir, "malformed-exit-one-agy.mjs");
+  await writeFile(malformedExitOneFake, `
+for await (const _chunk of process.stdin) { /* drain stdin */ }
+process.stdout.write("not-json\\n");
+process.exitCode = 1;
+`, "utf8");
+  let malformedExitOneFailure;
+  try {
+    await runAntigravityPrompt("private malformed exit-one canary", {
+      binary: process.execPath,
+      prefixArgs: [malformedExitOneFake],
+      cwd: fixtureDir,
+      timeoutMs: 5_000,
+      requester: { user_id: "100", chat_id: "-200" },
+    });
+    assert.fail("malformed exit-one worker unexpectedly succeeded");
+  } catch (error) {
+    malformedExitOneFailure = error;
+  }
+  assert.ok(malformedExitOneFailure instanceof AntigravityWorkerError);
+  assert.equal(malformedExitOneFailure.reasonClass, "worker_failed");
+  assert.deepEqual(workerFailureAuditFields(malformedExitOneFailure), {
+    failure_kind: "exit_code",
+    exit_code: 1,
+    flags: ["stdout_seen"],
+  });
+
+  const malformedHangingFake = join(fixtureDir, "malformed-hanging-agy.mjs");
+  await writeFile(malformedHangingFake, `
+for await (const _chunk of process.stdin) { /* drain stdin */ }
+process.stdout.write("not-json\\n");
+setInterval(() => {}, 1_000);
+`, "utf8");
+  const malformedHangingStartedAt = Date.now();
+  await assert.rejects(
+    runAntigravityPrompt("private malformed hanging canary", {
+      binary: process.execPath,
+      prefixArgs: [malformedHangingFake],
+      cwd: fixtureDir,
+      timeoutMs: 5_000,
+      hardKillGraceMs: 50,
+      requester: { user_id: "100", chat_id: "-200" },
+    }),
+    (error) => error instanceof AntigravityWorkerError &&
+      error.reasonClass === "worker_failed",
+  );
+  const malformedHangingElapsed = Date.now() - malformedHangingStartedAt;
+  assert.ok(malformedHangingElapsed < 1_000,
+    `malformed hanging worker occupied a slot too long: ${malformedHangingElapsed}ms`);
+
   const emptySuccessFake = join(fixtureDir, "empty-success-agy.mjs");
   await writeFile(emptySuccessFake, `
 for await (const _chunk of process.stdin) { /* drain stdin */ }
@@ -1865,6 +2160,12 @@ process.kill(process.pid, "SIGSEGV");
     stderr: auditBoundaryStderrCanary,
     token: config.botToken,
   });
+  Object.assign(terminalErrorFailure, {
+    path: auditBoundaryPathCanary,
+    prompt: auditBoundaryPromptCanary,
+    stderr: auditBoundaryStderrCanary,
+    token: config.botToken,
+  });
   let auditApiCalls = 0;
   const auditLines = [];
   const sentAuditFailures = [];
@@ -1889,11 +2190,29 @@ process.kill(process.pid, "SIGSEGV");
         sentAuditFailures.push(text);
       },
     });
+    await handleMessage(config, {
+      updateId: 971,
+      message_id: 971,
+      from: { id: "100" },
+      chat: { id: "-200", type: "private" },
+      text: auditBoundaryPromptCanary,
+    }, {
+      statePath: auditStatePath,
+      api: () => {
+        auditApiCalls += 1;
+        throw terminalErrorFailure;
+      },
+      send: async (token, chatId, text) => {
+        assert.equal(token, config.botToken);
+        assert.equal(chatId, "-200");
+        sentAuditFailures.push(text);
+      },
+    });
   } finally {
     console.log = originalConsoleLog;
   }
-  assert.equal(auditApiCalls, 1);
-  assert.equal(sentAuditFailures.length, 1);
+  assert.equal(auditApiCalls, 2);
+  assert.equal(sentAuditFailures.length, 2);
   const auditRecords = auditLines
     .filter((line) => line.startsWith("[Telegram Bridge] "))
     .map((line) => JSON.parse(line.slice("[Telegram Bridge] ".length)));
@@ -1908,11 +2227,24 @@ process.kill(process.pid, "SIGSEGV");
     signal: "SIGSEGV",
     flags: ["stderr_seen"],
   });
+  const terminalFailureRecord = auditRecords.find((record) =>
+    record.event === "request_failed" &&
+    record.reason_class === "terminal_status_failed");
+  assert.ok(terminalFailureRecord);
+  const { chat: terminalFailureChat, ...terminalFailureFields } = terminalFailureRecord;
+  assert.match(terminalFailureChat, /^[a-f0-9]{12}$/u);
+  assert.deepEqual(terminalFailureFields, {
+    event: "request_failed",
+    reason_class: "terminal_status_failed",
+    failure_kind: "terminal_status",
+    flags: ["tool_error_seen"],
+  });
   const serializedAudit = JSON.stringify(auditRecords);
   for (const forbidden of [
     auditBoundaryPromptCanary,
     auditBoundaryStderrCanary,
     auditBoundaryPathCanary,
+    terminalFailureCanary,
     config.botToken,
   ]) {
     assert.equal(serializedAudit.includes(forbidden), false);

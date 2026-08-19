@@ -141,9 +141,16 @@ Antigravity 명령이나 설정을 추정하지 않는다. 문서와 고정 bina
   bootstrap nsswitch/passwd identity read와 runtime `/usr/share/ca-certificates/**` TLS
   trust-store read만 두 transition chain에 추가한다. 새로운 broad `/etc/**`·`/usr/share/**`
   rule은 추가하지 않고, runtime의 기존 `/etc/** r`와 필수 system-library mapping 및
-  proc/settings/credential deny는 유지한다. local kernel-enforced status 0은 HAOS
-  증거가 아니며 2.0.17 실제 HAOS는 `NOT RUN`이다. aarch64 실기기 `NOT RUN`은
-  owner-waived experimental 배포 결정이지 PASS가 아니며 전체 v2 수용은 `PARTIAL`이다.
+  proc/settings/credential deny는 유지한다. 이후 실제 2.0.17 amd64에서 App 기동,
+  Ingress/Web terminal, native 기본 대화, Telegram transport와 도구 없는 답변은
+  `PASS`했지만 managed MCP와 `telegram_action_propose`는 `FAIL`했다. kernel audit는
+  `change-proposal-client`의 exact image-owned `supervisor-credential-fd.mjs` 전이 module
+  read 거부를 확인했고, restricted/sensitive-read 두 launcher는 승인 제안에 필요한
+  requester/run binding 다섯 값을 버렸다. 승인된 쓰기는 `NOT RUN`이며 공개 2.0.17
+  수용은 전체 `FAIL`이다. 2.0.18은 exact module read와 두 launcher의 완전한 다섯 값
+  검증·보존만 추가하고 broad AppArmor/native-tool 권한이나 승인 없는 직접 쓰기·명령을
+  열지 않는다. 자동 회귀는 HAOS 증거가 아니며 2.0.18 amd64/aarch64 실기기는 릴리스 전
+  `NOT RUN`이다. aarch64 면제는 PASS가 아니며 전체 v2 수용은 `PARTIAL`이다.
 - proposal registration만으로 crash durability를 주장하지 않는다. encrypted
   approval/card sealing 전 bridge crash는 사용자가 원 요청을 반복해야 한다.
 - 명시적 `reset_v2`는 safe parseable settings를 backup하고 ownership state와

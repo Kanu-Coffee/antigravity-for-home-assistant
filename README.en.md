@@ -32,25 +32,25 @@
 > consult each release's evidence for complete install, update, and rollback
 > verification on both real HAOS architectures.
 
-**2.0.17 native-CLI recovery:** On public 2.0.16 on real HAOS 18.2 amd64, the
-App, Ingress, Web terminal, and Telegram Bot API connection started, but `agy`
-and `antigravity --version` immediately exited with `Segmentation fault`/status
-139, and every Telegram worker failed with the same native CLI crash. Reproducing
-the failure with the exact public 2.0.16 image and its custom AppArmor profiles
-showed a kernel-audit denial of `file_mmap` permission `m` on
-`/usr/local/libexec/antigravity-real` under `interactive-runtime-restricted`;
-`interactive-runtime-sensitive-read` contained the same `r`-only rule.
-Version 2.0.17 changes those two exact native-binary rules from `r` to `rm` and
-adds only the full blank-auth worker trace's exact bootstrap nsswitch/passwd
-identity reads plus runtime `/usr/share/ca-certificates/**` TLS trust-store reads
-to the two transition chains. It adds no new broad `/etc/**` or `/usr/share/**`
-rule; existing runtime `/etc/** r`, required system-library mappings, and
-proc/settings/credential denies are unchanged,
-and Telegram now reports a bounded native termination signal instead of hiding
-it behind a generic `worker_failed`. A local kernel-enforced regression reaches
-status 0 for `antigravity --version`, but real-HAOS 2.0.17 remains `NOT RUN`.
-The unavailable aarch64-device waiver is not a PASS, overall v2 acceptance is
-`PARTIAL`, and only 2.0.13 remains the breaking security-boundary transition.
+**2.0.18 Telegram MCP and approval-path correction:** On public 2.0.17 on real
+HAOS 18.2 amd64, App startup, Ingress/Web terminal, the native CLI and basic
+conversation, Telegram transport, and a one-line no-tool reply passed. Managed
+MCP and `telegram_action_propose` approval-card requests failed. Kernel audit
+identified the exact AppArmor denial: `change-proposal-client` could not read the
+image-owned transitive module
+`/usr/local/share/antigravity-ha/supervisor-credential-fd.mjs`. Independently,
+both restricted and sensitive-read launchers discarded the five requester/run
+binding values required for an approval proposal. Approved write execution was
+therefore `NOT RUN`, and public 2.0.17 amd64 acceptance is `FAIL` overall.
+
+Version 2.0.18 grants only that exact module read and makes both launchers
+validate and preserve all five binding values as one complete unit while
+rejecting partial bindings. It adds no broad AppArmor or native-tool permission;
+unapproved direct writes and commands and existing sensitive-data denies remain
+unchanged. Automated regressions are not HAOS evidence. Real-device 2.0.18
+acceptance on amd64 and aarch64 is `NOT RUN` before release, overall v2
+acceptance remains `PARTIAL`, and only 2.0.13 remains the breaking
+security-boundary transition.
 
 Downgrading to 2.0.12 is not an automatic, lossless recovery path. Its public
 image failed to attach the custom AppArmor policy, and its real-device success
@@ -113,9 +113,9 @@ attach OAuth material to an issue.
 > actions. OAuth material, App-owned permission settings, and sensitive paths
 > cannot be modified directly. Protect the bot token, authorized chats, and
 > Telegram accounts as Home Assistant administrator credentials. Basic amd64
-> Bot API reconnect/delivery and App restart passed on 2.0.12, but OAuth, the
-> complete approval/mutation matrix, corrected 2.0.17 native CLI/Telegram paths, and
-> aarch64 real-device E2E remain incomplete.
+> Bot API transport and no-tool chat passed on 2.0.17 amd64, but managed MCP and
+> approval proposal failed. The corrected 2.0.18 MCP, approval/mutation path and
+> aarch64 real-device E2E remain `NOT RUN`.
 
 Complete official native first-run OAuth once with `ha-antigravity-login` in the
 Web UI or SSH, then enable the bot. There is no separate Telegram identity,

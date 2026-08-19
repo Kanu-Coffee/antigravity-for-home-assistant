@@ -27,23 +27,17 @@ Home Assistant 안에서 antigravity와 대화하며 설정을 살펴보고 대�
 > [!WARNING]
 > 이 앱은 Home Assistant 설정을 직접 바꿀 수 있는 강한 관리자 도구입니다. Telegram도 CLI와 동등한 관리자 채널이므로 bot token, 허용 chat과 Telegram 계정을 보호하세요. 중요한 변경 전에는 backup을 만들고 계획과 diff를 확인하며 SSH 포트를 인터넷에 직접 공개하지 마세요.
 
-**2.0.17 native CLI 복구:** 실제 HAOS 18.2 amd64의 공개 2.0.16에서 App, Ingress,
-Web terminal과 Telegram Bot API 연결은 기동했지만 `agy`와
-`antigravity --version`이 `Segmentation fault`/status 139로 즉시 종료되고 Telegram
-worker도 같은 native crash로 실패했습니다. exact public 2.0.16 image와 custom
-AppArmor profile 재현의 kernel audit는 `interactive-runtime-restricted`에서
-`/usr/local/libexec/antigravity-real` `file_mmap` permission `m` 거부를 확인했고,
-`interactive-runtime-sensitive-read`에도 동일한 `r`-only rule이 있었습니다.
-2.0.17은 두 exact native-binary rule을 `r`에서 `rm`으로 바꾸고 full blank-auth worker
-trace의 exact bootstrap nsswitch/passwd identity read와 runtime
-`/usr/share/ca-certificates/**` TLS trust-store read만 두 transition chain에 추가합니다.
-새로운 broad `/etc/**`·`/usr/share/**` rule은 추가하지 않고, runtime의 기존
-`/etc/** r`와 필수 system-library mapping 및 proc/settings/credential deny는 유지합니다.
-local kernel-enforced `--version`은 status
-0이지만 2.0.17 실제 HAOS는 `NOT RUN`, aarch64 면제는 PASS가 아니며 전체 수용은
-`PARTIAL`입니다. breaking 목록은 custom security boundary를 활성화한 2.0.13만
-유지합니다. 2.0.12 직접 downgrade는 지원되지 않고 exact App backup 복원은 이후 App
-`/data` 상태를 잃을 수 있으므로 무손실 fallback으로 취급하지 않습니다.
+**2.0.18 Telegram MCP·승인 경로 교정:** 공개 2.0.17의 실제 HAOS 18.2 amd64에서
+App, Web terminal, native 기본 대화, Telegram 연결과 도구 없는 답변은 통과했지만
+managed MCP와 `telegram_action_propose`는 실패했습니다. kernel audit는
+`change-proposal-client`의 exact image-owned
+`supervisor-credential-fd.mjs` module read 거부를 확인했고, 두 confined launcher는
+승인 제안에 필요한 requester/run binding 다섯 값을 버렸습니다. 승인된 쓰기는
+`NOT RUN`이므로 2.0.17 수용은 전체 `FAIL`입니다. 2.0.18은 exact module read만 열고
+두 launcher가 완전한 다섯 값 묶음만 검증·보존합니다. broad AppArmor/native-tool 권한,
+승인 없는 직접 쓰기나 명령은 추가하지 않습니다. 2.0.18 amd64와 aarch64 실기기
+수용은 릴리스 전 `NOT RUN`, 전체 v2 수용은 `PARTIAL`입니다. breaking 목록은 2.0.13까지만
+유지하며 2.0.12 backup restore는 무손실 fallback이 아닙니다.
 
 ## 빠른 시작
 

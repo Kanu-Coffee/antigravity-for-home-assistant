@@ -9,7 +9,7 @@ public App은 사용자의 HAOS에서 source build하지 않고 GHCR prebuilt im
 받는다.
 
 ```yaml
-version: "2.0.17"
+version: "2.0.18"
 arch:
   - amd64
   - aarch64
@@ -91,8 +91,20 @@ exact bootstrap nsswitch/passwd identity read와 runtime
 새로운 broad `/etc/**`·`/usr/share/**` rule은 추가하지 않고, runtime의 기존 `/etc/** r`,
 필수 system-library mapping 및 proc/settings/credential deny는 그대로이고, local kernel-enforced
 `antigravity --version` status 0은 HAOS 증거가 아니다. 2.0.17 actual HAOS와 aarch64는
-`NOT RUN`, 전체 v2 수용은 `PARTIAL`이다. 2.0.16과 2.0.17 corrective patch 모두 새
-migration이 아니므로 `breaking_versions`에는 2.0.13만 유지한다.
+`NOT RUN`, 전체 v2 수용은 `PARTIAL`이었다. 이후 실제 2.0.17 amd64에서 App startup,
+Web terminal, native 기본 대화, Telegram transport와 도구 없는 답변은 통과했지만
+managed MCP와 `telegram_action_propose`는 실패했다. kernel audit는
+`change-proposal-client`의 exact image-owned `supervisor-credential-fd.mjs` module read
+거부를 확인했고, 두 confined launcher는 승인 제안에 필요한 requester/run binding
+다섯 값을 버렸다. 승인된 쓰기는 `NOT RUN`이고 2.0.17 전체 수용은 `FAIL`이다.
+
+2.0.18은 proposal client에 그 exact module read만 추가하고 restricted/sensitive-read
+launcher가 완전한 다섯 값 binding만 검증·보존하며 일부 binding은 거부하게 한다. broad
+AppArmor/native-tool 권한, 환경 전체 상속이나 승인 없는 direct write/command는 추가하지
+않는다. 2.0.18 automated regression은 HAOS 증거가 아니며 amd64/aarch64 실기기 수용은
+릴리스 전 `NOT RUN`, 전체 v2 수용은 `PARTIAL`이다. 2.0.16~2.0.18 corrective patch는 새
+migration이 아니므로 `breaking_versions`에는 2.0.13까지만 유지한다. 2.0.18 뒤 추가
+배포 변경이 필요하면 이미 사용한 tag를 재사용하지 않고 최소 `2.0.19`를 사용한다.
 
 image에 고정한 Antigravity binary는 App runtime에서 자체 갱신하지 않는다. 모든
 native launch와 `env -i` child allowlist는 공식 opt-out
@@ -390,8 +402,8 @@ downgrade는 지원되지 않는다. 사용자가 보유한 exact 2.0.12 App bac
 approval/outbox·identity state는 소실된다. 그러한 backup 없이 uninstall 또는 Docker
 상태 수동 조작을 복구 절차로 사용하지 않는다.
 
-backup이 없고 2.0.17도 실기기 수용에 실패한다면 fallback은 현재 `/data`를 보존하는
-새로운 더 높은 numeric compatibility patch여야 한다. custom attachment를 의도적으로
+backup이 없고 2.0.18도 실기기 수용에 실패한다면 fallback은 현재 `/data`를 보존하는
+새로운 더 높은 numeric compatibility patch, 최소 `2.0.19`여야 한다. custom attachment를 의도적으로
 되돌리는 선택은 명시적 security degradation이며, 별도 candidate/HAOS 검증 전에는
 감사된 contingency `NOT RUN`일 뿐 정상 복구나 PASS로 기록하지 않는다. 문제 분석 중
 사용한 `reset_v2` mode는 정상화 뒤 반드시 `preserve`로 되돌린다.

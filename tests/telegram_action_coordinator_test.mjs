@@ -86,6 +86,28 @@ test("coordinator socket rejects a copied requester binding and is idempotent", 
   }
 });
 
+test("coordinator rejects a fully shaped forged interactive binding", async () => {
+  const root = await mkdtemp(join(tmpdir(), "telegram-action-coordinator-"));
+  const socketPath = join(root, "proposal.sock");
+  const coordinator = new TelegramActionCoordinator({ socketPath });
+  try {
+    const live = coordinator.beginRun(runInput("conversation-live-forged"));
+    await coordinator.start();
+    const forged = proposal({
+      ...live,
+      run_nonce: "F".repeat(24),
+    }, "pwd");
+    await assert.rejects(
+      sendActionRegisterRequest(forged, { socketPath }),
+      (error) => error?.code === "binding_mismatch",
+    );
+    assert.equal(coordinator.finishRun(live.run_nonce), true);
+  } finally {
+    await coordinator.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("coordinator rejects registration before init conversation binding", () => {
   const coordinator = new TelegramActionCoordinator({
     socketPath: "/tmp/telegram-action-coordinator-unstarted.sock",

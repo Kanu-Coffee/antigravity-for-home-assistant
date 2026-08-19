@@ -795,5 +795,17 @@ unsafe file과 unsafe effective boundary는 계속 Bot API 접촉 없이 fail cl
 denial과 SIGSEGV/status 139 때문에 모든 worker가 `session_ready` 뒤 실패했다. bridge는
 2.0.17부터 native child의 bounded termination signal을 진단에 포함하되 stderr, prompt,
 OAuth, token과 사용자 content를 기록하지 않는다. `/new`나 reconnect는 이 crash를
-복구하지 않는다. 2.0.17 actual HAOS approval/worker completion은 `NOT RUN`이며
-kernel-enforced·fixture 자동 smoke는 HAOS 증거가 아니다.
+복구하지 않는다. 이후 actual 2.0.17 HAOS amd64에서 basic/no-tool worker completion은
+`PASS`했지만 managed MCP와 `telegram_action_propose`는 `FAIL`했다. kernel audit는
+`change-proposal-client`의 exact image-owned `supervisor-credential-fd.mjs` module read
+거부를 확인했고, 두 confined launcher는 proposal의 requester/run binding 다섯 값을
+버렸다. 승인카드 전 실패했으므로 approved write는 `NOT RUN`이고 2.0.17 전체 수용은
+`FAIL`이다.
+
+2.0.18은 proposal client에 해당 exact module read만 추가한다. restricted와
+sensitive-read launcher는 다섯 run binding이 전부 있거나 전부 없는지만 허용하고,
+일부 binding은 fail closed하며 완전한 tuple만 함께 전달한다. 환경 전체 상속, broad
+`mcp(*)`/`command(*)`, 승인 없는 direct write/command는 허용하지 않는다. exact
+module/broad-rule negative와 complete/partial tuple 자동 회귀는 HAOS 증거가 아니며,
+2.0.18 amd64의 single read MCP→approval card→approved bounded write와 aarch64
+실기기 수용은 릴리스 전 `NOT RUN`이다.
