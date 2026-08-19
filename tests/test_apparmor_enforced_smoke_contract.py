@@ -236,7 +236,22 @@ def test_ci_and_candidate_require_enforcement_against_exact_images() -> None:
         "exec bash tests/apparmor-enforced-smoke.sh "
         "antigravity-for-home-assistant:test"
     ) in ci
-    assert "! command -v apparmor_parser >/dev/null 2>&1" in ci
+    static_parse = ci.split(
+        "      - name: Parse the enforcing AppArmor profile\n", 1
+    )[1].split("\n      - name: ", 1)[0]
+    assert "if ! command -v apparmor_parser >/dev/null 2>&1; then" in static_parse
+    assert "sudo apt-get update" not in static_parse
+    assert "Acquire::Retries=2" in static_parse
+    assert "Acquire::http::Timeout=15" in static_parse
+    assert "Acquire::https::Timeout=15" in static_parse
+    assert static_parse.count("timeout --signal=TERM --kill-after=10s 120s") == 2
+    assert 'apt-get "${apt_options[@]}" update' in static_parse
+    assert 'apt-get "${apt_options[@]}" install' in static_parse
+    assert "--yes --no-install-recommends apparmor" in static_parse
+    assert static_parse.count("command -v apparmor_parser >/dev/null 2>&1") == 2
+    assert static_parse.rindex("command -v apparmor_parser") < static_parse.index(
+        "sudo apparmor_parser"
+    )
     assert "packages+=(apparmor)" in ci
     assert "if ((${#packages[@]} > 0)); then" in ci
     assert "timeout --signal=TERM --kill-after=10s 120s" in ci

@@ -325,6 +325,29 @@ def test_ci_image_handoff_uses_only_bounded_conditional_package_installs(
     assert load_step.count("command -v apparmor_parser >/dev/null 2>&1") == 2
 
 
+def test_ci_shellcheck_install_is_conditional_and_bounded(
+    repository_root: Path,
+) -> None:
+    workflow = (repository_root / ".github/workflows/ci.yaml").read_text(
+        encoding="utf-8"
+    )
+    step = workflow.split("      - name: Run ShellCheck\n", 1)[1].split(
+        "\n      - name: ", 1
+    )[0]
+
+    assert "if ! command -v shellcheck >/dev/null 2>&1; then" in step
+    assert "sudo apt-get update" not in step
+    assert "Acquire::Retries=2" in step
+    assert "Acquire::http::Timeout=15" in step
+    assert "Acquire::https::Timeout=15" in step
+    assert step.count("timeout --signal=TERM --kill-after=10s 120s") == 2
+    assert 'apt-get "${apt_options[@]}" update' in step
+    assert 'apt-get "${apt_options[@]}" install' in step
+    assert "--yes --no-install-recommends shellcheck" in step
+    assert step.count("command -v shellcheck >/dev/null 2>&1") == 2
+    assert step.rindex("command -v shellcheck") < step.index("git grep")
+
+
 def test_ci_checks_committed_whitespace_and_generated_artifacts(
     repository_root: Path,
 ) -> None:
