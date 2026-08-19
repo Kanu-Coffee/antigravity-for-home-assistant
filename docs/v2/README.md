@@ -127,12 +127,14 @@ Antigravity 명령이나 설정을 추정하지 않는다. 문서와 고정 bina
   execute가 필요했다. 전체 cold-start trace로 resolved S6/execline·Bash, init
   계정/nginx 상태, Telegram pause, SSH accounting/OOM, Chromium child와 feedback
   subtree까지 bounded runtime closure를 확인했다. 2.0.15는 이를 profile별 exact 경로로
-  보완하고 새 broad library/package/config 권한을 추가하지 않은 채 실제 profile attach, cold
-  start·fresh-container restart와 안전하게 준비한 `/config/secrets.yaml` read-denial
-  canary를 검증하는 kernel-enforced 자동 smoke를 필수화한다. 이 자동 증거는 HAOS
-  증거가 아니므로 2.0.15 최초 기동·재시작은
-  `NOT RUN`이다. aarch64 실기기 `NOT RUN`은 owner-waived experimental 배포 결정이지
-  PASS가 아니며 전체 v2 수용은 `PARTIAL`이다.
+  보완하고 kernel-enforced 자동 smoke를 필수화했지만, 실제 HAOS에서 primary profile의
+  PTY multiplexor 접근 누락으로 ttyd `pty_spawn`이 EACCES를 반환했다. 같은 시작의
+  `refresh_managed`는 malformed `permissions.ask`를 Telegram 안전 정규화보다 먼저
+  거부해 bridge가 `permission_boundary_blocked`에 머물렀다. 따라서 공개 2.0.15의
+  amd64 HAOS 수용은 `FAIL`이다. 2.0.16은 exact `/dev/ptmx` read/write와 지원되는 안전한
+  settings의 managed permission bucket을 typed merge 검증 전 29/0/33으로 정규화하는
+  교정만 적용한다. 2.0.16 실제 HAOS는 `NOT RUN`이다. aarch64 실기기 `NOT RUN`은
+  owner-waived experimental 배포 결정이지 PASS가 아니며 전체 v2 수용은 `PARTIAL`이다.
 - proposal registration만으로 crash durability를 주장하지 않는다. encrypted
   approval/card sealing 전 bridge crash는 사용자가 원 요청을 반복해야 한다.
 - 명시적 `reset_v2`는 safe parseable settings를 backup하고 ownership state와

@@ -25,8 +25,10 @@ readonly SSH_PRIVATE_KEY="${WORK_DIR}/ssh-client-ed25519"
 readonly SSH_PUBLIC_KEY="${SSH_PRIVATE_KEY}.pub"
 readonly UTMP_FIXTURE="${WORK_DIR}/utmp"
 readonly WTMP_FIXTURE="${WORK_DIR}/wtmp"
+readonly TTYD_WEBSOCKET_SMOKE="${PWD}/tests/ttyd_websocket_smoke.py"
 PROFILE_LOADED=false
 AUDIT_START_EPOCH=0
+PYTHON3_BIN=
 
 redact_probe_output() {
   sed "s/${SUPERVISOR_TOKEN}/[REDACTED_HOME_ASSISTANT_TOKEN]/g"
@@ -119,6 +121,14 @@ require_enforcement_host() {
     || fail 'apparmor_parser is not installed'
   command -v ssh-keygen >/dev/null 2>&1 \
     || fail 'ssh-keygen is required to create the disposable SSH fixture'
+  command -v nsenter >/dev/null 2>&1 \
+    || fail 'nsenter is required to reach the confined ttyd loopback endpoint'
+  PYTHON3_BIN=$(command -v python3 2>/dev/null || true)
+  [[ -n $PYTHON3_BIN && -x $PYTHON3_BIN ]] \
+    || fail 'python3 is required to run the ttyd WebSocket probe'
+  readonly PYTHON3_BIN
+  [[ -f $TTYD_WEBSOCKET_SMOKE ]] \
+    || fail "missing ttyd WebSocket probe: ${TTYD_WEBSOCKET_SMOKE}"
   sudo -n true >/dev/null 2>&1 \
     || fail 'passwordless sudo is required to load the kernel AppArmor profile'
   docker info --format '{{json .SecurityOptions}}' \
@@ -337,6 +347,29 @@ run_ssh_and_accounting_probe() {
     grep -Fq "$marker" <<< "$output" \
       || fail "the loopback SSH/tmux probe omitted: ${marker}"
   done
+}
+
+run_ttyd_websocket_probe() {
+  local container=$1
+  local container_pid
+  local output
+
+  container_pid=$(docker inspect --format '{{.State.Pid}}' "$container")
+  [[ $container_pid =~ ^[1-9][0-9]*$ ]] \
+    || fail "could not resolve the running container PID for ${container}"
+
+  # ttyd intentionally listens only on the App's loopback interface. Enter
+  # only the container network namespace: keep the host mount/process spaces
+  # and run the repository's dependency-free client without publishing a port.
+  if ! output=$(sudo -n nsenter --target "$container_pid" --net -- \
+    "$PYTHON3_BIN" "$TTYD_WEBSOCKET_SMOKE" \
+      ws://127.0.0.1:7682/ws 2>&1); then
+    printf '%s\n' "$output" | redact_probe_output >&2
+    fail 'the confined loopback ttyd WebSocket/PTY probe failed'
+  fi
+  grep -Fq \
+    'reconnect=same resize=96x32 cwd=/config' <<< "$output" \
+    || fail 'the ttyd probe did not prove tmux reconnect and resize behavior'
 }
 
 run_playwright_probe() {
@@ -570,6 +603,7 @@ run_helper_credential_boundary_probe
 
 start_container "$FIRST_CONTAINER"
 assert_enforced_container_ready "$FIRST_CONTAINER"
+run_ttyd_websocket_probe "$FIRST_CONTAINER"
 run_confined_feature_probes "$FIRST_CONTAINER"
 
 docker restart "$FIRST_CONTAINER" >/dev/null

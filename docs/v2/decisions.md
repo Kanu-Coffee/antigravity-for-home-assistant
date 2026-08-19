@@ -189,7 +189,25 @@
   credential·민감정보 deny를 유지한다.
 - 2.0.15는 실제 custom profile을 exact image에 attach하는 kernel-enforced cold-start·
   fresh-container restart와 안전한 `/config/secrets.yaml` read-denial canary smoke를
-  CI/Candidate 필수 gate로 추가한다. 이는 automated Linux-container 증거이지 HAOS
-  증거가 아니므로 2.0.15 실기기 수용은 `NOT RUN`,
-  aarch64 owner waiver는 not a PASS, 전체 v2 수용은 `PARTIAL`이다. 2.0.15도 새 migration이
-  아니므로 `breaking_versions`에는 2.0.13만 유지한다.
+  CI/Candidate 필수 gate로 추가했다. 그러나 실제 HAOS에서 primary profile의
+  `/dev/ptmx` 접근 누락으로 ttyd PTY 생성이 EACCES를 반환해 2.0.15 Web terminal
+  수용은 `FAIL`이다. 자동 Linux-container 증거는 이 실기기 결과를 대체하지 않는다.
+
+## ADR-009 — PTY 최소권한과 Telegram managed bucket 정규화 순서
+
+- 상태: `Accepted`
+- 공개 2.0.15의 실제 HAOS 18.2 amd64에서 Ingress HTTP와 WebSocket upgrade는
+  성공했지만 ttyd `pty_spawn`이 EACCES로 실패했다. primary AppArmor profile에 ttyd가
+  여는 exact `/dev/ptmx rw`를 추가하며 `/dev/**` broad grant나 다른 profile의 권한
+  복사는 허용하지 않는다.
+- 같은 시작에서 `refresh_managed`는 safe parseable settings의 malformed
+  `permissions.ask`를 Telegram-safe replacement보다 먼저 typed array로 검증했다.
+  2.0.16은 Telegram이 관리하는 allow/ask/deny 세 bucket을 exact 29/0/33 policy로
+  canonicalize한 뒤 merge validation을 수행한다. 이 순서는 unrelated top-level settings,
+  global MCP, plugin, OAuth와 `/config` 보존을 바꾸지 않는다.
+- symlink, hardlink, non-root owner, 크기 초과와 invalid JSON은 계속 자동 복구 대상이
+  아니며 bridge는 effective boundary가 안전하지 않으면 Bot API 접촉 없이
+  `permission_boundary_blocked` hold를 유지한다.
+- 2.0.16은 2.0.13에서 활성화한 security boundary 내부의 corrective patch다.
+  `breaking_versions`에는 2.0.13까지만 유지한다. 2.0.16 실제 HAOS 수용은 `NOT RUN`,
+  aarch64 owner waiver는 not a PASS이며 전체 v2 수용은 `PARTIAL`이다.

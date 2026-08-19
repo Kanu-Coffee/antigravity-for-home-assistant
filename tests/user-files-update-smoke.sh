@@ -32,6 +32,22 @@ PERMISSION_V208_MIGRATION_VOLUME="${TEST_ID}-permission-v208-migration"
 PERMISSION_V208_AMBIGUOUS_VOLUME="${TEST_ID}-permission-v208-ambiguous"
 PERMISSION_V3_MIGRATION_VOLUME="${TEST_ID}-permission-v3-migration"
 TELEGRAM_RECONCILE_VOLUME="${TEST_ID}-telegram-reconcile"
+TELEGRAM_MALFORMED_REFRESH_VOLUME="${TEST_ID}-telegram-malformed-refresh"
+TELEGRAM_MALFORMED_MATRIX_CASES=(
+  "allow:non-array"
+  "allow:array-non-string"
+  "ask:non-array"
+  "ask:array-non-string"
+  "deny:non-array"
+  "deny:array-non-string"
+)
+TELEGRAM_MALFORMED_MATRIX_VOLUMES=()
+for TELEGRAM_MALFORMED_MATRIX_CASE in \
+  "${TELEGRAM_MALFORMED_MATRIX_CASES[@]}"; do
+  TELEGRAM_MALFORMED_MATRIX_VOLUMES+=(
+    "${TEST_ID}-telegram-matrix-${TELEGRAM_MALFORMED_MATRIX_CASE/:/-}"
+  )
+done
 TELEGRAM_OVERSIZE_VOLUME="${TEST_ID}-telegram-oversize"
 PERMISSION_UNOWNED_VOLUME="${TEST_ID}-permission-unowned"
 PERMISSION_AMBIGUOUS_VOLUME="${TEST_ID}-permission-ambiguous"
@@ -53,6 +69,8 @@ VOLUMES=(
   "${PERMISSION_V208_AMBIGUOUS_VOLUME}"
   "${PERMISSION_V3_MIGRATION_VOLUME}"
   "${TELEGRAM_RECONCILE_VOLUME}"
+  "${TELEGRAM_MALFORMED_REFRESH_VOLUME}"
+  "${TELEGRAM_MALFORMED_MATRIX_VOLUMES[@]}"
   "${TELEGRAM_OVERSIZE_VOLUME}"
   "${PERMISSION_UNOWNED_VOLUME}"
   "${PERMISSION_AMBIGUOUS_VOLUME}"
@@ -1414,6 +1432,470 @@ run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
     and (.permissions.deny | length) == 33
   ' "${settings}" >/dev/null
 SCRIPT
+
+# Reproduce the 2.0.15 -> 2.0.16 refresh ordering failure with synthetic data.
+# The previous version owns settings.json, but permissions.ask is parseable JSON
+# with the wrong type. Telegram must canonicalize that raw boundary before the
+# generic managed merge validates its buckets, then commit one recoverable
+# transaction without changing unrelated settings or the separate global MCP.
+run_script "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  umask 077
+  install -d -m 0700 /data/antigravity
+  jq -n '{
+    telegram_enabled: true,
+    telegram_allowed_user_ids: [],
+    telegram_allowed_chat_ids: [],
+    antigravity_tool_permission: "request-review",
+    antigravity_terminal_sandbox: false,
+    antigravity_user_files_update_mode: "refresh_managed"
+  }' > /data/options.json
+  chmod 0600 /data/options.json
+SCRIPT
+TELEGRAM_MALFORMED_BOOTSTRAP=$(run_script \
+  "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
+  9.9.9-telegramold <<'SCRIPT'
+  set -Eeuo pipefail
+  version=$1
+  install -d -m 0700 /run/antigravity-ha
+  printf '%s\n' "${version}" \
+    > /usr/local/share/antigravity-ha/app-version
+  exec /usr/local/bin/antigravity-user-files-update
+SCRIPT
+) || fail 'Telegram malformed-refresh fixture bootstrap failed'
+assert_json "${TELEGRAM_MALFORMED_BOOTSTRAP}" '
+  .app_version == "9.9.9-telegramold"
+  and (.created | sort) == ["mcp", "settings"]
+  and .refreshed == []
+  and .backup_directory == null
+'
+run_script "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  umask 077
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  mcp=/data/home/.gemini/config/mcp_config.json
+  jq '
+    .synthetic_refresh_marker = "preserve-unrelated-setting"
+    | .synthetic_refresh_ui = {theme: "local-only"}
+    | .permissions.ask = {synthetic_malformed_bucket: true}
+  ' "${settings}" > "${settings}.next"
+  mv "${settings}.next" "${settings}"
+  jq -n '{
+    synthetic_mcp_marker: "preserve-byte-exact",
+    mcpServers: {
+      synthetic_refresh: {
+        command: "/bin/false",
+        args: ["--synthetic-only"]
+      }
+    }
+  }' > "${mcp}.next"
+  mv "${mcp}.next" "${mcp}"
+  chmod 0600 "${settings}" "${mcp}"
+SCRIPT
+TELEGRAM_MALFORMED_SETTINGS_BEFORE=$(path_hash \
+  "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json)
+TELEGRAM_MALFORMED_MCP_BEFORE=$(path_hash \
+  "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
+  /data/home/.gemini/config/mcp_config.json)
+TELEGRAM_MALFORMED_OUTPUT=$(run_script \
+  "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
+  9.9.9-telegramnew <<'SCRIPT'
+  set -Eeuo pipefail
+  version=$1
+  install -d -m 0700 /run/antigravity-ha
+  printf '%s\n' "${version}" \
+    > /usr/local/share/antigravity-ha/app-version
+  exec /usr/local/bin/antigravity-user-files-update
+SCRIPT
+) || fail 'Telegram-enabled malformed permission bucket was not reconciled before managed refresh'
+assert_json "${TELEGRAM_MALFORMED_OUTPUT}" '
+  .app_version == "9.9.9-telegramnew"
+  and .mode == "refresh_managed"
+  and .permission_migration == "telegram_reconciled"
+  and .created == []
+  and .refreshed == ["settings"]
+  and (.backup_directory
+    | startswith("/data/antigravity-ha/backups/native-files/refresh-"))
+  and (.warnings | any(contains("safe Telegram policy")))
+'
+assert_sanitized "${TELEGRAM_MALFORMED_OUTPUT}"
+TELEGRAM_MALFORMED_BACKUP=$(jq --raw-output '.backup_directory' \
+  <<<"${TELEGRAM_MALFORMED_OUTPUT}")
+[[ $(path_hash "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
+  "${TELEGRAM_MALFORMED_BACKUP}/settings.before") == \
+  "${TELEGRAM_MALFORMED_SETTINGS_BEFORE}" ]]
+[[ $(path_hash "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
+  /data/home/.gemini/config/mcp_config.json) == \
+  "${TELEGRAM_MALFORMED_MCP_BEFORE}" ]]
+run_script "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
+  "${TELEGRAM_MALFORMED_BACKUP}" <<'SCRIPT'
+  set -Eeuo pipefail
+  backup=$1
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  state=/data/antigravity-ha/migration/native-files-state.json
+  test "$(stat -c '%a:%U:%G' "${settings}")" = 600:root:root
+  test ! -e "${backup}/mcp.before"
+  test ! -e "${backup}/mcp.image-default"
+  cmp --silent "${backup}/settings.image-default" "${settings}"
+  jq --exit-status '
+    .synthetic_refresh_marker == "preserve-unrelated-setting"
+    and .synthetic_refresh_ui == {theme: "local-only"}
+    and .allowNonWorkspaceAccess == false
+    and .artifactReviewPolicy == "agent-decides"
+    and .toolPermission == "request-review"
+    and .enableTerminalSandbox == false
+    and (.permissions.allow | length) == 29
+    and .permissions.ask == []
+    and (.permissions.deny | length) == 33
+    and (.permissions.allow | length) == ([.permissions.allow[]] | unique | length)
+    and (.permissions.deny | length) == ([.permissions.deny[]] | unique | length)
+  ' "${settings}" >/dev/null
+  jq --exit-status '
+    .synthetic_mcp_marker == "preserve-byte-exact"
+    and .mcpServers.synthetic_refresh.command == "/bin/false"
+    and .mcpServers.synthetic_refresh.args == ["--synthetic-only"]
+  ' /data/home/.gemini/config/mcp_config.json >/dev/null
+  jq --exit-status '
+    .scopes == ["settings"]
+    and .state.existed == true
+    and (.state.before_sha256 | test("^[0-9a-f]{64}$"))
+    and (.state.candidate_sha256 | test("^[0-9a-f]{64}$"))
+    and .state.before_sha256 != .state.candidate_sha256
+    and .files.settings.existed == true
+    and (.files.settings.before_sha256 | test("^[0-9a-f]{64}$"))
+    and (.files.settings.candidate_sha256 | test("^[0-9a-f]{64}$"))
+    and .files.settings.before_sha256 != .files.settings.candidate_sha256
+    and (.files | keys) == ["settings"]
+  ' "${backup}/metadata.json" >/dev/null
+  jq --exit-status '
+    (.applied.settings | index("9.9.9-telegramold")) != null
+    and (.applied.settings | index("9.9.9-telegramnew")) != null
+    and (.managed.settings.permission_rules | length) == 62
+  ' "${state}" >/dev/null
+  node --input-type=module <<'NODE'
+import {
+  loadTelegramPermissionBoundary,
+} from "/usr/local/share/antigravity-ha/telegram-bridge.mjs";
+
+const boundary = loadTelegramPermissionBoundary();
+if (boundary.toolPermission !== "request-review" ||
+    boundary.allowCount !== 29 || boundary.denyCount !== 33) {
+  throw new Error("malformed-refresh settings did not load in the bridge");
+}
+NODE
+SCRIPT
+TELEGRAM_MALFORMED_SETTINGS_AFTER=$(path_hash \
+  "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json)
+TELEGRAM_MALFORMED_STATE_AFTER=$(path_hash \
+  "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
+  /data/antigravity-ha/migration/native-files-state.json)
+TELEGRAM_MALFORMED_BACKUP_COUNT=$(run_script \
+  "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" <<'SCRIPT'
+  find /data/antigravity-ha/backups/native-files -mindepth 1 -maxdepth 1 \
+    -type d | wc -l
+SCRIPT
+)
+TELEGRAM_MALFORMED_IDEMPOTENT=$(run_script \
+  "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
+  9.9.9-telegramnew <<'SCRIPT'
+  set -Eeuo pipefail
+  version=$1
+  install -d -m 0700 /run/antigravity-ha
+  printf '%s\n' "${version}" \
+    > /usr/local/share/antigravity-ha/app-version
+  exec /usr/local/bin/antigravity-user-files-update
+SCRIPT
+) || fail 'Telegram malformed-refresh repair was not restart-idempotent'
+assert_json "${TELEGRAM_MALFORMED_IDEMPOTENT}" '
+  .app_version == "9.9.9-telegramnew"
+  and .mode == "refresh_managed"
+  and .created == []
+  and .refreshed == []
+  and .backup_directory == null
+'
+[[ $(path_hash "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json) == \
+  "${TELEGRAM_MALFORMED_SETTINGS_AFTER}" ]]
+[[ $(path_hash "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
+  /data/antigravity-ha/migration/native-files-state.json) == \
+  "${TELEGRAM_MALFORMED_STATE_AFTER}" ]]
+[[ $(path_hash "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
+  /data/home/.gemini/config/mcp_config.json) == \
+  "${TELEGRAM_MALFORMED_MCP_BEFORE}" ]]
+[[ $(run_script "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" <<'SCRIPT'
+  find /data/antigravity-ha/backups/native-files -mindepth 1 -maxdepth 1 \
+    -type d | wc -l
+SCRIPT
+) == "${TELEGRAM_MALFORMED_BACKUP_COUNT}" ]]
+
+# Telegram-off refresh keeps the old fail-closed semantics: the same malformed
+# owned bucket is rejected before a transaction or state mutation is possible.
+run_script "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  options=/data/options.json
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  jq '.telegram_enabled = false' "${options}" > "${options}.next"
+  mv "${options}.next" "${options}"
+  jq '.permissions.ask = {synthetic_malformed_bucket: true}' \
+    "${settings}" > "${settings}.next"
+  mv "${settings}.next" "${settings}"
+  chmod 0600 "${options}" "${settings}"
+SCRIPT
+TELEGRAM_OFF_MALFORMED_SETTINGS=$(path_hash \
+  "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json)
+if TELEGRAM_OFF_MALFORMED_OUTPUT=$(run_script \
+  "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
+  9.9.9-telegramoff <<'SCRIPT' 2>&1
+  set -Eeuo pipefail
+  version=$1
+  install -d -m 0700 /run/antigravity-ha
+  printf '%s\n' "${version}" \
+    > /usr/local/share/antigravity-ha/app-version
+  exec /usr/local/bin/antigravity-user-files-update
+SCRIPT
+); then
+  fail 'Telegram-disabled managed refresh accepted a malformed permission bucket'
+fi
+grep -Fq 'Existing settings.json permissions.ask must be a string array' \
+  <<<"${TELEGRAM_OFF_MALFORMED_OUTPUT}" \
+  || fail 'Telegram-disabled malformed bucket did not report the bounded reason'
+assert_sanitized "${TELEGRAM_OFF_MALFORMED_OUTPUT}"
+[[ $(path_hash "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json) == \
+  "${TELEGRAM_OFF_MALFORMED_SETTINGS}" ]]
+[[ $(path_hash "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
+  /data/antigravity-ha/migration/native-files-state.json) == \
+  "${TELEGRAM_MALFORMED_STATE_AFTER}" ]]
+[[ $(run_script "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" <<'SCRIPT'
+  find /data/antigravity-ha/backups/native-files -mindepth 1 -maxdepth 1 \
+    -type d | wc -l
+SCRIPT
+) == "${TELEGRAM_MALFORMED_BACKUP_COUNT}" ]]
+
+# Exercise the complete malformed-bucket contract independently of the primary
+# incident fixture. Each owned old-version volume changes exactly one of
+# allow/ask/deny to either a non-array or an array containing a non-string.
+# Telegram-enabled refresh must repair all six cases without carrying unsafe
+# bucket content into the bridge or touching unrelated settings/global MCP.
+for TELEGRAM_MATRIX_CASE in "${TELEGRAM_MALFORMED_MATRIX_CASES[@]}"; do
+  TELEGRAM_MATRIX_BUCKET=${TELEGRAM_MATRIX_CASE%%:*}
+  TELEGRAM_MATRIX_SHAPE=${TELEGRAM_MATRIX_CASE#*:}
+  TELEGRAM_MATRIX_VOLUME="${TEST_ID}-telegram-matrix-${TELEGRAM_MATRIX_CASE/:/-}"
+
+  TELEGRAM_MATRIX_BOOTSTRAP=$(run_script \
+    "${TELEGRAM_MATRIX_VOLUME}" \
+    9.9.9-matrixold <<'SCRIPT'
+    set -Eeuo pipefail
+    version=$1
+    umask 077
+    install -d -m 0700 /data/antigravity /run/antigravity-ha
+    jq -n '{
+      telegram_enabled: true,
+      telegram_allowed_user_ids: [],
+      telegram_allowed_chat_ids: [],
+      antigravity_tool_permission: "request-review",
+      antigravity_terminal_sandbox: false,
+      antigravity_user_files_update_mode: "refresh_managed"
+    }' > /data/options.json
+    chmod 0600 /data/options.json
+    printf '%s\n' "${version}" \
+      > /usr/local/share/antigravity-ha/app-version
+    exec /usr/local/bin/antigravity-user-files-update
+SCRIPT
+  ) || fail "Telegram malformed matrix bootstrap failed: ${TELEGRAM_MATRIX_CASE}"
+  assert_json "${TELEGRAM_MATRIX_BOOTSTRAP}" '
+    .app_version == "9.9.9-matrixold"
+    and (.created | sort) == ["mcp", "settings"]
+    and .refreshed == []
+    and .backup_directory == null
+  '
+
+  TELEGRAM_MATRIX_OUTPUT=$(run_script \
+    "${TELEGRAM_MATRIX_VOLUME}" \
+    9.9.9-matrixnew \
+    "${TELEGRAM_MATRIX_BUCKET}" \
+    "${TELEGRAM_MATRIX_SHAPE}" \
+    "${TELEGRAM_MATRIX_CASE}" <<'SCRIPT'
+    set -Eeuo pipefail
+    version=$1
+    bucket=$2
+    shape=$3
+    case_name=$4
+    umask 077
+    settings=/data/home/.gemini/antigravity-cli/settings.json
+    mcp=/data/home/.gemini/config/mcp_config.json
+    jq \
+      --arg bucket "${bucket}" \
+      --arg shape "${shape}" \
+      --arg case_name "${case_name}" '
+      .synthetic_matrix_marker = $case_name
+      | .synthetic_matrix_ui = {
+          theme: "local-only",
+          nested: {preserve: true}
+        }
+      | .permissions[$bucket] = (
+          if $shape == "non-array" then
+            {synthetic_malformed_bucket: true}
+          else
+            ["synthetic-string", {synthetic_non_string_entry: true}]
+          end
+        )
+    ' "${settings}" > "${settings}.next"
+    mv "${settings}.next" "${settings}"
+    jq -n --arg case_name "${case_name}" '{
+      synthetic_mcp_marker: $case_name,
+      mcpServers: {
+        synthetic_matrix: {
+          command: "/bin/false",
+          args: ["--synthetic-only"]
+        }
+      }
+    }' > "${mcp}.next"
+    mv "${mcp}.next" "${mcp}"
+    chmod 0600 "${settings}" "${mcp}"
+    cp "${mcp}" /data/telegram-matrix-mcp.before
+    chmod 0600 /data/telegram-matrix-mcp.before
+    install -d -m 0700 /run/antigravity-ha
+    printf '%s\n' "${version}" \
+      > /usr/local/share/antigravity-ha/app-version
+    exec /usr/local/bin/antigravity-user-files-update
+SCRIPT
+  ) || fail "Telegram malformed matrix repair failed: ${TELEGRAM_MATRIX_CASE}"
+  assert_json "${TELEGRAM_MATRIX_OUTPUT}" '
+    .app_version == "9.9.9-matrixnew"
+    and .mode == "refresh_managed"
+    and .permission_migration == "telegram_reconciled"
+    and .created == []
+    and .refreshed == ["settings"]
+    and (.backup_directory
+      | startswith("/data/antigravity-ha/backups/native-files/refresh-"))
+    and (.warnings | any(contains("safe Telegram policy")))
+  '
+  assert_sanitized "${TELEGRAM_MATRIX_OUTPUT}"
+  TELEGRAM_MATRIX_BACKUP=$(jq --raw-output '.backup_directory' \
+    <<<"${TELEGRAM_MATRIX_OUTPUT}")
+
+  run_script "${TELEGRAM_MATRIX_VOLUME}" \
+    "${TELEGRAM_MATRIX_BUCKET}" \
+    "${TELEGRAM_MATRIX_SHAPE}" \
+    "${TELEGRAM_MATRIX_CASE}" \
+    "${TELEGRAM_MATRIX_BACKUP}" <<'SCRIPT'
+    set -Eeuo pipefail
+    bucket=$1
+    shape=$2
+    case_name=$3
+    backup=$4
+    settings=/data/home/.gemini/antigravity-cli/settings.json
+    mcp=/data/home/.gemini/config/mcp_config.json
+    state=/data/antigravity-ha/migration/native-files-state.json
+    test "$(stat -c '%a:%U:%G' "${settings}")" = 600:root:root
+    test ! -e "${backup}/mcp.before"
+    test ! -e "${backup}/mcp.image-default"
+    cmp --silent "${backup}/settings.image-default" "${settings}"
+    cmp --silent /data/telegram-matrix-mcp.before "${mcp}"
+    jq --exit-status \
+      --arg bucket "${bucket}" \
+      --arg shape "${shape}" '
+      if $shape == "non-array" then
+        (.permissions[$bucket] | type) != "array"
+      else
+        ((.permissions[$bucket] | type) == "array"
+          and (.permissions[$bucket] | any(.[]; type != "string")))
+      end
+    ' "${backup}/settings.before" >/dev/null
+    jq --exit-status --arg case_name "${case_name}" '
+      .synthetic_matrix_marker == $case_name
+      and .synthetic_matrix_ui == {
+        theme: "local-only",
+        nested: {preserve: true}
+      }
+      and .allowNonWorkspaceAccess == false
+      and .artifactReviewPolicy == "agent-decides"
+      and .toolPermission == "request-review"
+      and .enableTerminalSandbox == false
+      and (.permissions.allow | length) == 29
+      and .permissions.ask == []
+      and (.permissions.deny | length) == 33
+      and (.permissions.allow | length)
+        == ([.permissions.allow[]] | unique | length)
+      and (.permissions.deny | length)
+        == ([.permissions.deny[]] | unique | length)
+    ' "${settings}" >/dev/null
+    jq --exit-status --arg case_name "${case_name}" '
+      .synthetic_mcp_marker == $case_name
+      and .mcpServers.synthetic_matrix.command == "/bin/false"
+      and .mcpServers.synthetic_matrix.args == ["--synthetic-only"]
+    ' "${mcp}" >/dev/null
+    jq --exit-status '
+      (.applied.settings | index("9.9.9-matrixold")) != null
+      and (.applied.settings | index("9.9.9-matrixnew")) != null
+      and (.managed.settings.permission_rules | length) == 62
+    ' "${state}" >/dev/null
+    node --input-type=module <<'NODE'
+import {
+  loadTelegramPermissionBoundary,
+} from "/usr/local/share/antigravity-ha/telegram-bridge.mjs";
+
+const boundary = loadTelegramPermissionBoundary();
+if (boundary.toolPermission !== "request-review" ||
+    boundary.allowCount !== 29 || boundary.denyCount !== 33) {
+  throw new Error("malformed matrix settings did not load in the bridge");
+}
+NODE
+SCRIPT
+
+  TELEGRAM_MATRIX_SETTINGS_AFTER=$(path_hash \
+    "${TELEGRAM_MATRIX_VOLUME}" \
+    /data/home/.gemini/antigravity-cli/settings.json)
+  TELEGRAM_MATRIX_STATE_AFTER=$(path_hash \
+    "${TELEGRAM_MATRIX_VOLUME}" \
+    /data/antigravity-ha/migration/native-files-state.json)
+  TELEGRAM_MATRIX_MCP_AFTER=$(path_hash \
+    "${TELEGRAM_MATRIX_VOLUME}" \
+    /data/home/.gemini/config/mcp_config.json)
+  TELEGRAM_MATRIX_BACKUP_COUNT=$(run_script \
+    "${TELEGRAM_MATRIX_VOLUME}" <<'SCRIPT'
+    find /data/antigravity-ha/backups/native-files -mindepth 1 -maxdepth 1 \
+      -type d | wc -l
+SCRIPT
+  )
+  TELEGRAM_MATRIX_IDEMPOTENT=$(run_script \
+    "${TELEGRAM_MATRIX_VOLUME}" \
+    9.9.9-matrixnew <<'SCRIPT'
+    set -Eeuo pipefail
+    version=$1
+    install -d -m 0700 /run/antigravity-ha
+    printf '%s\n' "${version}" \
+      > /usr/local/share/antigravity-ha/app-version
+    exec /usr/local/bin/antigravity-user-files-update
+SCRIPT
+  ) || fail "Telegram malformed matrix repair was not idempotent: ${TELEGRAM_MATRIX_CASE}"
+  assert_json "${TELEGRAM_MATRIX_IDEMPOTENT}" '
+    .app_version == "9.9.9-matrixnew"
+    and .mode == "refresh_managed"
+    and .created == []
+    and .refreshed == []
+    and .backup_directory == null
+  '
+  assert_sanitized "${TELEGRAM_MATRIX_IDEMPOTENT}"
+  [[ $(path_hash "${TELEGRAM_MATRIX_VOLUME}" \
+    /data/home/.gemini/antigravity-cli/settings.json) == \
+    "${TELEGRAM_MATRIX_SETTINGS_AFTER}" ]]
+  [[ $(path_hash "${TELEGRAM_MATRIX_VOLUME}" \
+    /data/antigravity-ha/migration/native-files-state.json) == \
+    "${TELEGRAM_MATRIX_STATE_AFTER}" ]]
+  [[ $(path_hash "${TELEGRAM_MATRIX_VOLUME}" \
+    /data/home/.gemini/config/mcp_config.json) == \
+    "${TELEGRAM_MATRIX_MCP_AFTER}" ]]
+  [[ $(run_script "${TELEGRAM_MATRIX_VOLUME}" <<'SCRIPT'
+    find /data/antigravity-ha/backups/native-files -mindepth 1 -maxdepth 1 \
+      -type d | wc -l
+SCRIPT
+  ) == "${TELEGRAM_MATRIX_BACKUP_COUNT}" ]]
+done
 
 # A compact, bounded legacy file can expand beyond the bridge limit when an
 # unsafe boundary is serialized canonically. Reject it before any transaction

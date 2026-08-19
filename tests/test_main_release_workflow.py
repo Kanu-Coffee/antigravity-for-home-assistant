@@ -22,7 +22,7 @@ def test_main_release_is_manual_main_only_and_minimally_authorized() -> None:
         "candidate_run_attempt",
         "confirm",
     }
-    assert inputs["version"]["default"] == "2.0.15"
+    assert inputs["version"]["default"] == "2.0.16"
     assert workflow["permissions"] == {"contents": "read"}
     publish = workflow["jobs"]["publish"]
     assert publish["if"] == "github.ref == 'refs/heads/main'"
@@ -105,20 +105,21 @@ def test_main_release_creates_annotated_tag_and_prerelease_without_fake_evidence
         "continues after publication.\\n'" in text
     )
     assert (
-        "Public 2.0.14 real amd64 HAOS AppArmor startup: `FAIL` (observed "
-        "resolved Bashio execute denial; follow-up trace identified the resolved "
-        "init `with-contenv` target)" in text
+        "Public 2.0.15 real amd64 HAOS acceptance: `FAIL` (Ingress HTTP and "
+        "WebSocket upgrade succeeded, but ttyd PTY allocation returned EACCES; "
+        "`refresh_managed` rejected malformed `permissions.ask` before "
+        "Telegram-safe normalization and the bridge remained permission-boundary "
+        "blocked)" in text
     )
     assert (
-        "2.0.15 AppArmor correction: trace-derived, profile-scoped exact runtime "
-        "closure for resolved Bashio/S6/execline/Bash, init account/nginx state, "
-        "Telegram pause, SSH OOM/accounting, Chromium children, and the feedback "
-        "subtree; the correction adds no new broad library, package, or "
-        "configuration grants" in text
+        "2.0.16 correction: add only the exact primary-profile PTY multiplexor "
+        "access required by ttyd, and normalize Telegram-managed permission "
+        "buckets before typed merge validation while preserving fail-closed "
+        "unsafe-file handling" in text
     )
     assert (
-        "2.0.15 automated kernel-enforced AppArmor startup smoke: `PASS` for "
-        "this exact Candidate; this is not HAOS evidence" in text
+        "2.0.16 automated kernel-enforced terminal and updater regression gates: "
+        "`PASS` for this exact Candidate; this is not HAOS evidence" in text
     )
     assert "amd64 HAOS acceptance at publication: `NOT RUN`" in text
     assert (
@@ -139,7 +140,7 @@ def test_repository_advertises_the_numeric_tag_published_by_main_release() -> No
         )
     )
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
-    assert config["version"] == inputs["version"]["default"] == "2.0.15"
+    assert config["version"] == inputs["version"]["default"] == "2.0.16"
     assert (
         config["image"]
         == "ghcr.io/kanu-coffee/antigravity-for-home-assistant"

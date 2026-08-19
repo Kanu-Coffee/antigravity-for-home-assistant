@@ -31,21 +31,18 @@
 > 확인하세요. 현재 `experimental`이며 실제 HAOS 양쪽 아키텍처의 전체 설치·업데이트·
 > rollback 검증은 릴리스별 증거를 확인해야 합니다.
 
-**2.0.15 Bashio/AppArmor init 복구:** 공개 2.0.14를 설치한 실제 HAOS 18.2
-amd64에서 S6는 service graph까지 진행했지만 `antigravity-ha-init`이
-`unable to exec bashio: Permission denied`와 exit 126으로 실패했습니다. AppArmor는
-`/usr/bin/bashio` symlink가 아니라 실제 `/usr/lib/bashio/bashio` 실행 경로를
-검사하며, 후속 cold-start trace는 init의 `/command/with-contenv`도 실제 S6 package
-경로로 해석됨을 확인했습니다. 이 trace는 관찰된 Bashio denial을 넘어
-S6/execline·실제 Bash 실행,
-init의 계정/nginx 상태, Telegram pause, SSH accounting/OOM, Chromium child와 feedback
-보고서 하위 경로까지 필요한 범위가 확인됐습니다. 2.0.15는 이 trace-derived runtime
-closure를 각 profile의 exact 경로로만 허용하며 새로운 `/usr/lib/**`, `/package/admin/**`,
-`/etc/**` 같은 broad 실행·쓰기 권한을 추가하지 않습니다. 실제 profile을 kernel에
-attach한 cold-start·fresh-container restart 자동 smoke도 필수 gate로 추가하지만 이는
-HAOS 증거가 아닙니다. 실제 HAOS 2.0.15는 `NOT RUN`, aarch64 장비 부재 면제는 PASS가
-아니며 전체 v2 수용은 `PARTIAL`입니다. breaking 목록은 보안 경계를 활성화한
-2.0.13만 유지합니다.
+**2.0.16 Web terminal·Telegram 복구:** 공개 2.0.15를 설치한 실제 HAOS 18.2
+amd64에서 App service graph와 Ingress HTTP/WebSocket은 정상 기동했지만 ttyd의 PTY
+생성이 EACCES로 실패해 Web UI가 reconnect를 반복했습니다. 같은 기기에서
+`refresh_managed`는 기존 `permissions.ask`가 문자열 배열이 아닐 때 Telegram 안전
+정규화보다 먼저 검증을 중단했고, bridge는 의도대로 `permission_boundary_blocked`에
+머물렀습니다. 2.0.16은 primary AppArmor profile에 ttyd가 필요한 exact `/dev/ptmx`
+read/write만 추가하고, 지원되는 안전한 settings에서는 세 permission bucket을 typed
+merge 검증 전에 exact 29/0/33 정책으로 정규화합니다. symlink·hardlink·non-root owner·
+크기 초과·invalid JSON은 계속 fail closed하고 unrelated settings, global MCP, plugin,
+OAuth와 `/config`는 보존합니다. 실제 HAOS 2.0.16은 `NOT RUN`, aarch64 장비 부재
+면제는 PASS가 아니며 전체 v2 수용은 `PARTIAL`입니다. 자동 Linux-container gate는
+HAOS 증거가 아니고 breaking 목록은 보안 경계를 활성화한 2.0.13만 유지합니다.
 
 ## v2가 제공하는 것
 
@@ -101,7 +98,7 @@ HAOS 증거가 아닙니다. 실제 HAOS 2.0.15는 `NOT RUN`, aarch64 장비 부
 > 설정과 민감 경로는 직접 수정할 수 없습니다. bot token, 허용된 chat과 Telegram
 > 계정을 HA 관리자 credential처럼 보호하세요. amd64의 기본 Bot API 재연결·전달과
 > App 재시작은 2.0.12에서 확인됐지만, OAuth, 전체 승인/mutation 행렬, corrected
-> 2.0.15 custom AppArmor와 aarch64 실기기 E2E는 아직 완료되지 않았습니다.
+> 2.0.16 terminal·Telegram 경로와 aarch64 실기기 E2E는 아직 완료되지 않았습니다.
 
 Web UI 또는 SSH에서 `ha-antigravity-login`으로 공식 native first-run OAuth를 한 번
 완료한 뒤 bot을 활성화합니다. 별도 Telegram identity, `ha-telegram-login`, 전용 HOME

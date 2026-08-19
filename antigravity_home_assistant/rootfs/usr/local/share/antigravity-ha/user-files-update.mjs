@@ -2737,13 +2737,28 @@ async function main() {
     !versionApplied(state, "settings", appVersion) &&
     state.managed.settings.keys.length > 0
   ) {
-    const currentSettings = await readSafeFile(SETTINGS_PATH);
+    const currentSettings = await readSafeFile(
+      SETTINGS_PATH,
+      options.telegramEnabled
+        ? TELEGRAM_SETTINGS_MAX_BYTES
+        : MAX_USER_FILE_BYTES,
+    );
     if (currentSettings === undefined) {
       throw new Error("Existing settings.json disappeared before managed merge");
     }
     const currentOwnership = state.managed.settings;
+    // The generic managed merge validates every current permission bucket.
+    // Telegram startup owns the complete permission boundary, so repair the
+    // raw file before that validation can reject a malformed legacy bucket.
+    // Keep Telegram-disabled refresh behavior unchanged and fail closed there.
+    const managedMergeBase = options.telegramEnabled
+      ? reconcileTelegramManagedSettings(
+          currentSettings,
+          defaults.settings,
+        )
+      : currentSettings;
     candidates.settings = mergeManagedSettings(
-      currentSettings,
+      managedMergeBase,
       defaults.settings,
       currentOwnership,
     );

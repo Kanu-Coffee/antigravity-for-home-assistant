@@ -125,6 +125,49 @@ def test_enforced_smoke_requires_two_clean_startups_and_a_denial_canary() -> Non
 def test_enforced_smoke_exercises_ssh_browser_feedback_and_accounting() -> None:
     smoke = read("tests/apparmor-enforced-smoke.sh")
 
+    for ttyd_token in (
+        "run_ttyd_websocket_probe",
+        "tests/ttyd_websocket_smoke.py",
+        'nsenter --target "$container_pid" --net --',
+        "ws://127.0.0.1:7682/ws",
+        "reconnect=same resize=96x32 cwd=/config",
+        "the confined loopback ttyd WebSocket/PTY probe failed",
+    ):
+        assert ttyd_token in smoke
+    ttyd_probe = smoke.split("run_ttyd_websocket_probe() {", 1)[1].split(
+        "\n}", 1
+    )[0]
+    preflight = smoke.split("require_enforcement_host() {", 1)[1].split(
+        "\n}", 1
+    )[0]
+    assert preflight.count("command -v python3") == 1
+    assert "PYTHON3_BIN=$(command -v python3 2>/dev/null || true)" in preflight
+    assert "[[ -n $PYTHON3_BIN && -x $PYTHON3_BIN ]]" in preflight
+    assert "readonly PYTHON3_BIN" in preflight
+    assert '"$PYTHON3_BIN" "$TTYD_WEBSOCKET_SMOKE"' in ttyd_probe
+    assert "/usr/bin/python3" not in ttyd_probe
+    assert "--mount" not in ttyd_probe
+    assert "docker port" not in ttyd_probe
+    assert smoke.count('run_ttyd_websocket_probe "$FIRST_CONTAINER"') == 1
+    assert smoke.index(
+        'assert_enforced_container_ready "$FIRST_CONTAINER"'
+    ) < smoke.index('run_ttyd_websocket_probe "$FIRST_CONTAINER"')
+    assert smoke.index(
+        'run_ttyd_websocket_probe "$FIRST_CONTAINER"'
+    ) < smoke.index('run_confined_feature_probes "$FIRST_CONTAINER"')
+
+    ttyd_client = read("tests/ttyd_websocket_smoke.py")
+    for lifecycle_token in (
+        "first_stream, _ = connect(sys.argv[1])",
+        "send_resize(first_stream, 120, 40)",
+        "second_stream, _ = connect(sys.argv[1], columns=88, rows=28)",
+        "second_state[:3] != first_state[:3]",
+        "send_resize(second_stream, 96, 32)",
+        "resized_state[:3] != first_state[:3]",
+        "reconnect=same resize=96x32 cwd=/config",
+    ):
+        assert lifecycle_token in ttyd_client
+
     for ssh_token in (
         "generate_disposable_ssh_key",
         "ssh-keygen -q -t ed25519",
