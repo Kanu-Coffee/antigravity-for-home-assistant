@@ -1388,6 +1388,12 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
         assert "deny /data/home/.gemini/antigravity-cli/oauth* rwklm," in (
             child_profile
         )
+        assert "deny /data/home/.gemini/antigravity-cli/cli.log rwklm," in (
+            child_profile
+        )
+        assert "deny /data/home/.gemini/antigravity-cli/log/** rwklm," in (
+            child_profile
+        )
         assert (
             "deny /data/home/.gemini/antigravity-cli/auth.json rwklm,"
             in child_profile
@@ -1397,6 +1403,8 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
             in child_profile
         )
     assert "/data/home/.gemini/GEMINI.md r," in command_profile
+    assert "/data/home/.bash_history rwkl," in shell_profile
+    assert "/data/home/.bash_history rwkl," not in command_profile
     assert (
         "deny /data/home/.gemini/antigravity-cli/settings.json rwklm,"
         in command_profile
