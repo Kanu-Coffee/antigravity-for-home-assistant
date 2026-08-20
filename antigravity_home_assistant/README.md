@@ -27,6 +27,24 @@ Home Assistant 안에서 antigravity와 대화하며 설정을 살펴보고 대�
 > [!WARNING]
 > 이 앱은 Home Assistant 설정을 직접 바꿀 수 있는 강한 관리자 도구입니다. Telegram도 CLI와 동등한 관리자 채널이므로 bot token, 허용 chat과 Telegram 계정을 보호하세요. 중요한 변경 전에는 backup을 만들고 계획과 diff를 확인하며 SSH 포트를 인터넷에 직접 공개하지 마세요.
 
+**2.1.1 native settings 호환성 수정:** 공개 2.1.0의 첫 Web `agy` 실행에서
+Antigravity 1.1.13이 `request-review` mode에서 non-canonical top-level
+`toolPermission`과 `enableTerminalSandbox`를 제거하려 했지만, 최종 `settings.json` 교체는 AppArmor의
+의도된 write/link/lock deny에 막혀 atomic rename 오류와 default fallback이
+나타났습니다. 임시 파일과 대상은 같은 디렉터리이므로 `EXDEV`가 아닙니다. 2.1.1의
+native shape에서 `request-review`는 top-level `toolPermission`을 생략하고
+`always-proceed`는 exact `"toolPermission":"always-proceed"`를 유지하며, 두 mode 모두
+`enableTerminalSandbox`를 생략합니다. App option의 Telegram mode와 known native
+permission bucket을 대조하고 native order로 기록하며, `always-proceed`에서는 empty
+`ask`를 생략합니다. settings/OAuth/policy deny는 유지하며 copy/unlink fallback이나
+settings write grant는 추가하지 않습니다.
+
+Telegram token과 allowlist는 `/data/options.json`에 있고 Bridge는 별도 S6 서비스이며,
+proposal MCP 이름은 `telegram_action`입니다. Core `telegram_bot` service 또는 이름이
+`telegram`인 MCP의 부재만으로 Bridge 비활성을 판정하지 마세요. 2.1.1 실제 HAOS
+Web/AppArmor/Telegram/browser/memory 수용은 양 아키텍처 모두 `NOT RUN`, 전체 v2는
+`PARTIAL`입니다.
+
 **2.1.0 운영 권한 재설계:** 공개 2.0.18 실제 HAOS 18.2 amd64는 App startup,
 native `antigravity --version` status 0, Telegram transport와 no-tool chat을
 `PASS`했습니다. 그러나 Web `agy`/`antigravity` interactive I/O와 첫 managed Telegram
@@ -76,12 +94,15 @@ proposal 등록 뒤 encrypted approval/card가 봉인되기 전 bridge가 종료
 복구할 수 없으므로 원래 요청을 다시 보내야 합니다.
 
 권한 drift 복구를 위해 `reset_v2`를 명시 선택하면 안전한 settings를 backup하고 기존
-ownership state와 무관하게 managed key와 permission 세 bucket을 exact default로
-되돌립니다. permissions 밖의 사용자 top-level 설정, global MCP, plugin, OAuth와
+ownership state와 무관하게 managed field와 선택 mode의 known permission bucket을 exact
+default로 되돌립니다. `request-review`는 `allow`/`deny`/`ask`를 기록하고,
+`always-proceed`는 `allow`/`deny`만 기록해 empty `ask`를 생략합니다. permissions 밖의
+사용자 top-level 설정, global MCP, plugin, OAuth와
 `/config`는 보존하며, `preserve`로 되돌릴 때까지 매 시작 drift를 다시 복구합니다.
 2.0.12부터 Telegram을 켠 상태에서는 root-owned single-link regular·256 KiB 이하의
-parse 가능한 settings에서 다섯 App 관리 보안 key와 exact 29/0/33 permission 정책을
-자동 복구하므로 업데이트 뒤 수동 `reset_v2` 없이 bridge를 시작할 수 있습니다.
+parse 가능한 settings를 자동 복구합니다. 현재 2.1.1은 App 관리 보안 field,
+선택 mode의 sparse native shape와 known permission bucket을 exact policy로 맞추므로
+업데이트 뒤 수동 `reset_v2` 없이 bridge를 시작할 수 있습니다.
 unknown allow/ask/deny는 보존하지 않고 기존 mode는 0600으로 강화합니다. symlink,
 hardlink, non-root owner, 크기 초과 또는 parse 불가능 파일은 Bot API 접속과 재시작
 loop 없이 fail closed합니다.

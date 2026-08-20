@@ -1419,6 +1419,10 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
         "/data/home/.gemini/antigravity-cli/settings.json rwk,"
         in settings_profile
     )
+    assert (
+        "/usr/local/share/antigravity-ha/telegram-permission-policy.mjs r,"
+        in settings_profile
+    )
     assert "/data/home/**" not in settings_profile
     assert "deny /data/home/.gemini/antigravity-cli/oauth* rwklm," in settings_profile
     assert "deny /data/options.json rwklm," in settings_profile

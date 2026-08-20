@@ -981,6 +981,7 @@ profile antigravity_home_assistant flags=(attach_disconnected,mediate_deleted) {
   /usr/lib/** rm,
   /usr/local/bin/agy-settings r,
   /usr/local/share/antigravity-ha/antigravity-settings-update.mjs r,
+  /usr/local/share/antigravity-ha/telegram-permission-policy.mjs r,
   /lib/** rm,
   /lib64/** rm,
   /etc/** r,

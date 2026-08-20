@@ -153,7 +153,33 @@ def test_telegram_service_depends_on_init(addon_root: Path) -> None:
         addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
     ).read_text(encoding="utf-8")
     assert 'audit("waiting_for_authorization"' in bridge
+    assert "load(config.toolPermission)" in bridge
+    boundary_loader = bridge.split(
+        "function loadTelegramPermissionBoundary(", maxsplit=1
+    )[1].split("function isForwardedMessage", maxsplit=1)[0]
+    assert "expectedToolPermission," in boundary_loader
+    assert "const raw = readFileSync(descriptor)" in boundary_loader
+    assert "raw.length !== before.size" in boundary_loader
+    assert "const after = fstatSync(descriptor)" in boundary_loader
+    assert "before.dev !== after.dev" in boundary_loader
+    assert "assertTelegramPermissionBoundary(" in boundary_loader
+    assert "value," in boundary_loader
+    assert "nativeParseJsonContent(raw)" in boundary_loader
+    assert "nativeCanonicalSettingsContent(" in boundary_loader
+    assert "!raw.equals(" in boundary_loader
+    assert (
+        "effective Antigravity settings are not in native canonical form"
+        in boundary_loader
+    )
+    permission_policy = (
+        addon_root
+        / "rootfs/usr/local/share/antigravity-ha/telegram-permission-policy.mjs"
+    ).read_text(encoding="utf-8")
+    assert "!sameRuleSet(deny, new Set(expected.deny))" in permission_policy
     assert "await waitForTelegramAuthorization(config)" in bridge
+    assert bridge.index(
+        "await waitForTelegramPermissionBoundary(config)"
+    ) < bridge.index("await connectTelegram(config)")
     assert bridge.index("await waitForTelegramAuthorization(config)") < bridge.index(
         "await connectTelegram(config)"
     )
@@ -408,11 +434,57 @@ def test_telegram_uses_shared_native_home_and_interactive_policy(
     if os.name != "nt":
         assert canary.stat().st_mode & stat.S_IXUSR
     canary_source = canary.read_text(encoding="utf-8")
+    settings_helper = (
+        rootfs
+        / "usr/local/share/antigravity-ha/antigravity-settings-update.mjs"
+    ).read_text(encoding="utf-8")
     assert "/usr/local/libexec/antigravity-real --version" in canary_source
     assert "shared Antigravity did not load the global MCP" in canary_source
     assert "shared global rule marker" in canary_source
     assert "shared global plugin marker" in canary_source
     assert "shared native OAuth/config marker" in canary_source
+    assert 'has(\\"toolPermission\\") | not' in canary_source
+    assert 'has(\\"enableTerminalSandbox\\") | not' in canary_source
+    assert (
+        '(.permissions | keys_unsorted) == [\\"allow\\", '
+        '\\"deny\\", \\"ask\\"]' in canary_source
+    )
+    assert "/usr/local/bin/agy-settings patch" in canary_source
+    assert '["colorScheme", isUnicodeScalarString]' in settings_helper
+    assert (
+        'patch: {colorScheme: \\"PERMISSION_CANARY_MUST_REMAIN\\"}'
+        in canary_source
+    )
+    assert (
+        '.colorScheme == \\"PERMISSION_CANARY_MUST_REMAIN\\"'
+        in canary_source
+    )
+    assert "deny_canary_marker" not in canary_source
+    assert canary_source.index("settings_hash=$(sha256sum") < canary_source.index(
+        "PERMISSION_CANARY_WARMUP"
+    )
+    boundary_canary_path = (
+        repository_root / "tests/fixtures/telegram-settings-boundary-canary.mjs"
+    )
+    assert boundary_canary_path.is_file()
+    boundary_canary = boundary_canary_path.read_text(encoding="utf-8")
+    assert "loadTelegramPermissionBoundary(" in boundary_canary
+    assert "JSON.stringify(value)" in boundary_canary
+    assert "/not in native canonical form/u" in boundary_canary
+    assert "TELEGRAM_SETTINGS_BOUNDARY_CANARY_PASS" in boundary_canary
+    assert (
+        canary_source.count(
+            "/test-fixtures/telegram-settings-boundary-canary.mjs"
+        ) == 2
+    )
+    assert canary_source.count("TELEGRAM_SETTINGS_BOUNDARY_CANARY_PASS") == 2
+    assert '.toolPermission == \\"always-proceed\\"' in canary_source
+    assert (
+        '(.permissions | keys_unsorted) == [\\"allow\\", \\"deny\\"]'
+        in canary_source
+    )
+    assert "always-proceed | grep -Fxq" in canary_source
+    assert "request-review | grep -Fxq" in canary_source
     assert '"[[ \\\"\\${HOME:-}\\\" == /data/home ]]"' in canary_source
     assert '"[[ \\\"\\$(pwd -P)\\\" == /config ]]"' in canary_source
     for alias_path in (

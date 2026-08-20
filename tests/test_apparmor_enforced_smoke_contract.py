@@ -120,6 +120,27 @@ def test_enforced_smoke_requires_two_clean_startups_and_a_denial_canary() -> Non
     assert "run_helper_credential_boundary_probe" in smoke
     assert "--security-opt apparmor=antigravity_home_assistant-ha-helper" in smoke
     assert "the ha-helper Supervisor credential read-only boundary failed" in smoke
+    assert "run_settings_update_probe" in smoke
+    assert 'run_settings_update_probe "$FIRST_CONTAINER"' in smoke
+    assert "/usr/local/bin/agy-settings patch" in smoke
+    # runc attaches the container's primary profile to the first docker-exec
+    # image. Start with env so the helper's child exec exercises its Px
+    # transition into the dedicated settings-update profile.
+    assert smoke.count(
+        "/usr/bin/env \\\n    /usr/local/bin/agy-settings sha256"
+    ) == 6
+    assert (
+        "/usr/bin/env \\\n        /usr/local/bin/agy-settings patch" in smoke
+    )
+    assert 'docker exec "$container" /usr/local/bin/agy-settings' not in smoke
+    assert (
+        'docker exec "$container" \\\n    /usr/local/bin/agy-settings' not in smoke
+    )
+    assert smoke.count("--security-opt apparmor=unconfined") == 2
+    assert smoke.count('--volume "${DATA_VOLUME}:/data:ro"') == 2
+    assert "assert_no_native_settings_temporary" in smoke
+    assert "native worker rewrote canonical settings" in smoke
+    assert "settings.json.*.tmp" in smoke
 
 
 def test_enforced_smoke_exercises_ssh_browser_feedback_and_accounting() -> None:
@@ -148,6 +169,7 @@ def test_enforced_smoke_exercises_ssh_browser_feedback_and_accounting() -> None:
     assert "/usr/bin/python3" not in ttyd_probe
     assert "--mount" not in ttyd_probe
     assert "docker port" not in ttyd_probe
+    ttyd_client = read("tests/ttyd_websocket_smoke.py")
     assert smoke.count('run_ttyd_websocket_probe "$FIRST_CONTAINER"') == 1
     assert smoke.index(
         'assert_enforced_container_ready "$FIRST_CONTAINER"'
@@ -155,8 +177,15 @@ def test_enforced_smoke_exercises_ssh_browser_feedback_and_accounting() -> None:
     assert smoke.index(
         'run_ttyd_websocket_probe "$FIRST_CONTAINER"'
     ) < smoke.index('run_confined_feature_probes "$FIRST_CONTAINER"')
-
-    ttyd_client = read("tests/ttyd_websocket_smoke.py")
+    assert smoke.index(
+        'run_ttyd_websocket_probe "$FIRST_CONTAINER"'
+    ) < smoke.index('run_native_cli_probe "$FIRST_CONTAINER" restricted')
+    ttyd_command = ttyd_client.split(
+        "def query_antigravity_canary(", maxsplit=1
+    )[1].split("pattern = re.compile", maxsplit=1)[0]
+    assert ttyd_command.index("/usr/local/bin/antigravity;") < ttyd_command.index(
+        "/usr/local/bin/antigravity --version"
+    )
     for lifecycle_token in (
         "first_stream, _ = connect(sys.argv[1])",
         "send_resize(first_stream, 120, 40)",
@@ -173,9 +202,16 @@ def test_enforced_smoke_exercises_ssh_browser_feedback_and_accounting() -> None:
         "not 0 <= helper_status <= 124",
         "not 0 <= log_status <= 124",
         "Antigravity Web PTY canary output exceeded 1 MiB",
+        "FORBIDDEN_SETTINGS_PROMPTS",
+        "continue with default settings",
+        "Antigravity Web PTY TUI rewrote settings.json",
+        "/usr/local/bin/agy-settings sha256",
+        "settings_hash_before",
         "reconnect=same resize=96x32 cwd=/config",
     ):
         assert lifecycle_token in ttyd_client
+    assert "the ttyd WebSocket PTY TUI rewrote canonical settings" in smoke
+    assert 'assert_no_native_settings_temporary \'ttyd WebSocket PTY TUI\'' in smoke
 
     for ssh_token in (
         "generate_disposable_ssh_key",

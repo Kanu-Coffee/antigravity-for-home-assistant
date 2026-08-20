@@ -16,6 +16,9 @@ import {
   TELEGRAM_SETTINGS_MAX_BYTES,
   assertTelegramPermissionBoundary,
   canonicalTelegramPermissionRules,
+  isNativeRawJsonNumber,
+  nativeCanonicalSettingsContent,
+  nativeParseJsonContent,
 } from "./telegram-permission-policy.mjs";
 
 const DATA_DIRECTORY = "/data/antigravity";
@@ -135,11 +138,13 @@ const MANAGED_SETTINGS_KEYS = new Set([
   "allowNonWorkspaceAccess",
   "altScreenMode",
   "artifactReviewPolicy",
-  "enableTerminalSandbox",
   "permissions",
   "showFeedbackSurvey",
   "showTips",
   "toolPermission",
+]);
+const RETIRED_NATIVE_SETTINGS_KEYS = new Set([
+  "enableTerminalSandbox",
 ]);
 const HA_READ_TOOLS = [
   "ha_read_addon_logs",
@@ -368,6 +373,22 @@ const LEGACY_2_0_6_MANAGED_SETTINGS_KEYS = [
   "showFeedbackSurvey",
   "permissions",
 ];
+// 2.1.0 recorded the retired sandbox key and recorded toolPermission even for
+// request-review, whose native 1.1.13 representation omits the default value.
+// Accept that exact vocabulary long enough to prove and migrate the old file.
+const LEGACY_2_1_0_MANAGED_SETTINGS_KEYS = [
+  ...LEGACY_2_0_6_MANAGED_SETTINGS_KEYS,
+];
+const CURRENT_REQUEST_REVIEW_MANAGED_SETTINGS_KEYS = [
+  ...MANAGED_SETTINGS_KEYS,
+].filter((key) => key !== "toolPermission");
+const CURRENT_ALWAYS_PROCEED_MANAGED_SETTINGS_KEYS = [
+  ...MANAGED_SETTINGS_KEYS,
+];
+const REGISTERED_MANAGED_SETTINGS_KEYS = new Set([
+  ...MANAGED_SETTINGS_KEYS,
+  ...LEGACY_2_1_0_MANAGED_SETTINGS_KEYS,
+]);
 const LEGACY_2_0_6_PERMISSION_RULE_SET = new Set([
   ...LEGACY_2_0_6_PERMISSION_RULES.allow,
   ...LEGACY_2_0_6_PERMISSION_RULES.ask,
@@ -378,7 +399,7 @@ const MANAGED_PERMISSION_RULES = new Set([
   ...REQUEST_REVIEW_PERMISSION_RULES.ask,
   ...REQUEST_REVIEW_PERMISSION_RULES.deny,
   ...ALWAYS_PROCEED_PERMISSION_RULES.allow,
-  ...ALWAYS_PROCEED_PERMISSION_RULES.ask,
+  ...(ALWAYS_PROCEED_PERMISSION_RULES.ask ?? []),
   ...ALWAYS_PROCEED_PERMISSION_RULES.deny,
 ]);
 const RETIRED_MANAGED_PERMISSION_RULES = new Set([
@@ -748,7 +769,8 @@ function validateState(value) {
     new Set(managedSettings.permission_rules).size !==
       managedSettings.permission_rules.length ||
     managedSettings.keys.some(
-      (key) => typeof key !== "string" || !MANAGED_SETTINGS_KEYS.has(key),
+      (key) =>
+        typeof key !== "string" || !REGISTERED_MANAGED_SETTINGS_KEYS.has(key),
     ) ||
     managedSettings.permission_rules.some(
       (rule) =>
@@ -1993,40 +2015,51 @@ function parseOptions(value) {
   };
 }
 
-function parseTemplate(content, name) {
+function parseTemplate(content, name, { preserveNumberLexemes = false } = {}) {
   if (content === undefined) {
     throw new FatalUpdateError(`The image default ${name} is missing`);
   }
   let value;
   try {
-    value = JSON.parse(content.toString("utf8"));
+    value = preserveNumberLexemes
+      ? nativeParseJsonContent(content)
+      : JSON.parse(content.toString("utf8"));
   } catch {
     throw new FatalUpdateError(`The image default ${name} is not valid JSON`);
   }
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) ||
+      isNativeRawJsonNumber(value)) {
     throw new FatalUpdateError(`The image default ${name} must be a JSON object`);
   }
   return value;
 }
 
 function defaultSettings(template, options) {
-  const value = parseTemplate(template, "settings.json");
-  value.toolPermission = options.toolPermission;
-  value.enableTerminalSandbox = options.terminalSandbox;
+  const value = parseTemplate(
+    template,
+    "settings.json",
+    { preserveNumberLexemes: true },
+  );
+  for (const key of RETIRED_NATIVE_SETTINGS_KEYS) delete value[key];
   value.allowNonWorkspaceAccess = true;
   value.permissions = canonicalTelegramPermissionRules(options.toolPermission);
-  assertTelegramPermissionBoundary(value);
-  return Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+  const content = nativeCanonicalSettingsContent(value, options.toolPermission);
+  assertTelegramPermissionBoundary(
+    parseSettings(content, "Canonical image default settings.json"),
+    options.toolPermission,
+  );
+  return content;
 }
 
 function parseSettings(content, name) {
   let value;
   try {
-    value = JSON.parse(content.toString("utf8"));
+    value = nativeParseJsonContent(content);
   } catch {
     throw new Error(`${name} is not valid JSON`);
   }
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) ||
+      isNativeRawJsonNumber(value)) {
     throw new Error(`${name} must be a JSON object`);
   }
   return value;
@@ -2042,7 +2075,7 @@ function permissionRules(value, name) {
     throw new Error(`${name} permissions must be a JSON object`);
   }
   for (const bucket of ["allow", "ask", "deny"]) {
-    const entries = value.permissions[bucket];
+    const entries = permissionBucket(value.permissions, bucket);
     if (
       !Array.isArray(entries) ||
       entries.some((entry) => typeof entry !== "string")
@@ -2054,6 +2087,11 @@ function permissionRules(value, name) {
   return rules;
 }
 
+function permissionBucket(permissions, bucket) {
+  if (bucket === "ask" && !Object.hasOwn(permissions, bucket)) return [];
+  return permissions[bucket];
+}
+
 function sameStringSet(left, right) {
   return (
     Array.isArray(left) &&
@@ -2063,6 +2101,14 @@ function sameStringSet(left, right) {
     new Set(right).size === right.length &&
     left.every((entry) => right.includes(entry))
   );
+}
+
+function sameTopLevelJsonSemantics(left, right) {
+  const sortTopLevel = (value) => Object.fromEntries(
+    Object.keys(value).sort().map((key) => [key, value[key]]),
+  );
+  return JSON.stringify(sortTopLevel(left)) ===
+    JSON.stringify(sortTopLevel(right));
 }
 
 function ownsTelegramSettingsBoundary(ownership, desiredOwnership) {
@@ -2086,10 +2132,25 @@ function hasLegacy206PermissionOwnership(ownership) {
   );
 }
 
+function hasRecognizedManagedSettingsKeys(ownership, desiredOwnership) {
+  return (
+    sameStringSet(ownership.keys, desiredOwnership.keys) ||
+    sameStringSet(
+      ownership.keys,
+      CURRENT_REQUEST_REVIEW_MANAGED_SETTINGS_KEYS,
+    ) ||
+    sameStringSet(
+      ownership.keys,
+      CURRENT_ALWAYS_PROCEED_MANAGED_SETTINGS_KEYS,
+    ) ||
+    sameStringSet(ownership.keys, LEGACY_2_1_0_MANAGED_SETTINGS_KEYS)
+  );
+}
+
 function permissionRuleSet(rules) {
   return [
     ...rules.allow,
-    ...rules.ask,
+    ...(rules.ask ?? []),
     ...rules.deny,
   ];
 }
@@ -2099,7 +2160,7 @@ function permissionMigrationSource(ownership, desiredOwnership) {
     return { label: "2.0.6", rules: LEGACY_2_0_6_PERMISSION_RULES };
   }
   if (
-    sameStringSet(ownership.keys, desiredOwnership.keys) &&
+    hasRecognizedManagedSettingsKeys(ownership, desiredOwnership) &&
     sameStringSet(
       ownership.permission_rules,
       permissionRuleSet(LEGACY_2_0_8_PERMISSION_RULES),
@@ -2108,7 +2169,7 @@ function permissionMigrationSource(ownership, desiredOwnership) {
     return { label: "2.0.8", rules: LEGACY_2_0_8_PERMISSION_RULES };
   }
   if (
-    sameStringSet(ownership.keys, desiredOwnership.keys) &&
+    hasRecognizedManagedSettingsKeys(ownership, desiredOwnership) &&
     sameStringSet(
       ownership.permission_rules,
       permissionRuleSet(LEGACY_V3_PERMISSION_RULES),
@@ -2120,7 +2181,7 @@ function permissionMigrationSource(ownership, desiredOwnership) {
     };
   }
   if (
-    sameStringSet(ownership.keys, desiredOwnership.keys) &&
+    hasRecognizedManagedSettingsKeys(ownership, desiredOwnership) &&
     sameStringSet(
       ownership.permission_rules,
       permissionRuleSet(LEGACY_2_0_11_2_0_18_PERMISSION_RULES),
@@ -2136,7 +2197,7 @@ function permissionMigrationSource(ownership, desiredOwnership) {
     ["2.1 always-proceed", ALWAYS_PROCEED_PERMISSION_RULES],
   ]) {
     if (
-      sameStringSet(ownership.keys, desiredOwnership.keys) &&
+      hasRecognizedManagedSettingsKeys(ownership, desiredOwnership) &&
       sameStringSet(
         ownership.permission_rules,
         permissionRuleSet(rules),
@@ -2254,61 +2315,111 @@ function preparePreservePermissionMigration(
   desiredContent,
   ownership,
   desiredOwnership,
+  expectedToolPermission,
 ) {
   const desired = parseSettings(
     desiredContent,
     "The image default settings.json",
   );
-  const expectedToolPermission = desired.toolPermission;
+  assertTelegramPermissionBoundary(desired, expectedToolPermission);
   const currentOwnership =
     (sameStringSet(ownership.keys, desiredOwnership.keys) &&
       sameStringSet(
         ownership.permission_rules,
         desiredOwnership.permission_rules,
       )) || ownsTelegramSettingsBoundary(ownership, desiredOwnership);
+  const normalizedCurrentOwnership = telegramSettingsOwnership(
+    ownership,
+    desiredOwnership,
+  );
+  const ownershipNeedsRefresh =
+    !sameStringSet(ownership.keys, normalizedCurrentOwnership.keys) ||
+    !sameStringSet(
+      ownership.permission_rules,
+      normalizedCurrentOwnership.permission_rules,
+    );
   if (currentOwnership) {
     try {
       const current = parseSettings(currentContent, "Existing settings.json");
-      let candidate = currentContent;
-      let changed = false;
-      if (current.enableTerminalSandbox === true) {
-        candidate = replaceTopLevelJsonPropertyValue(
-          candidate,
-          "enableTerminalSandbox",
-          false,
-        );
-        changed = true;
-      } else if (current.enableTerminalSandbox !== false) {
+      if (Object.hasOwn(current, "enableTerminalSandbox") &&
+          typeof current.enableTerminalSandbox !== "boolean") {
         throw new Error("The managed native sandbox setting is invalid");
       }
-      if (typeof current.toolPermission !== "string" ||
-          !TOOL_PERMISSIONS.has(current.toolPermission)) {
+      if (Object.hasOwn(current, "toolPermission") &&
+          (typeof current.toolPermission !== "string" ||
+            !TOOL_PERMISSIONS.has(current.toolPermission))) {
         throw new Error("The managed native tool permission is invalid");
       }
-      if (current.toolPermission !== expectedToolPermission) {
-        candidate = replaceTopLevelJsonPropertyValue(
-          candidate,
-          "toolPermission",
-          expectedToolPermission,
-        );
-        changed = true;
+      permissionRules(current, "Existing settings.json");
+      permissionRules(desired, "The image default settings.json");
+      const managedRules = new Set([
+        ...ownership.permission_rules,
+        ...desiredOwnership.permission_rules,
+      ]);
+      const bucketRank = { allow: 0, ask: 1, deny: 2 };
+      const preservedOverrides = new Map();
+      for (const bucket of ["allow", "ask", "deny"]) {
+        for (const rule of permissionBucket(desired.permissions, bucket)) {
+          const locations = ["allow", "ask", "deny"].filter(
+            (candidateBucket) => permissionBucket(
+              current.permissions,
+              candidateBucket,
+            ).filter((candidateRule) => candidateRule === rule).length === 1,
+          );
+          if (locations.length === 1 &&
+              bucketRank[locations[0]] > bucketRank[bucket]) {
+            preservedOverrides.set(rule, locations[0]);
+          }
+        }
       }
-      if (current.allowNonWorkspaceAccess !== true) {
-        candidate = replaceTopLevelJsonPropertyValue(
-          candidate,
-          "allowNonWorkspaceAccess",
-          true,
-        );
-        changed = true;
+      const permissions = {};
+      for (const bucket of ["allow", "ask", "deny"]) {
+        permissions[bucket] = [
+          ...new Set([
+            ...permissionBucket(current.permissions, bucket).filter(
+              (rule) =>
+                !managedRules.has(rule) ||
+                preservedOverrides.get(rule) === bucket,
+            ),
+            ...permissionBucket(desired.permissions, bucket).filter(
+              (rule) => !preservedOverrides.has(rule),
+            ),
+          ]),
+        ];
       }
-      if (!changed) {
+      const candidate = nativeCanonicalSettingsContent(
+        {
+          ...current,
+          allowNonWorkspaceAccess: desired.allowNonWorkspaceAccess,
+          artifactReviewPolicy: desired.artifactReviewPolicy,
+          permissions,
+        },
+        expectedToolPermission,
+      );
+      // Preserve mode may contain user-owned rules alongside the managed
+      // rules recorded in state. Validate the native bucket shape here, but
+      // do not apply Telegram's exact-rule-set gate unless Telegram is
+      // actually enabled; the later Telegram reconciliation owns that stricter
+      // boundary. This keeps a completed non-Telegram migration idempotent.
+      const canonicalCurrent = parseSettings(
+        candidate,
+        "Canonical existing settings.json",
+      );
+      permissionRules(canonicalCurrent, "Canonical existing settings.json");
+      if (Object.hasOwn(canonicalCurrent, "enableTerminalSandbox") ||
+          (expectedToolPermission === "always-proceed"
+            ? canonicalCurrent.toolPermission !== "always-proceed"
+            : Object.hasOwn(canonicalCurrent, "toolPermission"))) {
+        throw new Error("The canonical native settings mode is invalid");
+      }
+      if (candidate.equals(currentContent) && !ownershipNeedsRefresh) {
         return { candidate: null, status: "not_needed", warning: null };
       }
       return {
         candidate,
         status: "applied",
         warning:
-          "Preserve mode applied the selected operational permission mode and retired unsupported native-sandbox settings",
+          "Preserve mode normalized native permission fields and canonicalized settings.json for Antigravity 1.1.13",
       };
     } catch {
       return {
@@ -2339,6 +2450,15 @@ function preparePreservePermissionMigration(
     const current = parseSettings(currentContent, "Existing settings.json");
     permissionRules(current, "Existing settings.json");
     permissionRules(desired, "The image default settings.json");
+    if (Object.hasOwn(current, "enableTerminalSandbox") &&
+        typeof current.enableTerminalSandbox !== "boolean") {
+      throw new Error("The App-owned native sandbox setting changed");
+    }
+    if (Object.hasOwn(current, "toolPermission") &&
+        (typeof current.toolPermission !== "string" ||
+          !TOOL_PERMISSIONS.has(current.toolPermission))) {
+      throw new Error("The App-owned native tool permission changed");
+    }
 
     const bucketRank = { allow: 0, ask: 1, deny: 2 };
     const preservedOverrides = new Map();
@@ -2346,7 +2466,10 @@ function preparePreservePermissionMigration(
       for (const rule of migrationSource.rules[bucket]) {
         const locations = [];
         for (const candidateBucket of ["allow", "ask", "deny"]) {
-          for (const candidateRule of current.permissions[candidateBucket]) {
+          for (const candidateRule of permissionBucket(
+            current.permissions,
+            candidateBucket,
+          )) {
             if (candidateRule === rule) locations.push(candidateBucket);
           }
         }
@@ -2363,7 +2486,16 @@ function preparePreservePermissionMigration(
           throw new Error("The App-owned permission layout changed");
         }
         if (stronger.length === 1 && locations.length === expectedCount + 1) {
-          preservedOverrides.set(rule, stronger[0]);
+          const desiredBucket = ["allow", "ask", "deny"].find(
+            (candidateBucket) => permissionBucket(
+              desired.permissions,
+              candidateBucket,
+            ).includes(rule),
+          );
+          if (desiredBucket === undefined ||
+              bucketRank[stronger[0]] > bucketRank[desiredBucket]) {
+            preservedOverrides.set(rule, stronger[0]);
+          }
           continue;
         }
         if (expectedCount !== 1 || locations.length !== 1) {
@@ -2375,49 +2507,26 @@ function preparePreservePermissionMigration(
     const permissions = { ...current.permissions };
     const sourceRuleSet = new Set(permissionRuleSet(migrationSource.rules));
     for (const bucket of ["allow", "ask", "deny"]) {
-      const userRules = current.permissions[bucket].filter(
+      const userRules = permissionBucket(current.permissions, bucket).filter(
         (rule) =>
           !sourceRuleSet.has(rule) || preservedOverrides.get(rule) === bucket,
       );
       permissions[bucket] = [...userRules];
-      for (const rule of desired.permissions[bucket]) {
+      for (const rule of permissionBucket(desired.permissions, bucket)) {
         if (preservedOverrides.has(rule)) continue;
         if (!permissions[bucket].includes(rule)) permissions[bucket].push(rule);
       }
     }
 
-    let candidate = replaceTopLevelJsonPropertyValue(
-      currentContent,
-      "permissions",
+    const migrated = {
+      ...current,
+      allowNonWorkspaceAccess: true,
       permissions,
+    };
+    const candidate = nativeCanonicalSettingsContent(
+      migrated,
+      expectedToolPermission,
     );
-    if (current.enableTerminalSandbox === true) {
-      candidate = replaceTopLevelJsonPropertyValue(
-        candidate,
-        "enableTerminalSandbox",
-        false,
-      );
-    } else if (current.enableTerminalSandbox !== false) {
-      throw new Error("The App-owned native sandbox setting changed");
-    }
-    if (typeof current.toolPermission !== "string" ||
-        !TOOL_PERMISSIONS.has(current.toolPermission)) {
-      throw new Error("The App-owned native tool permission changed");
-    }
-    if (current.toolPermission !== expectedToolPermission) {
-      candidate = replaceTopLevelJsonPropertyValue(
-        candidate,
-        "toolPermission",
-        expectedToolPermission,
-      );
-    }
-    if (current.allowNonWorkspaceAccess !== true) {
-      candidate = replaceTopLevelJsonPropertyValue(
-        candidate,
-        "allowNonWorkspaceAccess",
-        true,
-      );
-    }
     const installed = parseSettings(candidate, "Migrated settings.json");
     const currentNonPermissions = { ...current };
     const installedNonPermissions = { ...installed };
@@ -2430,10 +2539,14 @@ function preparePreservePermissionMigration(
     delete currentNonPermissions.allowNonWorkspaceAccess;
     delete installedNonPermissions.allowNonWorkspaceAccess;
     if (
-      JSON.stringify(currentNonPermissions) !==
-        JSON.stringify(installedNonPermissions) ||
-      installed.enableTerminalSandbox !== false ||
-      installed.toolPermission !== expectedToolPermission ||
+      !sameTopLevelJsonSemantics(
+        currentNonPermissions,
+        installedNonPermissions,
+      ) ||
+      Object.hasOwn(installed, "enableTerminalSandbox") ||
+      (expectedToolPermission === "always-proceed"
+        ? installed.toolPermission !== "always-proceed"
+        : Object.hasOwn(installed, "toolPermission")) ||
       installed.allowNonWorkspaceAccess !== true
     ) {
       throw new Error("A non-permission setting changed during migration");
@@ -2477,30 +2590,53 @@ function telegramSettingsOwnership(currentOwnership, desiredOwnership) {
       );
     }
   }
+  const modeSpecificKeys = desiredOwnership.keys.includes("toolPermission")
+    ? ["toolPermission"]
+    : [];
   return {
     keys: [...new Set([
-      ...currentOwnership.keys,
+      ...currentOwnership.keys.filter(
+        (key) =>
+          !RETIRED_NATIVE_SETTINGS_KEYS.has(key) && key !== "toolPermission",
+      ),
       ...TELEGRAM_MANAGED_SECURITY_KEYS,
+      ...modeSpecificKeys,
     ])],
     permission_rules: [...desiredOwnership.permission_rules],
   };
 }
 
 function refreshedSettingsOwnership(currentOwnership, desiredOwnership) {
+  const modeSpecificKeys = desiredOwnership.keys.includes("toolPermission")
+    ? ["toolPermission"]
+    : [];
   return {
-    keys: [...currentOwnership.keys],
+    keys: currentOwnership.keys.filter(
+      (key) =>
+        !RETIRED_NATIVE_SETTINGS_KEYS.has(key) && key !== "toolPermission",
+    ).concat(modeSpecificKeys),
     permission_rules: currentOwnership.keys.includes("permissions")
       ? [...desiredOwnership.permission_rules]
       : [...currentOwnership.permission_rules],
   };
 }
 
-function mergeManagedSettings(currentContent, defaultContent, ownership) {
+function mergeManagedSettings(
+  currentContent,
+  defaultContent,
+  ownership,
+  expectedToolPermission,
+) {
   const current = parseSettings(currentContent, "Existing settings.json");
   const desired = parseSettings(defaultContent, "The image default settings.json");
   const merged = { ...current };
+  for (const key of RETIRED_NATIVE_SETTINGS_KEYS) delete merged[key];
+  if (expectedToolPermission === "request-review") delete merged.toolPermission;
 
   for (const key of ownership.keys) {
+    if (RETIRED_NATIVE_SETTINGS_KEYS.has(key)) continue;
+    if (key === "toolPermission" &&
+        expectedToolPermission === "request-review") continue;
     if (key === "permissions") continue;
     if (!Object.hasOwn(desired, key)) {
       throw new Error(`The managed settings key ${key} has no image default`);
@@ -2514,24 +2650,33 @@ function mergeManagedSettings(currentContent, defaultContent, ownership) {
     const previouslyManaged = new Set(ownership.permission_rules);
     const permissions = { ...current.permissions };
     for (const bucket of ["allow", "ask", "deny"]) {
-      const userRules = current.permissions[bucket].filter(
+      const userRules = permissionBucket(current.permissions, bucket).filter(
         (rule) => !previouslyManaged.has(rule),
       );
       permissions[bucket] = [
-        ...new Set([...userRules, ...desired.permissions[bucket]]),
+        ...new Set([
+          ...userRules,
+          ...permissionBucket(desired.permissions, bucket),
+        ]),
       ];
     }
     merged.permissions = permissions;
   }
 
-  return Buffer.from(`${JSON.stringify(merged, null, 2)}\n`, "utf8");
+  return nativeCanonicalSettingsContent(merged, expectedToolPermission);
 }
 
-function resetManagedSettings(currentContent, defaultContent, desiredOwnership) {
+function resetManagedSettings(
+  currentContent,
+  defaultContent,
+  desiredOwnership,
+  expectedToolPermission,
+) {
   const current = parseSettings(currentContent, "Existing settings.json");
   const desired = parseSettings(defaultContent, "The image default settings.json");
   permissionRules(desired, "The image default settings.json");
   const reset = { ...current };
+  for (const key of RETIRED_NATIVE_SETTINGS_KEYS) delete reset[key];
   for (const key of desiredOwnership.keys) {
     if (!Object.hasOwn(desired, key)) {
       throw new Error(`The managed settings key ${key} has no image default`);
@@ -2544,39 +2689,46 @@ function resetManagedSettings(currentContent, defaultContent, desiredOwnership) 
   // allow/ask rules inside the managed permission object.
   reset.permissions = {
     allow: [...desired.permissions.allow],
-    ask: [...desired.permissions.ask],
     deny: [...desired.permissions.deny],
+    ...(
+      permissionBucket(desired.permissions, "ask").length > 0
+        ? { ask: [...permissionBucket(desired.permissions, "ask")] }
+        : {}
+    ),
   };
-  return Buffer.from(`${JSON.stringify(reset, null, 2)}\n`, "utf8");
+  return nativeCanonicalSettingsContent(reset, expectedToolPermission);
 }
 
-function reconcileTelegramManagedSettings(currentContent, defaultContent) {
+function reconcileTelegramManagedSettings(
+  currentContent,
+  defaultContent,
+  expectedToolPermission,
+) {
   const current = parseSettings(currentContent, "Existing settings.json");
   const desired = parseSettings(defaultContent, "The image default settings.json");
-  assertTelegramPermissionBoundary(desired);
-  if (desired.enableTerminalSandbox !== false) {
-    throw new FatalUpdateError(
-      "The image default settings.json enables the unsupported native sandbox",
-    );
-  }
+  assertTelegramPermissionBoundary(desired, expectedToolPermission);
   let currentIsCanonical = true;
   try {
-    assertTelegramPermissionBoundary(current);
+    assertTelegramPermissionBoundary(current, expectedToolPermission);
   } catch {
     currentIsCanonical = false;
   }
   if (currentIsCanonical) {
-    if (currentContent.length > TELEGRAM_SETTINGS_MAX_BYTES) {
+    const canonical = nativeCanonicalSettingsContent(
+      current,
+      expectedToolPermission,
+    );
+    if (canonical.length > TELEGRAM_SETTINGS_MAX_BYTES) {
       throw new Error(
         "Candidate settings.json exceeds the Telegram boundary size limit",
       );
     }
-    return currentContent;
+    return canonical;
   }
   // A settings file that is already canonical stays byte-exact. Any boundary
   // drift is replaced below while preserving unrelated top-level keys.
 
-  // Enabling Telegram makes the five App-owned security settings part of the
+  // Enabling Telegram makes the three App-owned security settings part of the
   // authenticated approval boundary. Unknown allow/ask/deny rules cannot be
   // carried into a headless session because the bridge could bypass or block
   // proposal cards. Preserve every unrelated top-level user setting, global
@@ -2585,16 +2737,25 @@ function reconcileTelegramManagedSettings(currentContent, defaultContent) {
     ...current,
     allowNonWorkspaceAccess: desired.allowNonWorkspaceAccess,
     artifactReviewPolicy: desired.artifactReviewPolicy,
-    toolPermission: desired.toolPermission,
-    enableTerminalSandbox: desired.enableTerminalSandbox,
     permissions: {
       allow: [...desired.permissions.allow],
-      ask: [...desired.permissions.ask],
       deny: [...desired.permissions.deny],
+      ...(
+        permissionBucket(desired.permissions, "ask").length > 0
+          ? { ask: [...permissionBucket(desired.permissions, "ask")] }
+          : {}
+      ),
     },
   };
-  assertTelegramPermissionBoundary(reconciled);
-  const content = Buffer.from(`${JSON.stringify(reconciled, null, 2)}\n`, "utf8");
+  for (const key of RETIRED_NATIVE_SETTINGS_KEYS) delete reconciled[key];
+  const content = nativeCanonicalSettingsContent(
+    reconciled,
+    expectedToolPermission,
+  );
+  assertTelegramPermissionBoundary(
+    parseSettings(content, "Reconciled settings.json"),
+    expectedToolPermission,
+  );
   if (content.length > TELEGRAM_SETTINGS_MAX_BYTES) {
     throw new Error(
       "Reconciled settings.json exceeds the Telegram boundary size limit",
@@ -2744,6 +2905,7 @@ async function main() {
       currentSettings,
       defaults.settings,
       desiredOwnership,
+      options.toolPermission,
     );
     state.managed.settings = desiredOwnership;
     if (!reset.equals(currentSettings) ||
@@ -2764,6 +2926,7 @@ async function main() {
       defaults.settings,
       currentOwnership,
       desiredOwnership,
+      options.toolPermission,
     );
     permissionMigration =
       migration.status === "not_needed" &&
@@ -2802,12 +2965,14 @@ async function main() {
       ? reconcileTelegramManagedSettings(
           currentSettings,
           defaults.settings,
+          options.toolPermission,
         )
       : currentSettings;
     candidates.settings = mergeManagedSettings(
       managedMergeBase,
       defaults.settings,
       currentOwnership,
+      options.toolPermission,
     );
     state.managed.settings = refreshedSettingsOwnership(
       currentOwnership,
@@ -2834,6 +2999,7 @@ async function main() {
     const reconciled = reconcileTelegramManagedSettings(
       reconciliationBase,
       defaults.settings,
+      options.toolPermission,
     );
     const reconciliationNeeded =
       Object.hasOwn(candidates, "settings") ||

@@ -71,13 +71,14 @@ policy-integrity 경계와 Recorder write는 차단하고 Recorder read는 sensi
 있을 때만 허용한다.
 
 2.0.12에서 `telegram_enabled=true`인 startup은 위 2.0.11 일반 migration보다 강한
-permission 경계다. root-owned single-link regular·256 KiB 이하의 parse 가능한 existing
-settings를 transaction backup한 뒤 2.1.0의 `allowNonWorkspaceAccess=true`,
-`artifactReviewPolicy=agent-decides`, 선택된 effective `toolPermission`,
-`enableTerminalSandbox=false`와 해당 mode의 permission 세 bucket을 shared canonical
-policy로 교체한다. 이때 bucket 안의 user-owned rule과 stronger deny는 보존
-대상이 아니지만 이 다섯 보안 key 밖의 unrelated top-level settings, global MCP/plugin,
-OAuth와 `/config`는 변경하지 않는다. 기존 mode는 0600으로 강화하고 option mode는
+permission 경계로 도입됐다. root-owned single-link regular·256 KiB 이하의 parse 가능한
+existing settings를 transaction backup한 뒤, 현재 2.1.1은
+`allowNonWorkspaceAccess=true`, `artifactReviewPolicy=agent-decides`, selected mode의
+sparse `toolPermission` 표현과 known permission bucket을 shared canonical policy로
+교체하고 retired `enableTerminalSandbox`를 제거한다. 이때 bucket 안의 user-owned rule과
+stronger deny는 보존 대상이 아니지만 App 관리 permission 경계 밖의 unrelated top-level
+settings, global MCP/plugin, OAuth와 `/config`는 변경하지 않는다. 기존 mode는 0600으로
+강화하고 option mode는
 자동으로 `reset_v2`가 되지 않는다.
 2.0.16은 safe parseable settings 안의 allow/ask/deny bucket shape가 malformed여도
 managed bucket을 먼저 canonical policy로 교체한 뒤 typed merge validation을
@@ -206,8 +207,8 @@ option 값과 profile 종류에 관계없이 다음 경로와 그 하위·보조
 `/data/home/.gemini/**`는 image-managed launcher가 bootstrap을 거쳐 `Px`로 전환한
 Web/SSH/Telegram Antigravity runtime만의 예외다. runtime은 인증과 global
 customization을 위해 shared HOME을 읽고 일반 사용자 전역 파일을 쓸 수 있지만 App
-관리 `settings.json`의 raw direct write는 native permission exact deny다. 일반 전역
-설정은 interactive Web/SSH에서 digest-bound `agy-settings patch`가 별도
+관리 `settings.json`의 raw direct write는 native permission exact deny다. 검증된
+top-level scalar UI 설정은 interactive Web/SSH에서 digest-bound `agy-settings patch`가 별도
 settings-update profile로 원자적으로 매개 수정하며, `permissions`,
 `enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`,
 `artifactReviewPolicy`는 거부한다. Telegram action과 command profile은 OAuth backend와
@@ -453,9 +454,9 @@ broker에서 저위험 자동 실행하는 mutation은 없다. `expected_state`/
   ordinary command/URL, `mcp(*)`와 installed Playwright interaction을
   autonomous-admin으로 허용한다. `strict`/`proceed-in-sandbox`만 legacy upgrade input으로
   수용해 `request-review`로 정규화한다. native raw file read/write는 두 mode 모두 deny다.
-- 2.0.12에서 Telegram-enabled init은 ownership state나 migration mode에 기대지 않고
-  다섯 App 관리 보안 key와 effective permission 세 bucket을 canonical policy로
-  reconcile한다. 같은 input은 새
+- 2.0.12에 도입된 Telegram-enabled init은 ownership state나 migration mode에 기대지
+  않고, 현재 App 관리 보안 field, selected mode의 sparse native shape와 known
+  permission bucket을 canonical policy로 reconcile한다. 같은 input은 새
   backup/write 없이 idempotent해야 하며 global MCP는 byte-preserve하고 unrelated
   settings와 OAuth를 보존한다. preflight·parse·policy validation·transaction 중 하나라도
   안전하지 않으면 partial write나 permissive fallback을 허용하지 않는다.
@@ -470,8 +471,10 @@ broker에서 저위험 자동 실행하는 mutation은 없다. `expected_state`/
   interactive flow를 사용할 수 있고 Telegram button으로 자동 broker되지 않는다. 두
   경로는 HOME/OAuth/global permission을 분리한 별도 runtime이 아니다.
 - App 관리 settings와 native MCP config raw direct read/write는 exact deny다. authenticated
-  Web/SSH의 일반 전역 setting은 digest-bound `agy-settings patch`로 매개 수정할 수
-  있지만 protected key는 App option+restart로만 변경한다. Telegram customization
+  Web/SSH의 native-stable top-level scalar setting만 digest-bound `agy-settings patch`로
+  매개 수정할 수 있고 unknown non-null key와 object/array는 거부한다. unknown
+  top-level `null`은 stale 값 제거에만 허용한다. protected key는 App
+  option+restart로만 변경한다. Telegram customization
   mutation은 approved exact terminal/script proposal로만 수행한다.
 
 ## SEC-009 — 브라우저 보안

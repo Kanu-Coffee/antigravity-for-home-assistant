@@ -16,6 +16,25 @@ import urllib.request
 from urllib.parse import urlsplit
 
 
+FORBIDDEN_SETTINGS_PROMPTS = (
+    "invalid settings",
+    "atomic rename",
+    "continue with default settings",
+    "invalid settings were replaced with defaults",
+    "exit and fix manually",
+)
+
+
+def assert_no_settings_recovery_prompt(output: str) -> None:
+    normalized = output.casefold()
+    for marker in FORBIDDEN_SETTINGS_PROMPTS:
+        if marker in normalized:
+            raise RuntimeError(
+                "Antigravity Web PTY opened the invalid-settings recovery "
+                f"prompt: {marker}"
+            )
+
+
 def read_exact(stream: socket.socket, length: int) -> bytes:
     data = bytearray()
     while len(data) < length:
@@ -192,25 +211,30 @@ def query_antigravity_canary(
     marker = f"__antigravity_HA_CLI_{secrets.token_hex(8)}__"
     command = (
         "0set +e; "
+        '__agy_settings_hash_before="$(/usr/local/bin/agy-settings sha256)"; '
+        "/usr/bin/timeout --kill-after=2 5 /usr/local/bin/antigravity; "
+        "__agy_tui_status=$?; "
+        '__agy_settings_hash_after="$(/usr/local/bin/agy-settings sha256)"; '
         '__agy_version="$(/usr/bin/timeout 20 '
         '/usr/local/bin/antigravity --version 2>&1)"; '
         "__agy_version_status=$?; "
-        "/usr/bin/timeout --kill-after=2 5 /usr/local/bin/antigravity; "
-        "__agy_tui_status=$?; "
         "/usr/bin/timeout --kill-after=2 15 /usr/local/bin/ha-config-check; "
         "__agy_helper_status=$?; "
         "/usr/bin/timeout --kill-after=2 15 /usr/local/bin/ha-core-logs 1; "
         "__agy_log_status=$?; "
-        f"printf '\n{marker}%s|%s|%s|%s|%s\n' "
+        f"printf '\n{marker}%s|%s|%s|%s|%s|%s|%s\n' "
         '"$__agy_version_status" "$__agy_tui_status" '
-        '"$__agy_helper_status" "$__agy_log_status" "$__agy_version"\r'
+        '"$__agy_helper_status" "$__agy_log_status" "$__agy_version" '
+        '"$__agy_settings_hash_before" "$__agy_settings_hash_after"\r'
     ).encode("utf-8")
     pattern = re.compile(
         re.escape(marker)
         + r"(?P<version_status>\d+)\|(?P<tui_status>\d+)\|"
         + r"(?P<helper_status>\d+)\|"
         + r"(?P<log_status>\d+)\|"
-        + r"(?P<version>[0-9]+\.[0-9]+\.[0-9]+)"
+        + r"(?P<version>[0-9]+\.[0-9]+\.[0-9]+)\|"
+        + r"(?P<settings_hash_before>[a-f0-9]{64})\|"
+        + r"(?P<settings_hash_after>[a-f0-9]{64})"
     )
     output = bytearray()
     deadline = time.monotonic() + 70
@@ -232,6 +256,7 @@ def query_antigravity_canary(
             raise RuntimeError("Antigravity Web PTY canary output exceeded 1 MiB")
         decoded = output.decode("utf-8", "replace")
         decoded = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", decoded)
+        assert_no_settings_recovery_prompt(decoded)
         match = pattern.search(decoded)
         if match:
             version_status = int(match.group("version_status"))
@@ -239,6 +264,12 @@ def query_antigravity_canary(
             helper_status = int(match.group("helper_status"))
             log_status = int(match.group("log_status"))
             version = match.group("version")
+            if match.group("settings_hash_before") != match.group(
+                "settings_hash_after"
+            ):
+                raise RuntimeError(
+                    "Antigravity Web PTY TUI rewrote settings.json"
+                )
             if version_status != 0:
                 raise RuntimeError(
                     f"Antigravity Web PTY version command failed: {version_status}"
@@ -259,6 +290,7 @@ def query_antigravity_canary(
                 )
             return version_status, tui_status, helper_status, log_status, version
     decoded = output.decode("utf-8", "replace")
+    assert_no_settings_recovery_prompt(decoded)
     raise RuntimeError(f"Antigravity Web PTY canary marker not found; output={decoded!r}")
 
 

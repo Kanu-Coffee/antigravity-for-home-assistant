@@ -193,6 +193,7 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
 docker run --rm --platform "$TEST_PLATFORM" --network none \
   --tmpfs /data:rw,nosuid,nodev,noexec,mode=0755 \
   --tmpfs /run:rw,nosuid,nodev,noexec,mode=0755 \
+  --volume "${SCRIPT_DIRECTORY}/fixtures:/test-fixtures:ro" \
   --entrypoint /bin/bash "${IMAGE}" -ceu '
     install -d -m 0700 \
       /data/home/.gemini/antigravity-cli \
@@ -202,10 +203,29 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       /data/home/.gemini/config/plugins/home-assistant/
 
     shared_settings=$(mktemp)
-    jq ".modelProvider = \"gemini\" | .toolPermission = \"always-proceed\"" \
-      /etc/antigravity/settings.json > "${shared_settings}"
+    node --input-type=module > "${shared_settings}" <<NODE
+import { readFileSync } from "node:fs";
+import {
+  canonicalTelegramPermissionRules,
+  nativeCanonicalSettingsContent,
+} from "/usr/local/share/antigravity-ha/telegram-permission-policy.mjs";
+
+const settings = JSON.parse(readFileSync("/etc/antigravity/settings.json", "utf8"));
+settings.modelProvider = "gemini";
+settings.permissions = canonicalTelegramPermissionRules("always-proceed");
+process.stdout.write(nativeCanonicalSettingsContent(settings, "always-proceed"));
+NODE
     install -m 0600 "${shared_settings}" \
       /data/home/.gemini/antigravity-cli/settings.json
+    jq --exit-status "
+      .toolPermission == \"always-proceed\"
+      and (has(\"enableTerminalSandbox\") | not)
+      and (.permissions | keys_unsorted) == [\"allow\", \"deny\"]
+    " /data/home/.gemini/antigravity-cli/settings.json >/dev/null
+    /usr/bin/node \
+      /test-fixtures/telegram-settings-boundary-canary.mjs \
+      /data/home/.gemini/antigravity-cli/settings.json \
+      always-proceed | grep -Fxq TELEGRAM_SETTINGS_BOUNDARY_CANARY_PASS
 
     mock_log=$(mktemp)
     first_stdout=$(mktemp)
@@ -697,16 +717,16 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       /config/permission-oauth-alias
     ln -s /data/home/.aws/credentials \
       /config/permission-cloud-auth-alias
-    permission_settings=$(mktemp)
-    jq ".modelProvider = \"gemini\"" \
-      /data/home/.gemini/antigravity-cli/settings.json \
-      > "${permission_settings}"
-    install -m 0600 "${permission_settings}" \
-      /data/home/.gemini/antigravity-cli/settings.json
+    settings_digest=$(/usr/local/bin/agy-settings sha256)
+    jq -n --arg expected "${settings_digest}" "{
+      expected_sha256: \$expected,
+      patch: {modelProvider: \"gemini\"}
+    }" | /usr/local/bin/agy-settings patch >/dev/null
     jq --exit-status "
-      .toolPermission == \"request-review\"
-      and .enableTerminalSandbox == false
+      (has(\"toolPermission\") | not)
+      and (has(\"enableTerminalSandbox\") | not)
       and .allowNonWorkspaceAccess == true
+      and (.permissions | keys_unsorted) == [\"allow\", \"deny\", \"ask\"]
       and (.permissions.allow | index(\"command(*)\") == null)
       and (.permissions.allow | index(\"mcp(*)\") == null)
       and (.permissions.allow | index(\"read_file(*)\") == null)
@@ -734,6 +754,10 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       and (.permissions.deny | index(\"read_file(/data/home/.aws)\") != null)
       and (.permissions.deny | index(\"write_file(/data/home/.aws)\") != null)
     " /data/home/.gemini/antigravity-cli/settings.json >/dev/null
+    /usr/bin/node \
+      /test-fixtures/telegram-settings-boundary-canary.mjs \
+      /data/home/.gemini/antigravity-cli/settings.json \
+      request-review | grep -Fxq TELEGRAM_SETTINGS_BOUNDARY_CANARY_PASS
 
     install -m 0600 /test-fixtures/telegram-permission-canary-mcp.cjs \
       /config/permission-canary-mcp.cjs
@@ -761,13 +785,21 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
     trap cleanup_mock EXIT
 
     run_permission_canary() {
-      local mode_settings mock_log native_stdout native_stderr settings_hash
+      local mock_log native_stdout native_stderr settings_digest settings_hash
       local warmup_stdout warmup_stderr
-      mode_settings=$(mktemp)
-      jq ".deny_canary_marker = \"MUST_REMAIN\"" \
-        /data/home/.gemini/antigravity-cli/settings.json > "${mode_settings}"
-      install -m 0600 "${mode_settings}" \
-        /data/home/.gemini/antigravity-cli/settings.json
+      settings_digest=$(/usr/local/bin/agy-settings sha256)
+      jq -n --arg expected "${settings_digest}" "{
+        expected_sha256: \$expected,
+        patch: {colorScheme: \"PERMISSION_CANARY_MUST_REMAIN\"}
+      }" | /usr/local/bin/agy-settings patch >/dev/null
+      jq --exit-status "
+        has(\"toolPermission\") | not
+      " /data/home/.gemini/antigravity-cli/settings.json >/dev/null
+      jq --exit-status "
+        has(\"enableTerminalSandbox\") | not
+      " /data/home/.gemini/antigravity-cli/settings.json >/dev/null
+      settings_hash=$(sha256sum \
+        /data/home/.gemini/antigravity-cli/settings.json | cut -d " " -f 1)
       mock_log=$(mktemp)
       native_stdout=$(mktemp)
       native_stderr=$(mktemp)
@@ -803,8 +835,8 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
           --print-timeout 20s \
           > "${warmup_stdout}" 2> "${warmup_stderr}"
       ! grep -Eqi "auto-denied|headless mode cannot prompt" "${warmup_stderr}"
-      settings_hash=$(sha256sum \
-        /data/home/.gemini/antigravity-cli/settings.json | cut -d " " -f 1)
+      test "$(sha256sum /data/home/.gemini/antigravity-cli/settings.json \
+        | cut -d " " -f 1)" = "${settings_hash}"
 
       printf "%s\n" "TELEGRAM_PERMISSION_CANARY_SENTINEL" | /usr/bin/env -i \
         AGY_CLI_DISABLE_AUTO_UPDATE=true \
@@ -830,7 +862,7 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       test "$(sha256sum /data/home/.gemini/antigravity-cli/settings.json \
         | cut -d " " -f 1)" = "${settings_hash}"
       jq --exit-status \
-        ".deny_canary_marker == \"MUST_REMAIN\" and .compromised == null" \
+        ".colorScheme == \"PERMISSION_CANARY_MUST_REMAIN\" and .compromised == null" \
         /data/home/.gemini/antigravity-cli/settings.json >/dev/null
       test ! -e /config/command-permission-canary.marker
       grep -Fxq MCP_PERMISSION_CANARY_OK \

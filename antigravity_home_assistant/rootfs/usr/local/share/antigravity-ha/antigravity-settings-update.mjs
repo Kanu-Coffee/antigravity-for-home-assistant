@@ -13,6 +13,13 @@ import {
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 
+import {
+  isNativeRawJsonNumber,
+  nativeCanonicalSettingsContent,
+  nativeParseJsonContent,
+  nativeSettingsToolPermission,
+} from "./telegram-permission-policy.mjs";
+
 const SETTINGS_DIRECTORY = "/data/home/.gemini/antigravity-cli";
 const SETTINGS_PATH = `${SETTINGS_DIRECTORY}/settings.json`;
 const MAX_SETTINGS_BYTES = 256 * 1024;
@@ -27,6 +34,30 @@ const PROTECTED_KEYS = new Set([
   "artifactReviewPolicy",
 ]);
 const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+function isUnicodeScalarString(value) {
+  if (typeof value !== "string") return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const current = value.charCodeAt(index);
+    if (current >= 0xd800 && current <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next < 0xdc00 || next > 0xdfff) return false;
+      index += 1;
+    } else if (current >= 0xdc00 && current <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+const SUPPORTED_SCALAR_PATCHES = new Map([
+  ["altScreenMode", (value) =>
+    typeof value === "string" && ["auto", "always", "never"].includes(value)],
+  ["clearScrollbackOnResize", (value) => typeof value === "boolean"],
+  ["colorScheme", isUnicodeScalarString],
+  ["disableSlashCommands", (value) => typeof value === "boolean"],
+  ["modelProvider", isUnicodeScalarString],
+  ["showFeedbackSurvey", (value) => typeof value === "boolean"],
+  ["showTips", (value) => typeof value === "boolean"],
+]);
 
 function fail(message, code = 65) {
   process.stderr.write(`agy-settings: ${message}\n`);
@@ -73,11 +104,12 @@ function readSettings() {
 function parseObject(bytes, label) {
   let value;
   try {
-    value = JSON.parse(bytes.toString("utf8"));
+    value = nativeParseJsonContent(bytes);
   } catch {
     throw new Error(`${label} is not valid JSON`);
   }
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) ||
+      isNativeRawJsonNumber(value)) {
     throw new Error(`${label} must be a JSON object`);
   }
   return value;
@@ -88,6 +120,7 @@ function validateJson(value, depth = 0, budget = { nodes: 0 }) {
   if (budget.nodes > MAX_NODES || depth > MAX_DEPTH) {
     throw new Error("JSON patch exceeds the structural limit");
   }
+  if (isNativeRawJsonNumber(value)) return;
   if (value === null || typeof value === "string" ||
       typeof value === "boolean") return;
   if (typeof value === "number") {
@@ -107,17 +140,42 @@ function validateJson(value, depth = 0, budget = { nodes: 0 }) {
 
 function mergePatch(target, patch) {
   const output = target !== null && typeof target === "object" &&
-      !Array.isArray(target) ? { ...target } : {};
+      !Array.isArray(target) && !isNativeRawJsonNumber(target)
+    ? { ...target }
+    : {};
   for (const [key, value] of Object.entries(patch)) {
     if (value === null) {
       delete output[key];
-    } else if (typeof value === "object" && !Array.isArray(value)) {
+    } else if (typeof value === "object" && !Array.isArray(value) &&
+        !isNativeRawJsonNumber(value)) {
       output[key] = mergePatch(output[key], value);
     } else {
       output[key] = value;
     }
   }
   return output;
+}
+
+function validateSupportedPatch(patch) {
+  for (const [key, value] of Object.entries(patch)) {
+    const validator = SUPPORTED_SCALAR_PATCHES.get(key);
+    if (!validator) {
+      // Deleting an existing or stale unknown setting cannot introduce a
+      // native schema transform and provides a bounded recovery path for
+      // values written by an older helper. Protected keys were rejected first.
+      if (value === null) continue;
+      throw new Error(
+        "patch contains an unsupported top-level setting",
+      );
+    }
+    // JSON merge-patch null removes a supported setting and lets the native
+    // default apply. Objects, arrays and unknown native typed settings are
+    // deliberately rejected: the App cannot safely reproduce every private
+    // native schema transformation while settings.json remains write-protected.
+    if (value !== null && !validator(value)) {
+      throw new Error("patch contains an unsupported scalar setting value");
+    }
+  }
 }
 
 function readBoundedStdin() {
@@ -196,6 +254,7 @@ function patchSettings() {
       throw new Error(`${protectedKey} is App-managed and cannot be changed here`);
     }
   }
+  validateSupportedPatch(request.patch);
 
   const currentBytes = readSettings();
   if (sha256(currentBytes) !== request.expected_sha256) {
@@ -209,7 +268,10 @@ function patchSettings() {
     }
   }
   validateJson(candidateValue);
-  const candidate = Buffer.from(`${JSON.stringify(candidateValue, null, 2)}\n`, "utf8");
+  const candidate = nativeCanonicalSettingsContent(
+    candidateValue,
+    nativeSettingsToolPermission(current),
+  );
   if (candidate.length > MAX_SETTINGS_BYTES) {
     throw new Error("updated settings.json exceeds 256 KiB");
   }

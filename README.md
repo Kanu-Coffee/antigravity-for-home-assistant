@@ -31,6 +31,28 @@
 > 확인하세요. 현재 `experimental`이며 실제 HAOS 양쪽 아키텍처의 전체 설치·업데이트·
 > rollback 검증은 릴리스별 증거를 확인해야 합니다.
 
+**2.1.1 native settings 호환성 수정:** 공개 2.1.0의 실제 Web UI에서 첫 `agy`
+실행 시 Antigravity 1.1.13이 `request-review` mode에서 non-canonical top-level
+`toolPermission`과 `enableTerminalSandbox`를 제거해 설정을 canonicalize하려 했고, 보호된
+`settings.json`의 교체가 AppArmor에 의해 의도대로 차단되면서 atomic rename 오류와
+default fallback 안내가 나타났습니다. 임시 파일과 대상은 같은 디렉터리이므로
+`EXDEV` 문제가 아닙니다. 2.1.1은 native 1.1.13의 mode-specific shape를 사용합니다.
+`request-review`는 top-level `toolPermission`을 생략하고 `always-proceed`는 exact
+`"toolPermission":"always-proceed"`를 유지하며, 두 mode 모두
+`enableTerminalSandbox`를 생략합니다. 선택된 Telegram mode는 App option에서 가져와
+canonical native permission bucket과 대조합니다. known bucket은 native order로
+직렬화하고 `always-proceed`에서는 empty `ask`를 생략합니다.
+최종 settings의 AppArmor write/link/lock deny와 native file tool·command·shell의
+보호 경계는 그대로이며 copy/unlink fallback이나 settings write grant를 추가하지
+않습니다.
+
+Telegram token과 허용 목록은 `/data/options.json`에서 읽고 Bridge는 별도 S6
+서비스입니다. Home Assistant Core의 `telegram_bot` service 또는 이름이 `telegram`인
+MCP가 없는 것은 Bridge 비활성 증거가 아니며, 관리형 proposal MCP 이름은
+`telegram_action`입니다. 자동 회귀는 실제 HAOS 증거가 아닙니다. 2.1.1의 Web TUI,
+AppArmor, authenticated Telegram, browser와 memory 실기기 수용은 amd64/aarch64 모두
+`NOT RUN`이고 전체 v2는 `PARTIAL`입니다.
+
 **2.1.0 운영 권한 재설계:** 공개 2.0.18의 실제 HAOS 18.2 amd64에서 App 기동,
 `antigravity --version` status 0, Telegram transport와 도구 없는 기본 대화는
 `PASS`했습니다. 그러나 Web UI의 `agy`/`antigravity` 대화형 입출력은 실패했고, 현재
@@ -199,12 +221,15 @@ command/URL과 installed MCP를 자율 관리자 권한으로 실행합니다. n
 시작하기 위한 legacy 입력 호환 값이며 `request-review`로 정규화됩니다.
 
 2.0.12부터 Telegram이 켜져 있으면 시작 전에 root 소유
-single-link regular이고 256 KiB 이하이며 parse 가능한 settings를 transaction backup하고,
-2.1.0은 `allowNonWorkspaceAccess=true`, `artifactReviewPolicy=agent-decides`,
-`enableTerminalSandbox=false`, 선택된 effective `toolPermission`과 permission 세 bucket을
-해당 모드의 exact image policy로 정규화합니다. unknown custom
-allow/ask/deny는 제거하지만 이 다섯 App 관리 보안 key 밖의 top-level 설정, global MCP,
-plugin, OAuth와 `/config`는 보존합니다. 기존 mode가 0600이 아니면 transaction에서
+single-link regular이고 256 KiB 이하이며 parse 가능한 settings를 transaction backup합니다.
+현재 2.1.1은 `allowNonWorkspaceAccess=true`,
+`artifactReviewPolicy=agent-decides`, 선택 mode의 sparse `toolPermission` 표현과 known
+permission bucket을 exact image policy로 정규화하고 retired
+`enableTerminalSandbox`는 제거합니다. `request-review`는 top-level `toolPermission`을
+생략하고 `allow`/`deny`/`ask`를 기록하며, `always-proceed`는 exact mode 값을 유지하고
+`allow`/`deny`만 기록합니다. unknown custom allow/ask/deny는 제거하지만 이 App 관리
+permission 경계 밖의 top-level 설정, global MCP, plugin, OAuth와 `/config`는 보존합니다.
+기존 mode가 0600이 아니면 transaction에서
 0600으로 강화합니다. symlink/hardlink/non-root owner, 크기 초과 또는 parse 불가능한
 JSON은 수정하지 않으며, bridge는 sanitized
 `permission_boundary_blocked`를 한 번 기록하고 Bot API에 접속하거나 재시작 loop를
@@ -336,15 +361,17 @@ VPN을 사용하세요.
 
 | 값 | 동작 |
 | --- | --- |
-| `preserve` | OAuth와 사용자 소유 settings·MCP·plugin을 보존; Telegram enabled이면 안전한 settings의 다섯 App 관리 보안 key와 permission 세 bucket을 exact policy로 자동 정규화; App 소유 HA plugin은 version당 보안 갱신 |
+| `preserve` | OAuth와 사용자 소유 settings·MCP·plugin을 보존; Telegram enabled이면 안전한 settings의 App 관리 보안 field와 선택 mode의 known permission bucket을 exact policy로 자동 정규화; App 소유 HA plugin은 version당 보안 갱신 |
 | `refresh_managed` | 위 보존 원칙과 plugin 갱신에 더해 소유권이 기록된 settings key·permission rule을 backup 후 merge |
-| `reset_v2` | 명시적 복구 mode. 안전하게 parse 가능한 settings를 backup하고 ownership state와 무관하게 managed key와 permission 세 bucket을 image exact default로 교체 |
+| `reset_v2` | 명시적 복구 mode. 안전하게 parse 가능한 settings를 backup하고 ownership state와 무관하게 managed field와 선택 mode의 known permission bucket을 image exact default로 교체 |
 
 `reset_v2`는 `permissions` 밖의 사용자 top-level settings, 기존 global MCP,
 사용자 plugin, `/config`, OAuth, SSH key, browser identity와 memory를 보존합니다.
-대신 managed key와 `permissions.allow`/`ask`/`deny` 전체는 현재 image 기본값과 정확히
-맞추며, 기존 App ownership state가 없거나 모호해도 명시적으로 선택한 복구 작업을
-수행합니다. 안전한 regular file로 읽거나 JSON으로 parse할 수 없으면 fail closed합니다.
+대신 managed field와 선택 mode에 존재하는 known permission bucket은 현재 image
+기본값과 정확히 맞춥니다. `request-review`는 `allow`/`deny`/`ask`를 기록하고,
+`always-proceed`는 `allow`/`deny`만 기록해 empty `ask`를 생략합니다. 기존 App ownership
+state가 없거나 모호해도 명시적으로 선택한 복구 작업을 수행합니다. 안전한 regular
+file로 읽거나 JSON으로 parse할 수 없으면 fail closed합니다.
 option을 `preserve`로 되돌릴 때까지 매 시작 drift를 다시 복구하므로 정상화 뒤에는
 `preserve`로 변경하세요. mode와 관계없이 App 소유 `home-assistant` plugin은 안전한
 ownership marker가 있을 때 App version당 한 번 canonical image copy로 갱신됩니다.

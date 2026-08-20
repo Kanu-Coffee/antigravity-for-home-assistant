@@ -65,7 +65,11 @@ request to change global Antigravity settings, obtain the current digest with
 `agy-settings sha256` and pipe an object with `expected_sha256` and `patch` to
 `agy-settings patch`. The helper rejects App-owned `permissions`,
 `enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`, and
-`artifactReviewPolicy` keys and commits other settings atomically.
+`artifactReviewPolicy` keys. It atomically updates only `altScreenMode`,
+`clearScrollbackOnResize`, `colorScheme`, `disableSlashCommands`,
+`modelProvider`, `showFeedbackSurvey`, and `showTips`; `null` may remove a
+non-protected top-level stale setting. Unknown non-null settings and object or
+array values are rejected.
 
 If a `request-review` Telegram side effect cannot be represented by
 `ha_change_propose` or `telegram_action_propose`, report that limitation and

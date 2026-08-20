@@ -18,6 +18,8 @@ PUBLIC_2_0_6_SETTINGS_SHA256=ee34d8fd24909a90f1afafd4303dc5402571cf73105c8983a08
 PUBLIC_2_0_6_STATE_SHA256=78353795eadafcb552e8aeae049741d88fec378265bb133ac60e2950fd72e56c
 PUBLIC_2_0_8_SETTINGS_SHA256=e2590f1f1b4a61aec2afabbfbc4df884a3a47423749367dec249acd056bfa108
 PUBLIC_2_0_8_STATE_SHA256=ac108d3d3c43158f22f831c7c8e5bf9bd45de63a4cb40cd3ed620b2a6545a4d7
+PUBLIC_2_1_0_SETTINGS_SHA256=1d91fa1e64ae864c8ba6345a8237214d746cd18bde0b9297917933ddb23ac8f1
+PUBLIC_2_1_0_STATE_SHA256=d613788c6fa63a7c8c20823d012cb31f2abdfe171473f1be976f5d27e43ff7eb
 TEST_ID="antigravity-ha-native-files-${RANDOM}-$$"
 MAIN_VOLUME="${TEST_ID}-main"
 RESET_VOLUME="${TEST_ID}-reset"
@@ -32,6 +34,7 @@ PERMISSION_V208_MIGRATION_VOLUME="${TEST_ID}-permission-v208-migration"
 PERMISSION_V208_AMBIGUOUS_VOLUME="${TEST_ID}-permission-v208-ambiguous"
 PERMISSION_V3_MIGRATION_VOLUME="${TEST_ID}-permission-v3-migration"
 PERMISSION_V2018_MIGRATION_VOLUME="${TEST_ID}-permission-v2018-migration"
+PERMISSION_V210_MIGRATION_VOLUME="${TEST_ID}-permission-v210-migration"
 TELEGRAM_RECONCILE_VOLUME="${TEST_ID}-telegram-reconcile"
 TELEGRAM_MALFORMED_REFRESH_VOLUME="${TEST_ID}-telegram-malformed-refresh"
 TELEGRAM_MALFORMED_MATRIX_CASES=(
@@ -70,6 +73,7 @@ VOLUMES=(
   "${PERMISSION_V208_AMBIGUOUS_VOLUME}"
   "${PERMISSION_V3_MIGRATION_VOLUME}"
   "${PERMISSION_V2018_MIGRATION_VOLUME}"
+  "${PERMISSION_V210_MIGRATION_VOLUME}"
   "${TELEGRAM_RECONCILE_VOLUME}"
   "${TELEGRAM_MALFORMED_REFRESH_VOLUME}"
   "${TELEGRAM_MALFORMED_MATRIX_VOLUMES[@]}"
@@ -177,6 +181,10 @@ docker image inspect "${IMAGE}" >/dev/null 2>&1 \
   || fail 'public 2.0.8 preserve settings fixture hash changed'
 [[ $(sha256sum "${FIXTURE_DIRECTORY}/public-2.0.8-preserve-state.json" | cut -d " " -f 1) == "${PUBLIC_2_0_8_STATE_SHA256}" ]] \
   || fail 'public 2.0.8 preserve state fixture hash changed'
+[[ $(sha256sum "${FIXTURE_DIRECTORY}/public-2.1.0-preserve-settings.json" | cut -d " " -f 1) == "${PUBLIC_2_1_0_SETTINGS_SHA256}" ]] \
+  || fail 'public 2.1.0 preserve settings fixture hash changed'
+[[ $(sha256sum "${FIXTURE_DIRECTORY}/public-2.1.0-preserve-state.json" | cut -d " " -f 1) == "${PUBLIC_2_1_0_STATE_SHA256}" ]] \
+  || fail 'public 2.1.0 preserve state fixture hash changed'
 for volume in "${VOLUMES[@]}"; do
   docker volume create "${volume}" >/dev/null
 done
@@ -217,8 +225,8 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
   test "$(stat -c "%a:%U:%G" /data/home/.gemini/antigravity-cli/settings.json)" = 600:root:root
   test "$(stat -c "%a:%U:%G" /data/home/.gemini/config/mcp_config.json)" = 600:root:root
   jq --exit-status '
-    .toolPermission == "request-review"
-    and .enableTerminalSandbox == false
+    (has("toolPermission") | not)
+    and (has("enableTerminalSandbox") | not)
     and .allowNonWorkspaceAccess == true
     and .altScreenMode == "never"
     and (.permissions.allow | index("command(*)") == null)
@@ -267,7 +275,8 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
     /data/home/.gemini/config/mcp_config.json >/dev/null
   test "$(stat -c "%a:%U:%G" /data/antigravity-ha/migration/native-files-state.json)" = 600:root:root
   jq --exit-status '
-    (.managed.settings.keys | index("toolPermission") != null)
+    (.managed.settings.keys | index("toolPermission") == null)
+    and (.managed.settings.keys | index("enableTerminalSandbox") == null)
     and (.managed.settings.keys | index("permissions") != null)
     and (.managed.settings.permission_rules | index("command(*)") != null)
     and (.managed.settings.permission_rules | index("mcp(*)") == null)
@@ -276,6 +285,26 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
     and (.managed.settings.permission_rules
       | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)") != null)
   ' /data/antigravity-ha/migration/native-files-state.json >/dev/null
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  first_native_hash=$(sha256sum "${settings}" | cut -d " " -f 1)
+  set +e
+  printf '%s\n' request-review-first-launch-canary | env -i \
+    AGY_CLI_DISABLE_AUTO_UPDATE=true \
+    HOME=/data/home \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    TERM=dumb \
+    timeout --kill-after=2 8 /usr/local/libexec/antigravity-real \
+      --output-format stream-json --print-timeout 2s \
+      >/tmp/request-first-native.out 2>/tmp/request-first-native.err
+  native_status=$?
+  set -e
+  test "${native_status}" = 1
+  test "$(sha256sum "${settings}" | cut -d " " -f 1)" = \
+    "${first_native_hash}"
+  test -z "$(find /data/home/.gemini/antigravity-cli -maxdepth 1 \
+    -name 'settings.json.*.tmp' -print -quit)"
   AGY_CLI_DISABLE_AUTO_UPDATE=true HOME=/data/home \
     /usr/local/libexec/antigravity-real agent </dev/null >/dev/null
 SCRIPT
@@ -291,27 +320,168 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
     '{permissions,enableTerminalSandbox,allowNonWorkspaceAccess,toolPermission,artifactReviewPolicy}' "${settings}")
   digest=$(/usr/local/bin/agy-settings sha256)
   printf '%s\n' "$(jq -nc --arg digest "${digest}" \
-    '{expected_sha256:$digest,patch:{colorScheme:"tokyo night",showTips:true}}')" \
+    '{
+      expected_sha256: $digest,
+      patch: {
+        clearScrollbackOnResize: true,
+        colorScheme: "tokyo night",
+        disableSlashCommands: false,
+        modelProvider: "",
+        showFeedbackSurvey: true,
+        showTips: true
+      }
+    }')" \
     | /usr/local/bin/agy-settings patch >/tmp/agy-settings-result.json
   jq --exit-status \
-    '.status == "updated" and (.changed_keys == ["colorScheme","showTips"])' \
+    '.status == "updated"
+      and (.changed_keys == [
+        "clearScrollbackOnResize","colorScheme","disableSlashCommands",
+        "modelProvider","showFeedbackSurvey","showTips"
+      ])' \
     /tmp/agy-settings-result.json >/dev/null
   test "$(jq -c '{permissions,enableTerminalSandbox,allowNonWorkspaceAccess,toolPermission,artifactReviewPolicy}' \
     "${settings}")" = "${protected_before}"
   jq --exit-status \
-    '.colorScheme == "tokyo night" and .showTips == true' "${settings}" >/dev/null
+    '.colorScheme == "tokyo night"
+      and (has("clearScrollbackOnResize") | not)
+      and (has("disableSlashCommands") | not)
+      and (has("modelProvider") | not)
+      and (has("showFeedbackSurvey") | not)
+      and (has("showTips") | not)' "${settings}" >/dev/null
 
   digest=$(/usr/local/bin/agy-settings sha256)
+  stale_digest=${digest}
   printf '%s\n' "$(jq -nc --arg digest "${digest}" \
-    '{expected_sha256:$digest,patch:{ui:{permissions:"display-only"}}}')" \
-    | /usr/local/bin/agy-settings patch >/tmp/agy-settings-nested.json
-  jq --exit-status '.ui.permissions == "display-only"' "${settings}" >/dev/null
+    '{
+      expected_sha256: $digest,
+      patch: {colorScheme: "tokyo <&>\u2028\u2029"}
+    }')" \
+    | /usr/local/bin/agy-settings patch >/tmp/agy-settings-scalar.json
+  jq --exit-status \
+    '.status == "updated" and .changed_keys == ["colorScheme"]' \
+    /tmp/agy-settings-scalar.json >/dev/null
+  jq --exit-status \
+    '.colorScheme == "tokyo <&>\u2028\u2029"' "${settings}" >/dev/null
+  grep -Fq '"colorScheme": "tokyo \u003c\u0026\u003e\u2028\u2029"' \
+    "${settings}"
+  ! grep -Fq '<&>' "${settings}"
+
+  # Public 2.1.0 accepted arbitrary top-level settings through this helper.
+  # Deletion-only recovery for one of those stale typed values is safe: it
+  # cannot introduce a private-schema transform and must preserve policy.
+  jq '.customModelsConfig = {invalid: {nested: true}}' "${settings}" \
+    > "${settings}.stale"
+  chmod 0600 "${settings}.stale"
+  mv "${settings}.stale" "${settings}"
+  digest=$(/usr/local/bin/agy-settings sha256)
+  printf '%s\n' "$(jq -nc --arg digest "${digest}" \
+    '{expected_sha256:$digest,patch:{customModelsConfig:null}}')" \
+    | /usr/local/bin/agy-settings patch \
+      >/tmp/agy-settings-unknown-null-recovery.json
+  jq --exit-status \
+    '.status == "updated" and .changed_keys == ["customModelsConfig"]' \
+    /tmp/agy-settings-unknown-null-recovery.json >/dev/null
+  jq --exit-status 'has("customModelsConfig") | not' "${settings}" >/dev/null
   test "$(jq -c '{permissions,enableTerminalSandbox,allowNonWorkspaceAccess,toolPermission,artifactReviewPolicy}' \
     "${settings}")" = "${protected_before}"
 
-  stable_hash=$(sha256sum "${settings}" | cut -d " " -f 1)
+  # Arbitrary objects, arrays and unknown top-level keys cannot be proven
+  # byte-stable against the native private settings schema. Reject them before
+  # touching the protected file instead of recreating the atomic-rename fault.
+  digest=$(/usr/local/bin/agy-settings sha256)
+  before_unsupported=$(sha256sum "${settings}" | cut -d " " -f 1)
+  set +e
+  printf '{"expected_sha256":"%s","patch":{"nativeNumbers":{"unsafe":9007199254740993,"negativeZero":-0,"exponent":1.2300e+06,"overflow":1e400}}}\n' \
+    "${digest}" | /usr/local/bin/agy-settings patch \
+    >/tmp/agy-settings-unsupported.out 2>/tmp/agy-settings-unsupported.err
+  unsupported_status=$?
+  set -e
+  test "${unsupported_status}" = 65
+  grep -Fq 'patch contains an unsupported top-level setting' \
+    /tmp/agy-settings-unsupported.err
+  test "$(sha256sum "${settings}" | cut -d " " -f 1)" = \
+    "${before_unsupported}"
+  digest=$(/usr/local/bin/agy-settings sha256)
   set +e
   printf '%s\n' "$(jq -nc --arg digest "${digest}" \
+    '{expected_sha256:$digest,patch:{customModelsConfig:[]}}')" \
+    | /usr/local/bin/agy-settings patch \
+      >/tmp/agy-settings-unsupported-array.out \
+      2>/tmp/agy-settings-unsupported-array.err
+  unsupported_status=$?
+  set -e
+  test "${unsupported_status}" = 65
+  grep -Fq 'patch contains an unsupported top-level setting' \
+    /tmp/agy-settings-unsupported-array.err
+  test "$(sha256sum "${settings}" | cut -d " " -f 1)" = \
+    "${before_unsupported}"
+  for unsupported_patch in \
+    '{"colorScheme":{"nested":"no"}}' \
+    '{"altScreenMode":"sometimes"}' \
+    '{"showTips":"false"}'; do
+    digest=$(/usr/local/bin/agy-settings sha256)
+    set +e
+    printf '%s\n' "$(jq -nc --arg digest "${digest}" \
+      --argjson patch "${unsupported_patch}" \
+      '{expected_sha256:$digest,patch:$patch}')" \
+      | /usr/local/bin/agy-settings patch \
+        >/tmp/agy-settings-type.out 2>/tmp/agy-settings-type.err
+    unsupported_status=$?
+    set -e
+    test "${unsupported_status}" = 65
+    grep -Fq 'patch contains an unsupported scalar setting value' \
+      /tmp/agy-settings-type.err
+    test "$(sha256sum "${settings}" | cut -d " " -f 1)" = \
+      "${before_unsupported}"
+  done
+  test "$(jq -c '{permissions,enableTerminalSandbox,allowNonWorkspaceAccess,toolPermission,artifactReviewPolicy}' \
+    "${settings}")" = "${protected_before}"
+  jq --exit-status '
+    keys_unsorted == (keys | sort)
+    and (.permissions | keys_unsorted) == ["allow", "deny", "ask"]
+    and (has("toolPermission") | not)
+    and (has("enableTerminalSandbox") | not)
+  ' "${settings}" >/dev/null
+  patched_hash=$(sha256sum "${settings}" | cut -d " " -f 1)
+  set +e
+  printf '%s\n' agy-settings-native-hash-canary | env -i \
+    AGY_CLI_DISABLE_AUTO_UPDATE=true \
+    HOME=/data/home \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    TERM=dumb \
+    timeout --kill-after=2 8 /usr/local/libexec/antigravity-real \
+      --output-format stream-json --print-timeout 2s \
+      >/tmp/agy-settings-native.out 2>/tmp/agy-settings-native.err
+  native_status=$?
+  set -e
+  test "${native_status}" = 1
+  test "$(sha256sum "${settings}" | cut -d " " -f 1)" = "${patched_hash}"
+  test -z "$(find /data/home/.gemini/antigravity-cli -maxdepth 1 \
+    -name 'settings.json.*.tmp' -print -quit)"
+  set +e
+  printf '%s\n' agy-settings-native-special-character-canary | env -i \
+    AGY_CLI_DISABLE_AUTO_UPDATE=true \
+    HOME=/data/home \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    TERM=dumb \
+    timeout --kill-after=2 8 /usr/local/libexec/antigravity-real \
+      --output-format stream-json --print-timeout 2s \
+      >/tmp/agy-settings-native-second.out \
+      2>/tmp/agy-settings-native-second.err
+  native_status=$?
+  set -e
+  test "${native_status}" = 1
+  test "$(sha256sum "${settings}" | cut -d " " -f 1)" = "${patched_hash}"
+  test -z "$(find /data/home/.gemini/antigravity-cli -maxdepth 1 \
+    -name 'settings.json.*.tmp' -print -quit)"
+
+  stable_hash=$(sha256sum "${settings}" | cut -d " " -f 1)
+  set +e
+  printf '%s\n' "$(jq -nc --arg digest "${stale_digest}" \
     '{expected_sha256:$digest,patch:{showTips:false}}')" \
     | /usr/local/bin/agy-settings patch >/tmp/stale.out 2>/tmp/stale.err
   stale_status=$?
@@ -405,11 +575,21 @@ PRESERVE_OUTPUT=$(run_helper "${MAIN_VOLUME}") \
 assert_json "${PRESERVE_OUTPUT}" '
   .mode == "preserve"
   and .created == []
-  and .refreshed == []
+  and .permission_migration == "applied"
+  and .refreshed == ["settings"]
+  and (.backup_directory
+    | startswith("/data/antigravity-ha/backups/native-files/refresh-"))
   and (.warnings | any(contains("Legacy")))
+  and (.warnings | any(contains("canonicalized settings.json")))
 '
 assert_sanitized "${PRESERVE_OUTPUT}"
-[[ $(path_hash "${MAIN_VOLUME}" /data/home/.gemini/antigravity-cli/settings.json) == "${SETTINGS_HASH}" ]]
+PRESERVE_BACKUP_DIRECTORY=$(jq --raw-output '.backup_directory' \
+  <<<"${PRESERVE_OUTPUT}")
+[[ $(path_hash "${MAIN_VOLUME}" \
+  "${PRESERVE_BACKUP_DIRECTORY}/settings.before") == "${SETTINGS_HASH}" ]]
+SETTINGS_HASH_AFTER_PRESERVE=$(path_hash "${MAIN_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json)
+[[ ${SETTINGS_HASH_AFTER_PRESERVE} != "${SETTINGS_HASH}" ]]
 [[ $(path_hash "${MAIN_VOLUME}" /data/home/.gemini/config/mcp_config.json) == "${MCP_HASH}" ]]
 
 run_script "${MAIN_VOLUME}" <<'SCRIPT'
@@ -422,18 +602,20 @@ MANAGED_OUTPUT=$(run_helper "${MAIN_VOLUME}") \
   || fail 'refresh_managed helper run failed'
 assert_json "${MANAGED_OUTPUT}" '
   .mode == "refresh_managed"
-  and .refreshed == ["settings"]
-  and (.backup_directory | startswith("/data/antigravity-ha/backups/native-files/refresh-"))
+  and .refreshed == []
+  and .backup_directory == null
 '
 assert_sanitized "${MANAGED_OUTPUT}"
-MANAGED_BACKUP_DIRECTORY=$(jq --raw-output '.backup_directory' <<<"${MANAGED_OUTPUT}")
-[[ $(path_hash "${MAIN_VOLUME}" "${MANAGED_BACKUP_DIRECTORY}/settings.before") == "${SETTINGS_HASH}" ]]
+[[ $(path_hash "${MAIN_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json) == \
+  "${SETTINGS_HASH_AFTER_PRESERVE}" ]]
 [[ $(path_hash "${MAIN_VOLUME}" /data/home/.gemini/config/mcp_config.json) == "${MCP_HASH}" ]]
-run_script "${MAIN_VOLUME}" "${SETTINGS_SECRET}" "${MANAGED_BACKUP_DIRECTORY}" <<'SCRIPT'
+run_script "${MAIN_VOLUME}" "${SETTINGS_SECRET}" \
+  "${PRESERVE_BACKUP_DIRECTORY}" <<'SCRIPT'
   set -Eeuo pipefail
   jq --arg marker "$1" --exit-status '
     .user_marker == $marker
-    and .toolPermission == "request-review"
+    and (has("toolPermission") | not)
     and (.permissions.allow | index("user(custom/read)") != null)
     and (.permissions.allow | index("mcp(playwright/browser_snapshot)") != null)
     and (.permissions.ask | index("mcp(playwright/browser_snapshot)") == null)
@@ -454,7 +636,7 @@ run_script "${MAIN_VOLUME}" "${SETTINGS_SECRET}" "${MANAGED_BACKUP_DIRECTORY}" <
       | index("read_file(/data/home/.gemini/config/mcp_config.json)") != null)
     and (.permissions.deny
       | index("write_file(/data/home/.gemini/config/mcp_config.json)") != null)
-    and .permissions.user_bucket == ["user(custom/permission)"]
+    and (.permissions | has("user_bucket") | not)
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
   test -f "$2/settings.before"
   test ! -e "$2/mcp.before"
@@ -481,7 +663,7 @@ assert_sanitized "${RESET_OUTPUT}"
 run_script "${MAIN_VOLUME}" "${SETTINGS_SECRET}" <<'SCRIPT'
   jq --arg marker "$1" --exit-status '
     .user_marker == $marker
-    and .toolPermission == "request-review"
+    and (has("toolPermission") | not)
     and ((["mcp(ha_files/ha_files_write_text)", "execute_url(*)", "command(*)"]
       - .permissions.ask) | length == 0)
     and (.permissions.deny | index("read_file(*)") != null)
@@ -557,8 +739,8 @@ run_script "${RESET_VOLUME}" "${BACKUP_DIRECTORY}" "${SETTINGS_SECRET}" "${MCP_S
   test "$(stat -c "%a:%U:%G" "${backup}/settings.before")" = 600:root:root
   test ! -e "${backup}/mcp.before"
   jq --arg marker "$2" --exit-status '
-    .toolPermission == "request-review"
-    and .enableTerminalSandbox == false
+    (has("toolPermission") | not)
+    and (has("enableTerminalSandbox") | not)
     and .user_reset_key == $marker
     and (.permissions.deny | index("user(custom/deny)") == null)
     and (.permissions.allow | index("mcp(playwright/browser_snapshot)") != null)
@@ -619,6 +801,7 @@ run_script "${PERMISSION_MIGRATION_VOLUME}" \
   awk '
     /^  "permissions":/ {
       print "  \"user_byte_marker\"  :  \"preserve\\\\u002dexact\","
+      print "  \"user_numbers\": {\"unsafe\":9007199254740993,\"negativeZero\":-0,\"exponent\":1.2300e+06,\"overflow\":1e400,\"nested\":[9007199254740993,-0,1.2300e+06,1e400]},"
     }
     { print }
   ' /tmp/settings.json > /data/home/.gemini/antigravity-cli/settings.json
@@ -634,34 +817,11 @@ PERMISSION_SETTINGS_HASH_BEFORE=$(path_hash \
 PERMISSION_STATE_HASH_BEFORE=$(path_hash \
   "${PERMISSION_MIGRATION_VOLUME}" \
   /data/antigravity-ha/migration/native-files-state.json)
-PERMISSION_OUTER_HASH_BEFORE=$(run_script \
+PERMISSION_UNRELATED_HASH_BEFORE=$(run_script \
   "${PERMISSION_MIGRATION_VOLUME}" <<'SCRIPT'
-  awk '
-    /^  "permissions": \{/ {
-      print "  \"permissions\": <permission-value>"
-      inside = 1
-      next
-    }
-    inside && /^  }[,]?$/ {
-      inside = 0
-      if ($0 ~ /,$/) print "<permission-value-end>,"
-      else print "<permission-value-end>"
-      next
-    }
-    /^  "enableTerminalSandbox": (true|false),$/ {
-      print "  \"enableTerminalSandbox\": <managed-value>,"
-      next
-    }
-    /^  "allowNonWorkspaceAccess": (true|false),$/ {
-      print "  \"allowNonWorkspaceAccess\": <managed-value>,"
-      next
-    }
-    /^  "toolPermission": "[^"]+",$/ {
-      print "  \"toolPermission\": <managed-value>,"
-      next
-    }
-    !inside { print }
-  ' /data/home/.gemini/antigravity-cli/settings.json \
+  jq --sort-keys \
+    'del(.permissions,.enableTerminalSandbox,.allowNonWorkspaceAccess,.toolPermission)' \
+    /data/home/.gemini/antigravity-cli/settings.json \
     | sha256sum | cut -d ' ' -f 1
 SCRIPT
 )
@@ -724,48 +884,27 @@ PERMISSION_BACKUP_DIRECTORY=$(jq --raw-output '.backup_directory' \
 [[ $(path_hash "${PERMISSION_MIGRATION_VOLUME}" \
   "${PERMISSION_BACKUP_DIRECTORY}/settings.before") == \
   "${PERMISSION_SETTINGS_HASH_BEFORE}" ]]
-PERMISSION_OUTER_HASH_AFTER=$(run_script \
+PERMISSION_UNRELATED_HASH_AFTER=$(run_script \
   "${PERMISSION_MIGRATION_VOLUME}" <<'SCRIPT'
-  awk '
-    /^  "permissions": \{/ {
-      print "  \"permissions\": <permission-value>"
-      inside = 1
-      next
-    }
-    inside && /^  }[,]?$/ {
-      inside = 0
-      if ($0 ~ /,$/) print "<permission-value-end>,"
-      else print "<permission-value-end>"
-      next
-    }
-    /^  "enableTerminalSandbox": (true|false),$/ {
-      print "  \"enableTerminalSandbox\": <managed-value>,"
-      next
-    }
-    /^  "allowNonWorkspaceAccess": (true|false),$/ {
-      print "  \"allowNonWorkspaceAccess\": <managed-value>,"
-      next
-    }
-    /^  "toolPermission": "[^"]+",$/ {
-      print "  \"toolPermission\": <managed-value>,"
-      next
-    }
-    !inside { print }
-  ' /data/home/.gemini/antigravity-cli/settings.json \
+  jq --sort-keys \
+    'del(.permissions,.enableTerminalSandbox,.allowNonWorkspaceAccess,.toolPermission)' \
+    /data/home/.gemini/antigravity-cli/settings.json \
     | sha256sum | cut -d ' ' -f 1
 SCRIPT
 )
-[[ "${PERMISSION_OUTER_HASH_AFTER}" == "${PERMISSION_OUTER_HASH_BEFORE}" ]] \
-  || fail 'preserve permission migration changed non-permission bytes'
+[[ "${PERMISSION_UNRELATED_HASH_AFTER}" == \
+  "${PERMISSION_UNRELATED_HASH_BEFORE}" ]] \
+  || fail 'preserve permission migration changed unrelated settings semantics'
 run_script "${PERMISSION_MIGRATION_VOLUME}" <<'SCRIPT'
   set -Eeuo pipefail
-  grep -Fxq '  "user_byte_marker"  :  "preserve\\u002dexact",' \
-    /data/home/.gemini/antigravity-cli/settings.json
   jq --exit-status '
-    .toolPermission == "request-review"
+    (has("toolPermission") | not)
+    and (has("enableTerminalSandbox") | not)
+    and keys_unsorted == (keys | sort)
+    and (.permissions | keys_unsorted) == ["allow", "deny", "ask"]
     and .user_byte_marker == "preserve\\u002dexact"
     and .user_suffix == "preserve-after-permissions"
-    and .permissions.user_policy == {owner: "user", enabled: true}
+    and (.permissions | has("user_policy") | not)
     and (.permissions.allow | index("user(custom/allow)") != null)
     and (.permissions.ask | index("user(custom/ask)") != null)
     and (.permissions.deny | index("user(custom/deny)") != null)
@@ -806,6 +945,15 @@ run_script "${PERMISSION_MIGRATION_VOLUME}" <<'SCRIPT'
     and (.permissions.deny | index("read_file(/config/secrets.yaml)") != null)
     and (.permissions.deny | index("write_file(/config/.storage)") != null)
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  grep -Fq '"unsafe": 9007199254740993' "${settings}"
+  grep -Fq '"negativeZero": -0' "${settings}"
+  grep -Fq '"exponent": 1.2300e+06' "${settings}"
+  grep -Fq '"overflow": 1e400' "${settings}"
+  test "$(grep -oF '9007199254740993' "${settings}" | wc -l)" = 2
+  test "$(grep -oF -- '-0' "${settings}" | wc -l)" = 2
+  test "$(grep -oF '1.2300e+06' "${settings}" | wc -l)" = 2
+  test "$(grep -oF '1e400' "${settings}" | wc -l)" = 2
   jq --exit-status '
     (.applied.settings | length) == 1
     and (.managed.settings.permission_rules | index("read_file(/data)") == null)
@@ -814,6 +962,46 @@ run_script "${PERMISSION_MIGRATION_VOLUME}" <<'SCRIPT'
     and (.managed.settings.permission_rules
       | index("mcp(ha_read/ha_read_storage_usage)") != null)
   ' /data/antigravity-ha/migration/native-files-state.json >/dev/null
+SCRIPT
+# A completed non-Telegram migration may contain user-owned rules in the
+# standard buckets, but its protected top-level fields are still App-owned.
+# Simulate out-of-band drift and prove preserve repairs only those fields while
+# keeping the user rules and returning to native-stable bytes.
+run_script "${PERMISSION_MIGRATION_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  grep -Fq '"allowNonWorkspaceAccess": true' "${settings}"
+  grep -Fq '"artifactReviewPolicy": "agent-decides"' "${settings}"
+  grep -Fq '"write_file(*)"' "${settings}"
+  sed \
+    -e 's/"allowNonWorkspaceAccess": true/"allowNonWorkspaceAccess": "invalid"/' \
+    -e 's/"artifactReviewPolicy": "agent-decides"/"artifactReviewPolicy": "allow"/' \
+    "${settings}" | grep -vF '"write_file(*)"' > /tmp/settings.drift
+  chmod 0600 /tmp/settings.drift
+  mv /tmp/settings.drift "${settings}"
+SCRIPT
+PERMISSION_DRIFT_OUTPUT=$(run_helper "${PERMISSION_MIGRATION_VOLUME}") \
+  || fail 'preserve did not repair App-owned top-level settings drift'
+assert_json "${PERMISSION_DRIFT_OUTPUT}" '
+  .permission_migration == "applied"
+  and .created == []
+  and .refreshed == ["settings"]
+  and (.backup_directory
+    | startswith("/data/antigravity-ha/backups/native-files/refresh-"))
+  and (.warnings | any(contains("canonicalized settings.json")))
+'
+run_script "${PERMISSION_MIGRATION_VOLUME}" <<'SCRIPT'
+  jq --exit-status '
+    .allowNonWorkspaceAccess == true
+    and .artifactReviewPolicy == "agent-decides"
+    and (.permissions.allow | index("user(custom/allow)") != null)
+    and (.permissions.ask | index("user(custom/ask)") != null)
+    and (.permissions.deny | index("user(custom/deny)") != null)
+    and (.permissions.allow | index("command(*)") == null)
+    and (.permissions.ask | index("command(*)") != null)
+    and (.permissions.deny | index("write_file(*)") != null)
+    and (.permissions | has("user_bucket") | not)
+  ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
 SCRIPT
 PERMISSION_SETTINGS_HASH_AFTER=$(path_hash \
   "${PERMISSION_MIGRATION_VOLUME}" \
@@ -894,8 +1082,8 @@ assert_json "${PERMISSION_V208_OUTPUT}" '
 run_script "${PERMISSION_V208_MIGRATION_VOLUME}" <<'SCRIPT'
   set -Eeuo pipefail
   jq --exit-status '
-    .toolPermission == "request-review"
-    and .enableTerminalSandbox == false
+    (has("toolPermission") | not)
+    and (has("enableTerminalSandbox") | not)
     and (.permissions.allow | index("user(v208/allow)") != null)
     and (.permissions.ask | index("user(v208/ask)") != null)
     and (.permissions.deny | index("user(v208/deny)") != null)
@@ -984,6 +1172,12 @@ run_script "${PERMISSION_V208_AMBIGUOUS_VOLUME}" <<'SCRIPT'
   jq '
     .permissions.ask |= map(select(. != "command(*)"))
     | .permissions.deny += ["command(*)"]
+    | .permissions.allow |= map(select(
+        . != "write_file(/data/home/.gemini/antigravity-cli/settings.json)"
+      ))
+    | .permissions.ask += [
+        "write_file(/data/home/.gemini/antigravity-cli/settings.json)"
+      ]
   ' /test-fixtures/public-2.0.8-preserve-settings.json \
     > /data/home/.gemini/antigravity-cli/settings.json
   install -m 0600 /test-fixtures/public-2.0.8-preserve-state.json \
@@ -1006,10 +1200,162 @@ run_script "${PERMISSION_V208_AMBIGUOUS_VOLUME}" <<'SCRIPT'
     (.permissions.deny | index("command(*)") != null)
     and (.permissions.ask | index("command(*)") == null)
     and (.permissions.allow | index("command(*)") == null)
+    and (.permissions.deny
+      | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)")
+        != null)
+    and (.permissions.ask
+      | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)")
+        == null)
+    and (.permissions.allow
+      | index("write_file(/data/home/.gemini/antigravity-cli/settings.json)")
+        == null)
     and (.permissions.allow | index("mcp(*)") == null)
     and (.permissions.allow
       | index("mcp(telegram_action/telegram_action_propose)") != null)
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
+SCRIPT
+PERMISSION_V208_OVERRIDE_HASH=$(path_hash \
+  "${PERMISSION_V208_AMBIGUOUS_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json)
+PERMISSION_V208_OVERRIDE_IDEMPOTENT=$(run_helper \
+  "${PERMISSION_V208_AMBIGUOUS_VOLUME}") \
+  || fail 'public 2.0.8 stronger deny was not restart-idempotent'
+assert_json "${PERMISSION_V208_OVERRIDE_IDEMPOTENT}" '
+  .permission_migration == "already_applied"
+  and .created == []
+  and .refreshed == []
+  and .backup_directory == null
+'
+[[ $(path_hash "${PERMISSION_V208_AMBIGUOUS_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json) == \
+  "${PERMISSION_V208_OVERRIDE_HASH}" ]]
+
+# Rehearse the exact public 2.1.0 settings and ownership bytes that triggered
+# the native 1.1.13 first-launch rewrite. The current App must migrate both
+# files transactionally, keep an exact backup, emit native-stable bytes, refresh
+# stale ownership even when only state is old, and then become idempotent.
+run_script "${PERMISSION_V210_MIGRATION_VOLUME}" \
+  "${PUBLIC_2_1_0_SETTINGS_SHA256}" "${PUBLIC_2_1_0_STATE_SHA256}" <<'SCRIPT'
+  set -Eeuo pipefail
+  umask 077
+  install -d -m 0700 /data/antigravity /data/antigravity-ha/migration \
+    /data/home/.gemini/antigravity-cli /data/home/.gemini/config \
+    /run/antigravity-ha
+  jq -n '{
+    antigravity_tool_permission: "request-review",
+    antigravity_terminal_sandbox: false,
+    antigravity_user_files_update_mode: "preserve"
+  }' > /data/options.json
+  install -m 0600 /test-fixtures/public-2.1.0-preserve-settings.json \
+    /data/home/.gemini/antigravity-cli/settings.json
+  install -m 0600 /test-fixtures/public-2.1.0-preserve-state.json \
+    /data/antigravity-ha/migration/native-files-state.json
+  install -m 0600 /etc/antigravity/mcp_config.json \
+    /data/home/.gemini/config/mcp_config.json
+  test "$(sha256sum /data/home/.gemini/antigravity-cli/settings.json \
+    | cut -d ' ' -f 1)" = "$1"
+  test "$(sha256sum /data/antigravity-ha/migration/native-files-state.json \
+    | cut -d ' ' -f 1)" = "$2"
+SCRIPT
+PERMISSION_V210_OUTPUT=$(run_helper "${PERMISSION_V210_MIGRATION_VOLUME}") \
+  || fail 'public 2.1.0 preserve migration failed'
+assert_json "${PERMISSION_V210_OUTPUT}" '
+  .permission_migration == "applied"
+  and .created == []
+  and .refreshed == ["settings"]
+  and (.backup_directory
+    | startswith("/data/antigravity-ha/backups/native-files/refresh-"))
+'
+PERMISSION_V210_BACKUP=$(jq --raw-output '.backup_directory' \
+  <<<"${PERMISSION_V210_OUTPUT}")
+[[ $(path_hash "${PERMISSION_V210_MIGRATION_VOLUME}" \
+  "${PERMISSION_V210_BACKUP}/settings.before") == \
+  "${PUBLIC_2_1_0_SETTINGS_SHA256}" ]]
+[[ $(path_hash "${PERMISSION_V210_MIGRATION_VOLUME}" \
+  "${PERMISSION_V210_BACKUP}/state.before") == \
+  "${PUBLIC_2_1_0_STATE_SHA256}" ]]
+run_script "${PERMISSION_V210_MIGRATION_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  state=/data/antigravity-ha/migration/native-files-state.json
+  jq --exit-status '
+    keys_unsorted == (keys | sort)
+    and (has("toolPermission") | not)
+    and (has("enableTerminalSandbox") | not)
+    and (.permissions | keys_unsorted) == ["allow", "deny", "ask"]
+    and .altScreenMode == "never"
+    and .showFeedbackSurvey == false
+    and .showTips == false
+  ' "${settings}" >/dev/null
+  jq --exit-status '
+    (.managed.settings.keys | index("toolPermission") == null)
+    and (.managed.settings.keys | index("enableTerminalSandbox") == null)
+    and (.managed.settings.keys | index("permissions") != null)
+  ' "${state}" >/dev/null
+  native_hash=$(sha256sum "${settings}" | cut -d " " -f 1)
+  set +e
+  printf '%s\n' public-2.1.0-native-stability-canary | env -i \
+    AGY_CLI_DISABLE_AUTO_UPDATE=true \
+    HOME=/data/home \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    TERM=dumb \
+    timeout --kill-after=2 8 /usr/local/libexec/antigravity-real \
+      --output-format stream-json --print-timeout 2s \
+      >/tmp/public-v210-native.out 2>/tmp/public-v210-native.err
+  native_status=$?
+  set -e
+  test "${native_status}" = 1
+  test "$(sha256sum "${settings}" | cut -d " " -f 1)" = "${native_hash}"
+  test -z "$(find /data/home/.gemini/antigravity-cli -maxdepth 1 \
+    -name 'settings.json.*.tmp' -print -quit)"
+SCRIPT
+PERMISSION_V210_SETTINGS_AFTER=$(path_hash \
+  "${PERMISSION_V210_MIGRATION_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json)
+PERMISSION_V210_STATE_AFTER=$(path_hash \
+  "${PERMISSION_V210_MIGRATION_VOLUME}" \
+  /data/antigravity-ha/migration/native-files-state.json)
+PERMISSION_V210_IDEMPOTENT=$(run_helper \
+  "${PERMISSION_V210_MIGRATION_VOLUME}") \
+  || fail 'public 2.1.0 preserve migration was not idempotent'
+assert_json "${PERMISSION_V210_IDEMPOTENT}" '
+  .permission_migration == "already_applied"
+  and .refreshed == []
+  and .backup_directory == null
+'
+[[ $(path_hash "${PERMISSION_V210_MIGRATION_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json) == \
+  "${PERMISSION_V210_SETTINGS_AFTER}" ]]
+[[ $(path_hash "${PERMISSION_V210_MIGRATION_VOLUME}" \
+  /data/antigravity-ha/migration/native-files-state.json) == \
+  "${PERMISSION_V210_STATE_AFTER}" ]]
+
+# An interrupted 2.1.0 repair can leave canonical bytes with the old ownership
+# record. Refresh that state-only mismatch instead of repeating it forever.
+run_script "${PERMISSION_V210_MIGRATION_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  install -m 0600 /test-fixtures/public-2.1.0-preserve-state.json \
+    /data/antigravity-ha/migration/native-files-state.json
+SCRIPT
+PERMISSION_V210_STATE_ONLY=$(run_helper \
+  "${PERMISSION_V210_MIGRATION_VOLUME}") \
+  || fail 'public 2.1.0 state-only ownership refresh failed'
+assert_json "${PERMISSION_V210_STATE_ONLY}" '
+  .permission_migration == "applied"
+  and .refreshed == ["settings"]
+  and (.backup_directory
+    | startswith("/data/antigravity-ha/backups/native-files/refresh-"))
+'
+[[ $(path_hash "${PERMISSION_V210_MIGRATION_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json) == \
+  "${PERMISSION_V210_SETTINGS_AFTER}" ]]
+run_script "${PERMISSION_V210_MIGRATION_VOLUME}" <<'SCRIPT'
+  jq --exit-status '
+    (.managed.settings.keys | index("toolPermission") == null)
+    and (.managed.settings.keys | index("enableTerminalSandbox") == null)
+  ' /data/antigravity-ha/migration/native-files-state.json >/dev/null
 SCRIPT
 
 # Reconstruct the exact 2.0.9/2.0.10 broad App-owned layout from immutable
@@ -1095,7 +1441,7 @@ assert_json "${PERMISSION_V3_OUTPUT}" '
 '
 run_script "${PERMISSION_V3_MIGRATION_VOLUME}" <<'SCRIPT'
   jq --exit-status '
-    .toolPermission == "request-review"
+    (has("toolPermission") | not)
     and (.permissions.allow | index("command(*)") == null)
     and (.permissions.allow | index("mcp(*)") == null)
     and (.permissions.allow | index("read_file(*)") == null)
@@ -1116,6 +1462,20 @@ run_script "${PERMISSION_V3_MIGRATION_VOLUME}" <<'SCRIPT'
       | index("mcp(telegram_action/telegram_action_propose)") != null)
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null
 SCRIPT
+PERMISSION_V3_OVERRIDE_HASH=$(path_hash \
+  "${PERMISSION_V3_MIGRATION_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json)
+PERMISSION_V3_IDEMPOTENT=$(run_helper "${PERMISSION_V3_MIGRATION_VOLUME}") \
+  || fail '2.0.9/2.0.10 stronger deny was not restart-idempotent'
+assert_json "${PERMISSION_V3_IDEMPOTENT}" '
+  .permission_migration == "already_applied"
+  and .created == []
+  and .refreshed == []
+  and .backup_directory == null
+'
+[[ $(path_hash "${PERMISSION_V3_MIGRATION_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json) == \
+  "${PERMISSION_V3_OVERRIDE_HASH}" ]]
 
 # Reconstruct the exact 2.0.11-2.0.18 managed permission ownership, then prove
 # that preserve mode retires it transactionally. The same fixture also proves
@@ -1215,7 +1575,7 @@ run_script "${PERMISSION_V2018_MIGRATION_VOLUME}" <<'SCRIPT'
   settings=/data/home/.gemini/antigravity-cli/settings.json
   jq --exit-status '
     .legacy_2018_marker == "preserved"
-    and .toolPermission == "request-review"
+    and (has("toolPermission") | not)
     and .allowNonWorkspaceAccess == true
     and (.permissions.allow | index("read_file(*)") == null)
     and (.permissions.allow | index("read_url(*)") != null)
@@ -1251,7 +1611,8 @@ run_script "${PERMISSION_V2018_MIGRATION_VOLUME}" <<'SCRIPT'
     .legacy_2018_marker == "preserved"
     and .toolPermission == "always-proceed"
     and .allowNonWorkspaceAccess == true
-    and .permissions.ask == []
+    and (.permissions | has("ask") | not)
+    and (.permissions | keys_unsorted) == ["allow", "deny"]
     and (([
       "read_url(*)",
       "execute_url(*)",
@@ -1267,6 +1628,29 @@ run_script "${PERMISSION_V2018_MIGRATION_VOLUME}" <<'SCRIPT'
     and (.permissions.deny | index("write_file(/config/.storage)") != null)
     and (.permissions.deny | index("read_file(/proc/self/environ)") != null)
   ' "${settings}" >/dev/null
+  jq --exit-status '
+    (.managed.settings.keys | index("toolPermission") != null)
+    and (.managed.settings.keys | index("enableTerminalSandbox") == null)
+  ' /data/antigravity-ha/migration/native-files-state.json >/dev/null
+  always_native_hash=$(sha256sum "${settings}" | cut -d " " -f 1)
+  set +e
+  printf '%s\n' always-proceed-first-launch-canary | env -i \
+    AGY_CLI_DISABLE_AUTO_UPDATE=true \
+    HOME=/data/home \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    TERM=dumb \
+    timeout --kill-after=2 8 /usr/local/libexec/antigravity-real \
+      --output-format stream-json --print-timeout 2s \
+      >/tmp/always-first-native.out 2>/tmp/always-first-native.err
+  native_status=$?
+  set -e
+  test "${native_status}" = 1
+  test "$(sha256sum "${settings}" | cut -d " " -f 1)" = \
+    "${always_native_hash}"
+  test -z "$(find /data/home/.gemini/antigravity-cli -maxdepth 1 \
+    -name 'settings.json.*.tmp' -print -quit)"
   node --input-type=module <<'NODE'
 import {
   TELEGRAM_ALWAYS_PROCEED_ALLOW_RULES,
@@ -1276,7 +1660,7 @@ import {
   loadTelegramPermissionBoundary,
 } from "/usr/local/share/antigravity-ha/telegram-bridge.mjs";
 
-const boundary = loadTelegramPermissionBoundary();
+const boundary = loadTelegramPermissionBoundary("always-proceed");
 if (boundary.toolPermission !== "always-proceed" ||
     boundary.allowCount !== TELEGRAM_ALWAYS_PROCEED_ALLOW_RULES.size ||
     boundary.denyCount !== TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size) {
@@ -1288,6 +1672,40 @@ PERMISSION_ALWAYS_IDEMPOTENT=$(run_helper \
   "${PERMISSION_V2018_MIGRATION_VOLUME}") \
   || fail 'always-proceed migration was not restart-idempotent'
 assert_json "${PERMISSION_ALWAYS_IDEMPOTENT}" '
+  .permission_migration == "already_applied"
+  and .refreshed == []
+  and .backup_directory == null
+'
+run_script "${PERMISSION_V2018_MIGRATION_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  jq '.antigravity_tool_permission = "request-review"' \
+    /data/options.json > /data/options.next
+  mv /data/options.next /data/options.json
+  chmod 0600 /data/options.json
+SCRIPT
+PERMISSION_REQUEST_RETURN=$(run_helper \
+  "${PERMISSION_V2018_MIGRATION_VOLUME}") \
+  || fail 'always-proceed to request-review preserve transition failed'
+assert_json "${PERMISSION_REQUEST_RETURN}" '
+  .permission_migration == "applied"
+  and .refreshed == ["settings"]
+'
+run_script "${PERMISSION_V2018_MIGRATION_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  jq --exit-status '
+    (has("toolPermission") | not)
+    and (has("enableTerminalSandbox") | not)
+    and (.permissions | keys_unsorted) == ["allow", "deny", "ask"]
+  ' "${settings}" >/dev/null
+  jq --exit-status '
+    .managed.settings.keys | index("toolPermission") == null
+  ' /data/antigravity-ha/migration/native-files-state.json >/dev/null
+SCRIPT
+PERMISSION_REQUEST_RETURN_IDEMPOTENT=$(run_helper \
+  "${PERMISSION_V2018_MIGRATION_VOLUME}") \
+  || fail 'request-review return migration was not restart-idempotent'
+assert_json "${PERMISSION_REQUEST_RETURN_IDEMPOTENT}" '
   .permission_migration == "already_applied"
   and .refreshed == []
   and .backup_directory == null
@@ -1395,12 +1813,12 @@ run_script "${TELEGRAM_RECONCILE_VOLUME}" \
   jq --exit-status '
     .synthetic_incident_marker == "preserve-non-managed"
     and .synthetic_incident_ui == {theme: "local-only"}
-    and .showTips == true
-    and .showFeedbackSurvey == true
+    and (has("showTips") | not)
+    and (has("showFeedbackSurvey") | not)
     and .allowNonWorkspaceAccess == true
     and .artifactReviewPolicy == "agent-decides"
-    and .toolPermission == "request-review"
-    and .enableTerminalSandbox == false
+    and (has("toolPermission") | not)
+    and (has("enableTerminalSandbox") | not)
     and ((["mcp(ha_files/ha_files_write_text)", "execute_url(*)", "command(*)"]
       - .permissions.ask) | length == 0)
     and (.permissions.allow | length) == ([.permissions.allow[]] | unique | length)
@@ -1453,9 +1871,7 @@ run_script "${TELEGRAM_RECONCILE_VOLUME}" \
     and (.managed.settings.keys | sort) == ([
       "allowNonWorkspaceAccess",
       "artifactReviewPolicy",
-      "enableTerminalSandbox",
-      "permissions",
-      "toolPermission"
+      "permissions"
     ] | sort)
     and (.managed.settings.permission_rules | index("read_file(*)") != null)
     and (.managed.settings.permission_rules | index("command(*)") != null)
@@ -1469,7 +1885,7 @@ import {
   TELEGRAM_SAFE_ALLOW_RULES,
 } from "/usr/local/share/antigravity-ha/telegram-permission-policy.mjs";
 
-const boundary = loadTelegramPermissionBoundary();
+const boundary = loadTelegramPermissionBoundary("request-review");
 if (boundary.toolPermission !== "request-review" ||
     boundary.allowCount !== TELEGRAM_SAFE_ALLOW_RULES.size ||
     boundary.denyCount !== TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size) {
@@ -1515,8 +1931,63 @@ assert_sanitized "${TELEGRAM_RECONCILE_IDEMPOTENT}"
 SCRIPT
 ) == "${TELEGRAM_RECONCILE_BACKUP_COUNT}" ]]
 
+# Telegram-enabled settings use an exact deny bucket. An extra deny such as
+# mcp(*) can block every managed read/proposal tool even though all mandatory
+# secret denies remain present, so the startup reconciliation must remove it
+# transactionally before the Bridge is allowed to contact Telegram.
+run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  jq '.permissions.deny += ["mcp(*)"]' "${settings}" > "${settings}.next"
+  mv "${settings}.next" "${settings}"
+  chmod 0600 "${settings}"
+SCRIPT
+TELEGRAM_EXTRA_DENY_OUTPUT=$(run_helper \
+  "${TELEGRAM_RECONCILE_VOLUME}") \
+  || fail 'Telegram extra deny was not reconciled before Bridge startup'
+assert_json "${TELEGRAM_EXTRA_DENY_OUTPUT}" '
+  .permission_migration == "telegram_reconciled"
+  and .refreshed == ["settings"]
+  and (.backup_directory
+    | startswith("/data/antigravity-ha/backups/native-files/refresh-"))
+  and (.warnings | any(contains("safe Telegram policy")))
+'
+run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
+  set -Eeuo pipefail
+  settings=/data/home/.gemini/antigravity-cli/settings.json
+  jq --exit-status '
+    (.permissions.deny | index("mcp(*)") == null)
+    and (.permissions.deny | index("read_file(*)") != null)
+    and (.permissions.deny | index("write_file(*)") != null)
+    and (.permissions.allow
+      | index("mcp(ha_change/ha_change_propose)") != null)
+    and (.permissions.allow
+      | index("mcp(telegram_action/telegram_action_propose)") != null)
+  ' "${settings}" >/dev/null
+  node --input-type=module <<'NODE'
+import {
+  loadTelegramPermissionBoundary,
+} from "/usr/local/share/antigravity-ha/telegram-bridge.mjs";
+loadTelegramPermissionBoundary("request-review");
+NODE
+SCRIPT
+TELEGRAM_EXTRA_DENY_HASH=$(path_hash \
+  "${TELEGRAM_RECONCILE_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json)
+TELEGRAM_EXTRA_DENY_IDEMPOTENT=$(run_helper \
+  "${TELEGRAM_RECONCILE_VOLUME}") \
+  || fail 'Telegram extra deny repair was not restart-idempotent'
+assert_json "${TELEGRAM_EXTRA_DENY_IDEMPOTENT}" '
+  .permission_migration == "already_applied"
+  and .refreshed == []
+  and .backup_directory == null
+'
+[[ $(path_hash "${TELEGRAM_RECONCILE_VOLUME}" \
+  /data/home/.gemini/antigravity-cli/settings.json) == \
+  "${TELEGRAM_EXTRA_DENY_HASH}" ]]
+
 # Disabling Telegram and returning through ordinary preserve must recognize the
-# five-key ownership record. Repair App-owned sandbox/tool drift without claiming
+# three-key ownership record. Retire unsupported sandbox/tool drift without claiming
 # or changing preserved UI/customization keys.
 run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
   set -Eeuo pipefail
@@ -1548,18 +2019,16 @@ run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
   settings=/data/home/.gemini/antigravity-cli/settings.json
   state=/data/antigravity-ha/migration/native-files-state.json
   jq --exit-status '
-    .enableTerminalSandbox == false
-    and .toolPermission == "request-review"
-    and .showTips == true
-    and .showFeedbackSurvey == true
+    (has("enableTerminalSandbox") | not)
+    and (has("toolPermission") | not)
+    and (has("showTips") | not)
+    and (has("showFeedbackSurvey") | not)
   ' "${settings}" >/dev/null
   jq --exit-status '
     (.managed.settings.keys | sort) == ([
       "allowNonWorkspaceAccess",
       "artifactReviewPolicy",
-      "enableTerminalSandbox",
-      "permissions",
-      "toolPermission"
+      "permissions"
     ] | sort)
   ' "${state}" >/dev/null
 SCRIPT
@@ -1574,7 +2043,7 @@ assert_json "${TELEGRAM_OFF_PRESERVE_OUTPUT}" '
 '
 
 # Telegram-only reconciliation must not claim preserved UI/customization keys
-# as App-owned. A later Telegram-disabled refresh may update the five recorded
+# as App-owned. A later Telegram-disabled refresh may update the three recorded
 # security keys but must leave those unrelated values and their ownership alone.
 run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
   set -Eeuo pipefail
@@ -1603,16 +2072,14 @@ run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
     .synthetic_incident_marker == "preserve-non-managed"
     and .synthetic_incident_ui == {theme: "local-only"}
     and .altScreenMode == "never"
-    and .showTips == true
-    and .showFeedbackSurvey == true
+    and (has("showTips") | not)
+    and (has("showFeedbackSurvey") | not)
   ' "${settings}" >/dev/null
   jq --exit-status '
     (.managed.settings.keys | sort) == ([
       "allowNonWorkspaceAccess",
       "artifactReviewPolicy",
-      "enableTerminalSandbox",
-      "permissions",
-      "toolPermission"
+      "permissions"
     ] | sort)
     and (.managed.settings.permission_rules | index("read_file(*)") != null)
     and (.managed.settings.permission_rules | index("command(*)") != null)
@@ -1663,8 +2130,8 @@ run_script "${TELEGRAM_RECONCILE_VOLUME}" <<'SCRIPT'
   jq --exit-status '
     .allowNonWorkspaceAccess == true
     and .artifactReviewPolicy == "agent-decides"
-    and .enableTerminalSandbox == false
-    and .toolPermission == "request-review"
+    and (has("enableTerminalSandbox") | not)
+    and (has("toolPermission") | not)
     and (.permissions.allow | index("read_file(*)") == null)
     and (.permissions.allow | index("read_url(*)") != null)
     and ((["mcp(ha_files/ha_files_write_text)", "execute_url(*)", "command(*)"]
@@ -1786,8 +2253,8 @@ run_script "${TELEGRAM_MALFORMED_REFRESH_VOLUME}" \
     and .synthetic_refresh_ui == {theme: "local-only"}
     and .allowNonWorkspaceAccess == true
     and .artifactReviewPolicy == "agent-decides"
-    and .toolPermission == "request-review"
-    and .enableTerminalSandbox == false
+    and (has("toolPermission") | not)
+    and (has("enableTerminalSandbox") | not)
     and (.permissions.allow | index("read_file(*)") == null)
     and (.permissions.allow | index("read_url(*)") != null)
     and ((["mcp(ha_files/ha_files_write_text)", "execute_url(*)", "command(*)"]
@@ -1831,7 +2298,7 @@ import {
   TELEGRAM_SAFE_ALLOW_RULES,
 } from "/usr/local/share/antigravity-ha/telegram-permission-policy.mjs";
 
-const boundary = loadTelegramPermissionBoundary();
+const boundary = loadTelegramPermissionBoundary("request-review");
 if (boundary.toolPermission !== "request-review" ||
     boundary.allowCount !== TELEGRAM_SAFE_ALLOW_RULES.size ||
     boundary.denyCount !== TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size) {
@@ -2068,8 +2535,8 @@ SCRIPT
       }
       and .allowNonWorkspaceAccess == true
       and .artifactReviewPolicy == "agent-decides"
-      and .toolPermission == "request-review"
-      and .enableTerminalSandbox == false
+      and (has("toolPermission") | not)
+      and (has("enableTerminalSandbox") | not)
       and (.permissions.allow | index("read_file(*)") == null)
       and (.permissions.allow | index("read_url(*)") != null)
       and ((["mcp(ha_files/ha_files_write_text)", "execute_url(*)", "command(*)"]
@@ -2103,7 +2570,7 @@ import {
   TELEGRAM_SAFE_ALLOW_RULES,
 } from "/usr/local/share/antigravity-ha/telegram-permission-policy.mjs";
 
-const boundary = loadTelegramPermissionBoundary();
+const boundary = loadTelegramPermissionBoundary("request-review");
 if (boundary.toolPermission !== "request-review" ||
     boundary.allowCount !== TELEGRAM_SAFE_ALLOW_RULES.size ||
     boundary.denyCount !== TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size) {
@@ -2400,8 +2867,8 @@ run_script "${LEGACY_VOLUME}" <<'SCRIPT'
     /data/antigravity-ha/quarantine/v1-telegram/telegram_pair_info.json)" \
     = 600:root:root
   jq --exit-status '
-    .toolPermission == "request-review"
-    and .enableTerminalSandbox == false
+    (has("toolPermission") | not)
+    and (has("enableTerminalSandbox") | not)
     and (.permissions.allow | index("mcp(playwright/browser_snapshot)") != null)
     and (.permissions.allow | index("mcp(playwright/browser_click)") == null)
     and (.permissions.ask | index("mcp(playwright/browser_click)") == null)
@@ -2436,7 +2903,7 @@ assert_sanitized "${CONFLICT_OUTPUT}"
 run_script "${CONFLICT_VOLUME}" <<'SCRIPT'
   jq --exit-status '
     .user_owned_key == "preserve"
-    and .toolPermission == "request-review"
+    and (has("toolPermission") | not)
     and ((["mcp(ha_files/ha_files_write_text)", "execute_url(*)", "command(*)"]
       - .permissions.ask) | length == 0)
     and (.permissions.allow
@@ -2473,7 +2940,7 @@ assert_sanitized "${PARTIAL_CONFLICT_OUTPUT}"
 run_script "${PARTIAL_CONFLICT_VOLUME}" <<'SCRIPT'
   jq --exit-status '
     .user_owned_key == "preserve"
-    and .toolPermission == "request-review"
+    and (has("toolPermission") | not)
     and ((["mcp(ha_files/ha_files_write_text)", "execute_url(*)", "command(*)"]
       - .permissions.ask) | length == 0)
   ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null

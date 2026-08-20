@@ -98,6 +98,24 @@ fail() {
   exit 1
 }
 
+assert_no_native_settings_temporary() {
+  local label=$1
+  local temporary
+  if ! temporary=$(docker run --rm \
+      --platform "$TEST_PLATFORM" \
+      --security-opt apparmor=unconfined \
+      --entrypoint /usr/bin/find \
+      --volume "${DATA_VOLUME}:/data:ro" \
+      "$IMAGE" \
+      /data/home/.gemini/antigravity-cli -maxdepth 1 \
+      -name 'settings.json.*.tmp' -print -quit 2>&1); then
+    printf '%s\n' "$temporary" | redact_probe_output >&2
+    fail "the host-side ${label} settings temporary check failed"
+  fi
+  [[ -z $temporary ]] \
+    || fail "the ${label} left an atomic-rename settings temporary"
+}
+
 cleanup() {
   local status=$?
   trap - EXIT
@@ -569,6 +587,11 @@ run_ttyd_websocket_probe() {
   local container=$1
   local container_pid
   local output
+  local settings_hash
+
+  settings_hash=$(docker exec "$container" /usr/bin/env \
+    /usr/local/bin/agy-settings sha256) \
+    || fail 'the ttyd probe could not record the pre-TUI settings hash'
 
   container_pid=$(docker inspect --format '{{.State.Pid}}' "$container")
   [[ $container_pid =~ ^[1-9][0-9]*$ ]] \
@@ -594,6 +617,11 @@ run_ttyd_websocket_probe() {
     'tui_status=(1|124) helper_status=([0-9]|[1-9][0-9]|1[01][0-9]|12[0-4]) log_status=([0-9]|[1-9][0-9]|1[01][0-9]|12[0-4])$' \
     <<< "$output" \
     || fail 'the ttyd WebSocket PTY did not complete its bounded TUI canary'
+  [[ $(docker exec "$container" /usr/bin/env \
+    /usr/local/bin/agy-settings sha256) == \
+    "$settings_hash" ]] \
+    || fail 'the ttyd WebSocket PTY TUI rewrote canonical settings'
+  assert_no_native_settings_temporary 'ttyd WebSocket PTY TUI'
 }
 
 run_playwright_probe() {
@@ -672,6 +700,7 @@ run_native_cli_probe() {
   local stream_stderr="${WORK_DIR}/native-${access_mode}.stderr"
   local stream_status
   local stream_stdout="${WORK_DIR}/native-${access_mode}.stdout"
+  local settings_hash
   local version_output
 
   case "$access_mode" in
@@ -694,6 +723,9 @@ run_native_cli_probe() {
     *) fail "unknown native CLI access mode: ${access_mode}" ;;
   esac
 
+  settings_hash=$(docker exec "$container" /usr/bin/env \
+    /usr/local/bin/agy-settings sha256)
+
   # runc applies the container's primary profile to the first docker-exec
   # command. Start with env so the public launcher itself performs the same
   # shell -> bootstrap -> native-runtime Px chain used by ttyd and Telegram.
@@ -704,6 +736,9 @@ run_native_cli_probe() {
   fi
   [[ $version_output == "$EXPECTED_ANTIGRAVITY_VERSION" ]] \
     || fail "the ${access_mode} public launcher returned an unexpected version: ${version_output}"
+  [[ $(docker exec "$container" /usr/bin/env \
+    /usr/local/bin/agy-settings sha256) == "$settings_hash" ]] \
+    || fail "the ${access_mode} native version fast-path rewrote settings"
 
   set +e
   printf '%s\n' 'AppArmor native worker authentication probe' \
@@ -737,6 +772,45 @@ run_native_cli_probe() {
         and .result.num_turns == 0
       )' < "$stream_stdout" >/dev/null \
     || fail "the ${access_mode} blank-auth native worker omitted its exact stream result"
+  [[ $(docker exec "$container" /usr/bin/env \
+    /usr/local/bin/agy-settings sha256) == "$settings_hash" ]] \
+    || fail "the ${access_mode} native worker rewrote canonical settings"
+  assert_no_native_settings_temporary "${access_mode} native worker"
+}
+
+run_settings_update_probe() {
+  local container=$1
+  local digest output
+
+  if ! digest=$(docker exec "$container" /usr/bin/env \
+    /usr/local/bin/agy-settings sha256); then
+    fail 'the confined settings helper could not read the canonical settings'
+  fi
+  if ! output=$(printf '%s\n' \
+      "{\"expected_sha256\":\"${digest}\",\"patch\":{\"colorScheme\":\"apparmor-canary\"}}" \
+      | docker exec --interactive "$container" /usr/bin/env \
+        /usr/local/bin/agy-settings patch 2>&1); then
+    printf '%s\n' "$output" | redact_probe_output >&2
+    fail 'the confined settings helper could not load its canonical policy module'
+  fi
+  printf '%s\n' "$output" \
+    | docker exec --interactive "$container" /usr/bin/jq --exit-status \
+      'select(.status == "updated" and .changed_keys == ["colorScheme"])' \
+      >/dev/null \
+    || fail 'the confined settings helper returned an invalid result'
+  docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --security-opt apparmor=unconfined \
+    --entrypoint /usr/bin/jq \
+    --volume "${DATA_VOLUME}:/data:ro" \
+    "$IMAGE" --exit-status '
+      .colorScheme == "apparmor-canary"
+      and keys_unsorted == (keys | sort)
+      and (.permissions | keys_unsorted) == ["allow", "deny", "ask"]
+      and (has("toolPermission") | not)
+      and (has("enableTerminalSandbox") | not)
+    ' /data/home/.gemini/antigravity-cli/settings.json >/dev/null \
+    || fail 'the confined settings helper did not preserve native canonical bytes'
 }
 
 run_managed_change_proposal_mcp_probe() {
@@ -1233,13 +1307,17 @@ run_helper_credential_boundary_probe
 
 start_container "$FIRST_CONTAINER"
 assert_enforced_container_ready "$FIRST_CONTAINER"
+run_settings_update_probe "$FIRST_CONTAINER"
+# App init already invokes a native --version fast-path, but the first bounded
+# settings-loading invocation in this enforced test is deliberately the actual
+# Web TUI below. Run headless native/MCP feature probes only after that canary.
+run_ttyd_websocket_probe "$FIRST_CONTAINER"
 run_native_cli_probe "$FIRST_CONTAINER" restricted
 run_operational_blacklist_probe
 run_managed_read_validate_memory_mcp_probes "$FIRST_CONTAINER"
 run_managed_file_mcp_probe "$FIRST_CONTAINER"
 run_managed_change_proposal_mcp_probe "$FIRST_CONTAINER"
 run_managed_telegram_action_proposal_mcp_probe "$FIRST_CONTAINER"
-run_ttyd_websocket_probe "$FIRST_CONTAINER"
 run_confined_feature_probes "$FIRST_CONTAINER"
 
 enable_sensitive_data_access_fixture

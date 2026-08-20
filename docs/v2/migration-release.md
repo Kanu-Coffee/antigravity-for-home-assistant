@@ -9,7 +9,7 @@ public App은 사용자의 HAOS에서 source build하지 않고 GHCR prebuilt im
 받는다.
 
 ```yaml
-version: "2.1.0"
+version: "2.1.1"
 arch:
   - amd64
   - aarch64
@@ -128,6 +128,20 @@ quarantine하고 failed update를 durable ACK한 뒤 다음 user request에 새 
 `breaking_versions`에 추가한다. 2.1.0 automated regression은 HAOS 증거가 아니며
 amd64/aarch64 실기기 수용은 배포 시점 `NOT RUN`, 전체 v2 수용은 `PARTIAL`이다.
 
+2.1.1은 public 2.1.0의 첫 Web `agy`가 `request-review` settings를 native
+Antigravity 1.1.13 shape로 다시 쓰려다 final `settings.json`의 의도된 AppArmor
+write/link/lock deny에 막힌 호환성 회귀를 고친다. 임시 파일과 대상은 같은
+디렉터리이므로 `EXDEV`가 아니다. `request-review`는 top-level `toolPermission`을
+생략하고 `always-proceed`는 exact `"toolPermission":"always-proceed"`를 유지하며,
+두 mode 모두 `enableTerminalSandbox`를 생략한다. known permission bucket은 native
+canonical order로 기록한다. `request-review`는 `allow`/`deny`/`ask`,
+`always-proceed`는 `allow`/`deny`를 기록하고 empty `ask`를 생략한다. exact App-owned
+2.1.0 layout은 transaction backup 뒤 mode-specific canonical form으로 바꾸고 두 번째
+실행부터 byte-idempotent해야 한다. final-settings deny는 유지하며 copy/unlink fallback이나
+settings-write grant는 추가하지 않는다. 2.1.1의 real-HAOS Web TUI, enforced AppArmor,
+authenticated Telegram delivery, browser와 memory 수용은 amd64/aarch64 모두
+`NOT RUN`이고 전체 v2 수용은 `PARTIAL`이다.
+
 native `read_file(*)`/`write_file(*)`는 symlink alias 우회를 막기 위해 두 mode에서
 mandatory deny한다. ordinary file access는 server `ha_files`의
 `ha_files_list`, `ha_files_read_text`, `ha_files_write_text`로 이관한다. 허용 root는
@@ -206,12 +220,14 @@ version을 marker에 기록한다. 같은 이름의 기존 plugin에 marker가 �
   `read_file`/`write_file` allow/ask는 보존하지 않는다. ordinary file은 설치된
   `ha_files` MCP로만 접근한다.
 - 2.0.12부터 Telegram이 켜져 있으면 App ownership과 무관하게 root-owned single-link
-  regular·256 KiB 이하의 parse 가능한 settings를 먼저 transaction backup하고
-  `allowNonWorkspaceAccess`, `artifactReviewPolicy`, `toolPermission`, native sandbox와
-  permission 세 bucket을 선택된 2.1.0 mode의 exact Telegram policy로 정규화한다. unknown
-  custom allow/ask와 stronger deny를 permission bucket 안에는 보존하지 않지만, 이
-  다섯 App 관리 보안 key 밖의 top-level settings, global MCP/plugin/agent/skill/rule,
-  OAuth와 `/config`는 보존한다. 기존 mode는 0600으로 강화한다. 이는 headless startup
+  regular·256 KiB 이하의 parse 가능한 settings를 먼저 transaction backup한다. 공개
+  2.1.0까지는 다섯 App 관리 field와 세 permission bucket을 기록했다. 2.1.1부터는
+  `allowNonWorkspaceAccess`, `artifactReviewPolicy`, selected mode의 sparse
+  `toolPermission` 표현과 known permission bucket을 exact Telegram policy로 맞추고
+  retired native sandbox key를 제거한다. unknown custom allow/ask와 stronger deny는
+  permission bucket 안에 보존하지 않지만, App 관리 permission 경계 밖의 top-level
+  settings, global MCP/plugin/agent/skill/rule, OAuth와 `/config`는 보존한다. 기존 mode는
+  0600으로 강화한다. 이는 headless startup
   gate와 updater가 서로 다른 policy를
   받아들여 bridge가 restart loop에 빠지는 것을 막는 breaking migration이다.
 - symlink/hardlink/non-root owner, 256 KiB 초과 또는 parse 불가능한 settings는 자동
@@ -244,9 +260,11 @@ version을 marker에 기록한다. 같은 이름의 기존 plugin에 marker가 �
 
 - 사용자가 명시적으로 선택하는 permission drift 복구 control이다. 안전한 root-owned
   regular settings 파일과 parse 가능한 JSON을 먼저 transaction backup에 보존한다.
-- 기존 App ownership state의 유무·모호함과 관계없이 App-managed settings key를 image
-  default로 교체하고 `permissions.allow`/`ask`/`deny` 전체를 exact default로 바꾼다.
-  custom permission rule과 permissions의 알 수 없는 bucket은 보존하지 않는다.
+- 기존 App ownership state의 유무·모호함과 관계없이 App-managed settings field와 선택
+  mode에 존재하는 known permission bucket을 image exact default로 교체한다.
+  `request-review`는 `allow`/`deny`/`ask`를 기록하고, `always-proceed`는
+  `allow`/`deny`만 기록해 empty `ask`를 생략한다. custom permission rule과 permissions의
+  알 수 없는 bucket은 보존하지 않는다.
 - `permissions` 밖의 사용자 top-level settings와 global MCP/plugin/OAuth는 보존한다.
   symlink/hardlink/non-root owner, 크기 초과 또는 parse 불가능한 JSON은 계속 fail closed한다.
 - plugin 내부 MCP/rules/skills 갱신은 mode가 아니라 위 공통 version별 plugin

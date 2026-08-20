@@ -114,7 +114,8 @@
 - proposal coordinator registration은 approval state/card sealing 전에는
   crash-durable하지 않다. 이 사이 bridge crash는 사용자에게 원 요청 재시도를 요구한다.
 - 명시적 `reset_v2`는 safe parseable settings를 backup하고 ownership state와 무관하게
-  managed key와 permission 세 bucket을 exact default로 복구한다. permissions 밖의
+  managed field와 selected mode의 known permission bucket을 exact default로 복구한다.
+  permissions 밖의
   사용자 top-level/MCP/plugin/OAuth는 보존하고 `preserve`로 되돌릴 때까지 매 시작
   drift를 복구한다.
 - fixed CLI 1.1.13 print mode의 native permission request는 external callback으로
@@ -133,11 +134,13 @@
   gate에서 반복 종료하는 상태를 허용하지 않는다.
 - root-owned single-link regular·256 KiB 이하이고 parse 가능한 existing settings는 현재
   migration mode나 ownership state와 관계없이 transaction backup한다. 그 뒤
-  `allowNonWorkspaceAccess`, `artifactReviewPolicy`, `toolPermission`,
-  `enableTerminalSandbox`와 `permissions.allow`/`ask`/`deny` 전체를 image canonical
-  Telegram policy로 교체하고 mode를 0600으로 강화하며 ownership state를 같은 policy로
-  기록한다. 같은 canonical input의 재실행은 write와 새 backup이 없어야 한다.
-- 이 reconciliation은 다섯 App 관리 보안 key와 permission boundary에 한정한다. 그 밖의
+  `allowNonWorkspaceAccess`, `artifactReviewPolicy`, selected mode의 sparse
+  `toolPermission` 표현과 known permission bucket을 image canonical Telegram policy로
+  교체하고 retired `enableTerminalSandbox`를 제거하며 mode를 0600으로 강화한다.
+  ownership state도 같은 mode-specific policy로 기록하고, 같은 canonical input의
+  재실행은 write와 새 backup이 없어야 한다.
+- 이 reconciliation은 App 관리 보안 field와 selected mode의 permission boundary에
+  한정한다. 그 밖의
   사용자 top-level settings, global MCP 파일, 사용자 plugin, native OAuth와 `/config`는
   보존하고 `antigravity_user_files_update_mode`를 `reset_v2`로 자동 변경하지 않는다.
   따라서 Telegram-enabled 상태에서는 bucket 안의 user-owned rule과 stronger deny가
