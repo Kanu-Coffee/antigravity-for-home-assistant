@@ -230,11 +230,11 @@ Telegram token을 파일명, argv 또는 persisted queue에 넣지 않는다. `s
 1. init은 native `settings.json`을 schema 검증한다.
 2. migration mode에 따라 사용자 설정을 보존하거나 image-managed key만 merge한다.
 3. `telegram_enabled=true`이면 root-owned single-link regular·256 KiB 이하의 parse
-   가능한 settings에서 `allowNonWorkspaceAccess`, `artifactReviewPolicy`,
-   `toolPermission`, `enableTerminalSandbox`와 permission 세 bucket을 shared canonical
-   Telegram policy로 reconcile한다. 그 다섯 보안 key 밖의 unrelated top-level
-   settings와 option mode는 보존하고 파일 mode를 0600으로 강화하며 transaction state를
-   idempotent하게 기록한다.
+   가능한 settings에서 `allowNonWorkspaceAccess`, `artifactReviewPolicy`, selected
+   mode의 sparse `toolPermission` 표현과 known permission bucket을 shared canonical
+   Telegram policy로 reconcile하고 retired `enableTerminalSandbox`를 제거한다. 이 App
+   관리 permission 경계 밖의 unrelated top-level settings와 option mode는 보존하고 파일
+   mode를 0600으로 강화하며 transaction state를 idempotent하게 기록한다.
 4. global MCP config가 없으면 빈 `mcpServers` 기본본만 만들고, 기존 파일은 모든
    migration mode에서 byte-preserve한다.
 5. App 관리 MCP/rules/skills를 포함한 `home-assistant` plugin source를 검증한다.
@@ -338,9 +338,10 @@ timeout·5xx처럼 전달 여부가 모호한 send는 `/retry`까지 격리한�
 
 Telegram bridge 시작 전 effective settings gate는 기본 `request-review`와 explicit
 `always-proceed` 두 policy를 검증한다. `strict`와 `proceed-in-sandbox`는 config schema의
-legacy upgrade 입력이며 user-files updater가 `request-review`로 정규화한다. 2.0.12는
-Telegram-enabled init에서 같은 shared policy definition으로 다섯 App 관리 보안 key와
-permission 세 bucket까지 canonicalize한다. bridge 재검증이 이 경계를 수용하지 못하면
+legacy upgrade 입력이며 user-files updater가 `request-review`로 정규화한다. 2.0.12에
+도입된 Telegram-enabled init은 현재 같은 shared policy definition으로 App 관리 보안
+field, selected mode의 sparse native shape와 known permission bucket을 canonicalize한다.
+bridge 재검증이 이 경계를 수용하지 못하면
 `permission_boundary_blocked` 뒤 Bot API를 호출하지 않는 live hold로 들어가며 process
 exit와 S6 restart loop를 만들지 않는다.
 

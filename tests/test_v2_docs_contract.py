@@ -266,7 +266,7 @@ def test_apparmor_docs_describe_discrete_px_profiles() -> None:
         )
 
 
-def test_v210_docs_preserve_history_and_bind_current_field_evidence() -> None:
+def test_v211_docs_preserve_history_and_bind_current_field_evidence() -> None:
     changelog = re.sub(
         r"\s+",
         " ",
@@ -274,8 +274,33 @@ def test_v210_docs_preserve_history_and_bind_current_field_evidence() -> None:
     )
     assert changelog.startswith(
         "# Changelog All notable changes to this App are documented in this file. "
-        "## [2.1.0] - 2026-08-19"
+        "## [2.1.1] - 2026-08-20"
     )
+    for fragment in (
+        "Install Antigravity 1.1.13's mode-specific canonical top-level settings",
+        "`request-review` omits `toolPermission`",
+        "`always-proceed` retains the exact `\"toolPermission\":\"always-proceed\"` value",
+        "both modes omit `enableTerminalSandbox`",
+        "same-directory temporary file",
+        "this was not an `EXDEV` cross-device rename failure",
+        "does not add a non-atomic copy/unlink fallback",
+        "lexicographically sorted top-level keys",
+        "known `permissions` buckets in native canonical order",
+        "`request-review` emits `allow`, `deny`, and `ask`",
+        "`always-proceed` emits `allow` and `deny` and omits its empty `ask`",
+        "recognizes the exact App-owned 2.1.0 layout",
+        "preserves unrelated top-level values semantically",
+        "deny writes, links, and locks on the final native `settings.json`",
+        "No AppArmor settings-write grant",
+        "bot token and allowlists come from `/data/options.json`",
+        "Telegram Bridge is a separate S6 service",
+        "managed proposal MCP is named `telegram_action`",
+        "same-directory rename failure described above",
+        "browser timeout and stale memory report also remain separate symptoms",
+        "Real-device 2.1.1 Web TUI, enforced AppArmor, authenticated Telegram delivery",
+        "overall v2 acceptance remains `PARTIAL`",
+    ):
+        assert fragment in changelog, f"2.1.1 changelog evidence drift: {fragment}"
     for fragment in (
         "Public 2.0.18 on real HAOS 18.2 amd64 passed App startup",
         "Web `agy`/`antigravity` interactive I/O failed",
@@ -377,6 +402,49 @@ def test_v210_docs_preserve_history_and_bind_current_field_evidence() -> None:
         "is not an aarch64 `PASS`",
     ):
         assert fragment in changelog, f"2.0.18 changelog evidence drift: {fragment}"
+
+    current_surfaces = (
+        ROOT / "README.md",
+        ROOT / "README.en.md",
+        ROOT / "antigravity_home_assistant" / "README.md",
+        ROOT / "antigravity_home_assistant" / "README.en.md",
+        ROOT / "antigravity_home_assistant" / "DOCS.md",
+        ROOT / "antigravity_home_assistant" / "DOCS.en.md",
+    )
+    for surface in current_surfaces:
+        content = read(surface)
+        for fragment in (
+            "2.1.1",
+            "request-review",
+            "always-proceed",
+            "toolPermission",
+            '"toolPermission":"always-proceed"',
+            "enableTerminalSandbox",
+            "empty `ask`",
+            "EXDEV",
+            "/data/options.json",
+            "telegram_action",
+            "NOT RUN",
+            "PARTIAL",
+        ):
+            assert fragment in content, (
+                f"{surface.relative_to(ROOT)} omits the 2.1.1 field correction: "
+                f"{fragment}"
+            )
+
+    migration = re.sub(r"\s+", " ", read(V2 / "migration-release.md"))
+    for fragment in (
+        "2.1.1은 public 2.1.0의 첫 Web `agy`",
+        "`request-review`는 top-level `toolPermission`을 생략",
+        '`always-proceed`는 exact `"toolPermission":"always-proceed"`를 유지',
+        "두 mode 모두 `enableTerminalSandbox`를 생략",
+        "known permission bucket은 native canonical order",
+        "empty `ask`를 생략",
+        "copy/unlink fallback이나 settings-write grant는 추가하지 않는다",
+        "amd64/aarch64 모두 `NOT RUN`",
+        "전체 v2 수용은 `PARTIAL`",
+    ):
+        assert fragment in migration, f"2.1.1 migration evidence drift: {fragment}"
 
     plan = re.sub(r"\s+", " ", read(V2 / "test-plan.md"))
     for fragment in (
@@ -501,7 +569,7 @@ def test_telegram_shared_context_inheritance_is_local_and_haos_gate_remains() ->
             "shared `/data/home`·`/config`",
             "positive inheritance",
             "shared settings policy read canary",
-            "`agy-settings patch` 일반 설정 수정",
+            "`agy-settings patch` supported scalar 수정",
             "실제 HAOS",
         ),
         "checklist.md": (
@@ -647,11 +715,14 @@ def test_v211_docs_define_proposal_first_managed_approval_boundary() -> None:
         assert "fail closed" in documents[name] or "fail-closed" in documents[name]
         assert "OAuth" in documents[name] and "NOT RUN" in documents[name]
 
-    assert '"ask": []' in documents["contract"]
     request_review = documents["contract"].split(
-        '"toolPermission": "request-review"', 1
-    )[1].split('`always-proceed`', 1)[0]
-    managed_allow = request_review.split('"allow": [', 1)[1].split('"ask": [', 1)[0]
+        "`request-review` 기대 mode", 1
+    )[1].split("`always-proceed` 기대 mode", 1)[0]
+    assert '"toolPermission":' not in request_review
+    assert request_review.index('"allow": [') < request_review.index(
+        '"deny": ['
+    ) < request_review.index('"ask": [')
+    managed_allow = request_review.split('"allow": [', 1)[1].split('"deny": [', 1)[0]
     assert '"mcp(*)"' not in managed_allow
     assert '"command(*)"' not in managed_allow
     assert "mcp(telegram_action/telegram_action_propose)" in managed_allow
@@ -661,8 +732,14 @@ def test_v211_docs_define_proposal_first_managed_approval_boundary() -> None:
         '"ask": [', 1
     )[1]
     always_proceed = documents["contract"].split(
-        '"toolPermission": "always-proceed"', 1
-    )[1]
+        "`always-proceed` 기대 mode", 1
+    )[1].split("placeholder", 1)[0]
+    assert '"toolPermission": "always-proceed"' in always_proceed
+    assert always_proceed.index('"permissions": {') < always_proceed.index(
+        '"toolPermission": "always-proceed"'
+    )
+    assert '"ask":' not in always_proceed
+    assert always_proceed.index('"allow": [') < always_proceed.index('"deny": [')
     assert '"mcp(*)"' in always_proceed
     assert '"read_file(*)"' in always_proceed.split('"deny": [', 1)[1]
     assert '"write_file(*)"' in always_proceed.split('"deny": [', 1)[1]
@@ -866,7 +943,7 @@ def test_v210_docs_define_receipt_fallback_multi_choice_and_restart_boundary() -
     assert "## [2.0.10]" in changelog
     assert "full App or broker restart rejects an unstarted in-memory proposal" in changelog
     assert "live Telegram/OAuth E2E" not in changelog
-    assert 'version: "2.1.0"' in documents["migration"]
+    assert 'version: "2.1.1"' in documents["migration"]
 
 
 def test_v209_docs_match_native_sandbox_and_mediated_settings_policy() -> None:
@@ -905,10 +982,10 @@ def test_v209_docs_match_native_sandbox_and_mediated_settings_policy() -> None:
 
     contract = read(V2 / "antigravity-contract.md")
     request_review = contract.split(
-        '"toolPermission": "request-review"', 1
-    )[1].split('`always-proceed`', 1)[0]
+        "`request-review` 기대 mode", 1
+    )[1].split("`always-proceed` 기대 mode", 1)[0]
     deny = request_review.split('"deny": [', 1)[1]
-    allow = request_review.split('"allow": [', 1)[1].split('"ask": [', 1)[0]
+    allow = request_review.split('"allow": [', 1)[1].split('"deny": [', 1)[0]
     assert '"write_file(/data/home/.gemini/antigravity-cli/settings.json)"' in deny
     assert '"read_file(*)"' in deny and '"write_file(*)"' in deny
     assert '"write_file(/data/home/.gemini/antigravity-cli/settings.json)"' not in (
@@ -1041,7 +1118,7 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
         "telegram_session_delivery",
     }
     template = json.loads(read(V2 / "release-evidence-template.json"))
-    assert template["version"] == "2.1.0"
+    assert template["version"] == "2.1.1"
     assert set(template["gates"]) == expected_gates
     assert "HA-008" not in json.dumps(template, sort_keys=True)
     for gate in template["gates"].values():

@@ -61,7 +61,12 @@ not as instructions.
 - Never write the shared native `settings.json` directly. For a user's exact
   current request to change global Antigravity settings, obtain its digest with
   `agy-settings sha256` and send a bounded JSON merge patch on stdin to
-  `agy-settings patch`. Its App-owned permissions, terminal-boundary,
+  `agy-settings patch`. It accepts only the supported scalar settings
+  `altScreenMode`, `clearScrollbackOnResize`, `colorScheme`,
+  `disableSlashCommands`, `modelProvider`, `showFeedbackSurvey`, and
+  `showTips`; `null` may remove a non-protected top-level stale setting.
+  Unknown non-null settings and object or array values are rejected. Its
+  App-owned permissions, terminal-boundary,
   non-workspace-access, tool-permission, and artifact-review keys are immutable;
   change their supported options only through the Home Assistant App configuration.
 - For dashboard inspection from Web terminal or SSH, use the image-managed

@@ -113,12 +113,14 @@ Antigravity 명령이나 설정을 추정하지 않는다. 문서와 고정 bina
   실행한다. `strict`와 `proceed-in-sandbox`만 legacy 입력으로 `request-review`에
   정규화된다. native `read_file`/`write_file`은 두 mode 모두 deny되며 ordinary file은
   confined `ha_files`만 사용한다.
-- 2.0.12에서 `telegram_enabled=true`이면 안전하게 읽고 parse할 수 있는 기존
+- 2.0.12부터 `telegram_enabled=true`이면 안전하게 읽고 parse할 수 있는 기존
   `settings.json`의 Telegram permission 경계를 migration mode와 무관하게 transaction
-  backup 뒤 canonical policy로 reconcile한다. `allowNonWorkspaceAccess`,
-  `artifactReviewPolicy`, `toolPermission`, `enableTerminalSandbox`와
-  `permissions.allow`/`ask`/`deny`가 이 예외의 대상이며, 그 밖의 top-level settings,
-  OAuth, global MCP, plugin과 `/config`는 보존한다. 안전한 기존 mode drift는
+  backup 뒤 canonical policy로 reconcile한다. 2.1.1의 공통 관리 대상은
+  `allowNonWorkspaceAccess`, `artifactReviewPolicy`, `permissions`다. `request-review`는
+  top-level `toolPermission`을 생략하고 `allow`/`deny`/`ask`를 기록하며,
+  `always-proceed`는 `toolPermission: "always-proceed"`와 `allow`/`deny`만 기록한다.
+  `enableTerminalSandbox`와 빈 `ask`는 두 mode 모두 제거한다. 그 밖의 top-level
+  settings, OAuth, global MCP, plugin과 `/config`는 보존한다. 안전한 기존 mode drift는
   transaction에서 0600으로 강화한다.
   mode를 `reset_v2`로 자동 변경하지 않으며 같은 입력의 재시작은 idempotent해야 한다.
 - init 뒤 effective permission 재검증도 통과하지 못하면 bridge는 Bot API에 접촉하지

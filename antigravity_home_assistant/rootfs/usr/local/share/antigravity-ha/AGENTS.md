@@ -45,7 +45,11 @@ capabilities.
   current user request to change global Antigravity settings, run
   `agy-settings sha256`, then pipe a bounded JSON object containing that digest
   and a `patch` object to `agy-settings patch`. The helper atomically updates
-  ordinary global settings; `permissions`, `enableTerminalSandbox`,
+  only the supported scalar settings `altScreenMode`,
+  `clearScrollbackOnResize`, `colorScheme`, `disableSlashCommands`,
+  `modelProvider`, `showFeedbackSurvey`, and `showTips`. A `null` value may
+  remove a non-protected top-level stale setting; unknown non-null settings and
+  object or array values are rejected. `permissions`, `enableTerminalSandbox`,
   `allowNonWorkspaceAccess`, `toolPermission`, and `artifactReviewPolicy` are
   immutable and remain App-option/policy owned.
 

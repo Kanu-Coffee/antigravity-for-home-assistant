@@ -52,6 +52,9 @@ import {
 import {
   TELEGRAM_ALWAYS_PROCEED_ALLOW_RULES,
   TELEGRAM_REQUEST_REVIEW_ASK_RULES,
+  isNativeRawJsonNumber,
+  nativeCanonicalSettingsContent,
+  nativeParseJsonContent,
 } from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/telegram-permission-policy.mjs";
 import {
   bindSessionConversation,
@@ -85,6 +88,16 @@ const config = loadRuntimeConfig({
   antigravity_tool_permission: "request-review",
 });
 assert.equal(config.toolPermission, "request-review");
+assert.equal(config.botToken, `123456:${"A".repeat(35)}`);
+assert.deepEqual([...config.allowedUsers], ["100"]);
+assert.deepEqual([...config.allowedChats], ["-200"]);
+const malformedTokenCanary = "123456:PRIVATE_TOKEN_CANARY";
+assert.throws(() => loadRuntimeConfig({
+  telegram_enabled: true,
+  telegram_bot_token: malformedTokenCanary,
+}), (error) => error instanceof Error &&
+  error.message === "telegram_bot_token is missing or malformed" &&
+  !error.message.includes(malformedTokenCanary));
 const alwaysProceedConfig = loadRuntimeConfig({
   telegram_enabled: false,
   antigravity_tool_permission: "always-proceed",
@@ -99,14 +112,12 @@ assert.equal(loadRuntimeConfig({
   antigravity_tool_permission: "proceed-in-sandbox",
 }).toolPermission, "request-review");
 const safePermissionFixture = {
-  toolPermission: "request-review",
-  enableTerminalSandbox: false,
   allowNonWorkspaceAccess: true,
   artifactReviewPolicy: "agent-decides",
   permissions: {
     allow: [...TELEGRAM_SAFE_ALLOW_RULES],
-    ask: [...TELEGRAM_REQUEST_REVIEW_ASK_RULES],
     deny: [...TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES],
+    ask: [...TELEGRAM_REQUEST_REVIEW_ASK_RULES],
   },
 };
 assert.equal(
@@ -121,11 +132,261 @@ assert.equal(
   TELEGRAM_SAFE_ALLOW_RULES.has("mcp(ha_read/ha_read_supervisor_logs)"),
   true,
 );
-assert.deepEqual(assertTelegramPermissionBoundary(safePermissionFixture), {
+assert.deepEqual(assertTelegramPermissionBoundary(
+  safePermissionFixture,
+  "request-review",
+), {
   toolPermission: "request-review",
   allowCount: TELEGRAM_SAFE_ALLOW_RULES.size,
   denyCount: TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size,
 });
+const requestReviewCanonicalBytes = nativeCanonicalSettingsContent(
+  {
+    ...safePermissionFixture,
+    enableTerminalSandbox: false,
+    toolPermission: "request-review",
+  },
+  "request-review",
+);
+const requestReviewCanonicalValue = JSON.parse(
+  requestReviewCanonicalBytes.toString("utf8"),
+);
+assert.equal(requestReviewCanonicalBytes.at(-1), 0x0a);
+assert.equal(Object.hasOwn(requestReviewCanonicalValue, "toolPermission"), false);
+assert.equal(
+  Object.hasOwn(requestReviewCanonicalValue, "enableTerminalSandbox"),
+  false,
+);
+assert.deepEqual(
+  Object.keys(requestReviewCanonicalValue.permissions),
+  ["allow", "deny", "ask"],
+);
+assert.equal(
+  nativeCanonicalSettingsContent(
+    requestReviewCanonicalValue,
+    "request-review",
+  ).equals(requestReviewCanonicalBytes),
+  true,
+);
+assert.equal(
+  Buffer.from(`${JSON.stringify(requestReviewCanonicalValue)}\n`, "utf8")
+    .equals(requestReviewCanonicalBytes),
+  false,
+);
+const nativeDefaultBooleanValue = JSON.parse(
+  nativeCanonicalSettingsContent({
+    ...safePermissionFixture,
+    allowNonWorkspaceAccess: false,
+    clearScrollbackOnResize: true,
+    disableSlashCommands: false,
+    modelProvider: "",
+    notifications: false,
+    showFeedbackSurvey: true,
+    showTips: true,
+  }, "request-review").toString("utf8"),
+);
+assert.equal(Object.hasOwn(nativeDefaultBooleanValue, "showTips"), false);
+assert.equal(
+  Object.hasOwn(nativeDefaultBooleanValue, "showFeedbackSurvey"),
+  false,
+);
+assert.equal(
+  Object.hasOwn(nativeDefaultBooleanValue, "allowNonWorkspaceAccess"),
+  false,
+);
+assert.equal(Object.hasOwn(nativeDefaultBooleanValue, "modelProvider"), false);
+assert.equal(
+  Object.hasOwn(nativeDefaultBooleanValue, "clearScrollbackOnResize"),
+  false,
+);
+assert.equal(
+  Object.hasOwn(nativeDefaultBooleanValue, "disableSlashCommands"),
+  false,
+);
+assert.equal(Object.hasOwn(nativeDefaultBooleanValue, "notifications"), false);
+const nativeExplicitFalseValue = JSON.parse(
+  nativeCanonicalSettingsContent({
+    ...safePermissionFixture,
+    altScreenMode: "auto",
+    artifactReviewPolicy: "allow",
+    clearScrollbackOnResize: false,
+    colorScheme: "",
+    disableSlashCommands: true,
+    modelProvider: "gemini",
+    notifications: [],
+    showFeedbackSurvey: false,
+    showTips: false,
+  }, "request-review").toString("utf8"),
+);
+assert.equal(nativeExplicitFalseValue.showTips, false);
+assert.equal(nativeExplicitFalseValue.showFeedbackSurvey, false);
+assert.equal(nativeExplicitFalseValue.altScreenMode, "auto");
+assert.equal(nativeExplicitFalseValue.artifactReviewPolicy, "allow");
+assert.equal(nativeExplicitFalseValue.colorScheme, "");
+assert.equal(nativeExplicitFalseValue.modelProvider, "gemini");
+assert.equal(nativeExplicitFalseValue.clearScrollbackOnResize, false);
+assert.equal(nativeExplicitFalseValue.disableSlashCommands, true);
+assert.deepEqual(nativeExplicitFalseValue.notifications, []);
+const nativeEscapedText = `<&>\u2028\u2029`;
+const nativeEscapedBytes = "\\u003c\\u0026\\u003e\\u2028\\u2029";
+const loneSurrogate = "\ud800";
+const loneSurrogateKey = `lone-${loneSurrogate}`;
+const normalizedLoneSurrogateKey = "lone-\ufffd";
+const lowSurrogate = "\udfff";
+const lowSurrogateKey = `${lowSurrogate}-prefix`;
+const normalizedLowSurrogateKey = "\ufffd-prefix";
+const unicodeBmpKey = `unicode-${String.fromCodePoint(0xe000)}`;
+const unicodeSupplementaryKey = `unicode-${String.fromCodePoint(0x10000)}`;
+const nativeNestedFixture = {
+  z: "last",
+  a: "first",
+  [nativeEscapedText]: nativeEscapedText,
+  [loneSurrogateKey]: loneSurrogate,
+};
+const specialKeyCanonicalBytes = nativeCanonicalSettingsContent({
+  ...safePermissionFixture,
+  ...JSON.parse('{"2":"two","10":"ten","__proto__":{"marker":"preserve"}}'),
+  [`escape-${nativeEscapedText}`]: nativeEscapedText,
+  [normalizedLoneSurrogateKey]: "literal replacement first",
+  [loneSurrogateKey]: "normalized surrogate last",
+  [lowSurrogateKey]: "low surrogate prefix",
+  [unicodeSupplementaryKey]: "supplementary",
+  [unicodeBmpKey]: "bmp",
+  nativeNestedFixture,
+}, "request-review");
+const specialKeyCanonicalText = specialKeyCanonicalBytes.toString("utf8");
+assert.equal(
+  specialKeyCanonicalText.indexOf('\n  "10": "ten"') <
+    specialKeyCanonicalText.indexOf('\n  "2": "two"'),
+  true,
+);
+assert.deepEqual(
+  JSON.parse(specialKeyCanonicalText)["__proto__"],
+  { marker: "preserve" },
+);
+assert.equal(/[<>&\u2028\u2029]/u.test(specialKeyCanonicalText), false);
+assert.equal(
+  specialKeyCanonicalText.includes(
+    `"escape-${nativeEscapedBytes}": "${nativeEscapedBytes}"`,
+  ),
+  true,
+);
+assert.equal(
+  specialKeyCanonicalText.includes(
+    `"${nativeEscapedBytes}": "${nativeEscapedBytes}"`,
+  ),
+  true,
+);
+assert.equal(
+  specialKeyCanonicalText.indexOf(JSON.stringify(unicodeBmpKey)) <
+    specialKeyCanonicalText.indexOf(JSON.stringify(unicodeSupplementaryKey)),
+  true,
+);
+assert.equal(
+  specialKeyCanonicalText.indexOf('    "z": "last"') <
+    specialKeyCanonicalText.indexOf('    "a": "first"'),
+  true,
+);
+assert.deepEqual(
+  JSON.parse(specialKeyCanonicalText).nativeNestedFixture,
+  nativeNestedFixture,
+);
+assert.equal(
+  Object.hasOwn(JSON.parse(specialKeyCanonicalText), loneSurrogateKey),
+  false,
+);
+assert.equal(
+  JSON.parse(specialKeyCanonicalText)[normalizedLoneSurrogateKey],
+  "normalized surrogate last",
+);
+assert.equal(
+  Object.hasOwn(JSON.parse(specialKeyCanonicalText), lowSurrogateKey),
+  false,
+);
+assert.equal(
+  JSON.parse(specialKeyCanonicalText)[normalizedLowSurrogateKey],
+  "low surrogate prefix",
+);
+assert.equal(
+  JSON.parse(specialKeyCanonicalText)
+    .nativeNestedFixture[loneSurrogateKey],
+  loneSurrogate,
+);
+const reverseSurrogateCollision = JSON.parse(
+  nativeCanonicalSettingsContent(
+    Object.fromEntries([
+      ...Object.entries(safePermissionFixture),
+      [loneSurrogateKey, "surrogate first"],
+      [normalizedLoneSurrogateKey, "literal replacement last"],
+    ]),
+    "request-review",
+  ).toString("utf8"),
+);
+assert.equal(
+  reverseSurrogateCollision[normalizedLoneSurrogateKey],
+  "literal replacement last",
+);
+const repeatedSurrogateCollision = nativeParseJsonContent(
+  '{"\\ud800":1,"\\ufffd":2,"\\ud800":3}',
+);
+const repeatedSurrogateCanonical = JSON.parse(
+  nativeCanonicalSettingsContent(
+    { ...repeatedSurrogateCollision },
+    "request-review",
+  ).toString("utf8"),
+);
+assert.deepEqual(Object.keys(repeatedSurrogateCanonical), ["\ufffd"]);
+assert.equal(repeatedSurrogateCanonical["\ufffd"], 3);
+const rawNumberSettingsBytes = Buffer.from(
+  requestReviewCanonicalBytes.toString("utf8").replace(
+    '  "permissions":',
+    [
+      '  "nativeArray": [',
+      "    9007199254740993,",
+      "    -0,",
+      "    1.2300e+06,",
+      "    1e400",
+      "  ],",
+      '  "nativeExponent": 1.2300e+06,',
+      '  "nativeNegativeZero": -0,',
+      '  "nativeNestedNumbers": {',
+      '    "z": -0,',
+      '    "a": 1e400',
+      "  },",
+      '  "nativeOverflow": 1e400,',
+      '  "nativeUnsafeInteger": 9007199254740993,',
+      '  "permissions":',
+    ].join("\n"),
+  ),
+  "utf8",
+);
+const rawNumberSettingsValue = nativeParseJsonContent(rawNumberSettingsBytes);
+assert.equal(isNativeRawJsonNumber(rawNumberSettingsValue.nativeUnsafeInteger), true);
+assert.equal(isNativeRawJsonNumber(rawNumberSettingsValue.nativeNegativeZero), true);
+assert.equal(isNativeRawJsonNumber(rawNumberSettingsValue.nativeExponent), true);
+assert.equal(isNativeRawJsonNumber(rawNumberSettingsValue.nativeOverflow), true);
+assert.equal(isNativeRawJsonNumber(rawNumberSettingsValue.nativeArray[3]), true);
+assert.equal(
+  isNativeRawJsonNumber(rawNumberSettingsValue.nativeNestedNumbers.a),
+  true,
+);
+assert.equal(
+  nativeCanonicalSettingsContent(rawNumberSettingsValue, "request-review")
+    .equals(rawNumberSettingsBytes),
+  true,
+);
+assert.equal(
+  nativeCanonicalSettingsContent(
+    JSON.parse(rawNumberSettingsBytes.toString("utf8")),
+    "request-review",
+  ).equals(rawNumberSettingsBytes),
+  false,
+);
+const duplicateNestedNumber = nativeParseJsonContent(
+  '{"nested":{"duplicate":1,"duplicate":2.00}}',
+);
+assert.equal(isNativeRawJsonNumber(duplicateNestedNumber.nested.duplicate), true);
+assert.equal(JSON.stringify(duplicateNestedNumber), '{"nested":{"duplicate":2.00}}');
 const permissionBoundaryEvents = [];
 let permissionBoundaryHolds = 0;
 assert.equal(await waitForTelegramPermissionBoundary(
@@ -143,15 +404,68 @@ assert.deepEqual(permissionBoundaryEvents, [{
   event: "permission_boundary_blocked",
   error: "synthetic unsafe permission boundary",
 }]);
+for (const [reasonClass, publicMessage] of [
+  [
+    "malformed_json",
+    "effective Antigravity permissions could not be verified for Telegram",
+  ],
+  [
+    "oversize",
+    "effective Antigravity settings file is not a private root-owned file",
+  ],
+  [
+    "rename_race",
+    "effective Antigravity settings changed while they were checked",
+  ],
+]) {
+  const settingsCanary = `PRIVATE_SETTINGS_${reasonClass.toUpperCase()}_CANARY`;
+  const privateFailure = new Error(publicMessage, {
+    cause: new Error(settingsCanary),
+  });
+  privateFailure.path = `/private/${settingsCanary}/settings.json`;
+  privateFailure.settingsFragment = `{"private":"${settingsCanary}"}`;
+  const privacyEvents = [];
+  const userOutput = [];
+  let privacyHolds = 0;
+  assert.equal(await waitForTelegramPermissionBoundary(
+    { toolPermission: "request-review" },
+    {
+      load: () => { throw privateFailure; },
+      hold: async (...parts) => {
+        privacyHolds += 1;
+        userOutput.push(...parts);
+      },
+      auditEvent: (event, fields) => privacyEvents.push({ event, ...fields }),
+    },
+  ), null);
+  assert.equal(privacyHolds, 1);
+  assert.deepEqual(privacyEvents, [{
+    event: "permission_boundary_blocked",
+    error: publicMessage,
+  }]);
+  assert.deepEqual(userOutput, []);
+  assert.equal(
+    JSON.stringify({
+      error: safeError(privateFailure),
+      events: privacyEvents,
+      userOutput,
+    }).includes(settingsCanary),
+    false,
+  );
+}
 let readyBoundaryHeld = false;
+let loadedToolPermission = null;
 assert.deepEqual(await waitForTelegramPermissionBoundary(
   { toolPermission: "request-review" },
   {
-    load: () => ({
-      toolPermission: "request-review",
-      allowCount: TELEGRAM_SAFE_ALLOW_RULES.size,
-      denyCount: TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size,
-    }),
+    load: (expectedToolPermission) => {
+      loadedToolPermission = expectedToolPermission;
+      return {
+        toolPermission: "request-review",
+        allowCount: TELEGRAM_SAFE_ALLOW_RULES.size,
+        denyCount: TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size,
+      };
+    },
     hold: async () => { readyBoundaryHeld = true; },
     auditEvent: () => {
       throw new Error("ready permission boundary emitted a blocked event");
@@ -163,6 +477,7 @@ assert.deepEqual(await waitForTelegramPermissionBoundary(
   denyCount: TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size,
 });
 assert.equal(readyBoundaryHeld, false);
+assert.equal(loadedToolPermission, "request-review");
 const mismatchedBoundaryEvents = [];
 let mismatchedBoundaryHolds = 0;
 assert.equal(await waitForTelegramPermissionBoundary(
@@ -191,7 +506,7 @@ for (const unsafeRule of ["command(*)", "mcp(*)", "write_file(/config)"]) {
       ...safePermissionFixture.permissions,
       allow: [...safePermissionFixture.permissions.allow, unsafeRule],
     },
-  }), /bypass or block the configured Telegram policy/u);
+  }, "request-review"), /bypass or block the configured Telegram policy/u);
 }
 for (const nonReadOnlyBrowserTool of [
   "browser_close",
@@ -211,64 +526,146 @@ for (const nonReadOnlyBrowserTool of [
         `mcp(playwright/${nonReadOnlyBrowserTool})`,
       ],
     },
-  }), /bypass or block the configured Telegram policy/u);
+  }, "request-review"), /bypass or block the configured Telegram policy/u);
 }
 const alwaysProceedPermissionFixture = {
   ...safePermissionFixture,
   toolPermission: "always-proceed",
   permissions: {
     allow: [...TELEGRAM_ALWAYS_PROCEED_ALLOW_RULES],
-    ask: [],
     deny: [...TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES],
   },
 };
-assert.deepEqual(assertTelegramPermissionBoundary(alwaysProceedPermissionFixture), {
+assert.deepEqual(assertTelegramPermissionBoundary(
+  alwaysProceedPermissionFixture,
+  "always-proceed",
+), {
   toolPermission: "always-proceed",
   allowCount: TELEGRAM_ALWAYS_PROCEED_ALLOW_RULES.size,
   denyCount: TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size,
 });
+const alwaysProceedCanonicalBytes = nativeCanonicalSettingsContent({
+  ...alwaysProceedPermissionFixture,
+  enableTerminalSandbox: false,
+  permissions: {
+    ...alwaysProceedPermissionFixture.permissions,
+    ask: [],
+  },
+}, "always-proceed");
+const alwaysProceedCanonicalValue = JSON.parse(
+  alwaysProceedCanonicalBytes.toString("utf8"),
+);
+assert.equal(alwaysProceedCanonicalValue.toolPermission, "always-proceed");
+assert.equal(
+  Object.hasOwn(alwaysProceedCanonicalValue, "enableTerminalSandbox"),
+  false,
+);
+assert.deepEqual(
+  Object.keys(alwaysProceedCanonicalValue.permissions),
+  ["allow", "deny"],
+);
+assert.equal(
+  nativeCanonicalSettingsContent(
+    alwaysProceedCanonicalValue,
+    "always-proceed",
+  ).equals(alwaysProceedCanonicalBytes),
+  true,
+);
+assert.throws(() => assertTelegramPermissionBoundary({
+  ...alwaysProceedPermissionFixture,
+  permissions: {
+    ...alwaysProceedPermissionFixture.permissions,
+    ask: [],
+  },
+}, "always-proceed"), /not valid for Telegram/u);
 assert.throws(() => assertTelegramPermissionBoundary({
   ...safePermissionFixture,
-  toolPermission: "strict",
-}), /not valid for Telegram/u);
+}, "strict"), /not valid for Telegram/u);
 assert.throws(() => assertTelegramPermissionBoundary({
   ...safePermissionFixture,
   permissions: { ...safePermissionFixture.permissions, ask: [] },
-}), /bypass or block the configured Telegram policy/u);
+}, "request-review"), /bypass or block the configured Telegram policy/u);
+const missingRequestReviewAsk = {
+  ...safePermissionFixture,
+  permissions: { ...safePermissionFixture.permissions },
+};
+delete missingRequestReviewAsk.permissions.ask;
+assert.throws(
+  () => assertTelegramPermissionBoundary(
+    missingRequestReviewAsk,
+    "request-review",
+  ),
+  /not valid for Telegram/u,
+);
 for (const unsafeTopLevel of [
-  { enableTerminalSandbox: true },
   { allowNonWorkspaceAccess: false },
   { artifactReviewPolicy: "never" },
 ]) {
   assert.throws(() => assertTelegramPermissionBoundary({
     ...safePermissionFixture,
     ...unsafeTopLevel,
-  }), /not valid for Telegram/u);
+  }, "request-review"), /not valid for Telegram/u);
 }
-const missingSandboxFixture = { ...safePermissionFixture };
-delete missingSandboxFixture.enableTerminalSandbox;
-assert.throws(
-  () => assertTelegramPermissionBoundary(missingSandboxFixture),
-  /not valid for Telegram/u,
-);
+for (const retiredTopLevel of [
+  { toolPermission: "request-review" },
+  { enableTerminalSandbox: false },
+]) {
+  assert.throws(() => assertTelegramPermissionBoundary({
+    ...safePermissionFixture,
+    ...retiredTopLevel,
+  }, "request-review"), /not valid for Telegram/u);
+}
 assert.throws(() => assertTelegramPermissionBoundary({
   ...safePermissionFixture,
   permissions: {
     ...safePermissionFixture.permissions,
     allow: safePermissionFixture.permissions.allow.slice(1),
   },
-}), /bypass or block the configured Telegram policy/u);
-assert.deepEqual(assertTelegramPermissionBoundary({
-  ...safePermissionFixture,
+}, "request-review"), /bypass or block the configured Telegram policy/u);
+for (const extraDenyRule of [
+  "read_file(/fixture-extra-secret)",
+  "mcp(*)",
+]) {
+  assert.throws(() => assertTelegramPermissionBoundary({
+    ...safePermissionFixture,
+    permissions: {
+      ...safePermissionFixture.permissions,
+      deny: [...safePermissionFixture.permissions.deny, extraDenyRule],
+    },
+  }, "request-review"), /bypass or block the configured Telegram policy/u);
+}
+assert.throws(() => assertTelegramPermissionBoundary({
+  ...alwaysProceedPermissionFixture,
   permissions: {
-    ...safePermissionFixture.permissions,
-    deny: [...safePermissionFixture.permissions.deny, "read_file(/fixture-extra-secret)"],
+    ...alwaysProceedPermissionFixture.permissions,
+    deny: [
+      ...alwaysProceedPermissionFixture.permissions.deny,
+      "read_file(/fixture-extra-secret)",
+    ],
   },
-}), {
-  toolPermission: "request-review",
-  allowCount: TELEGRAM_SAFE_ALLOW_RULES.size,
-  denyCount: TELEGRAM_REQUIRED_SENSITIVE_DENY_RULES.size + 1,
-});
+}, "always-proceed"), /bypass or block the configured Telegram policy/u);
+const extraDenyBoundaryEvents = [];
+let extraDenyBoundaryHolds = 0;
+assert.equal(await waitForTelegramPermissionBoundary(
+  { toolPermission: "request-review" },
+  {
+    load: (expectedToolPermission) => assertTelegramPermissionBoundary({
+      ...safePermissionFixture,
+      permissions: {
+        ...safePermissionFixture.permissions,
+        deny: [...safePermissionFixture.permissions.deny, "mcp(*)"],
+      },
+    }, expectedToolPermission),
+    hold: async () => { extraDenyBoundaryHolds += 1; },
+    auditEvent: (event, fields) => extraDenyBoundaryEvents.push({
+      event,
+      ...fields,
+    }),
+  },
+), null);
+assert.equal(extraDenyBoundaryHolds, 1);
+assert.equal(extraDenyBoundaryEvents.length, 1);
+assert.equal(extraDenyBoundaryEvents[0].event, "permission_boundary_blocked");
 assert.equal(toolActionWatchdogMs(120_000, null, 5_000), 127_000);
 assert.equal(toolActionWatchdogMs(4_000, 250, 50), 250);
 assert.throws(() => toolActionWatchdogMs(120_001, null, 5_000), /watchdog/u);
@@ -278,7 +675,7 @@ assert.throws(() => assertTelegramPermissionBoundary({
     ...safePermissionFixture.permissions,
     deny: safePermissionFixture.permissions.deny.slice(1),
   },
-}), /bypass or block the configured Telegram policy/u);
+}, "request-review"), /bypass or block the configured Telegram policy/u);
 assert.equal(
   ANTIGRAVITY_AUTH_REQUIRED_MARKER.toString("utf8"),
   "Error: authentication required. Run 'antigravity-real' to log in, then retry.",
@@ -1915,8 +2312,10 @@ const payload = {
   prompt: input.trimEnd(),
   autoUpdateDisabled: process.env.AGY_CLI_DISABLE_AUTO_UPDATE === "true",
   home: process.env.HOME,
+  settingsPath: process.env.HOME + "/.gemini/antigravity-cli/settings.json",
   channel: process.env.ANTIGRAVITY_HA_CHANNEL,
   leakedSupervisorToken: Boolean(process.env.SUPERVISOR_TOKEN),
+  leakedTelegramBotToken: Boolean(process.env.TELEGRAM_BOT_TOKEN),
   requester: [process.env.HA_TELEGRAM_USER_ID, process.env.HA_TELEGRAM_CHAT_ID],
   argv: process.argv.slice(2),
 };
@@ -1952,8 +2351,13 @@ process.stdout.write(JSON.stringify({
   assert.equal(payload.prompt, malicious);
   assert.equal(payload.autoUpdateDisabled, true);
   assert.equal(payload.home, "/data/home");
+  assert.equal(
+    payload.settingsPath,
+    "/data/home/.gemini/antigravity-cli/settings.json",
+  );
   assert.equal(payload.channel, "telegram");
   assert.equal(payload.leakedSupervisorToken, false);
+  assert.equal(payload.leakedTelegramBotToken, false);
   assert.deepEqual(payload.requester, ["100", "-200"]);
   assert.equal(payload.argv.includes(malicious), false);
   assert.equal(payload.argv.includes("--output-format"), true);

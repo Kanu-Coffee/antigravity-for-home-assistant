@@ -283,16 +283,17 @@ v2 user-facing mode가 아니며 첫 안전한 bootstrap 뒤 Supervisor self-opt
 통해 `refresh_managed`로 정규화한다.
 
 `reset_v2`는 사용자가 명시적으로 선택하는 drift 복구 mode다. 안전하게 parse 가능한
-settings를 backup하고 기존 ownership state와 무관하게 managed key와
-`permissions.allow`/`ask`/`deny` 전체를 exact image default로 교체한다.
+settings를 backup하고 기존 ownership state와 무관하게 managed field와 selected mode에
+존재하는 known permission bucket을 exact image default로 교체한다.
 `permissions` 밖의 사용자 top-level settings, global MCP/plugin/OAuth와 `/config`는
 보존한다. option을 `preserve`로 되돌릴 때까지 매 시작 drift를 다시 복구한다.
 
 2.0.12부터 `telegram_enabled=true`이면 이 option이 `preserve` 또는
 `refresh_managed`여도 root-owned single-link regular·256 KiB 이하의 parse 가능한 existing
-settings에서 `allowNonWorkspaceAccess`, `artifactReviewPolicy`, `toolPermission`,
-`enableTerminalSandbox`와 permission 세 bucket을 transaction backup 뒤 exact Telegram
-policy로 reconcile한다. 이 다섯 보안 key 밖의 unrelated top-level settings, global MCP,
+settings를 transaction backup한다. 현재 2.1.1은 `allowNonWorkspaceAccess`,
+`artifactReviewPolicy`, selected mode의 sparse `toolPermission` 표현과 known permission
+bucket을 exact Telegram policy로 reconcile하고 retired `enableTerminalSandbox`를
+제거한다. 이 App 관리 permission 경계 밖의 unrelated top-level settings, global MCP,
 plugin, OAuth와 `/config`는 보존하고 mode를 0600으로 강화하되 update mode 자체를
 `reset_v2`로 바꾸지 않는다.
 같은 canonical input의 재시작은 write와 새 backup이 없는 idempotent 결과여야 한다.
@@ -325,8 +326,9 @@ write deny는 option 값과 무관한 불변조건이다.
   native `read_file(*)`/`write_file(*)`는 두 mode 모두 mandatory deny이고 ordinary file은
   `ha_files`만 사용한다.
 - 2.0.12에서 Telegram이 활성화되면 위 effective policy는 일반 preserve merge보다
-  우선하는 startup 경계다. 다섯 App 관리 보안 key drift와 permission 세 bucket의
-  user-owned rule/stronger deny도 canonical policy로 교체하되 그 밖의 customization과
+  우선하는 startup 경계다. 현재 App 관리 보안 field, selected mode의 sparse native
+  shape와 known permission bucket의 user-owned rule/stronger deny도 canonical policy로
+  교체하되 그 밖의 customization과
   별도 global MCP/OAuth는 보존한다. bridge가 init 뒤 이 경계를 재검증하지 못하면
   `permission_boundary_blocked`를 한 번 기록하고 Bot API 요청과 S6 restart 없이 살아
   있는 fail-closed hold에 머문다. 복구한 설정은 App restart 뒤 다시 검증한다.

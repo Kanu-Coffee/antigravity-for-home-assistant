@@ -1,9 +1,7 @@
 {
-  "altScreenMode": "never",
-  "toolPermission": "request-review",
-  "artifactReviewPolicy": "agent-decides",
   "allowNonWorkspaceAccess": true,
-  "enableTerminalSandbox": false,
-  "showTips": false,
-  "showFeedbackSurvey": false
+  "altScreenMode": "never",
+  "artifactReviewPolicy": "agent-decides",
+  "showFeedbackSurvey": false,
+  "showTips": false
 }

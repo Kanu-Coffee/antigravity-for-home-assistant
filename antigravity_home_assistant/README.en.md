@@ -27,6 +27,25 @@ Use antigravity inside Home Assistant to inspect your setup and improve dashboar
 > [!WARNING]
 > This app is a powerful administrative tool that can directly change your Home Assistant configuration. Telegram is equivalent to the CLI as an administrator channel, so protect the bot token, authorized chats, and Telegram accounts. Back up important data, review plans and diffs, and never expose the SSH port directly to the internet.
 
+**2.1.1 native-settings compatibility fix:** On the first public-2.1.0 Web
+`agy` launch, Antigravity 1.1.13 tried to remove non-canonical top-level
+`toolPermission` and `enableTerminalSandbox` in `request-review` mode. The intended AppArmor
+write/link/lock deny then blocked replacement of the final `settings.json`,
+producing an atomic-rename error and default fallback. Both paths share one
+directory, so this was not `EXDEV`. Version 2.1.1's native shape omits top-level
+`toolPermission` in `request-review`, retains exact
+`"toolPermission":"always-proceed"` in `always-proceed`, and omits
+`enableTerminalSandbox` in both modes. It validates known native permission
+buckets against the Telegram mode in App options and records them in native
+order; `always-proceed` omits empty `ask`. Settings/OAuth/policy denies remain;
+no copy/unlink fallback or settings-write grant is added.
+
+Telegram tokens and allowlists reside in `/data/options.json`, the Bridge is a
+separate S6 service, and its proposal MCP is `telegram_action`. Missing Core
+`telegram_bot` services or an MCP literally named `telegram` is not proof that
+the Bridge is inactive. Real-HAOS 2.1.1 Web/AppArmor/Telegram/browser/memory
+acceptance is `NOT RUN` on both architectures, so overall v2 remains `PARTIAL`.
+
 **2.1.0 operational-permission redesign:** Public 2.0.18 on real HAOS 18.2
 amd64 passed App startup, native `antigravity --version` with status 0,
 Telegram transport, and a no-tool chat. Web `agy`/`antigravity` interactive I/O
@@ -83,16 +102,19 @@ If the bridge exits after proposal registration but before sealing encrypted
 approval/card state, registration cannot be recovered and the request must be
 repeated.
 
-Explicit `reset_v2` recovery backs up safe settings and replaces managed keys
-and all three permission buckets with exact defaults regardless of prior
-ownership state. It preserves user top-level settings outside permissions,
+Explicit `reset_v2` recovery backs up safe settings and replaces managed fields
+and the selected mode's known permission buckets with exact defaults regardless
+of prior ownership state. `request-review` records `allow`/`deny`/`ask`, while
+`always-proceed` records `allow`/`deny` and omits empty `ask`. It preserves user
+top-level settings outside permissions,
 global MCP, plugins, OAuth, and `/config`, and repairs drift on every startup
 until returned to `preserve`.
-Starting in 2.0.12, a Telegram-enabled startup automatically restores the five
-App-managed security keys and exact 29/0/33 permission policy in a root-owned,
-single-link regular, parseable settings file of at most 256 KiB, so a supported
-update does not require a manual `reset_v2`. Unknown allow/ask/deny rules are
-not retained and an existing mode is hardened to 0600;
+Starting in 2.0.12, a Telegram-enabled startup automatically repairs an eligible
+root-owned, single-link regular, parseable settings file of at most 256 KiB. In
+its current 2.1.1 form, it restores the App-managed security fields, selected
+mode's sparse native shape, and known permission buckets, so a supported update
+does not require a manual `reset_v2`. Unknown allow/ask/deny rules are not
+retained and an existing mode is hardened to 0600;
 an unrecoverable file remains fail-closed without Bot API contact or a restart
 loop.
 

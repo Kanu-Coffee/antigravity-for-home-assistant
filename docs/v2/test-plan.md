@@ -131,9 +131,11 @@ card/callback 또는 실제 HA/command E2E가 아니다. 이 항목들은 계속
 다음을 별도 검증한다.
 
 - root-owned single-link regular·256 KiB 이하의 parse 가능한 existing settings를
-  transaction backup한 뒤 다섯 App 관리 보안 key와 permission 세 bucket을 shared
-  canonical policy로 교체하고 mode를 0600으로 강화하며 ownership state를 갱신
-- 그 다섯 보안 key 밖의 unrelated top-level settings의 semantic 보존, global MCP의 byte 보존과
+  transaction backup한 뒤 App 관리 보안 field, selected mode의 sparse native shape와
+  known permission bucket을 shared canonical policy로 교체하고 retired sandbox key를
+  제거하며 mode를 0600으로 강화하고 ownership state를 갱신
+- 이 App 관리 permission 경계 밖의 unrelated top-level settings의 semantic 보존,
+  global MCP의 byte 보존과
   OAuth/plugin/`/config` 비대상, update mode가 `reset_v2`로 바뀌지 않음
 - 기존 ownership state의 유무와 관계없는 결과, 두 번째 restart의 no-write/no-backup
   idempotency, prepared/commit crash recovery
@@ -401,8 +403,8 @@ recorded protocol fixture가 필요하다. fake binary만으로 최종 PASS하�
 AG-013의 2026-08-11 actual 1.1.11 control은 shared `/data/home`에서 user global stdio
 MCP가 Google OAuth 인증 완료 전 launch됨을 재현했다. 2.0.7은 이 positive control을
 의도된 관리자 채널 inheritance로 채택한다. global/workspace plugin·agent·rule·MCP
-수정 canary, shared settings policy read canary와 `agy-settings patch` 일반 설정 수정
-canary가 Web/SSH/Telegram에서 같은 결과를 내야 한다. raw native file read/write,
+수정 canary, shared settings policy read canary와 `agy-settings patch` supported scalar
+수정·unknown/object 거부 canary가 Web/SSH/Telegram에서 같은 결과를 내야 한다. raw native file read/write,
 raw `settings.json` read/write와
 `permissions`, `enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`,
 `artifactReviewPolicy` patch는 모두 거부되어야 한다. primary OAuth backend/path, 실제
@@ -518,9 +520,10 @@ current amd64 image와 current-source QEMU aarch64 packaging canary는 이 경�
   autonomous-admin과 두 mode의 mandatory blacklist 적용, `strict`/`proceed-in-sandbox`
   normalization, native sandbox flag 부재/override 거부,
   sandbox true/false 입력의 false 정규화, legacy Telegram mode 무시
-- Telegram-enabled preserve가 safe legacy settings의 boundary key와 permission 세
-  bucket만 transaction backup 뒤 canonicalize하고 unrelated settings/global MCP/OAuth를
-  보존하며, ownership 유무와 두 번째 실행에서 같은 idempotent 결과를 내는지 검증
+- Telegram-enabled preserve가 safe legacy settings의 App 관리 보안 field, selected
+  mode의 sparse native shape와 known permission bucket만 transaction backup 뒤
+  canonicalize하고 unrelated settings/global MCP/OAuth를 보존하며, ownership 유무와 두
+  번째 실행에서 같은 idempotent 결과를 내는지 검증
 - unsafe effective permission은 shared validator에서 거부되고
   `permission_boundary_blocked` 한 건 뒤 Bot API call과 process exit 없이 live hold하는지
   검증
@@ -823,8 +826,9 @@ numeric v2와 original custom repository metadata가 공개된 뒤, public v1.0.
    published generic/amd64 runtime digest와 `/data` identity 유지 확인
 3. OAuth, SSH, browser identity, memory, `/config`와 사용자 settings 확인
 4. 모든 native launch의 updater 미실행과 restart 전후 binary version/digest 불변 확인
-5. Telegram-enabled safe legacy settings에서 mode를 `preserve`로 유지한 채 다섯 App
-   관리 보안 key와 permission boundary를 exact reconcile하고 그 밖의 top-level
+5. Telegram-enabled safe legacy settings에서 mode를 `preserve`로 유지한 채 App 관리
+   보안 field, selected mode의 sparse native shape와 known permission boundary를 exact
+   reconcile하고 그 밖의 top-level
    settings/global MCP/OAuth를 보존하며
    재시작이 새 backup/write 없이 idempotent인지 확인
 6. 복원된 별도 public-v1 fixture에서 `refresh_managed`의 1회성, `reset_v2`가 settings

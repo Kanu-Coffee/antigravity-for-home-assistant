@@ -731,6 +731,24 @@ def test_global_settings_updates_use_the_validated_atomic_helper(rootfs: Path) -
     assert "renameSync(temporary, SETTINGS_PATH)" in helper
     assert "request accepts only expected_sha256 and patch" in helper
     assert "JSON patch exceeds the structural limit" in helper
+    assert "nativeParseJsonContent(bytes)" in helper
+    assert "isNativeRawJsonNumber(value)" in helper
+    assert "!isNativeRawJsonNumber(value)" in helper
+    assert "nativeCanonicalSettingsContent(" in helper
+    assert "nativeSettingsToolPermission(current)" in helper
+    for supported in (
+        '"altScreenMode"',
+        '"clearScrollbackOnResize"',
+        '"colorScheme"',
+        '"disableSlashCommands"',
+        '"modelProvider"',
+        '"showFeedbackSurvey"',
+        '"showTips"',
+    ):
+        assert supported in helper
+    assert "SUPPORTED_SCALAR_PATCHES" in helper
+    assert "patch contains an unsupported top-level setting" in helper
+    assert "patch contains an unsupported scalar setting value" in helper
 
 
 def test_init_starts_background_tmux(rootfs: Path) -> None:

@@ -2,6 +2,66 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.1.1] - 2026-08-20
+
+### Fixed
+
+- Install Antigravity 1.1.13's mode-specific canonical top-level settings.
+  `request-review` omits `toolPermission`, while `always-proceed` retains the
+  exact `"toolPermission":"always-proceed"` value; both modes omit
+  `enableTerminalSandbox`. On the reported first interactive `agy` launch in
+  `request-review`, the native CLI canonicalized an otherwise valid 2.1.0 file
+  by removing its non-canonical `toolPermission` and
+  `enableTerminalSandbox`, then replacing it through a same-directory
+  temporary file. The 2.1.0 native runtime correctly denied replacement of the protected
+  `settings.json`, so the TUI reported an atomic rename failure and offered to
+  continue with defaults. The temporary and destination paths share the same
+  directory; this was not an `EXDEV` cross-device rename failure, and 2.1.1
+  does not add a non-atomic copy/unlink fallback.
+- Emit and migrate Antigravity 1.1.13-compatible canonical settings bytes:
+  lexicographically sorted top-level keys, known `permissions` buckets in
+  native canonical order, two-space JSON indentation, and one final newline.
+  `request-review` emits `allow`, `deny`, and `ask`; `always-proceed` emits
+  `allow` and `deny` and omits its empty `ask`. `preserve` recognizes the exact
+  App-owned 2.1.0 layout, transactionally applies the mode-specific top-level
+  shape, preserves unrelated
+  top-level values semantically, and becomes byte-idempotent after migration.
+  The selected Telegram mode remains an App option and the installed native
+  permission buckets are validated against that explicit expected mode.
+- Preserve native JSON number lexemes, including integers beyond JavaScript's
+  safe range, negative zero, exponent spelling, and large-exponent syntax,
+  while normalizing native 1.1.13's observed default omissions. Restrict
+  `agy-settings patch` to the native-stable top-level scalar UI settings listed
+  in the documentation; unknown non-null keys and object/array values now fail
+  before the protected file changes instead of risking another native rewrite.
+  A top-level unknown key may be set to `null` only to remove stale data left by
+  an older helper.
+- Keep the security boundary unchanged. Both native runtime profiles still
+  deny writes, links, and locks on the final native `settings.json`; native
+  `read_file`/`write_file`, command, shell, OAuth, credential, and MCP-policy
+  denies remain in force. No AppArmor settings-write grant, protection-mode
+  bypass, broad permission, or Docker/host mount is added.
+- Correct the field diagnosis for Telegram. The bot token and allowlists come
+  from `/data/options.json`; the Telegram Bridge is a separate S6 service, not
+  a Home Assistant Core `telegram_bot` service, and its managed proposal MCP is
+  named `telegram_action`. Absence of a Core Telegram service or an MCP named
+  `telegram` does not prove that the bridge is inactive. Transport and worker
+  failures must instead be classified from bounded Bridge events.
+
+### Field evidence and limitations
+
+- Public 2.1.0 on real HAOS exposed the Web TUI settings canonicalization and
+  same-directory rename failure described above; a Telegram invocation did not
+  return a user response. The submitted diagnostic report did not include the
+  bounded Bridge events needed to distinguish a disconnected transport from a
+  connected native-worker failure. Its browser timeout and stale memory report
+  also remain separate symptoms without evidence that settings caused them.
+- Source, component, exact-image container, and kernel-enforced results for
+  2.1.1 are automated evidence only. Real-device 2.1.1 Web TUI, enforced
+  AppArmor, authenticated Telegram delivery, browser, and memory acceptance on
+  amd64 and aarch64 remain `NOT RUN` before installation testing; overall v2
+  acceptance remains `PARTIAL` at publication.
+
 ## [2.1.0] - 2026-08-19
 
 ### Changed

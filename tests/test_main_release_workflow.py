@@ -22,7 +22,7 @@ def test_main_release_is_manual_main_only_and_minimally_authorized() -> None:
         "candidate_run_attempt",
         "confirm",
     }
-    assert inputs["version"]["default"] == "2.1.0"
+    assert inputs["version"]["default"] == "2.1.1"
     assert workflow["permissions"] == {"contents": "read"}
     publish = workflow["jobs"]["publish"]
     assert publish["if"] == "github.ref == 'refs/heads/main'"
@@ -120,12 +120,40 @@ def test_main_release_creates_annotated_tag_and_prerelease_without_fake_evidence
         and "arbitrary unkeyed application text" in text
     )
     assert (
+        "Public 2.1.0 real amd64 HAOS evidence" in text
+        and "in `request-review` tried to remove non-canonical top-level "
+        "`toolPermission` and "
+        "`enableTerminalSandbox`" in text
+        and "same-directory temporary-to-settings rename" in text
+        and "this was not `EXDEV`" in text
+        and "missing bounded Bridge events prevent classifying transport versus "
+        "native-worker failure" in text
+    )
+    assert (
+        "2.1.1 emits Antigravity 1.1.13-compatible mode-specific settings" in text
+        and "`request-review` omits top-level `toolPermission`" in text
+        and "`always-proceed` retains exact "
+        "`\"toolPermission\":\"always-proceed\"`" in text
+        and "both omit `enableTerminalSandbox`" in text
+        and "Known buckets use native canonical order" in text
+        and "`request-review` emits `allow`/`deny`/`ask`" in text
+        and "`always-proceed` emits `allow`/`deny` and omits empty `ask`" in text
+        and "final settings AppArmor write/link/lock deny" in text
+        and "no copy/unlink fallback or settings-write grant is added" in text
+    )
+    assert (
+        "Telegram tokens and allowlists remain in `/data/options.json`" in text
+        and "Bridge is a separate S6 service" in text
+        and "managed proposal MCP is `telegram_action`" in text
+    )
+    assert (
         "Native `read_file`/`write_file` remain denied in both modes" in text
         and "`ha_files_list`, `ha_files_read_text`, and "
         "`ha_files_write_text`" in text
     )
     assert (
-        "2.1.0 automated policy, PTY, managed-tool, read/write, denial, "
+        "2.1.1 automated settings-canonicalization, policy, PTY, managed-tool, "
+        "read/write, denial, "
         "session-quarantine, multi-arch and exact-digest gates: `PASS` for this "
         "exact Candidate; this is not HAOS evidence" in text
     )
@@ -135,7 +163,10 @@ def test_main_release_creates_annotated_tag_and_prerelease_without_fake_evidence
         "unsupported, and restoring an exact old App backup replaces newer App "
         "`/data`" in text
     )
-    assert "amd64 2.1.0 HAOS acceptance at publication: `NOT RUN`" in text
+    assert (
+        "amd64 2.1.1 HAOS Web/AppArmor/Telegram/browser/memory acceptance at "
+        "publication: `NOT RUN`" in text
+    )
     assert (
         "aarch64 HAOS acceptance at publication: `NOT RUN`; owner-waived for "
         "experimental deployment, not a PASS" in text
@@ -154,7 +185,7 @@ def test_repository_advertises_the_numeric_tag_published_by_main_release() -> No
         )
     )
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
-    assert config["version"] == inputs["version"]["default"] == "2.1.0"
+    assert config["version"] == inputs["version"]["default"] == "2.1.1"
     assert (
         config["image"]
         == "ghcr.io/kanu-coffee/antigravity-for-home-assistant"

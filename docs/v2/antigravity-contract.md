@@ -115,7 +115,8 @@ Telegram은 위 global/workspace plugin, agent, rule, MCP와 settings를 상속�
 Web/SSH는 native review 아래 직접 수정할 수 있고, Telegram은 허용된 customization
 root에 대한 exact terminal/script proposal이 승인된 경우에만 수정한다. native MCP
 config와 App-owned permission settings는 Telegram action에서도 직접 수정하지 않는다.
-일반 전역 settings의 interactive 변경은 `agy-settings patch`로 매개 수정한다. OAuth는 trusted
+문서화된 native-stable top-level scalar settings의 interactive 변경은
+`agy-settings patch`로 매개 수정한다. OAuth는 trusted
 local controlling TTY의 `ha-antigravity-login`으로 한 번 수행하며 별도 Telegram
 HOME·login·bootstrap을 두지 않는다.
 
@@ -130,20 +131,27 @@ workspace plugin은 자동 삭제하지 않는다.
 `preserve`/`refresh_managed`는 기존 알 수 없는 key를 보존하며 App이 소유한 key만
 merge한다. 2.0.12부터 `telegram_enabled=true`이면 안전한 root-owned single-link
 regular file이고 parse 가능한 기존 settings에 한해 migration mode와 ownership state에
-관계없이 Telegram permission 경계를 transaction backup 뒤 reconcile한다. 2.1.0은
-`allowNonWorkspaceAccess=true`, `artifactReviewPolicy=agent-decides`,
-선택된 effective `toolPermission`, `enableTerminalSandbox=false`와
-`permissions.allow`/`ask`/`deny` 전체를 image canonical policy로 맞추며, 이 다섯 App
-관리 보안 key 밖의 사용자 top-level key는 보존한다. 입력과 출력은 256 KiB 이하이며
-안전한 기존 mode drift는 transaction에서 0600으로 강화한다.
-명시적 `reset_v2`는 Telegram 활성화 여부와 무관하게 managed key와 permission 세
-bucket을 exact default로 복구하는 별도 recovery control이다. 2.1.0의 두 canonical
-mode는 다음과 같다. 두 mode의 `deny`에는 아래 mandatory sensitive-path set 전체가
-동일하게 들어간다.
+관계없이 Telegram permission 경계를 transaction backup 뒤 reconcile한다. 공개
+2.1.0까지는 `allowNonWorkspaceAccess`, `artifactReviewPolicy`, `toolPermission`,
+`enableTerminalSandbox`와 세 permission bucket을 기록했지만, 이 형식은 native 1.1.13의
+sparse persistence와 맞지 않아 2.1.1의 현재 계약이 아니다. 이 과거 형식에서도 App 관리
+경계 밖의 사용자 top-level key는 보존했고, 입력과 출력은 256 KiB 이하이며 안전한 기존
+mode drift는 transaction에서 0600으로 강화했다.
+2.1.1은 native 1.1.13의 mode-specific sparse top-level shape를 설치한다.
+`request-review`는 `toolPermission`을 생략하고, `always-proceed`는 exact
+`"toolPermission":"always-proceed"`를 유지하며, 두 mode 모두
+`enableTerminalSandbox`를 생략한다. 선택 mode는 App option에서도 expected value로
+유지하고, known `permissions` bucket은 native canonical order로 직렬화한다. `request-review`는
+`allow`·`deny`·`ask`를 모두 기록하고, `always-proceed`는 empty `ask`를 생략해
+`allow`·`deny`만 기록한다. 명시적 `reset_v2`는 Telegram 활성화 여부와 무관하게
+managed key와 선택 mode에 존재하는 known permission bucket을 exact default로 복구하는
+별도 recovery control이다. 현재 두 canonical mode는 다음과 같다. 두 mode의 `deny`에는
+아래 mandatory sensitive-path set 전체가 동일하게 들어간다.
+
+`request-review` 기대 mode:
 
 ```json
 {
-  "toolPermission": "request-review",
   "permissions": {
     "allow": [
       "read_url(*)",
@@ -162,11 +170,6 @@ mode는 다음과 같다. 두 mode의 `deny`에는 아래 mandatory sensitive-pa
       "mcp(playwright/browser_snapshot)",
       "mcp(playwright/browser_take_screenshot)"
     ],
-    "ask": [
-      "mcp(ha_files/ha_files_write_text)",
-      "execute_url(*)",
-      "command(*)"
-    ],
     "deny": [
       "read_file(*)",
       "write_file(*)",
@@ -179,16 +182,21 @@ mode는 다음과 같다. 두 mode의 `deny`에는 아래 mandatory sensitive-pa
       "read_file(/data/home/.gemini/antigravity-cli/settings.json)",
       "write_file(/data/home/.gemini/antigravity-cli/settings.json)",
       "<all exact App/OAuth/cloud/SSH/proc credential-path denies>"
+    ],
+    "ask": [
+      "mcp(ha_files/ha_files_write_text)",
+      "execute_url(*)",
+      "command(*)"
     ]
   }
 }
 ```
 
-`always-proceed`는 같은 mandatory `deny`를 쓰며 allow/ask만 다음처럼 바뀐다.
+`always-proceed` 기대 mode는 같은 mandatory `deny`를 쓰며 empty `ask` key를 native
+canonical sparse form에서 완전히 생략한다.
 
 ```json
 {
-  "toolPermission": "always-proceed",
   "permissions": {
     "allow": [
       "read_url(*)",
@@ -196,13 +204,13 @@ mode는 다음과 같다. 두 mode의 `deny`에는 아래 mandatory sensitive-pa
       "command(*)",
       "mcp(*)"
     ],
-    "ask": [],
     "deny": [
       "read_file(*)",
       "write_file(*)",
       "<same mandatory exact sensitive-path deny set>"
     ]
-  }
+  },
+  "toolPermission": "always-proceed"
 }
 ```
 
@@ -251,9 +259,10 @@ closed한다. explicit `always-proceed`는 current user request 범위에서 ins
 
 2.0.12의 Telegram-enabled reconciliation은 2.0.11의 일반 preserve merge보다 좁고
 강한 startup 불변조건이다. Telegram이 활성화된 동안에는 user-owned permission rule과
-stronger ask/deny도 세 bucket 안에서 보존하지 않고 exact canonical policy로 교체한다.
-또한 App 관리 `allowNonWorkspaceAccess`와 `artifactReviewPolicy` drift도 교체한다. 대신
-이 다섯 보안 key 밖의 unrelated top-level settings, native OAuth, global MCP 파일, 사용자 plugin과
+stronger ask/deny도 selected mode의 known bucket 안에서 보존하지 않고 exact canonical
+policy로 교체한다. 또한 App 관리 `allowNonWorkspaceAccess`와
+`artifactReviewPolicy`, sparse mode 표현 drift도 교체한다. 대신 이 App 관리 permission
+경계 밖의 unrelated top-level settings, native OAuth, global MCP 파일, 사용자 plugin과
 `/config`는 대상이 아니다. update mode option 자체를 `reset_v2`로 바꾸지 않고,
 ownership state를 canonical policy에 맞춰 기록하며, 같은 파일로 다시 시작할 때 새
 backup이나 write가 없는 idempotent 결과여야 한다.
@@ -295,12 +304,16 @@ proposal-first 재계획을 요청할 수 있지만 거부된 invocation을 승�
 않는다. authenticated Web/SSH는 native interactive review 아래 direct tool을 쓸 수 있고
 Telegram card로 자동 변환되지 않는다.
 
-Antigravity 1.1.13은 system default와 같은 값을 저장하지 않는 sparse persistence를
-적용할 수 있다. `toolPermission` key가 native round-trip에서 생략돼도 App이 생성한
-`permissions.allow`, `permissions.ask`, `permissions.deny`가 native authorization
-계약이며 세 bucket과 ownership rule 전체를 검증해야 한다. 사용자 설정 보존 테스트는
-같은 이유로 default `colorScheme: "terminal"` 대신 CLI가 왕복 보존하는 공식
-non-default `colorScheme: "tokyo night"`를 사용한다.
+Antigravity 1.1.13은 system default와 empty bucket을 저장하지 않는 sparse persistence를
+적용한다. App option이 expected mode를 제공하고 native settings는 이를 mode-specific
+top-level shape로 표현한다. `request-review`는 top-level `toolPermission`을 생략하지만
+`always-proceed`는 exact value를 유지한다. native authorization 계약은 그 mode의 known
+permission bucket이다. `request-review`는
+`permissions.allow`·`permissions.deny`·`permissions.ask` 전체를 검증한다.
+`always-proceed`는 `permissions.allow`·`permissions.deny`를 검증하고 missing `ask`만
+empty로 해석하며, unknown bucket이나 다른 missing bucket은 허용하지 않는다. 사용자
+설정 보존 테스트는 같은 이유로 default `colorScheme: "terminal"` 대신 CLI가 왕복
+보존하는 공식 non-default `colorScheme: "tokyo night"`를 사용한다.
 
 1.1.13은 공유 native CLI HOME의 `antigravity-cli/cli.log`를 같은 directory 아래
 `log/cli-YYYYMMDD_HHMMSS.log`를 가리키는 상대 symlink로 만든다. public v1 update
@@ -321,9 +334,14 @@ App-managed proposal approval은 native option으로 완화되지 않는다.
 App 관리 permission enforcement의 self-bypass를 막기 위해 raw file tool의
 `settings.json` 직접 read/write는 exact deny다. interactive Web/SSH의 일반 전역 설정은 먼저
 `agy-settings sha256`으로 현재 digest를 얻고 `expected_sha256`과 JSON merge `patch`를
-stdin으로 `agy-settings patch`에 전달해 원자적으로 수정한다. helper는
+stdin으로 `agy-settings patch`에 전달해 원자적으로 수정한다. 2.1.1 helper는 native
+1.1.13과 byte-stable하다고 검증한 top-level scalar
+`altScreenMode`, `clearScrollbackOnResize`, `colorScheme`, `disableSlashCommands`,
+`modelProvider`, `showFeedbackSurvey`, `showTips`만 받는다. 알 수 없는 non-null key와
+object/array 값은 final settings를 바꾸기 전에 거부한다. 알 수 없는 top-level
+`null`은 이전 helper가 남긴 stale 값 제거에만 허용한다. helper는 top-level
 `permissions`, `enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`,
-`artifactReviewPolicy`가 patch 어느 깊이에 있어도 거부하며, 이 다섯 보안 key는 App
+`artifactReviewPolicy`를 거부하며, 이 다섯 보안 key는 App
 option과 restart로만 변경한다. Telegram의 지원되는 customization 변경은 exact
 terminal/script proposal과 approval을 통해서만 수행하며 native MCP config는 보호한다.
 user-configured MCP executable은 별도 command profile에서 실행한다.

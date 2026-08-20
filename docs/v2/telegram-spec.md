@@ -30,12 +30,12 @@ bridge 시작 조건은 다음을 모두 만족해야 한다.
 state의 type/mode/schema가 안전하지 않으면 대기하지 않고 fail closed 한다.
 
 2.0.12 init은 Telegram이 활성화됐고 기존 settings가 root-owned single-link regular,
-256 KiB 이하이며 parse 가능하면 3의 경계를 확인하기 전에
-`allowNonWorkspaceAccess`, `artifactReviewPolicy`, `toolPermission`,
-`enableTerminalSandbox`와 permission 세 bucket을 transaction backup 뒤 canonical
-policy로 reconcile한다. 이 다섯 보안 key 밖의 unrelated top-level settings, global
-MCP, plugin, OAuth와 `/config`는 보존하고 mode를 0600으로 강화하되 migration mode
-option을 바꾸지 않는다. bridge 재검증에서 3이
+256 KiB 이하이며 parse 가능하면 3의 경계를 확인하기 전에 transaction backup한다.
+현재 2.1.1은 `allowNonWorkspaceAccess`, `artifactReviewPolicy`, selected mode의 sparse
+`toolPermission` 표현과 known permission bucket을 canonical policy로 reconcile하고
+retired `enableTerminalSandbox`를 제거한다. 이 App 관리 permission 경계 밖의 unrelated
+top-level settings, global MCP, plugin, OAuth와 `/config`는 보존하고 mode를 0600으로
+강화하되 migration mode option을 바꾸지 않는다. bridge 재검증에서 3이
 실패하면 `permission_boundary_blocked`를 한 번 기록하고 Bot API 요청 없이 process를
 살아 있는 fail-closed hold에 둔다. 같은 설정으로 exit/S6 restart를 반복하지 않으며
 복구 뒤 App restart가 필요하다.
@@ -494,10 +494,11 @@ deny한다. ordinary file은 server `ha_files`(`serverInfo.name=antigravity-ha-f
 optional `expected_sha256`를 강제한다. secrets/storage/.gemini/credential/policy 및
 Recorder write는 fail closed하며 sensitive-data marker 없이 Recorder read도 거부한다.
 
-2.0.12에서 Telegram-enabled startup은 위 일반 preserve migration을 좁게 재정의한다.
-ownership state와 관계없이 다섯 App 관리 보안 key drift와 permission 세 bucket의
-user-owned rule/stronger deny를 shared canonical policy로 교체한다. 그 밖의 user
-customization과 global MCP/OAuth는 그대로 보존하며, canonical input의 재시작은 새
+2.0.12에서 Telegram-enabled startup은 위 일반 preserve migration을 좁게 재정의했다.
+현재 2.1.1은 ownership state와 관계없이 App 관리 보안 field, selected mode의 sparse
+native shape와 known permission bucket의 user-owned rule/stronger deny를 shared
+canonical policy로 교체한다. 그 밖의 user customization과 global MCP/OAuth는 그대로
+보존하며, canonical input의 재시작은 새
 backup이나 write가 없는 idempotent 결과여야 한다. `reset_v2`는 여전히 사용자가
 명시적으로 선택하는 broader recovery mode이고 이 reconciliation이 option을 자동
 승격하지 않는다.
@@ -757,8 +758,9 @@ reason/result/status class만 허용하며 재시작 시 0부터 시작한다. �
 - per-chat serialization, global concurrency와 queue limit이 지켜진다.
 - global permission option이 Web/SSH/Telegram에 동일하게 적용되고 legacy
   `telegram_access_mode`가 권한 source로 사용되지 않는다.
-- Telegram-enabled preserve update가 safe legacy settings의 다섯 App 관리 보안 key와
-  permission boundary를 transaction backup 뒤 canonicalize하고 그 밖의 top-level
+- Telegram-enabled preserve update가 safe legacy settings의 App 관리 보안 field,
+  selected mode의 sparse native shape와 known permission boundary를 transaction backup
+  뒤 canonicalize하고 그 밖의 top-level
   settings, global MCP와 OAuth를
   보존하며, 두 번째 실행은 write/backup 없이 idempotent하다.
 - 2.0.16 `refresh_managed`는 safe parseable settings의 기존 allow/ask/deny bucket이

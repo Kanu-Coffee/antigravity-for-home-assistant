@@ -222,10 +222,12 @@ Native `read_file` and `write_file` stay denied and files still go through
 `proceed-in-sandbox` are legacy upgrade inputs normalized to `request-review`.
 Starting in 2.0.12, enabling
 Telegram transactionally backs up a root-owned, single-link regular, parseable
-settings file of at most 256 KiB and restores the five App-managed security keys
-plus the selected mode's exact permission policy. Unknown custom allow/ask/deny rules
-are removed, while top-level settings outside those keys, global MCP/plugins/
-OAuth, and `/config` remain preserved; an existing mode is hardened to 0600.
+settings file of at most 256 KiB. In its current 2.1.1 form, it restores the
+App-managed security fields, selected mode's sparse native shape, and known
+permission buckets, while removing retired `enableTerminalSandbox`. Unknown
+custom allow/ask/deny rules are removed, while top-level settings outside this
+permission boundary, global MCP/plugins/OAuth, and `/config` remain preserved;
+an existing mode is hardened to 0600.
 Starting in 2.0.16, even a non-array existing permission bucket in an otherwise
 safe supported settings file is replaced by the canonical managed policy before
 typed merge validation.
@@ -298,11 +300,17 @@ Password and keyboard-interactive login are disabled. Do not port-forward TCP
 > Telegram is a primary administrator channel equivalent to the CLI. Authorized
 > users can use the shared OAuth identity and read and modify `/config` and
 > user-created global/workspace plugins, agents, rules, and MCP customizations.
-> Raw settings writes are an
-> exception; use `agy-settings patch` for ordinary global settings. Protect the
+> Raw settings writes are an exception; use `agy-settings patch` only for the
+> documented native-stable top-level scalar UI settings. Unknown non-null keys
+> and object/array values are rejected; `null` for an unknown top-level key is
+> accepted only to remove stale data. Protect the
 > bot token, authorized chats,
 > and Telegram accounts like HA administrator credentials.
 > Integrated OAuth, AppArmor, and Bot API E2E on real HAOS remain `NOT RUN`.
+
+The supported scalar keys are `altScreenMode`, `clearScrollbackOnResize`,
+`colorScheme`, `disableSlashCommands`, `modelProvider`, `showFeedbackSurvey`,
+and `showTips`.
 
 Sign in once with `ha-antigravity-login` in the Web UI or SSH. Telegram uses the
 same `/data/home` identity; there is no separate `ha-telegram-login`.
@@ -680,17 +688,19 @@ documented residual risk.
 
 | Mode | Preservation and change scope |
 | --- | --- |
-| `preserve` | Preserve OAuth and user settings/MCP/plugins; when Telegram is enabled, automatically reconcile safe settings' five App-managed security keys and permission buckets to the exact policy; canonically security-refresh the App-owned HA plugin once per version |
+| `preserve` | Preserve OAuth and user settings/MCP/plugins; when Telegram is enabled, automatically reconcile the App-managed security fields, selected mode's sparse native shape, and known permission buckets to the exact policy; canonically security-refresh the App-owned HA plugin once per version |
 | `refresh_managed` | Keep that preservation and plugin refresh, then root-only back up and merge ownership-recorded settings keys and permission rules |
-| `reset_v2` | Explicit recovery mode: back up safely parseable settings and replace managed keys plus all three permission buckets with exact image defaults, regardless of ownership state |
+| `reset_v2` | Explicit recovery mode: back up safely parseable settings and replace managed fields plus the selected mode's known permission buckets with exact image defaults, regardless of ownership state |
 
 All three modes exclude `/config`, native OAuth, SSH keys, browser identity,
 memory DB, and user-owned plugins and MCP servers from reset targets. `reset_v2`
 also preserves user top-level settings outside `permissions` and an existing
-global MCP file, but resets managed keys and all of
-`permissions.allow`/`ask`/`deny` exactly. Explicit selection authorizes recovery
-even when prior ownership state is absent or ambiguous; an unsafe regular file
-or invalid JSON still fails closed. While `reset_v2` remains selected, each
+global MCP file, but exactly resets managed fields and the known permission
+buckets present in the selected mode. `request-review` records
+`allow`/`deny`/`ask`; `always-proceed` records `allow`/`deny` and omits empty
+`ask`. Explicit selection authorizes recovery even when prior ownership state is
+absent or ambiguous; an unsafe regular file or invalid JSON still fails closed.
+While `reset_v2` remains selected, each
 startup repairs drift even within the same version, so return it to `preserve`
 after recovery. Regardless
 of mode, the App-owned `home-assistant` plugin is refreshed from the
@@ -847,6 +857,25 @@ contingency.
 ### Telegram does not respond
 
 - Check `telegram_enabled`, bot token format, and whether the App restarted.
+- On public 2.1.0, if Web `agy` cannot atomically rename
+  `settings.json.<uuid>.tmp` to `settings.json` and offers a default fallback,
+  do not classify it as cross-device `EXDEV`: both paths are in the same
+  `/data/home/.gemini/antigravity-cli` directory. In `request-review` mode,
+  Antigravity 1.1.13 tried to remove non-canonical top-level `toolPermission`
+  and `enableTerminalSandbox` on the first TUI start, while the intended
+  AppArmor deny blocked final-settings replacement. Version 2.1.1 follows the
+  native mode-specific shape: `request-review` omits top-level `toolPermission`,
+  `always-proceed` retains exact `"toolPermission":"always-proceed"`, and both
+  omit `enableTerminalSandbox`. It writes known permission buckets in native
+  order, omits empty `ask` in `always-proceed`, and checks them against the
+  expected App-option mode. Do not relax AppArmor or add a copy/unlink fallback.
+- Telegram tokens and user/chat allowlists come from `/data/options.json`. The
+  Bridge is a separate S6 service, not the Home Assistant Core `telegram_bot`
+  integration, and its managed proposal MCP is `telegram_action`. Missing Core
+  Telegram services or an MCP literally named `telegram` does not prove that
+  the Bridge is inactive. Use the bounded `permission_boundary_ready`,
+  `connected`, `request_accepted`, `session_ready`, and `request_failed` events
+  in order to separate transport from native-worker failures.
 - If the log says `waiting_for_authorization`, do not keep restarting. Configure
   both static lists or complete local pairing. Save `telegram_enabled: false`
   when Telegram is not in use.
@@ -941,7 +970,7 @@ contingency.
 
 ## Verification status and known limitations
 
-As of the repository state on 2026-08-19, static and component tests cover the
+As of the repository state on 2026-08-20, static and component tests cover the
 native CLI wrapper, read/change brokers, universal action
 proposal/coordinator/executor, Telegram binding and replay, memory, browser
 contracts, migration, AppArmor policy parsing, and a kernel-enforced startup
@@ -953,7 +982,7 @@ these items `VERIFIED`:
 
 - Clean install on real HAOS amd64, and install/start/update on aarch64
 - Native Antigravity OAuth and plugin discovery on both architectures
-- Corrected 2.1.0 custom AppArmor profiles attached in enforce mode with
+- Corrected 2.1.1 custom AppArmor profiles attached in enforce mode with
   successful native `--version`/conversation, first start, stop/start, restart,
   Web-terminal PTY/reconnect, broad operational read/write, managed read MCP,
   raw-unavailable bounded Host/Supervisor log projections with known-credential
@@ -976,8 +1005,12 @@ SIGSEGV/status 139 `FAIL`, and public 2.0.17 managed-MCP/Telegram-proposal
 `FAIL` with approved write `NOT RUN`. Public 2.0.18 amd64 passed startup,
 native version, and no-tool chat, but Web PTY I/O and the first managed tool
 failed; tests 3 through 7 reused the failed conversation and are not independent
-results, while approved write remained `NOT RUN`. Real-device 2.1.0 amd64 and
-aarch64 acceptance is `NOT RUN`. The aarch64 waiver is not a PASS and overall v2 acceptance is
+results, while approved write remained `NOT RUN`. Public 2.1.0 amd64 then
+`FAIL`ed its first Web-TUI settings canonicalization with a same-directory
+rename error and default fallback; a Telegram invocation also returned no user
+response, but missing bounded Bridge events prevent classifying transport
+versus worker failure. Real-device 2.1.1 acceptance on amd64 and aarch64 is
+`NOT RUN`. The aarch64 waiver is not a PASS and overall v2 acceptance remains
 `PARTIAL`. This does not pass the complete HA-001 through HA-008 or AA-001
 matrices.
 

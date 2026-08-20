@@ -82,8 +82,8 @@ def test_public_v1_upgrade_rehearsal_is_source_and_candidate_bound(
         'supervisor_option_prevalidation: "NOT_RUN"',
         'contains_credentials: false',
         "preserve mode unexpectedly claimed ownership of user native files",
-        '.toolPermission == "request-review"',
-        ".enableTerminalSandbox == false",
+        'has("toolPermission") | not',
+        'has("enableTerminalSandbox") | not',
         ".allowNonWorkspaceAccess == true",
         '.permissions.allow | index("command(*)") == null',
         '.permissions.allow | index("mcp(*)") == null',
@@ -219,10 +219,17 @@ def test_user_file_update_runtime_is_image_managed(
 
 def test_user_file_update_has_fixed_scopes_and_private_recovery_state(
     rootfs: Path,
+    repository_root: Path,
 ) -> None:
     helper = (
         rootfs / "usr/local/share/antigravity-ha/user-files-update.mjs"
     ).read_text(encoding="utf-8")
+    permission_policy = (
+        rootfs / "usr/local/share/antigravity-ha/telegram-permission-policy.mjs"
+    ).read_text(encoding="utf-8")
+    smoke = (repository_root / "tests/user-files-update-smoke.sh").read_text(
+        encoding="utf-8"
+    )
 
     for fixed_path in (
         'join(ANTIGRAVITY_CLI_DIRECTORY, "settings.json")',
@@ -276,16 +283,53 @@ def test_user_file_update_has_fixed_scopes_and_private_recovery_state(
     assert "0o600" in helper
     assert "mergeManagedSettings(" in helper
     assert "preparePreservePermissionMigration(" in helper
+    assert "normalizedCurrentOwnership = telegramSettingsOwnership(" in helper
+    assert "...ownership.permission_rules" in helper
+    assert "...desiredOwnership.permission_rules" in helper
+    assert "allowNonWorkspaceAccess: desired.allowNonWorkspaceAccess" in helper
+    assert "artifactReviewPolicy: desired.artifactReviewPolicy" in helper
+    assert "!managedRules.has(rule)" in helper
+    assert "bucketRank[locations[0]] > bucketRank[bucket]" in helper
+    assert "preservedOverrides.get(rule) === bucket" in helper
+    assert "!preservedOverrides.has(rule)" in helper
+    assert "bucketRank[stronger[0]] > bucketRank[desiredBucket]" in helper
     assert "antigravity_terminal_sandbox=true is deprecated" in helper
     assert "hasLegacy206PermissionOwnership(" in helper
     assert 'options.mode === "preserve"' in helper
     assert 'permission_migration: permissionMigration' in helper
     assert '"skipped_unowned"' in helper
     assert '"skipped_ambiguous"' in helper
-    assert "replaceTopLevelJsonPropertyValue(" in helper
+    assert "nativeCanonicalSettingsContent(" in helper
+    assert ".sort(nativeTopLevelKeyCompare)" in permission_policy
+    assert "nativeTopLevelKey(key)" in permission_policy
+    assert 'normalized += "\\ufffd"' in permission_policy
+    assert "JSON.rawJSON(context.source)" in permission_policy
+    assert "nativeParseJsonContent(content)" in helper
+    assert "normalized.showTips === true" in permission_policy
+    assert "normalized.showFeedbackSurvey === true" in permission_policy
+    assert 'normalized.modelProvider === ""' in permission_policy
+    assert "normalized.disableSlashCommands === false" in permission_policy
+    assert "normalized.clearScrollbackOnResize === true" in permission_policy
+    assert "normalized.notifications === false" in permission_policy
+    for native_escape in ("\\u003c", "\\u003e", "\\u0026", "\\u2028", "\\u2029"):
+        assert native_escape in permission_policy
+    assert "RETIRED_NATIVE_SETTINGS_KEYS" in helper
     assert "A non-permission setting changed during migration" in helper
     assert "state.managed.settings = desiredOwnership" in helper
     assert "previouslyManaged.has(rule)" in helper
+    assert '"allowNonWorkspaceAccess": "invalid"' in smoke
+    assert '"artifactReviewPolicy": "allow"' in smoke
+    assert "grep -vF '\"write_file(*)\"'" in smoke
+    for bucket in ("allow", "ask", "deny"):
+        assert f'index("user(custom/{bucket})") != null' in smoke
+    assert 'index("write_file(*)") != null' in smoke
+    assert "PERMISSION_V208_OVERRIDE_IDEMPOTENT" in smoke
+    assert "public 2.0.8 stronger deny was not restart-idempotent" in smoke
+    assert (
+        'write_file(/data/home/.gemini/antigravity-cli/settings.json)' in smoke
+    )
+    assert "PERMISSION_V3_IDEMPOTENT" in smoke
+    assert "2.0.9/2.0.10 stronger deny was not restart-idempotent" in smoke
     assert "ensureFreshDefaults" not in helper
     assert "preflightDefaultTargets" in helper
     assert 'candidates.mcp = defaults.mcp' in helper
@@ -563,6 +607,49 @@ def test_public_2_0_8_preserve_permission_fixture_is_source_bound(
     ]
 
 
+def test_public_2_1_0_preserve_permission_fixture_is_source_bound(
+    repository_root: Path,
+) -> None:
+    fixture_root = repository_root / "tests/fixtures"
+    settings_path = fixture_root / "public-2.1.0-preserve-settings.json"
+    state_path = fixture_root / "public-2.1.0-preserve-state.json"
+    source_path = fixture_root / "public-2.1.0-preserve-source.json"
+
+    settings_bytes = settings_path.read_bytes()
+    state_bytes = state_path.read_bytes()
+    source = json.loads(source_path.read_text(encoding="utf-8"))
+    settings = json.loads(settings_bytes)
+    state = json.loads(state_bytes)
+
+    assert source == {
+        "image": "ghcr.io/kanu-coffee/antigravity-for-home-assistant:2.1.0",
+        "image_digest": (
+            "sha256:f1d23edf602f2bdb9cc1846950cab2e3339a41081fab32a712c9e2782ce052ae"
+        ),
+        "source_revision": "03c28b704f3ee71d034809c06c1c584ae23620e5",
+        "options": {
+            "antigravity_tool_permission": "request-review",
+            "antigravity_terminal_sandbox": False,
+            "antigravity_user_files_update_mode": "preserve",
+        },
+        "settings_sha256": (
+            "1d91fa1e64ae864c8ba6345a8237214d746cd18bde0b9297917933ddb23ac8f1"
+        ),
+        "state_sha256": (
+            "d613788c6fa63a7c8c20823d012cb31f2abdfe171473f1be976f5d27e43ff7eb"
+        ),
+    }
+    assert hashlib.sha256(settings_bytes).hexdigest() == source["settings_sha256"]
+    assert hashlib.sha256(state_bytes).hexdigest() == source["state_sha256"]
+    assert settings["toolPermission"] == "request-review"
+    assert settings["enableTerminalSandbox"] is False
+    assert state["managed"]["settings"]["permission_rules"] == [
+        *settings["permissions"]["allow"],
+        *settings["permissions"]["ask"],
+        *settings["permissions"]["deny"],
+    ]
+
+
 def test_preserve_permission_migration_smoke_covers_atomic_fail_safe_paths(
     repository_root: Path,
 ) -> None:
@@ -574,13 +661,33 @@ def test_preserve_permission_migration_smoke_covers_atomic_fail_safe_paths(
         "public-2.0.6-preserve-settings.json",
         "public-2.0.6-preserve-state.json",
         "public 2.0.6 preserve permission migration failed",
+        "public-2.1.0-preserve-settings.json",
+        "public-2.1.0-preserve-state.json",
+        "public 2.1.0 preserve migration failed",
+        "public 2.1.0 state-only ownership refresh failed",
+        "public-2.1.0-native-stability-canary",
+        "agy-settings-native-special-character-canary",
+        '"colorScheme": "tokyo \\u003c\\u0026\\u003e\\u2028\\u2029"',
+        "agy-settings-unknown-null-recovery.json",
+        "customModelsConfig:null",
+        "customModelsConfig:[]",
+        "Telegram extra deny was not reconciled before Bridge startup",
+        "Telegram extra deny repair was not restart-idempotent",
+        '"showTips":"false"',
+        "patch contains an unsupported top-level setting",
+        "patch contains an unsupported scalar setting value",
+        '"unsafe":9007199254740993',
+        '"negativeZero":-0',
+        '"exponent":1.2300e+06',
+        '"overflow":1e400',
+        'modelProvider: ""',
         'process.kill(process.pid, \\"SIGKILL\\")',
         '.phase == "prepared"',
         '.permission_migration == "applied"',
         '.permission_migration == "already_applied"',
         '.permission_migration == "skipped_unowned"',
         '.permission_migration == "skipped_ambiguous"',
-        "preserve permission migration changed non-permission bytes",
+        "preserve permission migration changed unrelated settings semantics",
         'index("user(custom/allow)")',
         'index("user(custom/ask)")',
         'index("user(custom/deny)")',
@@ -758,7 +865,9 @@ def test_native_defaults_and_plugin_are_fixed_image_managed_inputs(
     for native_file_rule in ("read_file(*)", "write_file(*)"):
         assert f'"{native_file_rule}"' not in always_proceed_policy
     image_settings = json.loads(settings.read_text(encoding="utf-8"))
-    assert image_settings["toolPermission"] == "request-review"
+    assert "toolPermission" not in image_settings
+    assert "enableTerminalSandbox" not in image_settings
+    assert list(image_settings) == sorted(image_settings)
     assert image_settings["allowNonWorkspaceAccess"] is True
     for sensitive_rule in (
         "read_file(*)",

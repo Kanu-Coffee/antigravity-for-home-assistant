@@ -211,9 +211,11 @@ native `read_file`/`write_file`은 이 모드에서도 deny되고 file 작업은
 `proceed-in-sandbox`만 legacy upgrade 입력이며 `request-review`로 정규화됩니다.
 2.0.12부터 Telegram이 켜지면
 root-owned single-link regular·256 KiB 이하·parse 가능한 settings를 시작 transaction으로
-backup하고 다섯 App 관리 보안 key 및 permission 세 bucket을 선택 모드의 exact policy로
-정규화합니다. unknown custom allow/ask/deny는 제거하지만 그 다섯 key 밖의 top-level
-설정, global MCP/plugin/OAuth와 `/config`는 보존하고 기존 mode는 0600으로 강화합니다.
+backup합니다. 현재 2.1.1은 App 관리 보안 field, 선택 mode의 sparse native shape와
+known permission bucket을 exact policy로 정규화하고 retired `enableTerminalSandbox`를
+제거합니다. unknown custom allow/ask/deny는 제거하지만 이 App 관리 permission 경계 밖의
+top-level 설정, global MCP/plugin/OAuth와 `/config`는 보존하고 기존 mode는 0600으로
+강화합니다.
 2.0.16부터 지원되는 안전한 settings의 기존 permission bucket이 배열이 아니어도 세
 managed bucket을 먼저 canonical policy로 교체한 뒤 typed merge를 검증합니다.
 symlink/hardlink/non-root owner, 크기 초과나 parse 불가능한 JSON은 수정하지 않고 gate가
@@ -278,10 +280,15 @@ port-forward하지 말고 신뢰하는 VPN 또는 mesh VPN을 사용하세요.
 > [!CAUTION]
 > Telegram은 CLI와 동등한 관리자 주 채널입니다. 허용된 사용자는 `/config`, OAuth와
 > 사용자가 만든 전역·workspace plugin/agent/rule/MCP를 사용하고 일반 customization을
-> 수정할 수 있습니다. raw settings 직접 write는 예외이며 일반 전역 설정은
-> `agy-settings patch`로 매개 수정합니다. bot
+> 수정할 수 있습니다. raw settings 직접 write는 예외이며 검증된 top-level scalar UI
+> 설정만 `agy-settings patch`로 매개 수정합니다. 알 수 없는 non-null key와
+> object/array 값은 거부되며, 알 수 없는 top-level key의 `null`은 기존 값을 지우는
+> 복구 용도로만 허용됩니다. bot
 > token, 허용 chat과 Telegram 계정을 HA 관리자 credential처럼
 > 보호하세요. 실제 HAOS OAuth/AppArmor/Bot API 통합 E2E는 아직 `NOT RUN`입니다.
+
+지원 scalar key는 `altScreenMode`, `clearScrollbackOnResize`, `colorScheme`,
+`disableSlashCommands`, `modelProvider`, `showFeedbackSurvey`, `showTips`입니다.
 
 Web UI 또는 SSH에서 `ha-antigravity-login`으로 한 번 로그인합니다. Telegram도 같은
 `/data/home` identity를 사용하므로 별도 `ha-telegram-login`은 없습니다.
@@ -627,16 +634,18 @@ primary OAuth backend의 실제 경로와 same-process built-in read 비유출�
 
 | mode | 보존·변경 범위 |
 | --- | --- |
-| `preserve` | OAuth·사용자 settings/MCP/plugin 보존; 단, Telegram enabled이면 안전한 settings의 다섯 App 관리 보안 key와 permission 세 bucket을 exact policy로 자동 정규화; App 소유 HA plugin은 version당 canonical 보안 갱신 |
+| `preserve` | OAuth·사용자 settings/MCP/plugin 보존; 단, Telegram enabled이면 안전한 settings의 App 관리 보안 field와 선택 mode의 known permission bucket을 exact policy로 자동 정규화; App 소유 HA plugin은 version당 canonical 보안 갱신 |
 | `refresh_managed` | 위 보존·plugin 갱신에 더해 소유권이 기록된 settings key·permission rule을 root-only backup 후 merge |
-| `reset_v2` | 명시적 복구 mode. 안전하게 parse 가능한 settings를 backup하고 ownership state와 무관하게 managed key와 permission 세 bucket을 image exact default로 교체 |
+| `reset_v2` | 명시적 복구 mode. 안전하게 parse 가능한 settings를 backup하고 ownership state와 무관하게 managed field와 선택 mode의 known permission bucket을 image exact default로 교체 |
 
 세 mode 모두 `/config`, native OAuth, SSH key, browser identity, memory DB와 사용자
 소유 plugin/MCP를 초기화 대상으로 삼지 않습니다. `reset_v2`는 `permissions` 밖의
-사용자 top-level settings와 기존 global MCP도 보존하지만 managed key 및
-`permissions.allow`/`ask`/`deny` 전체는 exact default로 되돌립니다. 기존 ownership
-state가 없거나 모호해도 명시 선택을 복구 권한으로 사용하며, unsafe regular file이나
-parse 불가능한 JSON은 계속 fail closed합니다. `reset_v2`를 선택한 동안은 같은
+사용자 top-level settings와 기존 global MCP도 보존하지만 managed field와 선택 mode에
+존재하는 known permission bucket은 exact default로 되돌립니다. `request-review`는
+`allow`/`deny`/`ask`를 기록하고, `always-proceed`는 `allow`/`deny`만 기록해 empty `ask`를
+생략합니다. 기존 ownership state가 없거나 모호해도 명시 선택을 복구 권한으로
+사용하며, unsafe regular file이나 parse 불가능한 JSON은 계속 fail closed합니다.
+`reset_v2`를 선택한 동안은 같은
 version에서도 매 시작 drift를 복구하므로 정상화 뒤 `preserve`로 돌려놓으세요.
 mode와 관계없이 App 소유
 `home-assistant` plugin은 안전한 ownership marker가 있으면 App version당 한 번
@@ -776,6 +785,25 @@ downgrade는 지원되지 않습니다. exact 2.0.12 시점 App backup을 복원
 ### Telegram 응답 없음
 
 - `telegram_enabled`, bot token 형식과 App 재시작 여부를 확인합니다.
+- 공개 2.1.0에서 Web `agy`가
+  `settings.json.<uuid>.tmp`를 `settings.json`으로 atomic rename하지 못하고 default
+  fallback을 제시하면 cross-device `EXDEV`로 분류하지 마세요. 두 경로는 같은
+  `/data/home/.gemini/antigravity-cli` 디렉터리입니다. Antigravity 1.1.13이
+  `request-review` mode에서 non-canonical top-level `toolPermission`과
+  `enableTerminalSandbox`를 첫 TUI 실행에서 제거하려 했지만, 최종 settings 교체가
+  의도된 AppArmor deny에 막힌 2.1.0 호환성 회귀입니다. 2.1.1의 native shape에서
+  `request-review`는 top-level `toolPermission`을 생략하고 `always-proceed`는 exact
+  `"toolPermission":"always-proceed"`를 유지하며, 두 mode 모두
+  `enableTerminalSandbox`를 생략합니다. known permission bucket은 native order로
+  직렬화하고 `always-proceed`에서는 empty `ask`를 생략하며 App option의 기대 mode와
+  대조합니다. AppArmor를 완화하거나 copy/unlink fallback을 추가하지 않습니다.
+- Telegram token과 user/chat allowlist는 `/data/options.json`에서 읽습니다. Bridge는
+  Home Assistant Core `telegram_bot` 통합이 아니라 별도 S6 서비스이고 관리형 proposal
+  MCP 이름은 `telegram_action`입니다. Core Telegram service 또는 이름이 `telegram`인
+  MCP가 없다는 사실만으로 Bridge가 비활성이라고 판정하지 마세요.
+  `permission_boundary_ready`, `connected`, `request_accepted`, `session_ready`,
+  `request_failed`의 제한된 Bridge event를 순서대로 확인해 transport와 native worker
+  실패를 구분합니다.
 - `waiting_for_authorization`이면 재시작을 반복하지 말고 두 정적 목록을 모두
   설정하거나 local pairing을 완료합니다. Telegram을 쓰지 않으면
   `telegram_enabled: false`로 저장합니다.
@@ -864,7 +892,7 @@ downgrade는 지원되지 않습니다. exact 2.0.12 시점 App backup을 복원
 
 ## 검증 상태와 알려진 제한
 
-2026-08-19 저장소 기준으로 정적·component test는 native CLI wrapper, read/change
+2026-08-20 저장소 기준으로 정적·component test는 native CLI wrapper, read/change
 broker, universal action proposal/coordinator/executor, Telegram binding/replay, memory,
 browser 계약, migration, AppArmor policy parse와 kernel-enforced startup smoke를
 대상으로 합니다. 이 smoke는 실제 profile을 exact image에 attach해 cold start,
@@ -875,7 +903,7 @@ fresh-container restart, S6 init과 안전한 canary 내용으로 준비한
 
 - 실제 HAOS amd64의 clean install과 aarch64의 install·start·update
 - 양쪽 아키텍처의 native Antigravity OAuth와 plugin discovery
-- 2.1.0에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되고 S6,
+- 2.1.1에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되고 S6,
   native `--version`/대화, Web terminal PTY·reconnect, broad operational read/write,
   managed read MCP, raw-unavailable bounded Host/Supervisor log projection과 known
   credential redaction, Telegram 승인카드·자율 관리자 모드와
@@ -896,8 +924,12 @@ S6 runtime startup `FAIL`, 공개 2.0.14의 resolved Bashio execute startup `FAI
 MCP·Telegram 승인 제안 `FAIL`과 승인된 쓰기 `NOT RUN`, 공개 2.0.18 amd64의
 startup/native version/no-tool chat `PASS`이지만 Web PTY I/O와 첫 managed tool
 `FAIL`, 후속 3~7은 failed-conversation 재사용으로 독립 판정 불가, 승인된 쓰기
-`NOT RUN`입니다. 2.1.0 amd64·aarch64 실기기는 `NOT RUN`입니다. aarch64 면제는 PASS가 아니며 전체 v2 수용은
-`PARTIAL`입니다. 이 결과를 전체 HA-001~HA-008 또는 AA-001 PASS로 확대하지 않습니다.
+`NOT RUN`입니다. 공개 2.1.0 amd64의 첫 Web TUI settings canonicalization은
+same-directory rename failure와 default fallback으로 `FAIL`했고 Telegram 호출도 사용자
+응답을 반환하지 않았지만, bounded Bridge event가 없어 transport와 worker failure는
+구분하지 못했습니다. 2.1.1 amd64·aarch64 실기기 수용은 `NOT RUN`입니다. aarch64
+면제는 PASS가 아니며 전체 v2 수용은 `PARTIAL`입니다. 이 결과를 전체
+HA-001~HA-008 또는 AA-001 PASS로 확대하지 않습니다.
 
 ## 지원 보고서
 

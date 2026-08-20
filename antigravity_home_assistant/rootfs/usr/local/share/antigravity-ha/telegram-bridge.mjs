@@ -24,6 +24,8 @@ import {
   TELEGRAM_SAFE_ALLOW_RULES,
   TELEGRAM_SETTINGS_MAX_BYTES,
   assertTelegramPermissionBoundary,
+  nativeCanonicalSettingsContent,
+  nativeParseJsonContent,
 } from "./telegram-permission-policy.mjs";
 import {
   consumePairing,
@@ -690,7 +692,10 @@ function loadRuntimeConfig(options) {
   return { enabled, botToken, toolPermission, allowedUsers, allowedChats };
 }
 
-function loadTelegramPermissionBoundary(path = ANTIGRAVITY_SETTINGS_PATH) {
+function loadTelegramPermissionBoundary(
+  expectedToolPermission,
+  path = ANTIGRAVITY_SETTINGS_PATH,
+) {
   let descriptor;
   try {
     descriptor = openSync(
@@ -703,14 +708,30 @@ function loadTelegramPermissionBoundary(path = ANTIGRAVITY_SETTINGS_PATH) {
         before.size > TELEGRAM_SETTINGS_MAX_BYTES) {
       throw new Error("effective Antigravity settings file is not a private root-owned file");
     }
-    const value = JSON.parse(readFileSync(descriptor, "utf8"));
+    const raw = readFileSync(descriptor);
+    if (raw.length !== before.size) {
+      throw new Error("effective Antigravity settings changed while they were read");
+    }
+    const value = nativeParseJsonContent(raw);
     const after = fstatSync(descriptor);
     if (before.dev !== after.dev || before.ino !== after.ino ||
         before.size !== after.size || before.mtimeMs !== after.mtimeMs ||
         before.ctimeMs !== after.ctimeMs) {
       throw new Error("effective Antigravity settings changed while they were checked");
     }
-    return assertTelegramPermissionBoundary(value);
+    const boundary = assertTelegramPermissionBoundary(
+      value,
+      expectedToolPermission,
+    );
+    if (!raw.equals(nativeCanonicalSettingsContent(
+      value,
+      expectedToolPermission,
+    ))) {
+      throw new Error(
+        "effective Antigravity settings are not in native canonical form",
+      );
+    }
+    return boundary;
   } catch (error) {
     if (error?.message?.startsWith("effective Antigravity")) throw error;
     throw new Error("effective Antigravity permissions could not be verified for Telegram");
@@ -4335,7 +4356,7 @@ async function waitForTelegramPermissionBoundary(config, {
   auditEvent = audit,
 } = {}) {
   try {
-    const effectivePermissionBoundary = load();
+    const effectivePermissionBoundary = load(config.toolPermission);
     if (config.toolPermission !== effectivePermissionBoundary.toolPermission) {
       throw new Error(
         "configured and effective Antigravity permissions differ for Telegram; select reset_v2 in the App user-file update option and restart",

@@ -32,6 +32,29 @@
 > consult each release's evidence for complete install, update, and rollback
 > verification on both real HAOS architectures.
 
+**2.1.1 native-settings compatibility fix:** On public 2.1.0, the first real
+Web `agy` launch caused Antigravity 1.1.13 to canonicalize its settings by
+removing non-canonical top-level `toolPermission` and `enableTerminalSandbox`
+in `request-review` mode. AppArmor then correctly blocked replacement of
+the protected `settings.json`, producing an atomic-rename error and a default
+fallback prompt. The temporary and destination files share one directory, so
+this was not an `EXDEV` failure. Version 2.1.1 uses native 1.1.13's
+mode-specific shape: `request-review` omits top-level `toolPermission`,
+`always-proceed` retains exact `"toolPermission":"always-proceed"`, and both
+modes omit `enableTerminalSandbox`. It validates canonical native permission
+buckets against the Telegram mode selected in App options. Known buckets use
+native order, and `always-proceed` omits empty `ask`. The final-settings AppArmor
+write/link/lock deny and native file-tool, command, and shell boundaries remain
+unchanged; no copy/unlink fallback or settings-write grant is added.
+
+Telegram tokens and allowlists come from `/data/options.json`, and the Bridge
+is a separate S6 service. Missing Home Assistant Core `telegram_bot` services
+or an MCP literally named `telegram` do not prove that the Bridge is inactive;
+the managed proposal MCP is `telegram_action`. Automated regressions are not
+real HAOS evidence. Real-device 2.1.1 Web TUI, AppArmor, authenticated Telegram,
+browser, and memory acceptance remains `NOT RUN` on amd64 and aarch64, and
+overall v2 remains `PARTIAL`.
+
 **2.1.0 operational-permission redesign:** Public 2.0.18 on real HAOS 18.2
 amd64 passed App startup, native `antigravity --version` with status 0,
 Telegram transport, and a no-tool chat. Web `agy`/`antigravity` interactive I/O
@@ -216,12 +239,15 @@ inputs for stored Supervisor options and normalize to `request-review`.
 
 Starting in 2.0.12, enabling
 Telegram transactionally backs up a root-owned, single-link regular, parseable
-settings file of at most 256 KiB. Version 2.1.0 restores `allowNonWorkspaceAccess=true`,
-`artifactReviewPolicy=agent-decides`, `enableTerminalSandbox=false`,
-the selected effective `toolPermission`, and that mode's exact permission buckets.
-Unknown custom allow/ask/deny rules are removed, while top-level settings outside
-those five App-managed security keys, global MCP, plugins, OAuth, and `/config`
-remain preserved. A non-0600 mode is hardened to 0600 by the transaction.
+settings file of at most 256 KiB. In its current 2.1.1 form, it restores
+`allowNonWorkspaceAccess=true`, `artifactReviewPolicy=agent-decides`, the selected
+mode's sparse `toolPermission` representation, and that mode's known permission
+buckets, while removing retired `enableTerminalSandbox`. `request-review` omits
+top-level `toolPermission` and records `allow`/`deny`/`ask`; `always-proceed`
+retains its exact mode value and records only `allow`/`deny`. Unknown custom
+allow/ask/deny rules are removed, while top-level settings outside this
+App-managed permission boundary, global MCP, plugins, OAuth, and `/config` remain
+preserved. A non-0600 mode is hardened to 0600 by the transaction.
 Symlinks, hardlinks, non-root ownership, oversized files, or unparsable JSON are
 left untouched; the bridge records one
 sanitized `permission_boundary_blocked` event and waits without contacting the
@@ -373,16 +399,18 @@ The default `antigravity_user_files_update_mode` is `preserve`.
 
 | Value | Behavior |
 | --- | --- |
-| `preserve` | Preserve OAuth and user-owned settings, MCP, and plugins; when Telegram is enabled, automatically reconcile safe settings' five App-managed security keys and permission buckets to the exact policy; refresh the App-owned HA plugin once per version |
+| `preserve` | Preserve OAuth and user-owned settings, MCP, and plugins; when Telegram is enabled, automatically reconcile the App-managed security fields, selected mode's sparse native shape, and known permission buckets to the exact policy; refresh the App-owned HA plugin once per version |
 | `refresh_managed` | Keep those guarantees and plugin refresh, then back up and merge ownership-recorded settings keys and permission rules |
-| `reset_v2` | Explicit recovery mode: back up safely parseable settings and replace managed keys plus all three permission buckets with the exact image defaults, regardless of ownership state |
+| `reset_v2` | Explicit recovery mode: back up safely parseable settings and replace managed fields plus the selected mode's known permission buckets with the exact image defaults, regardless of ownership state |
 
 `reset_v2` preserves user top-level settings outside `permissions`, the existing
 global MCP configuration, user plugins, `/config`, OAuth, SSH keys, browser
-identity, and memory. It exactly resets managed keys and the entire
-`permissions.allow`/`ask`/`deny` object even when prior App ownership state is
-missing or ambiguous. Unsafe regular-file state or invalid JSON still fails
-closed. Until the option is returned to `preserve`, every startup repairs drift;
+identity, and memory. It exactly resets managed fields and the known permission
+buckets present in the selected mode: `request-review` records
+`allow`/`deny`/`ask`, while `always-proceed` records `allow`/`deny` and omits
+empty `ask`. This applies even when prior App ownership state is missing or
+ambiguous. Unsafe regular-file state or invalid JSON still fails closed. Until
+the option is returned to `preserve`, every startup repairs drift;
 switch it back after recovery. Regardless of mode, the App-owned `home-assistant` plugin is
 refreshed from the canonical image copy once per App version when its ownership
 marker is safe. A marker-less plugin with that name is treated as a user-owned

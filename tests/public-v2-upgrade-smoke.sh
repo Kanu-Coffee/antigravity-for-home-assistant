@@ -458,9 +458,9 @@ CANDIDATE_STATE
 run_bounded docker exec "${CANDIDATE_CONTAINER}" jq --exit-status \
   --arg marker "${SHARED_HOME_MARKER}" '
     .user_upgrade_marker == $marker
-    and .toolPermission == "request-review"
+    and (has("toolPermission") | not)
     and .allowNonWorkspaceAccess == true
-    and .enableTerminalSandbox == false
+    and (has("enableTerminalSandbox") | not)
     and (.permissions.allow | index("user(custom/global)") != null)
     and (.permissions.allow | index("read_file(/config)") == null)
     and (.permissions.allow | index("write_file(/config)") == null)

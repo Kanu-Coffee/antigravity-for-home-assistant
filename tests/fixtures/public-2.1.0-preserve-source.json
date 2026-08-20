@@ -1,0 +1,12 @@
+{
+  "image": "ghcr.io/kanu-coffee/antigravity-for-home-assistant:2.1.0",
+  "image_digest": "sha256:f1d23edf602f2bdb9cc1846950cab2e3339a41081fab32a712c9e2782ce052ae",
+  "source_revision": "03c28b704f3ee71d034809c06c1c584ae23620e5",
+  "options": {
+    "antigravity_tool_permission": "request-review",
+    "antigravity_terminal_sandbox": false,
+    "antigravity_user_files_update_mode": "preserve"
+  },
+  "settings_sha256": "1d91fa1e64ae864c8ba6345a8237214d746cd18bde0b9297917933ddb23ac8f1",
+  "state_sha256": "d613788c6fa63a7c8c20823d012cb31f2abdfe171473f1be976f5d27e43ff7eb"
+}
