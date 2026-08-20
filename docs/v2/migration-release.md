@@ -9,7 +9,7 @@ public App은 사용자의 HAOS에서 source build하지 않고 GHCR prebuilt im
 받는다.
 
 ```yaml
-version: "2.1.1"
+version: "2.1.2"
 arch:
   - amd64
   - aarch64
@@ -141,6 +141,31 @@ canonical order로 기록한다. `request-review`는 `allow`/`deny`/`ask`,
 settings-write grant는 추가하지 않는다. 2.1.1의 real-HAOS Web TUI, enforced AppArmor,
 authenticated Telegram delivery, browser와 memory 수용은 amd64/aarch64 모두
 `NOT RUN`이고 전체 v2 수용은 `PARTIAL`이다.
+
+공개 뒤 2.1.1 실제 HAOS amd64의 Telegram 시험은 transport, exact no-tool response,
+단일 `ha_read_state`와 confined `ha_files_list`를 `PASS`했다. 그러나 explicit
+`always-proceed`의 read-only native `run_command` turn은 Bridge에서
+`headless_permission_denied`로 분류됐고, 반복 요청은 mode를 구분하지 않는 proposal
+fallback 뒤 `proposal_result_invalid`로 끝났다. 2.1.1 classifier는 generic
+permission 문구를 어느 tool error에서든 일치시켰고 tool/denial layer를 기록하지
+않았으므로 AppArmor command profile이나 `/config` directory read 도달 여부는 판정할
+수 없다. 두 항목은 `FAIL`이 아니라 `NOT RUN`이다. 공개 2.1.1 이미지의 격리
+재현에서는 canonical `always-proceed`와 straight ASCII quote를 사용한 같은 명령이
+성공했고 curly Unicode quote도 권한 거부 없이 실행됐지만 출력만
+`‘TERMINAL-DIR-OKn’`로 훼손됐다. 이 자동 재현은 HAOS 증거가 아니다.
+
+2.1.2는 exact native 1.1.13 headless denial만 bounded하게 분류하고 선택된 mode와
+함께 처리한다. proposal이 없는 `request-review`의 `run_command` denial만 최대 한 번
+`telegram_action` proposal로 재계획하고 exact single same-run proposal은 기존 receipt
+검증을 계속한다. `always-proceed`에서 같은 denial이 나오면 정상 승인 요청으로
+위장하지 않고 approval card 없이 `unexpected_permission_denied` policy mismatch로
+fail closed한 뒤 conversation을 격리한다. Native `read_file`/`view_file`/`write_file`/`write_to_file` denial은 두
+mode 모두 `headless_read_denied`이며 forbidden native-file proposal로 보내지 않고
+confined `ha_files` 사용을 안내한다. 일반 command/AppArmor 오류 문구는 native approval
+denial로 오인하지 않는다. 이 진단·복구 보강은 2.1.0의 trust boundary를 바꾸지 않는
+patch이므로 `breaking_versions`에는 2.1.2를 추가하지 않는다. 2.1.2의 real-HAOS
+install/update, direct command, request-review proposal/approval, restart, rollback과
+aarch64 수용은 배포 전 모두 `NOT RUN`이며 전체 v2 수용은 `PARTIAL`이다.
 
 native `read_file(*)`/`write_file(*)`는 symlink alias 우회를 막기 위해 두 mode에서
 mandatory deny한다. ordinary file access는 server `ha_files`의

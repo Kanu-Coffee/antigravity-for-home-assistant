@@ -7,7 +7,7 @@ import {
   drainPendingResponseDeliveries,
   drainResponseDelivery,
   handleMessage,
-  processPrompt,
+  processPrompt as productionProcessPrompt,
   responseDeliveryId,
 } from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs";
 import {
@@ -38,6 +38,15 @@ const config = {
     "-1300", "-1400",
   ]),
 };
+
+function processPrompt(promptConfig, message, ticket, options = {}) {
+  return productionProcessPrompt(promptConfig, message, ticket, {
+    permissionBoundaryLoad: (expectedToolPermission) => ({
+      toolPermission: expectedToolPermission,
+    }),
+    ...options,
+  });
+}
 
 const fixtureRoot = await mkdtemp(join(tmpdir(), "telegram-session-delivery-"));
 try {

@@ -31,6 +31,22 @@
 > 확인하세요. 현재 `experimental`이며 실제 HAOS 양쪽 아키텍처의 전체 설치·업데이트·
 > rollback 검증은 릴리스별 증거를 확인해야 합니다.
 
+**2.1.2 Telegram 명령 권한 진단 수정:** 공개 2.1.1의 실제 HAOS amd64에서
+Telegram no-tool 응답, `ha_read_state`, confined `ha_files_list`는 `PASS`했지만,
+explicit `always-proceed`의 read-only native `run_command` 요청은 Bridge에서
+`headless_permission_denied`로 분류됐고 반복 요청은 mode를 구분하지 않는 proposal
+fallback 뒤 `proposal_result_invalid`로 끝났습니다. 2.1.1 telemetry는 tool이나
+denial layer를 식별하지 않아 shell/AppArmor 도달 여부를 판정할 수 없습니다. 공개
+2.1.1 이미지의 격리 재현에서는 straight ASCII quote 명령이 성공했고, curly Unicode
+quote도 권한 거부 없이 실행됐지만 출력만 훼손했습니다. 이 재현은 HAOS 증거가
+아닙니다. 2.1.2는 exact native denial만 분류하고, proposal이 없는
+`request-review` command만 최대 한 번 재계획하며 exact single same-run proposal은
+기존 receipt 검증을 계속합니다. `always-proceed` denial은 approval card로 전환하지
+않고 `unexpected_permission_denied` policy mismatch로 격리합니다. native
+`read_file`/`view_file`/`write_file`/`write_to_file` deny는 계속 managed `ha_files`
+경계로 안내합니다. 2.1.2의
+실제 HAOS 명령·승인·재시작 수용은 설치 전 `NOT RUN`이며 전체 v2는 `PARTIAL`입니다.
+
 **2.1.1 native settings 호환성 수정:** 공개 2.1.0의 실제 Web UI에서 첫 `agy`
 실행 시 Antigravity 1.1.13이 `request-review` mode에서 non-canonical top-level
 `toolPermission`과 `enableTerminalSandbox`를 제거해 설정을 canonicalize하려 했고, 보호된
@@ -49,9 +65,11 @@ canonical native permission bucket과 대조합니다. known bucket은 native or
 Telegram token과 허용 목록은 `/data/options.json`에서 읽고 Bridge는 별도 S6
 서비스입니다. Home Assistant Core의 `telegram_bot` service 또는 이름이 `telegram`인
 MCP가 없는 것은 Bridge 비활성 증거가 아니며, 관리형 proposal MCP 이름은
-`telegram_action`입니다. 자동 회귀는 실제 HAOS 증거가 아닙니다. 2.1.1의 Web TUI,
-AppArmor, authenticated Telegram, browser와 memory 실기기 수용은 amd64/aarch64 모두
-`NOT RUN`이고 전체 v2는 `PARTIAL`입니다.
+`telegram_action`입니다. 자동 회귀는 실제 HAOS 증거가 아닙니다. 2.1.1 공개 시점의
+Web TUI, AppArmor, authenticated Telegram, browser와 memory 실기기 수용은
+amd64/aarch64 모두 `NOT RUN`이었습니다. 이후 amd64의 Telegram no-tool과 두 managed
+read는 `PASS`, direct command와 proposal fallback은 `FAIL`했으며 전체 v2는
+`PARTIAL`입니다.
 
 **2.1.0 운영 권한 재설계:** 공개 2.0.18의 실제 HAOS 18.2 amd64에서 App 기동,
 `antigravity --version` status 0, Telegram transport와 도구 없는 기본 대화는
@@ -222,7 +240,7 @@ command/URL과 installed MCP를 자율 관리자 권한으로 실행합니다. n
 
 2.0.12부터 Telegram이 켜져 있으면 시작 전에 root 소유
 single-link regular이고 256 KiB 이하이며 parse 가능한 settings를 transaction backup합니다.
-현재 2.1.1은 `allowNonWorkspaceAccess=true`,
+현재 2.1.2는 `allowNonWorkspaceAccess=true`,
 `artifactReviewPolicy=agent-decides`, 선택 mode의 sparse `toolPermission` 표현과 known
 permission bucket을 exact image policy로 정규화하고 retired
 `enableTerminalSandbox`는 제거합니다. `request-review`는 top-level `toolPermission`을

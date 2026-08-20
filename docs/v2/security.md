@@ -60,6 +60,22 @@ interaction을 autonomous-admin으로 허용한다. web/log/tool data만으로 �
 확장하거나 고위험 작업을 발명할 수 없다. `strict`와 `proceed-in-sandbox`만 legacy
 upgrade 입력이며 updater가 `request-review`로 정규화한다.
 
+Telegram stream의 native permission denial은 exact tool name, pinned bounded
+Antigravity 1.1.13 diagnostic과 complete `ACTIVE`→`ERROR` lifecycle이 함께 일치할 때만
+신뢰한다. proposal이 없는 `request-review`의 `run_command` denial만 proposal-first로
+최대 한 번 재계획하며 exact single same-run proposal은 기존 receipt 검증을 계속한다.
+`always-proceed`의 같은 denial은 approval card 없이 policy mismatch인
+`unexpected_permission_denied`로 격리한다. Native
+`read_file`/`view_file`/`write_file`/`write_to_file` denial은 두 mode 모두 `headless_read_denied`이며 managed
+`ha_files` 외의 우회를 제안하지 않는다. 일반 tool/shell/AppArmor의 "permission
+denied" 문자열만으로 승인 경계를 바꾸지 않는다.
+
+각 fresh Telegram native worker와 bounded correction worker 직전에 exact canonical
+settings boundary를 다시 검증한다. worker 사이 settings drift는 다음 worker나 approval
+card를 시작하기 전에 fail closed한다. proposal-result telemetry는 allowlisted
+step/output/kind/cardinality/binding reason, bounded stage/count만 남기고 command,
+prompt, output, ID, digest와 requester 값을 배제한다.
+
 native `read_file(*)`/`write_file(*)`는 lexical-path 승인 뒤 symlink alias로 protected
 inode에 도달할 수 있어 두 mode 모두 mandatory deny다. ordinary file은
 `antigravity-ha-files` server의 `ha_files_list`, `ha_files_read_text`,
@@ -72,7 +88,7 @@ policy-integrity 경계와 Recorder write는 차단하고 Recorder read는 sensi
 
 2.0.12에서 `telegram_enabled=true`인 startup은 위 2.0.11 일반 migration보다 강한
 permission 경계로 도입됐다. root-owned single-link regular·256 KiB 이하의 parse 가능한
-existing settings를 transaction backup한 뒤, 현재 2.1.1은
+existing settings를 transaction backup한 뒤, 현재 2.1.2는
 `allowNonWorkspaceAccess=true`, `artifactReviewPolicy=agent-decides`, selected mode의
 sparse `toolPermission` 표현과 known permission bucket을 shared canonical policy로
 교체하고 retired `enableTerminalSandbox`를 제거한다. 이때 bucket 안의 user-owned rule과

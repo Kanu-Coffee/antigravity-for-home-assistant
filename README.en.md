@@ -32,6 +32,26 @@
 > consult each release's evidence for complete install, update, and rollback
 > verification on both real HAOS architectures.
 
+**2.1.2 Telegram command-permission diagnostics:** On public 2.1.1 on real
+HAOS amd64, Telegram no-tool response, `ha_read_state`, and confined
+`ha_files_list` passed, but an explicit-`always-proceed` read-only native
+`run_command` turn was classified by the Bridge as
+`headless_permission_denied`. Repeating it entered a mode-unaware proposal
+fallback and ended in `proposal_result_invalid`. Version 2.1.1 telemetry did
+not identify the tool or denial layer, so it cannot prove whether the shell or
+AppArmor was reached. In an isolated public-2.1.1-image reproduction, the
+straight-ASCII-quote command succeeded; curly Unicode quotes also executed
+without a permission denial but corrupted only the output. That isolated run
+is not HAOS evidence. Version 2.1.2 classifies only exact native denials. A
+`request-review` command denial without a proposal may replan at most once,
+while one exact same-run proposal continues through the existing receipt
+checks. An `always-proceed` denial is quarantined as the
+`unexpected_permission_denied` policy mismatch without presenting an approval
+card. Native `read_file`, `view_file`, `write_file`, and `write_to_file` denials
+still direct ordinary files through managed `ha_files`.
+Real-device 2.1.2 command, approval, and restart acceptance remains `NOT RUN`
+before installation, and overall v2 remains `PARTIAL`.
+
 **2.1.1 native-settings compatibility fix:** On public 2.1.0, the first real
 Web `agy` launch caused Antigravity 1.1.13 to canonicalize its settings by
 removing non-canonical top-level `toolPermission` and `enableTerminalSandbox`
@@ -51,9 +71,11 @@ Telegram tokens and allowlists come from `/data/options.json`, and the Bridge
 is a separate S6 service. Missing Home Assistant Core `telegram_bot` services
 or an MCP literally named `telegram` do not prove that the Bridge is inactive;
 the managed proposal MCP is `telegram_action`. Automated regressions are not
-real HAOS evidence. Real-device 2.1.1 Web TUI, AppArmor, authenticated Telegram,
-browser, and memory acceptance remains `NOT RUN` on amd64 and aarch64, and
-overall v2 remains `PARTIAL`.
+real HAOS evidence. At publication, real-device 2.1.1 Web TUI, AppArmor,
+authenticated Telegram, browser, and memory acceptance was `NOT RUN` on amd64
+and aarch64. Subsequent amd64 Telegram checks passed no-tool and two managed
+reads but failed direct command and proposal fallback; overall v2 remains
+`PARTIAL`.
 
 **2.1.0 operational-permission redesign:** Public 2.0.18 on real HAOS 18.2
 amd64 passed App startup, native `antigravity --version` with status 0,
@@ -239,7 +261,7 @@ inputs for stored Supervisor options and normalize to `request-review`.
 
 Starting in 2.0.12, enabling
 Telegram transactionally backs up a root-owned, single-link regular, parseable
-settings file of at most 256 KiB. In its current 2.1.1 form, it restores
+settings file of at most 256 KiB. In its current 2.1.2 form, it restores
 `allowNonWorkspaceAccess=true`, `artifactReviewPolicy=agent-decides`, the selected
 mode's sparse `toolPermission` representation, and that mode's known permission
 buckets, while removing retired `enableTerminalSandbox`. `request-review` omits

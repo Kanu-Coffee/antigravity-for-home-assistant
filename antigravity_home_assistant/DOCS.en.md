@@ -222,7 +222,7 @@ Native `read_file` and `write_file` stay denied and files still go through
 `proceed-in-sandbox` are legacy upgrade inputs normalized to `request-review`.
 Starting in 2.0.12, enabling
 Telegram transactionally backs up a root-owned, single-link regular, parseable
-settings file of at most 256 KiB. In its current 2.1.1 form, it restores the
+settings file of at most 256 KiB. In its current 2.1.2 form, it restores the
 App-managed security fields, selected mode's sparse native shape, and known
 permission buckets, while removing retired `enableTerminalSandbox`. Unknown
 custom allow/ask/deny rules are removed, while top-level settings outside this
@@ -922,6 +922,21 @@ contingency.
   proposal, or review the direct tool interactively in Web/SSH. An administrator
   who explicitly accepts autonomous operation may select `always-proceed` in the
   App option; the mandatory blacklist still applies.
+- On public 2.1.1, if `/status` says `always-proceed` but an ordinary
+  `run_command` turn is classified as `headless_permission_denied` and the
+  repeated request fails proposal validation, do not infer either a directory/
+  AppArmor failure or a native-policy denial. That classifier did not retain
+  the tool/layer and also matched generic permission text. In an isolated
+  public-2.1.1-image reproduction, the straight-ASCII-quote command succeeded;
+  curly Unicode quotes also executed without a permission denial but corrupted
+  the output to `‘TERMINAL-DIR-OKn’`. This is not HAOS evidence; avoid repeated
+  execution and inspect the bounded 2.1.2 reason instead. Version 2.1.2 replans
+  only an exact native command denial without a proposal in `request-review`,
+  at most once; one exact same-run proposal continues through receipt checks.
+  An `always-proceed` denial fails closed as the `unexpected_permission_denied`
+  policy mismatch without an approval card. Native-file denial is separated as `headless_read_denied`
+  with managed-`ha_files` guidance; an ordinary shell/AppArmor `Permission
+  denied` is not mistaken for native approval denial.
 - `/status` distinguishes Telegram transport, the bound conversation, and the
   most recent shared AI runtime/outbox result. Working help or status does not prove the
   shared native OAuth is ready.
@@ -970,7 +985,7 @@ contingency.
 
 ## Verification status and known limitations
 
-As of the repository state on 2026-08-20, static and component tests cover the
+As of the repository state on 2026-08-21, static and component tests cover the
 native CLI wrapper, read/change brokers, universal action
 proposal/coordinator/executor, Telegram binding and replay, memory, browser
 contracts, migration, AppArmor policy parsing, and a kernel-enforced startup
@@ -982,7 +997,7 @@ these items `VERIFIED`:
 
 - Clean install on real HAOS amd64, and install/start/update on aarch64
 - Native Antigravity OAuth and plugin discovery on both architectures
-- Corrected 2.1.1 custom AppArmor profiles attached in enforce mode with
+- Corrected 2.1.2 custom AppArmor profiles attached in enforce mode with
   successful native `--version`/conversation, first start, stop/start, restart,
   Web-terminal PTY/reconnect, broad operational read/write, managed read MCP,
   raw-unavailable bounded Host/Supervisor log projections with known-credential
@@ -1009,10 +1024,17 @@ results, while approved write remained `NOT RUN`. Public 2.1.0 amd64 then
 `FAIL`ed its first Web-TUI settings canonicalization with a same-directory
 rename error and default fallback; a Telegram invocation also returned no user
 response, but missing bounded Bridge events prevent classifying transport
-versus worker failure. Real-device 2.1.1 acceptance on amd64 and aarch64 is
-`NOT RUN`. The aarch64 waiver is not a PASS and overall v2 acceptance remains
-`PARTIAL`. This does not pass the complete HA-001 through HA-008 or AA-001
-matrices.
+versus worker failure. Subsequent public-2.1.1 Telegram checks on amd64 passed
+transport, an exact no-tool response, a managed state read, and a confined file
+listing, but failed the explicit-`always-proceed` direct command and its
+mode-unaware proposal fallback. Version 2.1.1 telemetry did not identify the
+tool/layer and cannot establish whether shell `/config` access or the AppArmor
+command profile was reached, so both remain `NOT RUN`. The isolated
+public-image straight-quote success and curly-quote output corruption are
+automated reproduction, not HAOS evidence. Real-device 2.1.2 and all aarch64
+acceptance also remain `NOT RUN`. The aarch64 waiver is
+not a PASS and overall v2 acceptance remains `PARTIAL`. This does not pass the
+complete HA-001 through HA-008 or AA-001 matrices.
 
 ## Support reports
 

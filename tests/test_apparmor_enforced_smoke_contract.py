@@ -318,6 +318,70 @@ def test_enforced_smoke_executes_both_native_cli_px_paths() -> None:
     assert restricted_call < option_change < restart < sensitive_call < final_audit
 
 
+def test_enforced_smoke_executes_always_proceed_command_through_native_profile(
+) -> None:
+    smoke = read("tests/apparmor-enforced-smoke.sh")
+    endpoint = read("tests/fixtures/telegram-always-command-canary-endpoint.cjs")
+    assertion = read("tests/fixtures/telegram-always-command-canary-assert.mjs")
+
+    for token in (
+        "run_always_proceed_native_command_probe",
+        "readonly COMMAND_ENDPOINT_ALIAS=always-command-endpoint",
+        "canonicalTelegramPermissionRules(\"always-proceed\")",
+        "nativeCanonicalSettingsContent(settings, \"always-proceed\")",
+        "telegram-always-command-canary-endpoint.cjs",
+        "telegram-always-command-canary-assert.mjs",
+        "apparmor=antigravity_home_assistant-interactive-runtime-restricted",
+        "--entrypoint /usr/local/libexec/antigravity-real",
+        "TELEGRAM_ALWAYS_COMMAND_CANARY_SENTINEL",
+        "the enforced always-proceed native command did not complete",
+        "the enforced always-proceed native command rewrote settings",
+    ):
+        assert token in smoke
+
+    assert (
+        'run_always_proceed_native_command_probe\n'
+        in smoke
+    )
+    command_probe = smoke.split(
+        "run_always_proceed_native_command_probe() {", 1
+    )[1].split("\nrun_settings_update_probe() {", 1)[0]
+    assert "--network \"$COMMAND_NETWORK\"" in command_probe
+    assert "docker network create --internal" in command_probe
+    assert '--network-alias "$COMMAND_ENDPOINT_ALIAS"' in command_probe
+    assert (
+        'GOOGLE_GEMINI_BASE_URL=http://${COMMAND_ENDPOINT_ALIAS}:18789'
+        in command_probe
+    )
+    assert "GOOGLE_GEMINI_BASE_URL=http://${COMMAND_ENDPOINT_CONTAINER}" not in command_probe
+    assert "GEMINI_API_KEY=synthetic-always-command-canary" in command_probe
+    assert "NATIVE_STREAM_PATH=/test-output/native-stream.ndjson" in command_probe
+    assert '${stream_stdout}:/test-output/native-stream.ndjson:ro' in command_probe
+    assert 'NATIVE_STREAM_PATH="$stream_stdout" /usr/bin/node' not in command_probe
+    assert "HA_TELEGRAM_SESSION_GENERATION=7" in command_probe
+    assert "HA_TELEGRAM_UPDATE_ID=77" in command_probe
+    assert "HA_TELEGRAM_RUN_NONCE=command-canary-run-nonce-123456" in command_probe
+    assert (
+        "HA_TELEGRAM_ACTION_PROPOSAL_SOCKET=/run/antigravity-ha/"
+        "telegram-action-proposal.sock" in command_probe
+    )
+    assert (
+        "PATH=/usr/local/libexec/antigravity-command-bin:/usr/local/sbin:"
+        "/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" in command_probe
+    )
+    assert "TERM=xterm-256color" in command_probe
+    assert "--env NO_COLOR=1" not in command_probe
+    assert "SUPERVISOR_TOKEN" not in command_probe
+    assert "secrets.yaml" not in command_probe
+    assert "settings.json" in command_probe
+    assert "run_command" in endpoint
+    assert "ls -1A /config >/dev/null" in endpoint
+    assert "TERMINAL_DIR_CANARY_OK" in endpoint
+    assert 'step.tool_name === "run_command"' in assertion
+    assert 'step.state === "DONE"' in assertion
+    assert 'toolSteps.some((step) => step.state === "ERROR")' in assertion
+
+
 def test_enforced_smoke_bootstraps_the_managed_change_proposal_mcp() -> None:
     smoke = read("tests/apparmor-enforced-smoke.sh")
 
