@@ -28,6 +28,7 @@ import {
   pairingTokenFromMessage,
   parseStreamResult,
   pollUpdateBatches,
+  processPrompt,
   proposalDisposition,
   requesterKey,
   resetMetricsForTest,
@@ -1187,6 +1188,91 @@ assert.deepEqual(parseStreamResult([
   conversationId: "conversation.telegram-action",
 });
 
+function nativeRunCommandDenialUpdates({
+  conversationId,
+  stepIndex,
+  commandLine,
+}) {
+  const parameters = { CommandLine: commandLine };
+  return [
+    {
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: stepIndex,
+        step_type: "tool",
+        state: "ACTIVE",
+        tool_name: "run_command",
+        tool_info: { name: "run_command", parameters },
+      },
+    },
+    {
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: stepIndex,
+        step_type: "tool",
+        state: "ERROR",
+        tool_name: "run_command",
+        duration_seconds: 0.004,
+        tool_info: {
+          name: "run_command",
+          parameters,
+          error: {
+            type: "TOOL_ERROR",
+            message: `User denied permission to run command:\n${commandLine}`,
+          },
+        },
+      },
+    },
+  ];
+}
+
+const deniedCommandWithValidProposal = parseStreamResult([
+  JSON.stringify({
+    event: "init",
+    conversation_id: "conversation.denied-command-valid-proposal",
+  }),
+  ...nativeRunCommandDenialUpdates({
+    conversationId: "conversation.denied-command-valid-proposal",
+    stepIndex: 5,
+    commandLine: "printf VALID_PROPOSAL_CANARY",
+  }).map(JSON.stringify),
+  JSON.stringify({
+    event: "step_update",
+    step_update: {
+      step_index: 6,
+      step_type: "tool",
+      state: "DONE",
+      tool_name: "call_mcp_tool",
+      tool_info: {
+        name: "call_mcp_tool",
+        parameters: {
+          Arguments: { operation: "terminal_command" },
+          ServerName: "telegram_action",
+          ToolName: "telegram_action_propose",
+        },
+        output: JSON.stringify({
+          proposal_id: telegramActionProposalId,
+          request_digest: telegramActionDigest,
+        }),
+      },
+    },
+  }),
+  JSON.stringify({
+    event: "result",
+    result: {
+      conversation_id: "conversation.denied-command-valid-proposal",
+      status: "SUCCESS",
+      response: "승인 제안을 준비했습니다.",
+    },
+  }),
+].join("\n"));
+assert.equal(deniedCommandWithValidProposal.nativeCommandPermissionDenied, true);
+assert.deepEqual(deniedCommandWithValidProposal.proposalIds, [
+  telegramActionProposalId,
+]);
+
 const managedProposalStep = ({ state, stepIndex = 7, output = null, metadata = {} }) => ({
   event: "step_update",
   step_update: {
@@ -1292,19 +1378,11 @@ assert.throws(
       event: "init",
       conversation_id: "conversation.permission-denied-with-response",
     }),
-    JSON.stringify({
-      event: "step_update",
-      step_update: {
-        step_index: 9,
-        step_type: "tool",
-        state: "ERROR",
-        tool_name: "run_command",
-        tool_info: {
-          name: "run_command",
-          output: "User denied permission to run command",
-        },
-      },
-    }),
+    ...nativeRunCommandDenialUpdates({
+      conversationId: "conversation.permission-denied-with-response",
+      stepIndex: 9,
+      commandLine: "printf SAFE_CANARY",
+    }).map(JSON.stringify),
     JSON.stringify(successTerminal(
       "conversation.permission-denied-with-response",
       "명령을 실행하지 못했습니다.",
@@ -1341,8 +1419,586 @@ assert.throws(
     }),
   ].join("\n")),
   (error) => error instanceof AntigravityWorkerError &&
-    error.reasonClass === "headless_permission_denied",
+    error.reasonClass === "terminal_status_failed",
 );
+for (const [conversationId, toolName, diagnostic, expectedReason] of [
+  [
+    "conversation.native-command-denial",
+    "run_command",
+    "User denied permission to run command:\nprintf PRIVATE_COMMAND_ARGUMENT_CANARY",
+    "headless_permission_denied",
+  ],
+  [
+    "conversation.apparmor-command-denial",
+    "run_command",
+    "ls: cannot open directory '/config/private-canary': Permission denied",
+    "terminal_status_failed",
+  ],
+  [
+    "conversation.native-read-denial",
+    "read_file",
+    ANTIGRAVITY_HEADLESS_PERMISSION_MARKER.toString("utf8"),
+    "headless_read_denied",
+  ],
+  [
+    "conversation.native-write-denial",
+    "write_to_file",
+    "Permission denied for write_file(/synthetic/canary). Matches user-configured deny rule.",
+    "headless_read_denied",
+  ],
+]) {
+  let denialFailure;
+  try {
+    const denialUpdates = toolName === "run_command" &&
+        diagnostic.startsWith("User denied permission to run command:\n")
+      ? nativeRunCommandDenialUpdates({
+          conversationId,
+          stepIndex: 11,
+          commandLine: diagnostic.slice(
+            "User denied permission to run command:\n".length,
+          ),
+        })
+      : [{
+          event: "step_update",
+          step_update: {
+            step_index: 11,
+            step_type: "tool",
+            state: "ERROR",
+            tool_name: toolName,
+            tool_info: {
+              name: toolName,
+              output: diagnostic,
+            },
+          },
+        }];
+    parseStreamResult([
+      JSON.stringify({ event: "init", conversation_id: conversationId }),
+      ...denialUpdates.map(JSON.stringify),
+      JSON.stringify({
+        event: "result",
+        result: { conversation_id: conversationId, status: "ERROR" },
+      }),
+    ].join("\n"));
+    assert.fail(`${toolName} denial unexpectedly succeeded`);
+  } catch (error) {
+    denialFailure = error;
+  }
+  assert.ok(denialFailure instanceof AntigravityWorkerError);
+  assert.equal(denialFailure.reasonClass, expectedReason);
+  assert.equal(denialFailure.message.includes(diagnostic), false);
+  assert.equal(renderRequestFailure(denialFailure).includes(diagnostic), false);
+}
+
+const executedPermissionSpoof = parseStreamResult([
+  JSON.stringify({ event: "init", conversation_id: "conversation.executed-spoof" }),
+  JSON.stringify({
+    event: "step_update",
+    step_update: {
+      step_index: 12,
+      step_type: "tool",
+      state: "DONE",
+      tool_name: "run_command",
+      duration_seconds: 0.006,
+      tool_info: {
+        name: "run_command",
+        parameters: {
+          CommandLine:
+            "printf 'User denied permission to run command:\\nprintf EXECUTED_SPOOF\\n'; exit 23",
+        },
+        output: "User denied permission to run command:\nprintf EXECUTED_SPOOF\n",
+      },
+    },
+  }),
+  JSON.stringify(successTerminal(
+    "conversation.executed-spoof",
+    "실행된 명령의 실패 결과를 확인했습니다.",
+  )),
+].join("\n"));
+assert.equal(executedPermissionSpoof.response, "실행된 명령의 실패 결과를 확인했습니다.");
+assert.equal(Object.hasOwn(
+  executedPermissionSpoof,
+  "nativeCommandPermissionDenied",
+), false);
+
+const lifecycleCommand = "printf LIFECYCLE_CANARY";
+const lifecycleConversation = "conversation.command-denial-lifecycle";
+const lifecycleUpdates = nativeRunCommandDenialUpdates({
+  conversationId: lifecycleConversation,
+  stepIndex: 13,
+  commandLine: lifecycleCommand,
+});
+for (const [suffix, updates] of [
+  ["error-only", [lifecycleUpdates[1]]],
+  [
+    "done-then-error",
+    [
+      lifecycleUpdates[0],
+      {
+        event: "step_update",
+        step_update: {
+          conversation_id: lifecycleConversation,
+          step_index: 13,
+          step_type: "tool",
+          state: "DONE",
+          tool_name: "run_command",
+          duration_seconds: 0.003,
+          tool_info: {
+            name: "run_command",
+            parameters: { CommandLine: lifecycleCommand },
+            output: "LIFECYCLE_COMMAND_ALREADY_EXECUTED",
+          },
+        },
+      },
+      lifecycleUpdates[1],
+    ],
+  ],
+]) {
+  assert.throws(
+    () => parseStreamResult([
+      JSON.stringify({
+        event: "init",
+        conversation_id: lifecycleConversation,
+      }),
+      ...updates.map(JSON.stringify),
+      JSON.stringify(successTerminal(
+        lifecycleConversation,
+        `invalid lifecycle ${suffix}`,
+      )),
+    ].join("\n")),
+    (error) => error instanceof AntigravityWorkerError &&
+      error.reasonClass === "terminal_status_failed",
+  );
+}
+
+function permissionModeCoordinator() {
+  let runIndex = 0;
+  const runs = new Map();
+  return {
+    beginRun(binding) {
+      runIndex += 1;
+      const run = { ...binding, run_nonce: `permission-mode-run-${runIndex}` };
+      runs.set(run.run_nonce, run);
+      return run;
+    },
+    bindConversation(runNonce, conversationId) {
+      const run = runs.get(runNonce);
+      assert.ok(run);
+      const bound = { ...run, conversation_id: conversationId };
+      runs.set(runNonce, bound);
+      return bound;
+    },
+    finishRun(runNonce) {
+      runs.delete(runNonce);
+    },
+  };
+}
+
+const requestReviewReplanRoot = await mkdtemp(join(
+  tmpdir(),
+  "telegram-request-review-replan-",
+));
+try {
+  const managedRoot = join(requestReviewReplanRoot, "data", "antigravity-ha");
+  await mkdir(managedRoot, { recursive: true, mode: 0o700 });
+  const prompts = [];
+  const conversationId = "conversation.request-review-replan";
+  const retryCanary = new Error("request review retry canary");
+  await assert.rejects(processPrompt(config, {
+    updateId: 901,
+    from: { id: "100" },
+    chat: { id: "-200" },
+    text: "bounded terminal request",
+  }, null, {
+    statePath: join(managedRoot, "telegram", "bridge-state.json"),
+    actionCoordinator: permissionModeCoordinator(),
+    api: async () => true,
+    permissionBoundaryLoad: (expected) => ({ toolPermission: expected }),
+    runPrompt: async (prompt, options) => {
+      prompts.push(prompt);
+      if (prompts.length === 1) {
+        options.onConversation(conversationId);
+        throw new AntigravityWorkerError("headless_permission_denied");
+      }
+      assert.equal(options.conversationId, conversationId);
+      throw retryCanary;
+    },
+  }), (error) => error === retryCanary);
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1], /telegram_action\/telegram_action_propose/u);
+} finally {
+  await rm(requestReviewReplanRoot, { recursive: true, force: true });
+}
+
+const requestReviewReplanDriftRoot = await mkdtemp(join(
+  tmpdir(),
+  "telegram-request-review-replan-drift-",
+));
+try {
+  const managedRoot = join(
+    requestReviewReplanDriftRoot,
+    "data",
+    "antigravity-ha",
+  );
+  await mkdir(managedRoot, { recursive: true, mode: 0o700 });
+  let boundaryLoads = 0;
+  let workerCalls = 0;
+  let beginCalls = 0;
+  let finishCalls = 0;
+  let runBinding = null;
+  const replanBoundaryDriftCanary = new Error(
+    "private replan boundary drift canary",
+  );
+  const actionCoordinator = {
+    beginRun(binding) {
+      beginCalls += 1;
+      runBinding = { ...binding, run_nonce: "replan-drift-run" };
+      return runBinding;
+    },
+    bindConversation(runNonce, conversationId) {
+      assert.equal(runNonce, runBinding.run_nonce);
+      runBinding = { ...runBinding, conversation_id: conversationId };
+      return runBinding;
+    },
+    finishRun(runNonce) {
+      assert.equal(runNonce, runBinding.run_nonce);
+      finishCalls += 1;
+    },
+  };
+  await assert.rejects(processPrompt(config, {
+    updateId: 908,
+    from: { id: "100" },
+    chat: { id: "-200" },
+    text: "bounded replan permission drift request",
+  }, null, {
+    statePath: join(managedRoot, "telegram", "bridge-state.json"),
+    actionCoordinator,
+    api: async () => true,
+    permissionBoundaryLoad: (expected) => {
+      boundaryLoads += 1;
+      if (boundaryLoads === 2) throw replanBoundaryDriftCanary;
+      return { toolPermission: expected };
+    },
+    runPrompt: async (_prompt, options) => {
+      workerCalls += 1;
+      options.onConversation("conversation.request-review-replan-drift");
+      throw new AntigravityWorkerError("headless_permission_denied");
+    },
+  }), (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "unexpected_permission_denied" &&
+    !error.message.includes(replanBoundaryDriftCanary.message));
+  assert.equal(boundaryLoads, 2);
+  assert.equal(workerCalls, 1);
+  assert.equal(beginCalls, 1);
+  assert.equal(finishCalls, 1);
+} finally {
+  await rm(requestReviewReplanDriftRoot, { recursive: true, force: true });
+}
+
+const proposalBindingRoot = await mkdtemp(join(
+  tmpdir(),
+  "telegram-proposal-binding-audit-",
+));
+const proposalBindingCanary = "PRIVATE_PROPOSAL_BINDING_CANARY";
+const proposalBindingAuditLines = [];
+const originalProposalBindingConsoleLog = console.log;
+try {
+  const managedRoot = join(proposalBindingRoot, "data", "antigravity-ha");
+  await mkdir(managedRoot, { recursive: true, mode: 0o700 });
+  const conversationId = "conversation.proposal-binding-audit";
+  let runBinding = null;
+  const actionCoordinator = {
+    beginRun(binding) {
+      runBinding = { ...binding, run_nonce: "proposal-binding-audit-run" };
+      return runBinding;
+    },
+    bindConversation(runNonce, nextConversationId) {
+      assert.equal(runNonce, runBinding.run_nonce);
+      runBinding = { ...runBinding, conversation_id: nextConversationId };
+      return runBinding;
+    },
+    getProposal(nextProposalId, { run_nonce: runNonce }) {
+      assert.equal(nextProposalId, telegramActionProposalId);
+      assert.equal(runNonce, runBinding.run_nonce);
+      return {
+        proposal_id: telegramActionProposalId,
+        proposal: {
+          request_digest: telegramActionDigest,
+          binding: {
+            ...runBinding,
+            user_id: proposalBindingCanary,
+          },
+        },
+      };
+    },
+    finishRun(runNonce) {
+      assert.equal(runNonce, runBinding.run_nonce);
+    },
+  };
+  console.log = (...values) => proposalBindingAuditLines.push(values.join(" "));
+  await assert.rejects(processPrompt(config, {
+    updateId: 904,
+    from: { id: "100" },
+    chat: { id: "-200" },
+    text: "bounded proposal binding request",
+  }, null, {
+    statePath: join(managedRoot, "telegram", "bridge-state.json"),
+    actionCoordinator,
+    api: async () => true,
+    permissionBoundaryLoad: (expected) => ({ toolPermission: expected }),
+    runPrompt: async (_prompt, options) => {
+      options.onConversation(conversationId);
+      return {
+        response: "proposal prepared",
+        proposalIds: [telegramActionProposalId],
+        proposalKind: "telegram_action",
+        proposalReceipts: [{
+          proposalId: telegramActionProposalId,
+          proposalKind: "telegram_action",
+          requestDigest: telegramActionDigest,
+          stepIndex: 4,
+        }],
+        conversationId,
+      };
+    },
+  }), (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "proposal_result_invalid");
+} finally {
+  console.log = originalProposalBindingConsoleLog;
+  await rm(proposalBindingRoot, { recursive: true, force: true });
+}
+const proposalBindingAuditRecords = proposalBindingAuditLines
+  .filter((line) => line.startsWith("[Telegram Bridge] "))
+  .map((line) => JSON.parse(line.slice("[Telegram Bridge] ".length)))
+  .filter((record) => record.event === "proposal_result_invalid");
+assert.deepEqual(proposalBindingAuditRecords, [{
+  event: "proposal_result_invalid",
+  reason_class: "proposal_binding_invalid",
+}]);
+assert.equal(workerStatusSnapshot(), "proposal_result_invalid");
+assert.equal(proposalBindingAuditLines.some(
+  (line) => line.includes(proposalBindingCanary),
+), false);
+
+const alwaysProceedDenialRoot = await mkdtemp(join(
+  tmpdir(),
+  "telegram-always-proceed-denial-",
+));
+const alwaysProceedPromptCanary = "PRIVATE_ALWAYS_PROCEED_PROMPT_CANARY";
+const capturedPermissionLogs = [];
+const originalConsoleLog = console.log;
+try {
+  const managedRoot = join(alwaysProceedDenialRoot, "data", "antigravity-ha");
+  await mkdir(managedRoot, { recursive: true, mode: 0o700 });
+  let promptCalls = 0;
+  console.log = (...values) => capturedPermissionLogs.push(values.join(" "));
+  await assert.rejects(processPrompt({
+    ...config,
+    toolPermission: "always-proceed",
+  }, {
+    updateId: 902,
+    from: { id: "100" },
+    chat: { id: "-200" },
+    text: alwaysProceedPromptCanary,
+  }, null, {
+    statePath: join(managedRoot, "telegram", "bridge-state.json"),
+    actionCoordinator: permissionModeCoordinator(),
+    api: async () => true,
+    permissionBoundaryLoad: (expected) => ({ toolPermission: expected }),
+    runPrompt: async (_prompt, options) => {
+      promptCalls += 1;
+      options.onConversation("conversation.always-proceed-denial");
+      throw new AntigravityWorkerError("headless_permission_denied");
+    },
+  }), (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "unexpected_permission_denied" &&
+    !error.message.includes(alwaysProceedPromptCanary));
+  assert.equal(promptCalls, 1);
+  assert.equal(workerStatusSnapshot(), "unexpected_permission_denied");
+  assert.equal(renderWorkerStatus(), "예상하지 못한 직접 도구 권한 거부 (정책 불일치)");
+  const renderedUnexpectedDenial = renderRequestFailure(
+    new AntigravityWorkerError("unexpected_permission_denied"),
+  );
+  assert.match(renderedUnexpectedDenial, /권한 적용이 일치하지 않아/u);
+  assert.equal(renderedUnexpectedDenial.includes(alwaysProceedPromptCanary), false);
+} finally {
+  console.log = originalConsoleLog;
+  await rm(alwaysProceedDenialRoot, { recursive: true, force: true });
+}
+assert.equal(capturedPermissionLogs.some((line) =>
+  line.includes('"event":"unexpected_permission_denial"') &&
+  line.includes('"reason_class":"unexpected_permission_denied"') &&
+  line.includes('"policy_mode":"always-proceed"') &&
+  line.includes('"denial_layer":"native_headless"') &&
+  line.includes('"tool_class":"terminal_command"')), true);
+assert.equal(capturedPermissionLogs.some((line) =>
+  line.includes(alwaysProceedPromptCanary)), false);
+
+const boundaryDriftRoot = await mkdtemp(join(
+  tmpdir(),
+  "telegram-permission-boundary-drift-",
+));
+const boundaryDriftCanary = "PRIVATE_PERMISSION_BOUNDARY_DRIFT_CANARY";
+const boundaryDriftLogs = [];
+try {
+  const managedRoot = join(boundaryDriftRoot, "data", "antigravity-ha");
+  await mkdir(managedRoot, { recursive: true, mode: 0o700 });
+  let workerCalls = 0;
+  let coordinatorCalls = 0;
+  let apiCalls = 0;
+  console.log = (...values) => boundaryDriftLogs.push(values.join(" "));
+  await assert.rejects(processPrompt({
+    ...config,
+    toolPermission: "always-proceed",
+  }, {
+    updateId: 905,
+    from: { id: "100" },
+    chat: { id: "-200" },
+    text: "bounded permission drift request",
+  }, null, {
+    statePath: join(managedRoot, "telegram", "bridge-state.json"),
+    actionCoordinator: {
+      beginRun() {
+        coordinatorCalls += 1;
+        throw new Error("permission boundary preflight ran too late");
+      },
+    },
+    api: async () => {
+      apiCalls += 1;
+      return true;
+    },
+    permissionBoundaryLoad: () => {
+      throw new Error(boundaryDriftCanary);
+    },
+    runPrompt: async () => {
+      workerCalls += 1;
+      throw new Error("permission boundary preflight did not stop the worker");
+    },
+  }), (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "unexpected_permission_denied" &&
+    !error.message.includes(boundaryDriftCanary));
+  assert.equal(workerCalls, 0);
+  assert.equal(coordinatorCalls, 0);
+  assert.equal(apiCalls, 1);
+  assert.match(
+    renderRequestFailure(new AntigravityWorkerError("unexpected_permission_denied")),
+    /reset_v2/u,
+  );
+  assert.match(
+    renderRequestFailure(new AntigravityWorkerError("unexpected_permission_denied")),
+    /preserve/u,
+  );
+} finally {
+  console.log = originalConsoleLog;
+  await rm(boundaryDriftRoot, { recursive: true, force: true });
+}
+assert.equal(boundaryDriftLogs.some((line) =>
+  line.includes('"event":"unexpected_permission_denial"') &&
+  line.includes('"policy_mode":"always-proceed"') &&
+  line.includes('"denial_layer":"settings_preflight"') &&
+  line.includes('"tool_class":"runtime_policy"')), true);
+assert.equal(boundaryDriftLogs.some((line) =>
+  line.includes(boundaryDriftCanary)), false);
+
+const deniedCommandProposalResult = {
+  response: "승인 제안을 준비했습니다.",
+  proposalIds: [proposalId],
+  proposalKind: "ha_change",
+  proposalReceipts: [{
+    proposalId,
+    proposalKind: "ha_change",
+    requestDigest: null,
+    stepIndex: 6,
+  }],
+  conversationId: "conversation.denied-command-mode-routing",
+  nativeCommandPermissionDenied: true,
+};
+for (const [toolPermission, expectedFailure] of [
+  ["always-proceed", "unexpected_permission_denied"],
+  ["request-review", "proposal inspect canary"],
+]) {
+  const modeRoot = await mkdtemp(join(
+    tmpdir(),
+    `telegram-denied-command-${toolPermission}-`,
+  ));
+  try {
+    const managedRoot = join(modeRoot, "data", "antigravity-ha");
+    await mkdir(managedRoot, { recursive: true, mode: 0o700 });
+    let workerCalls = 0;
+    let proposalInspectCalls = 0;
+    const proposalInspectCanary = new Error("proposal inspect canary");
+    await assert.rejects(processPrompt({
+      ...config,
+      toolPermission,
+    }, {
+      updateId: toolPermission === "always-proceed" ? 906 : 907,
+      from: { id: "100" },
+      chat: { id: "-200" },
+      text: "bounded denied command with valid proposal",
+    }, null, {
+      statePath: join(managedRoot, "telegram", "bridge-state.json"),
+      actionCoordinator: permissionModeCoordinator(),
+      api: async () => true,
+      permissionBoundaryLoad: (expected) => ({ toolPermission: expected }),
+      runPrompt: async (_prompt, options) => {
+        workerCalls += 1;
+        options.onConversation(deniedCommandProposalResult.conversationId);
+        return deniedCommandProposalResult;
+      },
+      proposalInspect: async () => {
+        proposalInspectCalls += 1;
+        throw proposalInspectCanary;
+      },
+    }), (error) => expectedFailure === "unexpected_permission_denied"
+      ? error instanceof AntigravityWorkerError &&
+        error.reasonClass === expectedFailure
+      : error === proposalInspectCanary);
+    assert.equal(workerCalls, 1);
+    assert.equal(
+      proposalInspectCalls,
+      toolPermission === "request-review" ? 1 : 0,
+    );
+  } finally {
+    await rm(modeRoot, { recursive: true, force: true });
+  }
+}
+
+const managedFileOnlyRoot = await mkdtemp(join(
+  tmpdir(),
+  "telegram-managed-file-only-",
+));
+try {
+  const managedRoot = join(managedFileOnlyRoot, "data", "antigravity-ha");
+  await mkdir(managedRoot, { recursive: true, mode: 0o700 });
+  let promptCalls = 0;
+  await assert.rejects(processPrompt({
+    ...config,
+    toolPermission: "always-proceed",
+  }, {
+    updateId: 903,
+    from: { id: "100" },
+    chat: { id: "-200" },
+    text: "bounded managed file request",
+  }, null, {
+    statePath: join(managedRoot, "telegram", "bridge-state.json"),
+    actionCoordinator: permissionModeCoordinator(),
+    api: async () => true,
+    permissionBoundaryLoad: (expected) => ({ toolPermission: expected }),
+    runPrompt: async (_prompt, options) => {
+      promptCalls += 1;
+      options.onConversation("conversation.managed-file-only");
+      throw new AntigravityWorkerError("headless_read_denied");
+    },
+  }), (error) => error instanceof AntigravityWorkerError &&
+    error.reasonClass === "headless_read_denied");
+  assert.equal(promptCalls, 1);
+  assert.match(
+    renderRequestFailure(new AntigravityWorkerError("headless_read_denied")),
+    /관리형 도구/u,
+  );
+} finally {
+  await rm(managedFileOnlyRoot, { recursive: true, force: true });
+}
+
 for (const [suffix, response] of [
   ["non-string-with-proposal", { invalid: true }],
   ["oversize-with-proposal", " ".repeat(32_769)],
@@ -1462,6 +2118,134 @@ assert.throws(
   (error) => error instanceof AntigravityWorkerError &&
     error.reasonClass === "proposal_result_invalid",
 );
+
+const proposalFailureAuditCanary = "PRIVATE_PROPOSAL_FAILURE_AUDIT_CANARY";
+const proposalFailureAuditLines = [];
+const originalProposalAuditConsoleLog = console.log;
+try {
+  console.log = (...values) => proposalFailureAuditLines.push(values.join(" "));
+  const expectProposalResultFailure = (events) => assert.throws(
+    () => parseStreamResult(events.map((event) => JSON.stringify(event)).join("\n")),
+    (error) => error instanceof AntigravityWorkerError &&
+      error.reasonClass === "proposal_result_invalid",
+  );
+
+  expectProposalResultFailure([
+    { event: "init", conversation_id: "conversation.audit-step-contract" },
+    managedProposalStep({
+      state: "DONE",
+      metadata: { unexpectedMetadata: proposalFailureAuditCanary },
+      output: JSON.stringify({ proposal_id: proposalId }),
+    }),
+    successTerminal("conversation.audit-step-contract"),
+  ]);
+  expectProposalResultFailure([
+    { event: "init", conversation_id: "conversation.audit-output" },
+    managedProposalStep({
+      state: "DONE",
+      output: proposalFailureAuditCanary,
+    }),
+    successTerminal("conversation.audit-output"),
+  ]);
+  expectProposalResultFailure([
+    { event: "init", conversation_id: "conversation.audit-output-contract" },
+    managedProposalStep({ state: "DONE", output: 7 }),
+    successTerminal("conversation.audit-output-contract"),
+  ]);
+  expectProposalResultFailure([
+    { event: "init", conversation_id: "conversation.audit-output-envelope" },
+    managedProposalStep({
+      state: "DONE",
+      output: JSON.stringify({
+        proposal_id: "short",
+        preview: proposalFailureAuditCanary,
+      }),
+    }),
+    successTerminal("conversation.audit-output-envelope"),
+  ]);
+  expectProposalResultFailure([
+    { event: "init", conversation_id: "conversation.audit-mixed-kind" },
+    managedProposalStep({
+      state: "DONE",
+      output: JSON.stringify({ proposal_id: proposalId }),
+    }),
+    {
+      event: "step_update",
+      step_update: {
+        step_index: 8,
+        step_type: "tool",
+        state: "DONE",
+        tool_name: "call_mcp_tool",
+        tool_info: {
+          name: "call_mcp_tool",
+          parameters: {
+            Arguments: { summary: proposalFailureAuditCanary },
+            ServerName: "telegram_action",
+            ToolName: "telegram_action_propose",
+          },
+          output: JSON.stringify({
+            proposal_id: telegramActionProposalId,
+            request_digest: telegramActionDigest,
+          }),
+        },
+      },
+    },
+    successTerminal("conversation.audit-mixed-kind"),
+  ]);
+  expectProposalResultFailure([
+    { event: "init", conversation_id: "conversation.audit-cardinality" },
+    managedProposalStep({
+      state: "DONE",
+      stepIndex: 7,
+      output: JSON.stringify({ proposal_id: proposalId }),
+    }),
+    managedProposalStep({
+      state: "DONE",
+      stepIndex: 8,
+      output: JSON.stringify({ proposal_id: "proposalFixture0987654321" }),
+    }),
+    successTerminal("conversation.audit-cardinality"),
+  ]);
+} finally {
+  console.log = originalProposalAuditConsoleLog;
+}
+const proposalFailureAuditRecords = proposalFailureAuditLines
+  .filter((line) => line.startsWith("[Telegram Bridge] "))
+  .map((line) => JSON.parse(line.slice("[Telegram Bridge] ".length)))
+  .filter((record) => record.event === "proposal_result_invalid");
+for (const reasonClass of [
+  "proposal_step_contract_invalid",
+  "proposal_output_invalid",
+  "proposal_kind_mixed",
+  "proposal_cardinality_invalid",
+]) {
+  assert.equal(proposalFailureAuditRecords.some(
+    (record) => record.reason_class === reasonClass,
+  ), true);
+}
+assert.deepEqual(new Set(proposalFailureAuditRecords
+  .filter((record) => record.reason_class === "proposal_output_invalid")
+  .map((record) => record.validation_stage)), new Set(["contract", "envelope", "json"]));
+const cardinalityFailureAudit = proposalFailureAuditRecords.find(
+  (record) => record.reason_class === "proposal_cardinality_invalid",
+);
+assert.equal(cardinalityFailureAudit.proposal_count, 2);
+assert.equal(cardinalityFailureAudit.proposal_step_count, 2);
+for (const record of proposalFailureAuditRecords) {
+  assert.deepEqual(
+    Object.keys(record).sort(),
+    Object.keys(record).filter((key) => [
+      "event",
+      "proposal_count",
+      "proposal_step_count",
+      "reason_class",
+      "validation_stage",
+    ].includes(key)).sort(),
+  );
+}
+assert.equal(proposalFailureAuditLines.some(
+  (line) => line.includes(proposalFailureAuditCanary),
+), false);
 assert.throws(
   () => parseStreamResult("not json\n"),
   (error) => error instanceof AntigravityWorkerError &&
@@ -2479,12 +3263,15 @@ process.stderr.write(marker.slice(21) + "\\n${stderrCanary}\\n");
     permissionFailure = error;
   }
   assert.ok(permissionFailure instanceof AntigravityWorkerError);
-  assert.equal(permissionFailure.reasonClass, "headless_permission_denied");
-  assert.equal(requestFailureReason(permissionFailure), "headless_permission_denied");
-  assert.equal(workerStatusSnapshot(), "headless_permission_denied");
-  assert.equal(renderWorkerStatus(), "직접 도구 실행 차단 (Telegram 승인 제안 필요)");
+  assert.equal(permissionFailure.reasonClass, "headless_read_denied");
+  assert.equal(requestFailureReason(permissionFailure), "headless_read_denied");
+  assert.equal(workerStatusSnapshot(), "headless_read_denied");
+  assert.equal(
+    renderWorkerStatus(),
+    "최근 native 파일 작업 차단 (관리형 ha_files 필요)",
+  );
   const permissionFailureMessage = renderRequestFailure(permissionFailure);
-  assert.match(permissionFailureMessage, /Telegram 승인 경계/u);
+  assert.match(permissionFailureMessage, /native 파일 작업/u);
   for (const forbidden of [
     stderrCanary,
     "private permission prompt canary",

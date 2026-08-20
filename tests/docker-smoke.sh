@@ -129,6 +129,8 @@ tests/public-v2-upgrade-smoke.sh "${IMAGE}" \
   || fail 'Public 2.0.6 to candidate upgrade smoke failed'
 tests/telegram-shared-context-smoke.sh "${IMAGE}" \
   || fail 'Telegram shared native context smoke failed'
+tests/telegram-action-native-valid-control.sh "${IMAGE}" \
+  || fail 'Telegram native action proposal control failed'
 tests/telegram-universal-action-smoke.sh "${IMAGE}" \
   || fail 'Telegram universal action image smoke failed'
 PINNED_ANTIGRAVITY_VERSION=$(sed -n \

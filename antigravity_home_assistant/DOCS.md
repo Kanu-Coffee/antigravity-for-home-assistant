@@ -211,7 +211,7 @@ native `read_file`/`write_file`은 이 모드에서도 deny되고 file 작업은
 `proceed-in-sandbox`만 legacy upgrade 입력이며 `request-review`로 정규화됩니다.
 2.0.12부터 Telegram이 켜지면
 root-owned single-link regular·256 KiB 이하·parse 가능한 settings를 시작 transaction으로
-backup합니다. 현재 2.1.1은 App 관리 보안 field, 선택 mode의 sparse native shape와
+backup합니다. 현재 2.1.2는 App 관리 보안 field, 선택 mode의 sparse native shape와
 known permission bucket을 exact policy로 정규화하고 retired `enableTerminalSandbox`를
 제거합니다. unknown custom allow/ask/deny는 제거하지만 이 App 관리 permission 경계 밖의
 top-level 설정, global MCP/plugin/OAuth와 `/config`는 보존하고 기존 mode는 0600으로
@@ -846,6 +846,20 @@ downgrade는 지원되지 않습니다. exact 2.0.12 시점 App backup을 복원
   바꾸거나 interactive Web/SSH에서 검토합니다. 자율 실행이 제품 요구인 관리자는
   위험을 검토한 뒤 App option에서 `always-proceed`를 명시적으로 선택할 수 있지만
   mandatory blacklist는 계속 적용됩니다.
+- 공개 2.1.1에서 `/status`가 `always-proceed`인데 ordinary `run_command` turn이
+  `headless_permission_denied`로 분류되고 같은 요청이 proposal 검증 실패로 끝나도
+  directory/AppArmor failure 또는 native policy denial로 단정하지 마세요. 당시
+  classifier는 tool/layer를 기록하지 않고 generic permission 문구도 일치시켰습니다.
+  공개 2.1.1 이미지의 격리 재현에서 straight ASCII quote 명령은 성공했고 curly
+  Unicode quote도 권한 거부 없이 실행됐지만 `‘TERMINAL-DIR-OKn’`처럼 출력만
+  훼손됐습니다. 이는 HAOS 증거가 아니며 반복 실행 대신 2.1.2의 bounded reason을
+  확인해야 합니다. 2.1.2는 proposal이 없는 `request-review`의 exact native command
+  denial만 최대 한 번 재계획하고 exact single same-run proposal은 기존 receipt 검증을
+  계속합니다. `always-proceed` denial은 approval card 없이
+  `unexpected_permission_denied` policy mismatch로 fail closed합니다. Native file
+  denial은 `headless_read_denied`로 분리해 managed
+  `ha_files` 사용을 안내하고, 일반 shell/AppArmor `Permission denied`는 승인 거부로
+  오인하지 않습니다.
 - `/status`는 Telegram transport, 결합된 conversation과 최근 공유 AI runtime/outbox 결과를
   구분해 표시합니다. help와 status가 정상이어도 공유 native OAuth가 완료됐다는
   뜻은 아닙니다.
@@ -892,7 +906,7 @@ downgrade는 지원되지 않습니다. exact 2.0.12 시점 App backup을 복원
 
 ## 검증 상태와 알려진 제한
 
-2026-08-20 저장소 기준으로 정적·component test는 native CLI wrapper, read/change
+2026-08-21 저장소 기준으로 정적·component test는 native CLI wrapper, read/change
 broker, universal action proposal/coordinator/executor, Telegram binding/replay, memory,
 browser 계약, migration, AppArmor policy parse와 kernel-enforced startup smoke를
 대상으로 합니다. 이 smoke는 실제 profile을 exact image에 attach해 cold start,
@@ -903,7 +917,7 @@ fresh-container restart, S6 init과 안전한 canary 내용으로 준비한
 
 - 실제 HAOS amd64의 clean install과 aarch64의 install·start·update
 - 양쪽 아키텍처의 native Antigravity OAuth와 plugin discovery
-- 2.1.1에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되고 S6,
+- 2.1.2에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되고 S6,
   native `--version`/대화, Web terminal PTY·reconnect, broad operational read/write,
   managed read MCP, raw-unavailable bounded Host/Supervisor log projection과 known
   credential redaction, Telegram 승인카드·자율 관리자 모드와
@@ -927,8 +941,14 @@ startup/native version/no-tool chat `PASS`이지만 Web PTY I/O와 첫 managed t
 `NOT RUN`입니다. 공개 2.1.0 amd64의 첫 Web TUI settings canonicalization은
 same-directory rename failure와 default fallback으로 `FAIL`했고 Telegram 호출도 사용자
 응답을 반환하지 않았지만, bounded Bridge event가 없어 transport와 worker failure는
-구분하지 못했습니다. 2.1.1 amd64·aarch64 실기기 수용은 `NOT RUN`입니다. aarch64
-면제는 PASS가 아니며 전체 v2 수용은 `PARTIAL`입니다. 이 결과를 전체
+구분하지 못했습니다. 공개 2.1.1 amd64의 후속 Telegram 시험은 transport, exact
+no-tool, managed state read와 confined file listing을 `PASS`했지만 explicit
+`always-proceed` direct command와 mode-unaware proposal fallback은 `FAIL`했습니다.
+2.1.1 telemetry는 tool/layer를 식별하지 않아 shell의 `/config` 접근이나 AppArmor
+command profile 도달 여부를 판정할 수 없으므로 두 항목은 `NOT RUN`입니다. 공개
+2.1.1 이미지의 격리 straight-quote 명령 성공과 curly-quote 출력 훼손은 자동 재현일
+뿐 HAOS 증거가 아닙니다. 2.1.2와 모든 aarch64 실기기 수용도 `NOT RUN`입니다. aarch64 면제는
+PASS가 아니며 전체 v2 수용은 `PARTIAL`입니다. 이 결과를 전체
 HA-001~HA-008 또는 AA-001 PASS로 확대하지 않습니다.
 
 ## 지원 보고서

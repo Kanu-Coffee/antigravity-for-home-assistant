@@ -1236,6 +1236,9 @@ try {
       if (method === "sendMessage") consentTelegramBodies.push(body);
       return true;
     },
+    permissionBoundaryLoad: (expectedToolPermission) => ({
+      toolPermission: expectedToolPermission,
+    }),
   });
   const consentCard = consentTelegramBodies.find((body) =>
     Array.isArray(body.reply_markup?.inline_keyboard));

@@ -15,6 +15,15 @@ SCRIPT_DIRECTORY=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 IMAGE=${1:-antigravity-for-home-assistant:test}
 EXPECTED_VERSION=$(sed -n \
   's/^ARG ANTIGRAVITY_VERSION=//p' antigravity_home_assistant/Dockerfile)
+STREAM_WORK_DIRECTORY=$(mktemp -d)
+
+cleanup() {
+  local status=$?
+  trap - EXIT
+  rm -rf -- "${STREAM_WORK_DIRECTORY}"
+  exit "$status"
+}
+trap cleanup EXIT
 
 fail() {
   printf 'telegram shared-context smoke: %s\n' "$*" >&2
@@ -194,6 +203,7 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
   --tmpfs /data:rw,nosuid,nodev,noexec,mode=0755 \
   --tmpfs /run:rw,nosuid,nodev,noexec,mode=0755 \
   --volume "${SCRIPT_DIRECTORY}/fixtures:/test-fixtures:ro" \
+  --volume "${STREAM_WORK_DIRECTORY}:/test-streams" \
   --entrypoint /bin/bash "${IMAGE}" -ceu '
     install -d -m 0700 \
       /data/home/.gemini/antigravity-cli \
@@ -226,6 +236,112 @@ NODE
       /test-fixtures/telegram-settings-boundary-canary.mjs \
       /data/home/.gemini/antigravity-cli/settings.json \
       always-proceed | grep -Fxq TELEGRAM_SETTINGS_BOUNDARY_CANARY_PASS
+
+    command_mock_log=$(mktemp)
+    command_stdout=$(mktemp)
+    command_stderr=$(mktemp)
+    command_settings_hash=$(sha256sum \
+      /data/home/.gemini/antigravity-cli/settings.json | cut -d " " -f 1)
+    command_mock_pid=
+    cleanup_command_mock() {
+      if [[ -n "${command_mock_pid}" ]] && \
+          kill -0 "${command_mock_pid}" 2>/dev/null; then
+        kill "${command_mock_pid}" 2>/dev/null || true
+        wait "${command_mock_pid}" 2>/dev/null || true
+      fi
+    }
+    trap cleanup_command_mock EXIT
+    /usr/bin/node \
+      /test-fixtures/telegram-always-command-canary-endpoint.cjs \
+      > "${command_mock_log}" 2>&1 &
+    command_mock_pid=$!
+    for _ in $(seq 1 100); do
+      grep -Fq "\"kind\":\"ready\"" "${command_mock_log}" && break
+      kill -0 "${command_mock_pid}" 2>/dev/null \
+        || { printf "always command endpoint stopped during startup\n" >&2; exit 1; }
+      sleep 0.05
+    done
+    grep -Fq "\"kind\":\"ready\"" "${command_mock_log}"
+
+    cd /config
+    printf "%s\n" "TELEGRAM_ALWAYS_COMMAND_CANARY_SENTINEL" | \
+      /usr/bin/env -i \
+        AGY_CLI_DISABLE_AUTO_UPDATE=true \
+        ANTIGRAVITY_HA_CHANNEL=telegram \
+        GEMINI_API_KEY=synthetic-always-command-canary \
+        GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:18789 \
+        HOME=/data/home \
+        HA_TELEGRAM_USER_ID=123456789 \
+        HA_TELEGRAM_CHAT_ID=-100123456789 \
+        LANG=C.UTF-8 \
+        LC_ALL=C.UTF-8 \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        TERM=dumb \
+        NO_COLOR=1 \
+        timeout 30s /usr/local/libexec/antigravity-real \
+          --output-format stream-json \
+          --print-timeout 20s \
+          --disable-slash-commands \
+          > "${command_stdout}" 2> "${command_stderr}"
+
+    kill "${command_mock_pid}" 2>/dev/null || true
+    wait "${command_mock_pid}" 2>/dev/null || true
+    command_mock_pid=
+    test ! -s "${command_stderr}"
+    test "$(sha256sum /data/home/.gemini/antigravity-cli/settings.json \
+      | cut -d " " -f 1)" = "${command_settings_hash}"
+    NATIVE_STREAM_PATH="${command_stdout}" \
+      /usr/bin/node \
+        /test-fixtures/telegram-always-command-canary-assert.mjs
+    jq -s -e "
+      any(.[]; .kind == \"request\" and
+        .run_command_advertised == true and
+        .run_command_response_count == 0) and
+      any(.[]; .kind == \"request\" and
+        .run_command_response_count >= 1 and .marker_seen == true)
+    " "${command_mock_log}" >/dev/null
+
+    executed_failure_mock_log=$(mktemp)
+    executed_failure_stdout=/test-streams/executed-failure.ndjson
+    executed_failure_stderr=$(mktemp)
+    command_mock_pid=
+    ALWAYS_COMMAND_CANARY_MODE=executed-failure /usr/bin/node \
+      /test-fixtures/telegram-always-command-canary-endpoint.cjs \
+      > "${executed_failure_mock_log}" 2>&1 &
+    command_mock_pid=$!
+    for _ in $(seq 1 100); do
+      grep -Fq "\"kind\":\"ready\"" "${executed_failure_mock_log}" && break
+      kill -0 "${command_mock_pid}" 2>/dev/null \
+        || { printf "executed failure endpoint stopped during startup\n" >&2; exit 1; }
+      sleep 0.05
+    done
+    grep -Fq "\"kind\":\"ready\"" "${executed_failure_mock_log}"
+
+    printf "%s\n" "TELEGRAM_ALWAYS_COMMAND_CANARY_SENTINEL" | \
+      /usr/bin/env -i \
+        AGY_CLI_DISABLE_AUTO_UPDATE=true \
+        ANTIGRAVITY_HA_CHANNEL=telegram \
+        GEMINI_API_KEY=synthetic-always-command-canary \
+        GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:18789 \
+        HOME=/data/home \
+        HA_TELEGRAM_USER_ID=123456789 \
+        HA_TELEGRAM_CHAT_ID=-100123456789 \
+        LANG=C.UTF-8 \
+        LC_ALL=C.UTF-8 \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        TERM=dumb \
+        NO_COLOR=1 \
+        timeout 30s /usr/local/libexec/antigravity-real \
+          --output-format stream-json \
+          --print-timeout 20s \
+          --disable-slash-commands \
+          > "${executed_failure_stdout}" 2> "${executed_failure_stderr}"
+
+    kill "${command_mock_pid}" 2>/dev/null || true
+    wait "${command_mock_pid}" 2>/dev/null || true
+    command_mock_pid=
+    test ! -s "${executed_failure_stderr}"
+    trap - EXIT
 
     mock_log=$(mktemp)
     first_stdout=$(mktemp)
@@ -693,6 +809,7 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
   --tmpfs /data:rw,nosuid,nodev,noexec,mode=0755 \
   --tmpfs /run:rw,nosuid,nodev,noexec,mode=0755 \
   --volume "${SCRIPT_DIRECTORY}/fixtures:/test-fixtures:ro" \
+  --volume "${STREAM_WORK_DIRECTORY}:/test-streams:ro" \
   --entrypoint /bin/bash "${IMAGE}" -ceu '
     install -d -m 0700 /data/antigravity /run/antigravity-ha /config
     jq -n "{
@@ -870,6 +987,11 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
       NATIVE_STREAM_PATH="${native_stdout}" \
         PERMISSION_CANARY_REQUIRE_APPARMOR=false \
         /usr/bin/node /test-fixtures/telegram-permission-canary-assert.mjs
+      DENIAL_STREAM_PATH="${native_stdout}" \
+        EXECUTED_FAILURE_STREAM_PATH=/test-streams/executed-failure.ndjson \
+        /usr/bin/node \
+          /test-fixtures/telegram-command-denial-shape-assert.mjs \
+          | grep -Fxq TELEGRAM_COMMAND_DENIAL_SHAPE_PASS
       jq -s -e "
         any(.[]; .kind == \"request\" and
           .state == \"await_write_deny\" and .write_to_file_advertised == true) and

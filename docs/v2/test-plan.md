@@ -299,6 +299,46 @@ failed-session recovery를 순서대로 검증해야 한다.
 aarch64도 같은 acceptance를 요구한다. 배포 시점 두 architecture는 `NOT RUN`이고 전체
 v2 수용은 `PARTIAL`이다.
 
+### 2.1.2 Telegram direct-command와 mode-aware denial
+
+공개 2.1.1 실제 HAOS amd64에서 Telegram transport, exact no-tool response, 단일
+`ha_read_state`와 confined `ha_files_list`는 `PASS`했다. explicit
+`always-proceed`의 read-only native `run_command` turn은 Bridge에서
+`headless_permission_denied`로 분류됐고 같은 요청의 fallback은
+`proposal_result_invalid`로 끝났다. 2.1.1 telemetry는 tool/denial layer를 식별하지
+않고 generic permission 문구도 같은 reason으로 분류했으므로 shell `/config`
+directory read와 AppArmor command profile 도달 여부를 판정할 수 없다. 두 항목은
+`FAIL`이 아니라 `NOT RUN`이다. 공개 2.1.1 이미지의 격리 시험에서는 canonical
+`always-proceed`와 straight ASCII quote의 같은 명령이 성공했다. curly Unicode
+quote도 권한 거부 없이 실행됐지만 출력만 `‘TERMINAL-DIR-OKn’`로 훼손됐으며, 이
+결과는 HAOS 증거가 아니다.
+
+2.1.2 자동 수용은 다음을 모두 검사한다.
+
+- exact native 1.1.13에서 canonical `always-proceed` settings를 사용한 read-only
+  `run_command`가 proposal이나 interactive prompt 없이 성공하는 positive canary
+- proposal이 없는 `request-review`의 exact `run_command` headless denial만 같은
+  conversation에서 `telegram_action_propose`로 최대 한 번 재계획하고, exact single
+  same-run proposal은 재계획 없이 receipt 검증을 계속하며 denied invocation 자체는
+  resume/retry하지 않는 component test
+- 같은 denial이 `always-proceed`에서 발생하면 replan 없이
+  `unexpected_permission_denied`로 격리되고 다음 요청이 새 generation을 사용하는
+  negative test
+- native `read_file`/`view_file`/`write_file`/`write_to_file` denial은 두 mode에서
+  `headless_read_denied`이며 proposal을 만들지 않고 confined `ha_files` 경계만
+  안내하는 negative test
+- generic tool, shell과 AppArmor의 "permission denied" 문구, mismatched/unknown tool
+  name과 크기 초과 diagnostic은 native approval denial로 분류하지 않는 parser test
+- exact native 1.1.13 `telegram_action_propose`가 ACTIVE/DONE
+  `call_mcp_tool` step, bounded string receipt와 matching conversation/digest를 내고
+  coordinator revalidation까지 통과하는 real-native canary
+
+2.1.2 실제 HAOS amd64에서는 fresh `/new` 뒤 no-tool, managed state read, managed file
+list, explicit `always-proceed` read-only native command, `request-review` proposal card,
+승인·취소와 `/status`를 독립 요청으로 검사한다. command 성공 뒤에만 ordinary
+`/config` directory와 AppArmor command path를 `PASS`로 판정한다. aarch64, update,
+restart와 rollback도 별도이며 배포 전에는 모두 `NOT RUN`, 전체 v2는 `PARTIAL`이다.
+
 2.0.12 rollback rehearsal은 이를 2.0.18 permission failure의 clean/safe fix로 간주하거나
 Supervisor direct downgrade가 지원된다고 가정하지 않는다.
 exact 2.0.12 App backup이 있는 경우에만 backup restore가 App image와 `/data`를 함께
@@ -391,8 +431,8 @@ candidate와 HAOS evidence가 생기기 전에는 관련 마일스톤을 `VERIFI
 | AG-007 | MCP discovery | `ha_change`, `telegram_action`, `ha_files`, `ha_memory`, `ha_read`, `ha_validate`, `playwright` 일곱 managed server가 secret env 없이 발견 |
 | AG-008 | OAuth persistence | login 후 restart/update에서 native session 보존 |
 | AG-009 | print stdin | 값 없는 `--print` 없이 pipe된 prompt가 argv/log에 없고 stdin으로 처리 |
-| AG-010 | stream parser | top-level `event`, init/progress/SUCCESS native free-text result, exact completed HA/action proposal receipt, optional bounded `toolAction`/`toolSummary`, kind-specific single-proposal empty-text fallback, conversation binding, typed terminal/headless-permission failures, invalid JSON, unknown event, size limit |
-| AG-011 | headless permissions | 기본 `request-review`의 managed read/proposal + mutation ask, explicit `always-proceed` autonomous-admin, 두 mode의 raw native file deny와 mandatory blacklist, `strict`/`proceed-in-sandbox` 정규화, sandbox true/false no-op |
+| AG-010 | stream parser | top-level `event`, init/progress/SUCCESS native free-text result, exact completed HA/action proposal receipt, optional bounded `toolAction`/`toolSummary`, kind-specific single-proposal empty-text fallback, conversation binding, exact-tool/pinned-diagnostic headless denial과 generic permission-error 분리, invalid JSON, unknown event, size limit |
+| AG-011 | headless permissions | 기본 `request-review`의 managed read/proposal + command-denial one-shot replan, explicit `always-proceed` autonomous-admin/unexpected-denial 격리, 두 mode의 raw native file deny와 mandatory blacklist, `strict`/`proceed-in-sandbox` 정규화, sandbox true/false no-op |
 | AG-012 | forbidden flags | skip-permissions와 Telegram override 거부 |
 | AG-013 | Telegram customization inheritance | user global/workspace plugin·agent·rule·MCP를 Web/SSH와 동일하게 실행·노출; mode별 mutation, shared settings policy 상속, raw native file read/write deny, confined `ha_files` positive/negative, protected settings/MCP-config deny |
 | AG-014 | runtime auto-update disabled | 모든 native launch가 opt-out을 강제하고 updater spawn·binary version/digest 변동이 없음 |
@@ -520,6 +560,10 @@ current amd64 image와 current-source QEMU aarch64 packaging canary는 이 경�
   autonomous-admin과 두 mode의 mandatory blacklist 적용, `strict`/`proceed-in-sandbox`
   normalization, native sandbox flag 부재/override 거부,
   sandbox true/false 입력의 false 정규화, legacy Telegram mode 무시
+- exact native `run_command` headless denial의 proposal 없는 `request-review` one-shot
+  proposal replan, same-run receipt continuation과 `always-proceed`
+  `unexpected_permission_denied` no-card, native-file denial의 managed `ha_files` 안내,
+  generic shell/AppArmor permission error의 approval 분류 금지
 - Telegram-enabled preserve가 safe legacy settings의 App 관리 보안 field, selected
   mode의 sparse native shape와 known permission bucket만 transaction backup 뒤
   canonicalize하고 unrelated settings/global MCP/OAuth를 보존하며, ownership 유무와 두
@@ -789,6 +833,10 @@ top-level settings/global MCP 보존, backup·ownership·restart idempotency를 
 - unauthorized user/chat와 pairing probe 거부
 - 조회와 per-chat session continuation, explicit `/new` rotation
 - global native permission 동등 적용과 same-session change confirmation/cancel/expiry
+- explicit `always-proceed`에서 ordinary read-only native command가 direct 성공하고,
+  proposal이 없는 `request-review` command denial은 최대 한 번 proposal card로
+  전환되고 exact same-run proposal은 그대로 검증되며, mode mismatch는 bounded
+  `unexpected_permission_denied`와 새 generation으로 격리
 - 2.0.11 representative legacy permission drift를 가진 safe settings에서 Telegram을 켠
   `preserve` update가 boundary key만 canonicalize하고 unrelated settings/global MCP와
   OAuth를 보존한 뒤 `permission_boundary_ready`와 Bot API reconnect에 도달

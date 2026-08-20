@@ -14,12 +14,17 @@ readonly TEST_ID="antigravity-ha-apparmor-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_A
 readonly PROFILE_NAME="antigravity_home_assistant_ci_${GITHUB_RUN_ID:-local}_${GITHUB_RUN_ATTEMPT:-0}_${RANDOM}_$$"
 readonly FIRST_CONTAINER="${TEST_ID}-cold"
 readonly RESTART_CONTAINER="${TEST_ID}-restart"
+readonly COMMAND_ENDPOINT_CONTAINER="${TEST_ID}-command-endpoint"
+readonly COMMAND_ENDPOINT_ALIAS=always-command-endpoint
 readonly DATA_VOLUME="${TEST_ID}-data"
 readonly CONFIG_VOLUME="${TEST_ID}-config"
 readonly SHARE_VOLUME="${TEST_ID}-share"
 readonly MEDIA_VOLUME="${TEST_ID}-media"
 readonly BACKUP_VOLUME="${TEST_ID}-backup"
 readonly HELPER_RUNTIME_VOLUME="${TEST_ID}-helper-runtime"
+readonly COMMAND_DATA_VOLUME="${TEST_ID}-command-data"
+readonly COMMAND_CONFIG_VOLUME="${TEST_ID}-command-config"
+readonly COMMAND_NETWORK="${TEST_ID}-command-network"
 readonly SUPERVISOR_TOKEN=apparmor-enforced-smoke-token-do-not-use
 readonly EXPECTED_ANTIGRAVITY_VERSION=1.1.13
 readonly ANTIGRAVITY_AUTH_REQUIRED_MARKER="Error: authentication required. Run 'antigravity-real' to log in, then retry."
@@ -120,11 +125,14 @@ cleanup() {
   local status=$?
   trap - EXIT
   docker rm --force "$FIRST_CONTAINER" "$RESTART_CONTAINER" \
+    "$COMMAND_ENDPOINT_CONTAINER" \
     >/dev/null 2>&1 || true
   docker volume rm --force "$DATA_VOLUME" "$CONFIG_VOLUME" \
     "$SHARE_VOLUME" "$MEDIA_VOLUME" "$BACKUP_VOLUME" \
-    "$HELPER_RUNTIME_VOLUME" \
+    "$HELPER_RUNTIME_VOLUME" "$COMMAND_DATA_VOLUME" \
+    "$COMMAND_CONFIG_VOLUME" \
     >/dev/null 2>&1 || true
+  docker network rm "$COMMAND_NETWORK" >/dev/null 2>&1 || true
   if [[ $PROFILE_LOADED == true ]]; then
     sudo -n apparmor_parser --remove --skip-cache "$RENDERED_PROFILE" \
       >/dev/null 2>&1 || true
@@ -778,6 +786,139 @@ run_native_cli_probe() {
   assert_no_native_settings_temporary "${access_mode} native worker"
 }
 
+run_always_proceed_native_command_probe() {
+  local after_hash
+  local before_hash
+  local endpoint_log="${WORK_DIR}/always-command-endpoint.log"
+  local stream_stderr="${WORK_DIR}/always-command.stderr"
+  local stream_stdout="${WORK_DIR}/always-command.stdout"
+
+  docker volume create "$COMMAND_DATA_VOLUME" >/dev/null
+  docker volume create "$COMMAND_CONFIG_VOLUME" >/dev/null
+  docker network create --internal "$COMMAND_NETWORK" >/dev/null
+
+  docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --entrypoint /usr/bin/env \
+    --volume "${COMMAND_DATA_VOLUME}:/data" \
+    --volume "${COMMAND_CONFIG_VOLUME}:/config" \
+    "$IMAGE" /bin/bash -ceu '
+      install -d -m 0700 /data/home/.gemini/antigravity-cli
+      temporary=$(mktemp)
+      /usr/bin/node --input-type=module > "$temporary" <<NODE
+import { readFileSync } from "node:fs";
+import {
+  canonicalTelegramPermissionRules,
+  nativeCanonicalSettingsContent,
+} from "/usr/local/share/antigravity-ha/telegram-permission-policy.mjs";
+
+const settings = JSON.parse(readFileSync("/etc/antigravity/settings.json", "utf8"));
+settings.modelProvider = "gemini";
+settings.permissions = canonicalTelegramPermissionRules("always-proceed");
+process.stdout.write(nativeCanonicalSettingsContent(settings, "always-proceed"));
+NODE
+      install -m 0600 "$temporary" \
+        /data/home/.gemini/antigravity-cli/settings.json
+    '
+
+  before_hash=$(docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --entrypoint /usr/bin/sha256sum \
+    --volume "${COMMAND_DATA_VOLUME}:/data:ro" \
+    "$IMAGE" /data/home/.gemini/antigravity-cli/settings.json \
+    | cut -d ' ' -f 1)
+
+  docker run --detach \
+    --platform "$TEST_PLATFORM" \
+    --name "$COMMAND_ENDPOINT_CONTAINER" \
+    --network "$COMMAND_NETWORK" \
+    --network-alias "$COMMAND_ENDPOINT_ALIAS" \
+    --env CANARY_LISTEN_ADDRESS=0.0.0.0 \
+    --entrypoint /usr/bin/node \
+    --volume "${PWD}/tests/fixtures:/test-fixtures:ro" \
+    "$IMAGE" \
+    /test-fixtures/telegram-always-command-canary-endpoint.cjs >/dev/null
+  for _ in $(seq 1 100); do
+    docker logs "$COMMAND_ENDPOINT_CONTAINER" 2>&1 \
+      | grep -Fq '"kind":"ready"' && break
+    [[ $(docker inspect --format '{{.State.Running}}' \
+      "$COMMAND_ENDPOINT_CONTAINER") == true ]] \
+      || fail 'the enforced always-command endpoint stopped during startup'
+    sleep 0.05
+  done
+  docker logs "$COMMAND_ENDPOINT_CONTAINER" 2>&1 \
+    | grep -Fq '"kind":"ready"' \
+    || fail 'the enforced always-command endpoint did not become ready'
+
+  if ! printf '%s\n' 'TELEGRAM_ALWAYS_COMMAND_CANARY_SENTINEL' \
+    | docker run --rm --interactive \
+      --platform "$TEST_PLATFORM" \
+      --network "$COMMAND_NETWORK" \
+      --security-opt \
+        apparmor=antigravity_home_assistant-interactive-runtime-restricted \
+      --entrypoint /usr/local/libexec/antigravity-real \
+      --env AGY_CLI_DISABLE_AUTO_UPDATE=true \
+      --env ANTIGRAVITY_HA_CHANNEL=telegram \
+      --env GEMINI_API_KEY=synthetic-always-command-canary \
+      --env "GOOGLE_GEMINI_BASE_URL=http://${COMMAND_ENDPOINT_ALIAS}:18789" \
+      --env HOME=/data/home \
+      --env HA_TELEGRAM_USER_ID=123456789 \
+      --env HA_TELEGRAM_CHAT_ID=-100123456789 \
+      --env HA_TELEGRAM_SESSION_GENERATION=7 \
+      --env HA_TELEGRAM_UPDATE_ID=77 \
+      --env HA_TELEGRAM_RUN_NONCE=command-canary-run-nonce-123456 \
+      --env HA_TELEGRAM_ACTION_PROPOSAL_SOCKET=/run/antigravity-ha/telegram-action-proposal.sock \
+      --env LANG=C.UTF-8 \
+      --env LC_ALL=C.UTF-8 \
+      --env PATH=/usr/local/libexec/antigravity-command-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+      --env TERM=xterm-256color \
+      --volume "${COMMAND_DATA_VOLUME}:/data" \
+      --volume "${COMMAND_CONFIG_VOLUME}:/config" \
+      --workdir /config \
+      "$IMAGE" \
+        --output-format stream-json \
+        --print-timeout 20s \
+        --disable-slash-commands \
+        >"$stream_stdout" 2>"$stream_stderr"; then
+    redact_probe_output < "$stream_stderr" >&2
+    redact_probe_output < "$stream_stdout" >&2
+    fail 'the enforced always-proceed native command did not complete'
+  fi
+  [[ ! -s $stream_stderr ]] \
+    || fail 'the enforced always-proceed native command emitted stderr'
+  docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --entrypoint /usr/bin/node \
+    --env NATIVE_STREAM_PATH=/test-output/native-stream.ndjson \
+    --volume "${stream_stdout}:/test-output/native-stream.ndjson:ro" \
+    --volume "${PWD}/tests/fixtures:/test-fixtures:ro" \
+    "$IMAGE" /test-fixtures/telegram-always-command-canary-assert.mjs \
+    || fail 'the enforced always-proceed native command stream was invalid'
+
+  docker logs "$COMMAND_ENDPOINT_CONTAINER" > "$endpoint_log" 2>&1
+  /usr/bin/jq --exit-status --slurp '
+    any(.[]; .kind == "request" and
+      .run_command_advertised == true and
+      .run_command_response_count == 0) and
+    any(.[]; .kind == "request" and
+      .run_command_response_count >= 1 and .marker_seen == true)
+  ' "$endpoint_log" >/dev/null \
+    || fail 'the enforced always-command endpoint omitted its bounded evidence'
+
+  after_hash=$(docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --entrypoint /usr/bin/sha256sum \
+    --volume "${COMMAND_DATA_VOLUME}:/data:ro" \
+    "$IMAGE" /data/home/.gemini/antigravity-cli/settings.json \
+    | cut -d ' ' -f 1)
+  [[ $after_hash == "$before_hash" ]] \
+    || fail 'the enforced always-proceed native command rewrote settings'
+}
+
 run_settings_update_probe() {
   local container=$1
   local digest output
@@ -1313,6 +1454,7 @@ run_settings_update_probe "$FIRST_CONTAINER"
 # Web TUI below. Run headless native/MCP feature probes only after that canary.
 run_ttyd_websocket_probe "$FIRST_CONTAINER"
 run_native_cli_probe "$FIRST_CONTAINER" restricted
+run_always_proceed_native_command_probe
 run_operational_blacklist_probe
 run_managed_read_validate_memory_mcp_probes "$FIRST_CONTAINER"
 run_managed_file_mcp_probe "$FIRST_CONTAINER"

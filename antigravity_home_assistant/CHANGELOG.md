@@ -2,6 +2,55 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.1.2] - 2026-08-21
+
+### Fixed
+
+- Make Telegram headless-permission recovery mode-aware and fail closed. A
+  native command denial in `request-review` may enter the bounded proposal
+  replan once, but the same denial in explicit `always-proceed` is a policy
+  mismatch and no longer gets silently converted into a mutation proposal.
+  The Bridge reports the bounded `unexpected_permission_denied` reason,
+  quarantines the failed conversation, and requires a fresh worker before the
+  next request.
+- Classify only exact, bounded native 1.1.13 permission-denial diagnostics.
+  Arbitrary tool-error text containing generic words such as "permission
+  denied" no longer activates proposal recovery. Native `read_file` and
+  `write_file` denial remains distinct from command review and directs ordinary
+  file work to the confined `ha_files` MCP boundary instead of proposing a
+  forbidden native-file operation.
+- Revalidate the canonical Telegram permission boundary immediately before
+  every fresh native worker, including the one bounded `request-review`
+  correction worker. Atomic settings drift stops before a second worker or
+  approval card can start; denied commands are never blindly retried.
+- Add privacy-bounded `proposal_result_invalid` diagnostics for step contract,
+  output contract/JSON/envelope, mixed proposal kind, receipt cardinality, and
+  coordinator binding failures. Telemetry includes only fixed reason classes,
+  bounded stages and counts—never prompt, command, output, ID, digest, or
+  requester values.
+
+### Field evidence and limitations
+
+- Public 2.1.1 on real HAOS amd64 passed Telegram transport, an exact no-tool
+  response, one managed `ha_read_state` call, and one confined
+  `ha_files_list` call. In explicit `always-proceed`, a read-only native
+  `run_command` turn was classified by the Bridge as
+  `headless_permission_denied`; its repeated request entered proposal handling
+  and failed receipt validation. The 2.1.1 classifier accepted generic
+  permission text from any tool error and did not record the tool or denial
+  layer, so the field evidence cannot prove whether the shell or AppArmor was
+  reached. An isolated public-2.1.1-image reproduction with canonical
+  `always-proceed` settings executed the straight-ASCII-quote command
+  successfully; curly Unicode quotes also executed without a permission denial
+  but changed the output to `‘TERMINAL-DIR-OKn’`. That isolated result is not
+  HAOS evidence, and live terminal `/config` access and the kernel command
+  policy remain `NOT RUN`, not `FAIL`.
+- Source and component results for 2.1.2 are automated evidence only.
+  Real-device 2.1.2 install/update, Web TUI, direct command, request-review
+  proposal and approval, restart, browser, memory, rollback, and aarch64
+  acceptance remain `NOT RUN` until the published image is installed and
+  tested. Overall v2 acceptance remains `PARTIAL`.
+
 ## [2.1.1] - 2026-08-20
 
 ### Fixed

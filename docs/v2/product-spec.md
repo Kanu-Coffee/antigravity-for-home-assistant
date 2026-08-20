@@ -290,7 +290,7 @@ settings를 backup하고 기존 ownership state와 무관하게 managed field와
 
 2.0.12부터 `telegram_enabled=true`이면 이 option이 `preserve` 또는
 `refresh_managed`여도 root-owned single-link regular·256 KiB 이하의 parse 가능한 existing
-settings를 transaction backup한다. 현재 2.1.1은 `allowNonWorkspaceAccess`,
+settings를 transaction backup한다. 현재 2.1.2는 `allowNonWorkspaceAccess`,
 `artifactReviewPolicy`, selected mode의 sparse `toolPermission` 표현과 known permission
 bucket을 exact Telegram policy로 reconcile하고 retired `enableTerminalSandbox`를
 제거한다. 이 App 관리 permission 경계 밖의 unrelated top-level settings, global MCP,
@@ -325,6 +325,14 @@ write deny는 option 값과 무관한 불변조건이다.
   mandatory blacklist 밖의 command/URL과 `mcp(*)`를 autonomous-admin으로 허용한다.
   native `read_file(*)`/`write_file(*)`는 두 mode 모두 mandatory deny이고 ordinary file은
   `ha_files`만 사용한다.
+- 2.1.2는 exact native tool name과 pinned bounded diagnostic이 함께 일치할 때만
+  complete `ACTIVE`→`ERROR` lifecycle까지 확인해 headless permission denial로
+  분류한다. proposal이 없는 `request-review`의 `run_command` denial만 proposal-first로
+  최대 한 번 재계획하고 exact single same-run proposal은 기존 receipt 검증을
+  계속한다. `always-proceed`의 같은 denial은 approval card 없이
+  `unexpected_permission_denied` policy mismatch로 격리한다. Native
+  `read_file`/`view_file`/`write_file`/`write_to_file` denial은 `headless_read_denied`로 분리하며 generic
+  shell/AppArmor 오류는 승인 거부로 재분류하지 않는다.
 - 2.0.12에서 Telegram이 활성화되면 위 effective policy는 일반 preserve merge보다
   우선하는 startup 경계다. 현재 App 관리 보안 field, selected mode의 sparse native
   shape와 known permission bucket의 user-owned rule/stronger deny도 canonical policy로

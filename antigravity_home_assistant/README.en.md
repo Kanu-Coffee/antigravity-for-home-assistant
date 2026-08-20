@@ -27,6 +27,22 @@ Use antigravity inside Home Assistant to inspect your setup and improve dashboar
 > [!WARNING]
 > This app is a powerful administrative tool that can directly change your Home Assistant configuration. Telegram is equivalent to the CLI as an administrator channel, so protect the bot token, authorized chats, and Telegram accounts. Back up important data, review plans and diffs, and never expose the SSH port directly to the internet.
 
+**2.1.2 Telegram command-permission diagnostics:** On public 2.1.1 on real
+HAOS amd64, Telegram no-tool and managed state/file reads passed, but an
+explicit-`always-proceed` read-only native `run_command` turn was classified by
+the Bridge as `headless_permission_denied`, and its repeated request failed
+proposal-result validation. Version 2.1.1 telemetry did not identify the tool
+or denial layer and therefore cannot prove shell/AppArmor reachability. In an
+isolated public-2.1.1-image reproduction, straight ASCII quotes succeeded and
+curly Unicode quotes executed without a permission denial but corrupted the
+output; that run is not HAOS evidence. Version 2.1.2 checks the exact native
+denial together with the App mode. A `request-review` command denial without a
+proposal may replan at most once; one exact same-run proposal instead continues
+through its receipt checks. An `always-proceed` denial is quarantined as
+`unexpected_permission_denied` without an approval card, and native-file
+denials are directed to managed `ha_files`. Real-device 2.1.2 acceptance is `NOT RUN` before
+installation, so overall v2 remains `PARTIAL`.
+
 **2.1.1 native-settings compatibility fix:** On the first public-2.1.0 Web
 `agy` launch, Antigravity 1.1.13 tried to remove non-canonical top-level
 `toolPermission` and `enableTerminalSandbox` in `request-review` mode. The intended AppArmor
@@ -43,8 +59,10 @@ no copy/unlink fallback or settings-write grant is added.
 Telegram tokens and allowlists reside in `/data/options.json`, the Bridge is a
 separate S6 service, and its proposal MCP is `telegram_action`. Missing Core
 `telegram_bot` services or an MCP literally named `telegram` is not proof that
-the Bridge is inactive. Real-HAOS 2.1.1 Web/AppArmor/Telegram/browser/memory
-acceptance is `NOT RUN` on both architectures, so overall v2 remains `PARTIAL`.
+the Bridge is inactive. Real-HAOS 2.1.1 acceptance was `NOT RUN` on both
+architectures at publication. Subsequent amd64 Telegram checks passed no-tool
+and managed reads but failed direct command and proposal fallback; overall v2
+remains `PARTIAL`.
 
 **2.1.0 operational-permission redesign:** Public 2.0.18 on real HAOS 18.2
 amd64 passed App startup, native `antigravity --version` with status 0,
@@ -111,7 +129,7 @@ global MCP, plugins, OAuth, and `/config`, and repairs drift on every startup
 until returned to `preserve`.
 Starting in 2.0.12, a Telegram-enabled startup automatically repairs an eligible
 root-owned, single-link regular, parseable settings file of at most 256 KiB. In
-its current 2.1.1 form, it restores the App-managed security fields, selected
+its current 2.1.2 form, it restores the App-managed security fields, selected
 mode's sparse native shape, and known permission buckets, so a supported update
 does not require a manual `reset_v2`. Unknown allow/ask/deny rules are not
 retained and an existing mode is hardened to 0600;

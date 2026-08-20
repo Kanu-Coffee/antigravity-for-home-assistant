@@ -266,7 +266,7 @@ def test_apparmor_docs_describe_discrete_px_profiles() -> None:
         )
 
 
-def test_v211_docs_preserve_history_and_bind_current_field_evidence() -> None:
+def test_v212_docs_preserve_history_and_bind_current_field_evidence() -> None:
     changelog = re.sub(
         r"\s+",
         " ",
@@ -274,8 +274,37 @@ def test_v211_docs_preserve_history_and_bind_current_field_evidence() -> None:
     )
     assert changelog.startswith(
         "# Changelog All notable changes to this App are documented in this file. "
-        "## [2.1.1] - 2026-08-20"
+        "## [2.1.2] - 2026-08-21"
     )
+    for fragment in (
+        "Make Telegram headless-permission recovery mode-aware and fail closed",
+        "native command denial in `request-review` may enter the bounded proposal replan once",
+        "same denial in explicit `always-proceed` is a policy mismatch",
+        "bounded `unexpected_permission_denied` reason",
+        "Classify only exact, bounded native 1.1.13 permission-denial diagnostics",
+        "Native `read_file` and `write_file` denial remains distinct",
+        "Revalidate the canonical Telegram permission boundary immediately before",
+        "every fresh native worker",
+        "Add privacy-bounded `proposal_result_invalid` diagnostics",
+        "fixed reason classes",
+        "never prompt, command, output, ID, digest, or requester values",
+        "Public 2.1.1 on real HAOS amd64 passed Telegram transport",
+        "one managed `ha_read_state` call",
+        "one confined `ha_files_list` call",
+        "turn was classified by the Bridge as `headless_permission_denied`",
+        "failed receipt validation",
+        "accepted generic permission text from any tool error",
+        "cannot prove whether the shell or AppArmor was reached",
+        "isolated public-2.1.1-image reproduction",
+        "straight-ASCII-quote command successfully",
+        "curly Unicode quotes also executed without a permission denial",
+        "changed the output to `‘TERMINAL-DIR-OKn’`",
+        "isolated result is not HAOS evidence",
+        "live terminal `/config` access and the kernel command policy remain `NOT RUN`",
+        "Real-device 2.1.2 install/update",
+        "overall v2 acceptance remains `PARTIAL`",
+    ):
+        assert fragment in changelog, f"2.1.2 changelog evidence drift: {fragment}"
     for fragment in (
         "Install Antigravity 1.1.13's mode-specific canonical top-level settings",
         "`request-review` omits `toolPermission`",
@@ -413,7 +442,10 @@ def test_v211_docs_preserve_history_and_bind_current_field_evidence() -> None:
     )
     for surface in current_surfaces:
         content = read(surface)
+        normalized_content = re.sub(r"\s+", " ", content)
         for fragment in (
+            "2.1.2",
+            "unexpected_permission_denied",
             "2.1.1",
             "request-review",
             "always-proceed",
@@ -431,6 +463,11 @@ def test_v211_docs_preserve_history_and_bind_current_field_evidence() -> None:
                 f"{surface.relative_to(ROOT)} omits the 2.1.1 field correction: "
                 f"{fragment}"
             )
+        assert "curly Unicode" in normalized_content
+        assert "denial layer" in normalized_content or "tool/layer" in normalized_content
+        assert "denied before shell execution" not in normalized_content
+        assert "shell 실행 전에 거부" not in normalized_content
+        assert "명령이 실행 전 거부" not in normalized_content
 
     migration = re.sub(r"\s+", " ", read(V2 / "migration-release.md"))
     for fragment in (
@@ -445,6 +482,25 @@ def test_v211_docs_preserve_history_and_bind_current_field_evidence() -> None:
         "전체 v2 수용은 `PARTIAL`",
     ):
         assert fragment in migration, f"2.1.1 migration evidence drift: {fragment}"
+    for fragment in (
+        "공개 뒤 2.1.1 실제 HAOS amd64의 Telegram 시험",
+        "단일 `ha_read_state`와 confined `ha_files_list`를 `PASS`",
+        "read-only native `run_command` turn은 Bridge에서 `headless_permission_denied`로 분류",
+        "generic permission 문구를 어느 tool error에서든 일치",
+        "tool/denial layer를 기록하지 않았으므로",
+        "straight ASCII quote를 사용한 같은 명령이 성공",
+        "curly Unicode quote도 권한 거부 없이 실행",
+        "`‘TERMINAL-DIR-OKn’`로 훼손",
+        "이 자동 재현은 HAOS 증거가 아니다",
+        "2.1.2는 exact native 1.1.13 headless denial",
+        "proposal이 없는 `request-review`의 `run_command` denial만 최대 한 번",
+        "exact single same-run proposal은 기존 receipt 검증을 계속",
+        "`unexpected_permission_denied` policy mismatch",
+        "Native `read_file`/`view_file`/`write_file`/`write_to_file` denial은 두 mode 모두 `headless_read_denied`",
+        "`breaking_versions`에는 2.1.2를 추가하지 않는다",
+        "2.1.2의 real-HAOS install/update",
+    ):
+        assert fragment in migration, f"2.1.2 migration evidence drift: {fragment}"
 
     plan = re.sub(r"\s+", " ", read(V2 / "test-plan.md"))
     for fragment in (
@@ -943,7 +999,7 @@ def test_v210_docs_define_receipt_fallback_multi_choice_and_restart_boundary() -
     assert "## [2.0.10]" in changelog
     assert "full App or broker restart rejects an unstarted in-memory proposal" in changelog
     assert "live Telegram/OAuth E2E" not in changelog
-    assert 'version: "2.1.1"' in documents["migration"]
+    assert 'version: "2.1.2"' in documents["migration"]
 
 
 def test_v209_docs_match_native_sandbox_and_mediated_settings_policy() -> None:
@@ -1118,7 +1174,7 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
         "telegram_session_delivery",
     }
     template = json.loads(read(V2 / "release-evidence-template.json"))
-    assert template["version"] == "2.1.1"
+    assert template["version"] == "2.1.2"
     assert set(template["gates"]) == expected_gates
     assert "HA-008" not in json.dumps(template, sort_keys=True)
     for gate in template["gates"].values():

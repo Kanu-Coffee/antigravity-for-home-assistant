@@ -22,7 +22,7 @@ def test_main_release_is_manual_main_only_and_minimally_authorized() -> None:
         "candidate_run_attempt",
         "confirm",
     }
-    assert inputs["version"]["default"] == "2.1.1"
+    assert inputs["version"]["default"] == "2.1.2"
     assert workflow["permissions"] == {"contents": "read"}
     publish = workflow["jobs"]["publish"]
     assert publish["if"] == "github.ref == 'refs/heads/main'"
@@ -142,6 +142,46 @@ def test_main_release_creates_annotated_tag_and_prerelease_without_fake_evidence
         and "no copy/unlink fallback or settings-write grant is added" in text
     )
     assert (
+        "Public 2.1.1 real amd64 HAOS evidence" in text
+        and "an exact no-tool response" in text
+        and "one managed state read" in text
+        and "one confined file listing passed" in text
+        and "classified an explicit-`always-proceed` read-only native-command "
+        "turn as `headless_permission_denied`" in text
+        and "mode-unaware proposal fallback" in text
+        and "did not identify the tool/layer" in text
+        and "also matched generic permission text" in text
+        and "isolated public-2.1.1-image reproduction" in text
+        and "straight-ASCII-quote command successfully" in text
+        and "curly Unicode quotes also executed without a permission denial "
+        "but corrupted only the output" in text
+        and "That isolated result is not HAOS evidence" in text
+        and "Live shell `/config` access and the AppArmor command profile "
+        "remain `NOT RUN`, not `FAIL`" in text
+    )
+    assert (
+        "2.1.2 makes headless-permission handling mode-aware and exact" in text
+        and "native `run_command` denial without a proposal" in text
+        and "one exact same-run proposal continues through the existing "
+        "receipt checks" in text
+        and "same denial in `always-proceed` fails closed as "
+        "`unexpected_permission_denied`" in text
+        and "never presents an approval card" in text
+        and "Native `read_file`/`view_file`/`write_file`/`write_to_file` denial "
+        "remains "
+        "`headless_read_denied`" in text
+        and "generic shell/AppArmor permission errors do not activate approval "
+        "recovery" in text
+    )
+    assert (
+        "Before every fresh Telegram native worker" in text
+        and "including the bounded correction worker" in text
+        and "revalidates the exact canonical settings boundary" in text
+        and "fixed step/output/kind/cardinality/binding subreasons" in text
+        and "prompts, commands, outputs, IDs, digests, and requester values "
+        "are excluded" in text
+    )
+    assert (
         "Telegram tokens and allowlists remain in `/data/options.json`" in text
         and "Bridge is a separate S6 service" in text
         and "managed proposal MCP is `telegram_action`" in text
@@ -152,8 +192,8 @@ def test_main_release_creates_annotated_tag_and_prerelease_without_fake_evidence
         "`ha_files_write_text`" in text
     )
     assert (
-        "2.1.1 automated settings-canonicalization, policy, PTY, managed-tool, "
-        "read/write, denial, "
+        "2.1.2 automated settings-canonicalization, mode-aware denial, exact "
+        "native command/proposal, policy, PTY, managed-tool, read/write, "
         "session-quarantine, multi-arch and exact-digest gates: `PASS` for this "
         "exact Candidate; this is not HAOS evidence" in text
     )
@@ -164,8 +204,9 @@ def test_main_release_creates_annotated_tag_and_prerelease_without_fake_evidence
         "`/data`" in text
     )
     assert (
-        "amd64 2.1.1 HAOS Web/AppArmor/Telegram/browser/memory acceptance at "
-        "publication: `NOT RUN`" in text
+        "amd64 2.1.2 HAOS install/update, Web/AppArmor, direct command, "
+        "request-review proposal/approval, restart, browser, memory, and "
+        "rollback acceptance at publication: `NOT RUN`" in text
     )
     assert (
         "aarch64 HAOS acceptance at publication: `NOT RUN`; owner-waived for "
@@ -185,7 +226,7 @@ def test_repository_advertises_the_numeric_tag_published_by_main_release() -> No
         )
     )
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
-    assert config["version"] == inputs["version"]["default"] == "2.1.1"
+    assert config["version"] == inputs["version"]["default"] == "2.1.2"
     assert (
         config["image"]
         == "ghcr.io/kanu-coffee/antigravity-for-home-assistant"

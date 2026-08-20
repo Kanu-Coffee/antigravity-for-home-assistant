@@ -11,7 +11,7 @@ import {
   handleMessage,
   handleToolCallback,
   normalizeUpdate,
-  processPrompt,
+  processPrompt as productionProcessPrompt,
   renderToolApprovalCard,
 } from "../antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs";
 import {
@@ -37,6 +37,15 @@ const config = {
   allowedUsers: new Set(["100"]),
   allowedChats: new Set(["-200"]),
 };
+
+function processPrompt(promptConfig, message, ticket, options = {}) {
+  return productionProcessPrompt(promptConfig, message, ticket, {
+    permissionBoundaryLoad: (expectedToolPermission) => ({
+      toolPermission: expectedToolPermission,
+    }),
+    ...options,
+  });
+}
 
 function actionWorker(coordinator, proposalArguments, conversationId) {
   return async (_prompt, options) => {

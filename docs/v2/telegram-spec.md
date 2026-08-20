@@ -31,7 +31,7 @@ state의 type/mode/schema가 안전하지 않으면 대기하지 않고 fail clo
 
 2.0.12 init은 Telegram이 활성화됐고 기존 settings가 root-owned single-link regular,
 256 KiB 이하이며 parse 가능하면 3의 경계를 확인하기 전에 transaction backup한다.
-현재 2.1.1은 `allowNonWorkspaceAccess`, `artifactReviewPolicy`, selected mode의 sparse
+현재 2.1.2는 `allowNonWorkspaceAccess`, `artifactReviewPolicy`, selected mode의 sparse
 `toolPermission` 표현과 known permission bucket을 canonical policy로 reconcile하고
 retired `enableTerminalSandbox`를 제거한다. 이 App 관리 permission 경계 밖의 unrelated
 top-level settings, global MCP, plugin, OAuth와 `/config`는 보존하고 mode를 0600으로
@@ -267,18 +267,44 @@ pinned 1.1.13 native child의 stderr는 원문을 저장·로그·회신하지 �
 `ha-antigravity-login`을 안내한다.
 exit 0, stdout 0 byte와 pinned stderr-only headless auto-denial marker가 정확히 함께
 있을 때는 legacy `headless_read_denied`로 분류한다. stderr marker만 있고 정상 terminal
-result가 있으면 이 분류를 적용하지 않는다. 별도로 valid stream의 tool
-`step_update.state == "ERROR"`에서 bounded `tool_info.output`/`error.message`가 고정
-permission-denied pattern과 일치하고 proposal receipt가 없으면 terminal 사과문이
-non-empty여도 `headless_permission_denied`다. 이 stream evidence는 한 번의
-proposal-first same-conversation replan을 시작하지만 denied tool을 resume하거나
-승인하지 않는다. malformed stream은 기존 stream failure로 남는다. stderr 마지막 줄,
-tool target과 raw diagnostic은 저장·로그·회신하지 않는다.
+result가 있으면 이 분류를 적용하지 않는다. 별도로 valid stream에서 exact native
+`run_command`, `read_file`, `view_file`, `write_file` 또는 `write_to_file` tool name과
+bounded `tool_info.output`/`error.message`가 pinned native 1.1.13 headless-denial
+pattern에 모두 일치할 때만 native permission denial 후보다. `run_command`는 동일
+conversation·step·CommandLine의 exact `ACTIVE`→`ERROR` pair이고 다른
+`run_command DONE`이 없어야 한다. orphan/duplicate/mixed lifecycle, generic
+"permission denied", AppArmor/shell error 또는 unknown tool diagnostic은 approval
+분류를 활성화하지 않는다. 유효 proposal receipt가 없으면 즉시 typed denial로
+중단하고, 정확한 단일 same-run receipt가 함께 있으면 denial metadata를 downstream
+mode 검증까지 보존한다.
+
+proposal이 없는 `run_command` denial은 `request-review`에서만 같은 conversation의
+proposal-first replan을 최대 한 번 시작한다. 정확한 단일 same-run proposal은 새
+replan 없이 기존 receipt 검증으로 진행한다. explicit `always-proceed`의 같은 denial은
+설정된 policy와 native 적용 불일치이므로 `unexpected_permission_denied`로 fail
+closed하고 conversation을 격리하며 approval card로 전환하지 않는다.
+`read_file`/`view_file`/`write_file`/`write_to_file` denial은 두 mode 모두
+`headless_read_denied`이고 forbidden native-file proposal 없이 confined `ha_files`
+사용을 안내한다. 어느 경로도 denied tool을 resume하거나 승인하지 않는다. malformed
+stream은 기존 stream failure로 남는다. stderr 마지막 줄, command, file target과 raw
+diagnostic은 저장·로그·회신하지 않는다.
+
+bridge는 최초 native worker와 bounded correction worker를 각각 시작하기 직전에
+mode-specific canonical settings boundary를 다시 읽고 raw byte까지 검증한다. 두 검증
+사이 atomic replacement나 mode drift가 있으면 두 번째 worker/coordinator를 시작하지
+않고 bounded `unexpected_permission_denied`의 `settings_preflight`로 fail closed한다.
+denied command는 자동 재시도하지 않는다.
+
+`proposal_result_invalid` 진단은 step contract, output
+contract/JSON/envelope, mixed kind, receipt cardinality, coordinator binding의 고정
+subreason만 기록한다. 필요한 경우 allowlisted stage나 nonnegative bounded count만
+추가하며 prompt, command, output, proposal ID, digest, conversation과 requester 값은
+기록하지 않는다.
 
 `/status`의 transport 정상은 Bot API command가 bridge에서 처리된다는 뜻일 뿐이다.
 공유 AI runtime 상태는 App 시작 뒤 `아직 확인되지 않음`에서 시작해 완료된 최근
 native child 결과만 `ready`, `authentication_required`, `headless_read_denied`,
-`headless_permission_denied`,
+`headless_permission_denied`, `unexpected_permission_denied`,
 `stream_contract_failed`, `terminal_missing`, `terminal_status_failed`,
 `terminal_response_invalid`, `conversation_mismatch`, `proposal_result_invalid` 또는
 `worker_failed`로 갱신한다. 이 상태에는 identifier, prompt, stderr 또는 credential
@@ -495,7 +521,7 @@ optional `expected_sha256`를 강제한다. secrets/storage/.gemini/credential/p
 Recorder write는 fail closed하며 sensitive-data marker 없이 Recorder read도 거부한다.
 
 2.0.12에서 Telegram-enabled startup은 위 일반 preserve migration을 좁게 재정의했다.
-현재 2.1.1은 ownership state와 관계없이 App 관리 보안 field, selected mode의 sparse
+현재 2.1.2는 ownership state와 관계없이 App 관리 보안 field, selected mode의 sparse
 native shape와 known permission bucket의 user-owned rule/stronger deny를 shared
 canonical policy로 교체한다. 그 밖의 user customization과 global MCP/OAuth는 그대로
 보존하며, canonical input의 재시작은 새
@@ -515,9 +541,13 @@ current request의 installed Playwright navigation/interaction도 허용한다.
 않는다. 따라서 Telegram callback은 native prompt resume가 아니다. `request-review`의 HA service/config
 mutation은 `ha_change_propose`, terminal command·bounded inline script·command choices·
 finite question은 `telegram_action_propose`로 먼저 등록한다. 둘 다 실행하지 않고 exact
-digest/public preview만 broker/coordinator에 등록한다. native permission denial을
-감지하면 bridge는 같은 conversation에 proposal-first 재계획을 최대 한 번 요청할 수
-있지만 거부된 invocation을 승인·resume·retry하지 않는다. 임의 future/user plugin MCP
+digest/public preview만 broker/coordinator에 등록한다. exact native `run_command`
+permission denial을 감지하면 bridge는 proposal이 없는 `request-review`에서만 같은
+conversation에 proposal-first 재계획을 최대 한 번 요청할 수 있다. exact single
+same-run proposal은 그 receipt를 계속 검증한다. `always-proceed` denial은
+`unexpected_permission_denied`로 격리하고 approval card로 전환하지 않으며,
+native-file denial은 managed `ha_files`로 안내한다. 어느 경우에도 거부된 invocation을
+승인·resume·retry하지 않는다. 임의 future/user plugin MCP
 side effect는 transparent intercept할 수 없으며 두 proposal이 표현하지 못하면 fail
 closed한다.
 

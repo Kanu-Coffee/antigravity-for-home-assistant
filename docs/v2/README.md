@@ -115,7 +115,7 @@ Antigravity 명령이나 설정을 추정하지 않는다. 문서와 고정 bina
   confined `ha_files`만 사용한다.
 - 2.0.12부터 `telegram_enabled=true`이면 안전하게 읽고 parse할 수 있는 기존
   `settings.json`의 Telegram permission 경계를 migration mode와 무관하게 transaction
-  backup 뒤 canonical policy로 reconcile한다. 2.1.1의 공통 관리 대상은
+  backup 뒤 canonical policy로 reconcile한다. 2.1.2의 공통 관리 대상은
   `allowNonWorkspaceAccess`, `artifactReviewPolicy`, `permissions`다. `request-review`는
   top-level `toolPermission`을 생략하고 `allow`/`deny`/`ask`를 기록하며,
   `always-proceed`는 `toolPermission: "always-proceed"`와 `allow`/`deny`만 기록한다.
@@ -123,6 +123,12 @@ Antigravity 명령이나 설정을 추정하지 않는다. 문서와 고정 bina
   settings, OAuth, global MCP, plugin과 `/config`는 보존한다. 안전한 기존 mode drift는
   transaction에서 0600으로 강화한다.
   mode를 `reset_v2`로 자동 변경하지 않으며 같은 입력의 재시작은 idempotent해야 한다.
+- Telegram의 exact native `run_command` headless denial은 proposal이 없는
+  `request-review`에서만 최대 한 번 proposal-first로 재계획한다. exact single same-run
+  proposal은 기존 receipt 검증을 계속한다. `always-proceed`에서 같은 denial은 정상
+  승인 요청이 아니라 `unexpected_permission_denied` policy mismatch이며 approval card
+  없이 conversation을 격리한다. Native file denial은 managed `ha_files` 경계로 안내하고 generic shell/AppArmor
+  permission 오류는 native approval denial로 재분류하지 않는다.
 - init 뒤 effective permission 재검증도 통과하지 못하면 bridge는 Bot API에 접촉하지
   않고 `permission_boundary_blocked`를 한 번 기록한 뒤 살아 있는 fail-closed hold에
   머문다. 같은 설정의 fatal/S6 restart loop를 만들지 않으며 안전한 복구 뒤 App을

@@ -134,10 +134,10 @@ regular file이고 parse 가능한 기존 settings에 한해 migration mode와 o
 관계없이 Telegram permission 경계를 transaction backup 뒤 reconcile한다. 공개
 2.1.0까지는 `allowNonWorkspaceAccess`, `artifactReviewPolicy`, `toolPermission`,
 `enableTerminalSandbox`와 세 permission bucket을 기록했지만, 이 형식은 native 1.1.13의
-sparse persistence와 맞지 않아 2.1.1의 현재 계약이 아니다. 이 과거 형식에서도 App 관리
+sparse persistence와 맞지 않아 2.1.2의 현재 계약이 아니다. 이 과거 형식에서도 App 관리
 경계 밖의 사용자 top-level key는 보존했고, 입력과 출력은 256 KiB 이하이며 안전한 기존
 mode drift는 transaction에서 0600으로 강화했다.
-2.1.1은 native 1.1.13의 mode-specific sparse top-level shape를 설치한다.
+2.1.1부터 현재 2.1.2까지 native 1.1.13의 mode-specific sparse top-level shape를 설치한다.
 `request-review`는 `toolPermission`을 생략하고, `always-proceed`는 exact
 `"toolPermission":"always-proceed"`를 유지하며, 두 mode 모두
 `enableTerminalSandbox`를 생략한다. 선택 mode는 App option에서도 expected value로
@@ -299,9 +299,11 @@ proposal MCP가 private coordinator에 등록한 사실 자체는 crash-durable�
 보장은 봉인 이후 decision/result와 broker가 이미 접수한 실행에만 적용한다.
 
 `request-review`에서 임의 future/user plugin MCP에 native prompt interception을 확장할
-수 없으므로 이런 side effect는 Telegram에서 fail closed한다. headless permission denial 때 한 번
-proposal-first 재계획을 요청할 수 있지만 거부된 invocation을 승인 또는 resume하지
-않는다. authenticated Web/SSH는 native interactive review 아래 direct tool을 쓸 수 있고
+수 없으므로 이런 side effect는 Telegram에서 fail closed한다. proposal이 없는
+`request-review` headless command denial 때만 최대 한 번 proposal-first 재계획을
+요청할 수 있고 exact single same-run proposal은 기존 receipt 검증을 계속하지만,
+거부된 invocation 자체를 승인 또는 resume하지 않는다. `always-proceed` denial은
+approval card 없이 policy mismatch로 격리한다. authenticated Web/SSH는 native interactive review 아래 direct tool을 쓸 수 있고
 Telegram card로 자동 변환되지 않는다.
 
 Antigravity 1.1.13은 system default와 empty bucket을 저장하지 않는 sparse persistence를
@@ -334,7 +336,7 @@ App-managed proposal approval은 native option으로 완화되지 않는다.
 App 관리 permission enforcement의 self-bypass를 막기 위해 raw file tool의
 `settings.json` 직접 read/write는 exact deny다. interactive Web/SSH의 일반 전역 설정은 먼저
 `agy-settings sha256`으로 현재 digest를 얻고 `expected_sha256`과 JSON merge `patch`를
-stdin으로 `agy-settings patch`에 전달해 원자적으로 수정한다. 2.1.1 helper는 native
+stdin으로 `agy-settings patch`에 전달해 원자적으로 수정한다. 2.1.2 helper는 native
 1.1.13과 byte-stable하다고 검증한 top-level scalar
 `altScreenMode`, `clearScrollbackOnResize`, `colorScheme`, `disableSlashCommands`,
 `modelProvider`, `showFeedbackSurvey`, `showTips`만 받는다. 알 수 없는 non-null key와

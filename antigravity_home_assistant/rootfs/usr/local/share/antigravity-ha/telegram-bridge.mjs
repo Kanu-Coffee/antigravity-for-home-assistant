@@ -108,6 +108,13 @@ const ANTIGRAVITY_HEADLESS_PERMISSION_MARKER = Buffer.from(
   'a tool required the "read_file" permission that headless mode cannot prompt for, so it was auto-denied.',
   "utf8",
 );
+const NATIVE_HEADLESS_PERMISSION_TOOLS = new Set([
+  "read_file",
+  "run_command",
+  "view_file",
+  "write_file",
+  "write_to_file",
+]);
 const WORKER_FAILURE_REASONS = Object.freeze([
   "authentication_required",
   "conversation_mismatch",
@@ -118,7 +125,20 @@ const WORKER_FAILURE_REASONS = Object.freeze([
   "terminal_missing",
   "terminal_response_invalid",
   "terminal_status_failed",
+  "unexpected_permission_denied",
   "worker_failed",
+]);
+const PROPOSAL_RESULT_INVALID_REASONS = new Set([
+  "proposal_binding_invalid",
+  "proposal_cardinality_invalid",
+  "proposal_kind_mixed",
+  "proposal_output_invalid",
+  "proposal_step_contract_invalid",
+]);
+const PROPOSAL_OUTPUT_VALIDATION_STAGES = new Set([
+  "contract",
+  "envelope",
+  "json",
 ]);
 const REQUEST_FAILURE_REASONS = Object.freeze([
   ...WORKER_FAILURE_REASONS,
@@ -387,12 +407,13 @@ class AntigravityWorkerError extends Error {
       authentication_required: "Antigravity worker authentication is required",
       conversation_mismatch: "Antigravity resumed a different conversation",
       headless_permission_denied: "Antigravity headless tool permission was denied",
-      headless_read_denied: "Antigravity headless file read was denied",
+      headless_read_denied: "Antigravity native file operation was denied",
       proposal_result_invalid: "Antigravity change proposal result was invalid",
       stream_contract_failed: "Antigravity stream contract validation failed",
       terminal_missing: "Antigravity terminal result was missing",
       terminal_response_invalid: "Antigravity terminal response was invalid",
       terminal_status_failed: "Antigravity terminal result did not succeed",
+      unexpected_permission_denied: "Antigravity permission policy was unexpectedly denied",
       worker_failed: "Antigravity worker exited unsuccessfully",
     };
     super(messages[reasonClass]);
@@ -514,8 +535,11 @@ function renderRequestFailure(error) {
     case "authentication_required":
       return "Antigravity 로그인이 필요합니다. App 웹 터미널 또는 SSH에서 antigravity를 실행해 로그인한 뒤 다시 시도하세요.";
     case "headless_permission_denied":
-    case "headless_read_denied":
       return "직접 도구 실행은 Telegram 승인 경계를 통과하지 않아 중단했습니다. 같은 요청을 다시 보내면 Antigravity가 Telegram 작업 제안 카드로 준비합니다.";
+    case "headless_read_denied":
+      return "보안 정책상 허용되지 않은 native 파일 작업이 차단되었습니다. Home Assistant 관리형 도구를 사용해 다시 요청하세요.";
+    case "unexpected_permission_denied":
+      return "설정된 전역 도구 권한과 실제 Antigravity 권한 적용이 일치하지 않아 안전하게 중단했습니다. App을 재시작해 설정 경계를 다시 검증하세요. 계속되면 antigravity_user_files_update_mode를 reset_v2로 선택해 재시작한 뒤 preserve로 되돌리세요.";
     case "conversation_mismatch":
       return "저장된 대화와 Antigravity 세션이 일치하지 않습니다. /new 명령으로 새 대화를 시작한 뒤 다시 시도하세요.";
     case "proposal_result_invalid":
@@ -545,12 +569,13 @@ function renderWorkerStatus() {
     authentication_required: "공유 Antigravity 로그인 필요 (antigravity)",
     conversation_mismatch: "저장된 대화와 런타임 세션 불일치 (/new 필요)",
     headless_permission_denied: "직접 도구 실행 차단 (Telegram 승인 제안 필요)",
-    headless_read_denied: "전역 권한 정책의 대화형 승인 필요",
+    headless_read_denied: "최근 native 파일 작업 차단 (관리형 ha_files 필요)",
     proposal_result_invalid: "최근 변경 제안 결과 검증 실패",
     stream_contract_failed: "최근 응답 스트림 형식 검증 실패",
     terminal_missing: "최근 요청의 최종 결과 누락",
     terminal_response_invalid: "최근 최종 응답 내용 검증 실패",
     terminal_status_failed: "최근 Antigravity 실행이 성공 상태로 끝나지 않음",
+    unexpected_permission_denied: "예상하지 못한 직접 도구 권한 거부 (정책 불일치)",
     worker_failed: "최근 요청 실패",
   };
   return descriptions[workerRuntimeStatus] ?? descriptions.worker_failed;
@@ -1123,6 +1148,122 @@ function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function nativeHeadlessPermissionDenial(step) {
+  if (!isPlainObject(step) || step.step_type !== "tool" || step.state !== "ERROR" ||
+      !isPlainObject(step.tool_info)) {
+    return null;
+  }
+  if (typeof step.tool_name !== "string" ||
+      step.tool_info.name !== step.tool_name ||
+      !NATIVE_HEADLESS_PERMISSION_TOOLS.has(step.tool_name)) {
+    return null;
+  }
+  const toolName = step.tool_name;
+  if (toolName === "run_command") {
+    const parameters = step.tool_info.parameters;
+    const nativeError = step.tool_info.error;
+    const commandLine = parameters?.CommandLine;
+    const durationSeconds = step.duration_seconds;
+    const isExactPinnedNativeDenial = isPlainObject(parameters) &&
+      Object.keys(parameters).length === 1 &&
+      typeof commandLine === "string" && commandLine.length > 0 &&
+      Buffer.byteLength(commandLine, "utf8") <= MAX_PROMPT_BYTES &&
+      !/[\u0000]/u.test(commandLine) &&
+      Number.isFinite(durationSeconds) && durationSeconds >= 0 &&
+      isPlainObject(nativeError) &&
+      Object.keys(nativeError).length === 2 &&
+      nativeError.type === "TOOL_ERROR" &&
+      nativeError.message ===
+        `User denied permission to run command:\n${commandLine}` &&
+      Object.keys(step.tool_info).sort().join(",") ===
+        "error,name,parameters" &&
+      !Object.hasOwn(step.tool_info, "output");
+    return isExactPinnedNativeDenial ? "headless_permission_denied" : null;
+  }
+  const diagnostics = [step.tool_info.output, step.tool_info.error?.message]
+    .filter((value) => typeof value === "string" &&
+      Buffer.byteLength(value, "utf8") <= 4 * 1024);
+  const nativePermission = ["write_file", "write_to_file"].includes(toolName)
+    ? "write_file"
+    : "read_file";
+  const isMandatoryNativeFileDenial = diagnostics.some((value) =>
+    value === ANTIGRAVITY_HEADLESS_PERMISSION_MARKER.toString("utf8") ||
+    (value.startsWith(`Permission denied for ${nativePermission}(`) &&
+      value.endsWith("). Matches user-configured deny rule.") &&
+      !/[\r\n\u0000]/u.test(value)));
+  return isMandatoryNativeFileDenial ? "headless_read_denied" : null;
+}
+
+function isExactPinnedNativeRunCommandActive(step) {
+  const parameters = step?.tool_info?.parameters;
+  const commandLine = parameters?.CommandLine;
+  return isPlainObject(step) && step.step_type === "tool" &&
+    step.state === "ACTIVE" && step.tool_name === "run_command" &&
+    Number.isSafeInteger(step.step_index) && step.step_index >= 0 &&
+    typeof step.conversation_id === "string" &&
+    isPlainObject(step.tool_info) &&
+    Object.keys(step.tool_info).sort().join(",") === "name,parameters" &&
+    step.tool_info.name === "run_command" &&
+    isPlainObject(parameters) && Object.keys(parameters).length === 1 &&
+    typeof commandLine === "string" && commandLine.length > 0 &&
+    Buffer.byteLength(commandLine, "utf8") <= MAX_PROMPT_BYTES &&
+    !/[\u0000]/u.test(commandLine) &&
+    !Object.hasOwn(step, "duration_seconds");
+}
+
+function isExactPinnedNativeRunCommandDenialLifecycle(
+  runCommandSteps,
+  conversationId,
+) {
+  if (!Array.isArray(runCommandSteps) || runCommandSteps.length !== 2 ||
+      runCommandSteps.some((step) => step?.state === "DONE")) {
+    return false;
+  }
+  const [active, denied] = runCommandSteps;
+  if (!isExactPinnedNativeRunCommandActive(active) ||
+      nativeHeadlessPermissionDenial(denied) !==
+        "headless_permission_denied") {
+    return false;
+  }
+  return active.conversation_id === conversationId &&
+    denied.conversation_id === conversationId &&
+    Number.isSafeInteger(denied.step_index) && denied.step_index >= 0 &&
+    denied.step_index === active.step_index &&
+    denied.tool_info.parameters.CommandLine ===
+      active.tool_info.parameters.CommandLine;
+}
+
+function proposalResultFailure(reasonClass, {
+  proposalCount = null,
+  proposalStepCount = null,
+  validationStage = null,
+} = {}) {
+  if (!PROPOSAL_RESULT_INVALID_REASONS.has(reasonClass)) {
+    throw new Error("proposal result failure reason is not allowlisted");
+  }
+  workerRuntimeStatus = "proposal_result_invalid";
+  const fields = { reason_class: reasonClass };
+  if (reasonClass === "proposal_cardinality_invalid") {
+    for (const [key, value] of [
+      ["proposal_count", proposalCount],
+      ["proposal_step_count", proposalStepCount],
+    ]) {
+      if (!Number.isSafeInteger(value) || value < 0 || value > MAX_STREAM_BYTES) {
+        throw new Error("proposal result count is outside the bounded range");
+      }
+      fields[key] = value;
+    }
+  }
+  if (reasonClass === "proposal_output_invalid") {
+    if (!PROPOSAL_OUTPUT_VALIDATION_STAGES.has(validationStage)) {
+      throw new Error("proposal output validation stage is not allowlisted");
+    }
+    fields.validation_stage = validationStage;
+  }
+  audit("proposal_result_invalid", fields);
+  return streamFailure("proposal_result_invalid");
+}
+
 function proposalReceiptFromStepUpdate(stepUpdate) {
   if (!isPlainObject(stepUpdate) || stepUpdate.step_type !== "tool" ||
       !isPlainObject(stepUpdate.tool_info)) {
@@ -1172,7 +1313,7 @@ function proposalReceiptFromStepUpdate(stepUpdate) {
       parameter_key_count: parameterKeys.length,
       metadata_key_count: metadataKeys.length,
     });
-    throw streamFailure("proposal_result_invalid");
+    throw proposalResultFailure("proposal_step_contract_invalid");
   }
   if (stepUpdate.state !== "DONE") {
     return {
@@ -1184,13 +1325,17 @@ function proposalReceiptFromStepUpdate(stepUpdate) {
   }
   if (typeof stepUpdate.tool_info.output !== "string" ||
       Buffer.byteLength(stepUpdate.tool_info.output) > MAX_STREAM_LINE_BYTES) {
-    throw streamFailure("proposal_result_invalid");
+    throw proposalResultFailure("proposal_output_invalid", {
+      validationStage: "contract",
+    });
   }
   let output;
   try {
     output = JSON.parse(stepUpdate.tool_info.output);
   } catch {
-    throw streamFailure("proposal_result_invalid");
+    throw proposalResultFailure("proposal_output_invalid", {
+      validationStage: "json",
+    });
   }
   const validProposalId = proposalKind === "telegram_action"
     ? /^ta_[A-Za-z0-9_-]{20,48}$/u.test(output?.proposal_id ?? "")
@@ -1202,7 +1347,9 @@ function proposalReceiptFromStepUpdate(stepUpdate) {
       (proposalKind === "telegram_action" &&
         (typeof requestDigest !== "string" ||
           !/^sha256:[a-f0-9]{64}$/u.test(requestDigest)))) {
-    throw streamFailure("proposal_result_invalid");
+    throw proposalResultFailure("proposal_output_invalid", {
+      validationStage: "envelope",
+    });
   }
   return {
     proposalId: output.proposal_id,
@@ -1235,8 +1382,9 @@ function parseStreamResult(stream) {
   const proposalIds = [];
   const proposalReceipts = [];
   const proposalCallSteps = new Set();
+  const runCommandSteps = [];
   let proposalKind = null;
-  let headlessPermissionDenied = false;
+  let headlessReadDenied = false;
   let toolErrorSeen = false;
   for (const line of stdout.split("\n")) {
     if (!line.trim()) continue;
@@ -1301,25 +1449,23 @@ function parseStreamResult(stream) {
     } else if (event?.event === "step_update") {
       if (initEvents !== 1) throw streamFailure("stream_contract_failed");
       const step = event.step_update;
+      if (isPlainObject(step) && step.step_type === "tool" &&
+          step.tool_name === "run_command") {
+        runCommandSteps.push(step);
+      }
       const isToolError = isPlainObject(step) &&
         step.step_type === "tool" && step.state === "ERROR";
       if (isToolError) {
         toolErrorSeen = true;
       }
-      if (isToolError && isPlainObject(step.tool_info)) {
-        const diagnostics = [step.tool_info.output, step.tool_info.error?.message]
-          .filter((value) => typeof value === "string" &&
-            Buffer.byteLength(value, "utf8") <= 4 * 1024)
-          .join(" ");
-        if (/\b(?:user denied permission|permission (?:was )?denied|auto-denied)\b/iu
-          .test(diagnostics)) {
-          headlessPermissionDenied = true;
-        }
+      if (isToolError) {
+        const denialReason = nativeHeadlessPermissionDenial(step);
+        headlessReadDenied ||= denialReason === "headless_read_denied";
       }
       const receipt = proposalReceiptFromStepUpdate(event.step_update);
       if (receipt !== null) {
         if (proposalKind !== null && proposalKind !== receipt.proposalKind) {
-          throw streamFailure("proposal_result_invalid");
+          throw proposalResultFailure("proposal_kind_mixed");
         }
         proposalKind = receipt.proposalKind;
         proposalCallSteps.add(receipt.stepIndex);
@@ -1332,6 +1478,19 @@ function parseStreamResult(stream) {
   }
   if (initEvents !== 1 || resultEvents !== 1) {
     throw streamFailure("terminal_missing");
+  }
+  const runCommandDenialCandidateSeen = runCommandSteps.some((step) =>
+    nativeHeadlessPermissionDenial(step) === "headless_permission_denied");
+  const headlessPermissionDenied = runCommandDenialCandidateSeen &&
+    isExactPinnedNativeRunCommandDenialLifecycle(
+      runCommandSteps,
+      conversationId,
+    );
+  if (runCommandDenialCandidateSeen && !headlessPermissionDenied) {
+    throw streamFailure("terminal_status_failed");
+  }
+  if (headlessReadDenied) {
+    throw streamFailure("headless_read_denied");
   }
   if (headlessPermissionDenied && proposalIds.length === 0) {
     throw streamFailure("headless_permission_denied");
@@ -1346,7 +1505,10 @@ function parseStreamResult(stream) {
     throw streamFailure("terminal_response_invalid");
   }
   if (proposalIds.length > 1 || proposalIds.length !== proposalCallSteps.size) {
-    throw streamFailure("proposal_result_invalid");
+    throw proposalResultFailure("proposal_cardinality_invalid", {
+      proposalCount: proposalIds.length,
+      proposalStepCount: proposalCallSteps.size,
+    });
   }
   if (response.trim().length === 0) {
     if (proposalIds.length !== 1 || proposalCallSteps.size !== 1) {
@@ -1366,6 +1528,9 @@ function parseStreamResult(stream) {
     proposalKind,
     proposalReceipts,
     conversationId,
+    ...(headlessPermissionDenied
+      ? { nativeCommandPermissionDenied: true }
+      : {}),
   };
 }
 
@@ -1694,7 +1859,11 @@ async function runAntigravityPrompt(prompt, {
           parseStreamResult(Buffer.concat(stdoutChunks, stdoutBytes));
         } catch (error) {
           if (error instanceof AntigravityWorkerError &&
-              ["headless_permission_denied", "terminal_status_failed"]
+              [
+                "headless_permission_denied",
+                "headless_read_denied",
+                "terminal_status_failed",
+              ]
                 .includes(error.reasonClass)) {
             workerRuntimeStatus = error.reasonClass;
             throw error;
@@ -1710,7 +1879,7 @@ async function runAntigravityPrompt(prompt, {
     }
     if (stdoutBytes === 0) {
       const reasonClass = headlessPermissionMatcher.matched
-        ? "headless_permission_denied"
+        ? "headless_read_denied"
         : "worker_failed";
       workerRuntimeStatus = reasonClass;
       throw new AntigravityWorkerError(reasonClass, {
@@ -2568,7 +2737,7 @@ function createTelegramActionApproval({
       proposal.binding.update_id !== updateId ||
       proposal.binding.run_nonce !== runNonce ||
       proposal.binding.conversation_id !== session.conversation_id) {
-    throw streamFailure("proposal_result_invalid");
+    throw proposalResultFailure("proposal_binding_invalid");
   }
   const existing = toolApprovalForProposal(receipt.proposalId, botToken, stateOptions);
   if (existing !== null) return existing;
@@ -2627,6 +2796,50 @@ function createTelegramActionApproval({
   }, botToken, stateOptions);
 }
 
+function throwUnexpectedPermissionDenial(policyMode, denialLayer, toolClass) {
+  const boundedPolicyMode = ["request-review", "always-proceed"]
+    .includes(policyMode)
+    ? policyMode
+    : "unverified";
+  const boundedDenialLayer = ["settings_preflight", "native_headless"]
+    .includes(denialLayer)
+    ? denialLayer
+    : "unverified";
+  const boundedToolClass = ["runtime_policy", "terminal_command"]
+    .includes(toolClass)
+    ? toolClass
+    : "unverified";
+  workerRuntimeStatus = "unexpected_permission_denied";
+  audit("unexpected_permission_denial", {
+    reason_class: "unexpected_permission_denied",
+    policy_mode: boundedPolicyMode,
+    denial_layer: boundedDenialLayer,
+    tool_class: boundedToolClass,
+  });
+  throw new AntigravityWorkerError("unexpected_permission_denied");
+}
+
+function verifyPromptPermissionBoundary(config, load = loadTelegramPermissionBoundary) {
+  let boundary;
+  try {
+    boundary = load(config.toolPermission);
+  } catch {
+    throwUnexpectedPermissionDenial(
+      config.toolPermission,
+      "settings_preflight",
+      "runtime_policy",
+    );
+  }
+  if (!isPlainObject(boundary) || boundary.toolPermission !== config.toolPermission) {
+    throwUnexpectedPermissionDenial(
+      config.toolPermission,
+      "settings_preflight",
+      "runtime_policy",
+    );
+  }
+  return boundary;
+}
+
 async function processPrompt(config, message, ticket = null, {
   statePath,
   runPrompt = runAntigravityPrompt,
@@ -2641,6 +2854,7 @@ async function processPrompt(config, message, ticket = null, {
   api = telegramApi,
   acknowledgeInput = null,
   actionCoordinator = telegramActionCoordinator,
+  permissionBoundaryLoad = loadTelegramPermissionBoundary,
 } = {}) {
   const chatId = String(message.chat.id);
   const userId = String(message.from.id);
@@ -2721,6 +2935,7 @@ async function processPrompt(config, message, ticket = null, {
       action: "typing",
     }).catch(() => {});
     assertJobActive(ticket);
+    verifyPromptPermissionBoundary(config, permissionBoundaryLoad);
     actionRunBinding = actionCoordinator.beginRun({
       user_id: userId,
       chat_id: chatId,
@@ -2756,16 +2971,40 @@ async function processPrompt(config, message, ticket = null, {
     });
     try {
       workerResult = await runWorker(prompt);
+      if (workerResult.nativeCommandPermissionDenied === true &&
+          (config.toolPermission !== "request-review" ||
+            workerResult.proposalIds.length !== 1)) {
+        throw new AntigravityWorkerError("headless_permission_denied");
+      }
     } catch (error) {
       actionCoordinator.finishRun(actionRunBinding.run_nonce);
       if (!(error instanceof AntigravityWorkerError) ||
-          error.reasonClass !== "headless_permission_denied" ||
-          boundSession.conversation_id === null) {
+          error.reasonClass !== "headless_permission_denied") {
         throw error;
       }
+      const configuredToolPermission = config.toolPermission;
+      if (configuredToolPermission !== "request-review" &&
+          configuredToolPermission !== "always-proceed") {
+        throwUnexpectedPermissionDenial(
+          "unverified",
+          "native_headless",
+          "terminal_command",
+        );
+      }
+      if (configuredToolPermission === "always-proceed") {
+        throwUnexpectedPermissionDenial(
+          configuredToolPermission,
+          "native_headless",
+          "terminal_command",
+        );
+      }
+      if (boundSession.conversation_id === null) throw error;
+      verifyPromptPermissionBoundary(config, permissionBoundaryLoad);
       audit("headless_permission_replan", {
         chat: opaqueId(chatId),
         generation: boundSession.generation,
+        denial_layer: "native_headless",
+        tool_class: "terminal_command",
       });
       actionRunBinding = actionCoordinator.beginRun({
         user_id: userId,

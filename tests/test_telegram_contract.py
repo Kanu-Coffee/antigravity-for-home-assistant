@@ -332,7 +332,104 @@ def test_telegram_terminal_failure_telemetry_is_bounded(addon_root: Path) -> Non
     assert runner.index('code === 1 && authRequiredMatcher.matched') < runner.index(
         "if (code !== 0)"
     )
-    assert '["headless_permission_denied", "terminal_status_failed"]' in runner
+    assert '"headless_permission_denied",\n                "headless_read_denied",' in runner
+    assert '"headless_read_denied",\n                "terminal_status_failed",' in runner
+
+
+def test_telegram_proposal_failure_telemetry_is_bounded(addon_root: Path) -> None:
+    bridge = (
+        addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
+    ).read_text(encoding="utf-8")
+
+    helper = bridge.split(
+        "function proposalResultFailure", maxsplit=1
+    )[1].split("function proposalReceiptFromStepUpdate", maxsplit=1)[0]
+    for reason in (
+        "proposal_binding_invalid",
+        "proposal_cardinality_invalid",
+        "proposal_kind_mixed",
+        "proposal_output_invalid",
+        "proposal_step_contract_invalid",
+    ):
+        assert f'"{reason}"' in bridge
+    assert 'audit("proposal_result_invalid", fields)' in helper
+    assert 'fields.validation_stage = validationStage' in helper
+    assert 'fields[key] = value' in helper
+    assert 'workerRuntimeStatus = "proposal_result_invalid"' in helper
+    assert "proposal_id" not in helper
+    assert "request_digest" not in helper
+    assert "conversation_id" not in helper
+
+    parser = bridge.split("function parseStreamResult", maxsplit=1)[1].split(
+        "function parseInitEventLine", maxsplit=1
+    )[0]
+    assert 'proposalResultFailure("proposal_kind_mixed")' in parser
+    assert 'proposalResultFailure("proposal_cardinality_invalid"' in parser
+
+    approval = bridge.split(
+        "function createTelegramActionApproval", maxsplit=1
+    )[1].split("async function processPrompt", maxsplit=1)[0]
+    assert 'proposalResultFailure("proposal_binding_invalid")' in approval
+
+
+def test_telegram_headless_permission_routing_is_mode_and_tool_aware(
+    addon_root: Path,
+) -> None:
+    bridge = (
+        addon_root / "rootfs/usr/local/share/antigravity-ha/telegram-bridge.mjs"
+    ).read_text(encoding="utf-8")
+
+    classifier = bridge.split(
+        "function nativeHeadlessPermissionDenial", maxsplit=1
+    )[1].split("function proposalReceiptFromStepUpdate", maxsplit=1)[0]
+    native_tools = bridge.split(
+        "const NATIVE_HEADLESS_PERMISSION_TOOLS", maxsplit=1
+    )[1].split("]);", maxsplit=1)[0]
+    assert '"read_file"' in native_tools
+    assert '"run_command"' in native_tools
+    assert '"view_file"' in native_tools
+    assert '"write_file"' in native_tools
+    assert '"write_to_file"' in native_tools
+    assert "step.tool_info.name !== step.tool_name" in classifier
+    assert "Object.keys(parameters).length === 1" in classifier
+    assert "isExactPinnedNativeRunCommandActive" in classifier
+    assert "isExactPinnedNativeRunCommandDenialLifecycle" in classifier
+    assert "runCommandSteps.length !== 2" in classifier
+    assert 'step?.state === "DONE"' in classifier
+    assert "denied.step_index === active.step_index" in classifier
+    assert "active.conversation_id === conversationId" in classifier
+    assert 'nativeError.type === "TOOL_ERROR"' in classifier
+    assert "`User denied permission to run command:\\n${commandLine}`" in classifier
+    assert '!Object.hasOwn(step.tool_info, "output")' in classifier
+    assert "Number.isFinite(durationSeconds)" in classifier
+    assert "Matches user-configured deny rule" in classifier
+    assert "ANTIGRAVITY_HEADLESS_PERMISSION_MARKER" in classifier
+    assert "permission (?:was )?denied" not in classifier
+    assert 'toolName === "run_command"' in classifier
+    assert '"headless_read_denied"' in classifier
+
+    processor = bridge.split("async function processPrompt", maxsplit=1)[1].split(
+        "async function handleMessage", maxsplit=1
+    )[0]
+    assert "permissionBoundaryLoad = loadTelegramPermissionBoundary" in processor
+    assert (
+        processor.count(
+            "verifyPromptPermissionBoundary(config, permissionBoundaryLoad)"
+        )
+        == 2
+    )
+    assert "workerResult.nativeCommandPermissionDenied === true" in processor
+    assert 'configuredToolPermission === "always-proceed"' in processor
+    assert "throwUnexpectedPermissionDenial(" in processor
+    denial_helper = bridge.split(
+        "function throwUnexpectedPermissionDenial", maxsplit=1
+    )[1].split("function verifyPromptPermissionBoundary", maxsplit=1)[0]
+    assert 'throw new AntigravityWorkerError("unexpected_permission_denied")' in denial_helper
+    assert processor.index('configuredToolPermission === "always-proceed"') < processor.index(
+        'audit("headless_permission_replan"'
+    )
+    assert 'tool_class: "terminal_command"' in processor
+    assert 'denial_layer: "native_headless"' in processor
 
 
 def test_telegram_uses_shared_native_home_and_interactive_policy(
@@ -485,6 +582,17 @@ def test_telegram_uses_shared_native_home_and_interactive_policy(
     )
     assert "always-proceed | grep -Fxq" in canary_source
     assert "request-review | grep -Fxq" in canary_source
+    assert 'STREAM_WORK_DIRECTORY=$(mktemp -d)' in canary_source
+    assert canary_source.count(
+        '--volume "${STREAM_WORK_DIRECTORY}:/test-streams'
+    ) == 2
+    assert (
+        "EXECUTED_FAILURE_STREAM_PATH=/test-streams/executed-failure.ndjson"
+        in canary_source
+    )
+    assert 'EXECUTED_FAILURE_STREAM_PATH="${executed_failure_stdout}"' not in (
+        canary_source
+    )
     assert '"[[ \\\"\\${HOME:-}\\\" == /data/home ]]"' in canary_source
     assert '"[[ \\\"\\$(pwd -P)\\\" == /config ]]"' in canary_source
     for alias_path in (
@@ -511,6 +619,7 @@ def test_telegram_uses_shared_native_home_and_interactive_policy(
         encoding="utf-8"
     )
     assert 'tests/telegram-shared-context-smoke.sh "${IMAGE}"' in docker_smoke
+    assert 'tests/telegram-action-native-valid-control.sh "${IMAGE}"' in docker_smoke
     assert 'tests/public-v2-upgrade-smoke.sh "${IMAGE}"' in docker_smoke
 
 
