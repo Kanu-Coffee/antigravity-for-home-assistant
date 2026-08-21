@@ -20,6 +20,8 @@ def test_enforced_smoke_loads_and_cleans_up_a_real_kernel_profile() -> None:
         "Docker does not advertise AppArmor enforcement",
         "passwordless sudo is required to load the kernel AppArmor profile",
         "sudo -n true",
+        "host ps is required to validate the onboarding foreground group",
+        "host /usr/bin/kill is required to signal the onboarding foreground group",
         "apparmor_parser --replace --skip-cache",
         "apparmor_parser --remove --skip-cache",
         '--security-opt "apparmor=${PROFILE_NAME}"',
@@ -59,8 +61,29 @@ def test_enforced_smoke_exercises_onboarding_profiles_and_transaction() -> None:
         "apparmor=antigravity_home_assistant-shell",
         "onboarding-native-cat:/usr/local/libexec/antigravity-real:ro",
         "Validated consumer onboarding files were saved",
-        "ps -o tpgid= -p 1",
-        'kill -INT -- "-${foreground_pgid}"',
+        "Docker host, not with a confined in-container ps/ptrace query",
+        "-eo pid,ppid,pgid,sid,tpgid,comm,args",
+        '$9 == "/usr/local/bin/ha-antigravity-login"',
+        '$9 == "/usr/local/libexec/antigravity-onboarding-controller"',
+        '$7 == "/usr/bin/timeout" && $8 == "--foreground"',
+        'NF == 7',
+        '$7 == "/usr/local/libexec/antigravity-real"',
+        "rows != 4",
+        "unknown_count != 0",
+        "wrapper_count != 1",
+        "controller_count != 1",
+        "timeout_count != 1",
+        "native_count != 1",
+        "wrapper_pid != init_pid",
+        "controller_ppid != wrapper_pid",
+        "timeout_ppid != controller_pid",
+        "native_ppid != timeout_pid",
+        "ps -eo pid=,pgid=",
+        "the enforced onboarding foreground group escaped its container",
+        'cmp --silent "$controller_processes" "$controller_processes_recheck"',
+        'cmp --silent "$host_group_pids" "$host_group_pids_recheck"',
+        "{{.State.Running}}:{{.State.Pid}}:{{.Config.OpenStdin}}:{{.Config.Tty}}",
+        'sudo -n /usr/bin/kill -INT -- "-${foreground_pgid}"',
         "did not close after foreground SIGINT",
         "EOF can never masquerade as a successful operator close",
         "the enforced onboarding controller transaction was incomplete",
@@ -68,6 +91,11 @@ def test_enforced_smoke_exercises_onboarding_profiles_and_transaction() -> None:
         "onboarding.json.onboarding.tmp",
     ):
         assert token in smoke
+    assert "ps -o tpgid=" not in smoke
+    assert 'docker exec "$ONBOARDING_CONTROLLER_CONTAINER"' not in smoke
+    assert 'docker attach "$ONBOARDING_CONTROLLER_CONTAINER"' not in smoke
+    assert "/usr/bin/script" not in smoke
+    assert "kill -INT -- -1" not in smoke
     assert smoke.index("load_and_verify_profiles") < smoke.index(
         "run_onboarding_profile_probe\n"
     )

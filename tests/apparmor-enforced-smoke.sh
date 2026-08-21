@@ -169,6 +169,10 @@ require_enforcement_host() {
     || fail 'ssh-keygen is required to create the disposable SSH fixture'
   command -v nsenter >/dev/null 2>&1 \
     || fail 'nsenter is required to reach the confined ttyd loopback endpoint'
+  command -v ps >/dev/null 2>&1 \
+    || fail 'host ps is required to validate the onboarding foreground group'
+  [[ -x /usr/bin/kill ]] \
+    || fail 'host /usr/bin/kill is required to signal the onboarding foreground group'
   PYTHON3_BIN=$(command -v python3 2>/dev/null || true)
   [[ -n $PYTHON3_BIN && -x $PYTHON3_BIN ]] \
     || fail 'python3 is required to run the ttyd WebSocket probe'
@@ -377,8 +381,19 @@ PY
 run_onboarding_profile_probe() {
   local before_real_hash
   local before_staged_hash
+  local controller_group_pids
   local controller_logs
+  local controller_open_stdin
+  local controller_init_pid
+  local controller_processes
+  local controller_processes_recheck
+  local controller_running
+  local controller_state
   local controller_status
+  local controller_tty
+  local foreground_pgid
+  local host_group_pids
+  local host_group_pids_recheck
   local native_output
   local native_status
   local signal_output
@@ -644,16 +659,100 @@ run_onboarding_profile_probe() {
         > "$cli/cache/onboarding.json"
       chmod 0600 "$cli/antigravity-oauth-token" "$cli/cache/onboarding.json"
     '
-  set +e
   # The synthetic native is an ELF cat process with its stdin held open by the
-  # detached container. Signal the container PTY's foreground process group
-  # directly so EOF can never masquerade as a successful operator close.
-  signal_output=$(docker exec "$ONBOARDING_CONTROLLER_CONTAINER" \
-    /bin/bash -p -ceu '
-      foreground_pgid=$(ps -o tpgid= -p 1 | tr -d " ")
-      [[ $foreground_pgid =~ ^[1-9][0-9]*$ ]]
-      kill -INT -- "-${foreground_pgid}"
-    ' 2>&1)
+  # detached container. Resolve the isolated foreground process group from the
+  # Docker host, not with a confined in-container ps/ptrace query. Require the
+  # wrapper, controller, timeout, and native to remain in the same dedicated
+  # TTY session before signaling that exact group.
+  # EOF can never masquerade as a successful operator close.
+  controller_processes="${WORK_DIR}/onboarding-controller-processes.txt"
+  controller_group_pids="${WORK_DIR}/onboarding-controller-group-pids.txt"
+  host_group_pids="${WORK_DIR}/onboarding-host-group-pids.txt"
+  controller_state=$(docker inspect --format \
+    '{{.State.Running}}:{{.State.Pid}}:{{.Config.OpenStdin}}:{{.Config.Tty}}' \
+    "$ONBOARDING_CONTROLLER_CONTAINER")
+  IFS=: read -r controller_running controller_init_pid controller_open_stdin \
+    controller_tty <<< "$controller_state"
+  [[ $controller_running == true && $controller_open_stdin == true \
+    && $controller_tty == true && $controller_init_pid =~ ^[1-9][0-9]*$ ]] \
+    || fail 'the enforced onboarding controller lost its isolated TTY state'
+  docker top "$ONBOARDING_CONTROLLER_CONTAINER" \
+    -eo pid,ppid,pgid,sid,tpgid,comm,args > "$controller_processes" \
+    || fail 'the enforced onboarding process-group snapshot failed'
+  foreground_pgid=$(awk -v init_pid="$controller_init_pid" '
+    NR > 1 && $1 == init_pid {
+      if ($3 == init_pid && $4 == init_pid && $5 == init_pid) print $3
+      exit
+    }
+  ' "$controller_processes")
+  [[ $foreground_pgid =~ ^[1-9][0-9]*$ && $foreground_pgid -gt 1 ]] \
+    || fail 'the enforced onboarding foreground process group was invalid'
+  awk -v foreground_pgid="$foreground_pgid" \
+      -v init_pid="$controller_init_pid" '
+    NR == 1 { next }
+    {
+      rows += 1
+      if ($3 != foreground_pgid || $4 != foreground_pgid \
+          || $5 != foreground_pgid) exit 1
+      if (NF == 9 && $7 == "/bin/bash" && $8 == "-p" \
+          && $9 == "/usr/local/bin/ha-antigravity-login") {
+        wrapper_count += 1
+        wrapper_pid = $1
+      } else if (NF == 9 && $7 == "/bin/bash" && $8 == "-p" \
+          && $9 == "/usr/local/libexec/antigravity-onboarding-controller") {
+        controller_count += 1
+        controller_pid = $1
+        controller_ppid = $2
+      } else if ($7 == "/usr/bin/timeout" && $8 == "--foreground") {
+        timeout_count += 1
+        timeout_pid = $1
+        timeout_ppid = $2
+      } else if (NF == 7 \
+          && $7 == "/usr/local/libexec/antigravity-real") {
+        native_count += 1
+        native_ppid = $2
+      } else {
+        unknown_count += 1
+      }
+    }
+    END {
+      if (rows != 4 || unknown_count != 0 \
+          || wrapper_count != 1 || controller_count != 1 \
+          || timeout_count != 1 || native_count != 1 \
+          || wrapper_pid != init_pid \
+          || controller_ppid != wrapper_pid \
+          || timeout_ppid != controller_pid \
+          || native_ppid != timeout_pid) exit 1
+    }
+  ' "$controller_processes" \
+    || fail 'the enforced onboarding foreground process group was incomplete'
+  awk 'NR > 1 { print $1 }' "$controller_processes" \
+    | sort -n > "$controller_group_pids"
+  ps -eo pid=,pgid= \
+    | awk -v foreground_pgid="$foreground_pgid" \
+      '$2 == foreground_pgid { print $1 }' \
+    | sort -n > "$host_group_pids"
+  cmp --silent "$controller_group_pids" "$host_group_pids" \
+    || fail 'the enforced onboarding foreground group escaped its container'
+  [[ $(docker inspect --format '{{.State.Running}}:{{.State.Pid}}' \
+      "$ONBOARDING_CONTROLLER_CONTAINER") \
+      == "true:${controller_init_pid}" ]] \
+    || fail 'the enforced onboarding controller changed before SIGINT'
+  controller_processes_recheck="${WORK_DIR}/onboarding-controller-processes-recheck.txt"
+  host_group_pids_recheck="${WORK_DIR}/onboarding-host-group-pids-recheck.txt"
+  docker top "$ONBOARDING_CONTROLLER_CONTAINER" \
+    -eo pid,ppid,pgid,sid,tpgid,comm,args > "$controller_processes_recheck" \
+    || fail 'the enforced onboarding process-group recheck failed'
+  ps -eo pid=,pgid= \
+    | awk -v foreground_pgid="$foreground_pgid" \
+      '$2 == foreground_pgid { print $1 }' \
+    | sort -n > "$host_group_pids_recheck"
+  if ! cmp --silent "$controller_processes" "$controller_processes_recheck" \
+    || ! cmp --silent "$host_group_pids" "$host_group_pids_recheck"; then
+    fail 'the enforced onboarding foreground group changed before SIGINT'
+  fi
+  set +e
+  signal_output=$(sudo -n /usr/bin/kill -INT -- "-${foreground_pgid}" 2>&1)
   signal_status=$?
   set -e
   (( signal_status == 0 )) || {
