@@ -326,6 +326,7 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
         clearScrollbackOnResize: true,
         colorScheme: "tokyo night",
         disableSlashCommands: false,
+        enableTelemetry: false,
         modelProvider: "",
         showFeedbackSurvey: true,
         showTips: true
@@ -336,7 +337,7 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
     '.status == "updated"
       and (.changed_keys == [
         "clearScrollbackOnResize","colorScheme","disableSlashCommands",
-        "modelProvider","showFeedbackSurvey","showTips"
+        "enableTelemetry","modelProvider","showFeedbackSurvey","showTips"
       ])' \
     /tmp/agy-settings-result.json >/dev/null
   test "$(jq -c '{permissions,enableTerminalSandbox,allowNonWorkspaceAccess,toolPermission,artifactReviewPolicy}' \
@@ -345,6 +346,7 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
     '.colorScheme == "tokyo night"
       and (has("clearScrollbackOnResize") | not)
       and (has("disableSlashCommands") | not)
+      and .enableTelemetry == false
       and (has("modelProvider") | not)
       and (has("showFeedbackSurvey") | not)
       and (has("showTips") | not)' "${settings}" >/dev/null
@@ -418,7 +420,9 @@ run_script "${MAIN_VOLUME}" <<'SCRIPT'
   for unsupported_patch in \
     '{"colorScheme":{"nested":"no"}}' \
     '{"altScreenMode":"sometimes"}' \
-    '{"showTips":"false"}'; do
+    '{"showTips":"false"}' \
+    '{"enableTelemetry":true}' \
+    '{"enableTelemetry":null}'; do
     digest=$(/usr/local/bin/agy-settings sha256)
     set +e
     printf '%s\n' "$(jq -nc --arg digest "${digest}" \

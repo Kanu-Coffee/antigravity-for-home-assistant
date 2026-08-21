@@ -1,0 +1,542 @@
+#!/bin/bash -p
+set -Eeuo pipefail
+unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
+unset GLIBC_TUNABLES LD_AUDIT LD_DEBUG LD_LIBRARY_PATH LD_PRELOAD
+unset PYTHONHOME PYTHONINSPECT PYTHONPATH PYTHONSTARTUP
+unset GCONV_PATH GETCONF_DIR HOSTALIASES LOCALDOMAIN LOCPATH MALLOC_TRACE
+unset NLSPATH RES_OPTIONS TMPDIR TZDIR
+unset ANTIGRAVITY_HA_CHANNEL HA_TELEGRAM_USER_ID HA_TELEGRAM_CHAT_ID
+unset HA_TELEGRAM_SESSION_GENERATION HA_TELEGRAM_UPDATE_ID
+unset HA_TELEGRAM_RUN_NONCE HA_ANTIGRAVITY_CONVERSATION_ID
+unset HA_TELEGRAM_ACTION_PROPOSAL_SOCKET
+umask 077
+
+readonly RUNTIME_DIR=/run/antigravity-ha
+readonly SAFE_CWD=${RUNTIME_DIR}/onboarding-workspace
+readonly STAGING_HOME=${RUNTIME_DIR}/onboarding-home
+readonly SESSION_LOCK=${RUNTIME_DIR}/native-session.lock
+readonly SETTINGS_LOCK=${RUNTIME_DIR}/user-files-update.lock
+readonly ACTIVE_MARKER=${RUNTIME_DIR}/onboarding-active
+readonly TRANSACTION_ROOT=/data/antigravity-ha/onboarding
+readonly TRANSACTION_HELPER=/usr/local/share/antigravity-ha/onboarding-transaction.mjs
+readonly REAL_CLI_HOME=/data/home/.gemini/antigravity-cli
+readonly REAL_SETTINGS=${REAL_CLI_HOME}/settings.json
+readonly REAL_OAUTH=${REAL_CLI_HOME}/antigravity-oauth-token
+readonly REAL_CACHE=${REAL_CLI_HOME}/cache
+readonly REAL_ONBOARDING=${REAL_CACHE}/onboarding.json
+readonly STAGED_CLI_HOME=${STAGING_HOME}/.gemini/antigravity-cli
+readonly STAGED_SETTINGS=${STAGED_CLI_HOME}/settings.json
+readonly STAGED_SETTINGS_CANDIDATE=${STAGED_CLI_HOME}/settings.candidate.json
+readonly STAGED_OAUTH=${STAGED_CLI_HOME}/antigravity-oauth-token
+readonly STAGED_ONBOARDING=${STAGED_CLI_HOME}/cache/onboarding.json
+readonly MAX_OAUTH_BYTES=1048576
+
+settings_invariant_fingerprint() {
+  /usr/bin/node \
+    /usr/local/share/antigravity-ha/onboarding-settings-fingerprint.mjs \
+    "$1"
+}
+
+raw_fingerprint() {
+  local path=$1 digest
+  digest=$(/usr/bin/sha256sum -- "${path}") || return 1
+  digest=${digest%% *}
+  [[ ${digest} =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s\n' "${digest}"
+}
+
+oauth_state() {
+  local path=$1 metadata owner group mode links size digest
+  if [[ ! -e ${path} && ! -L ${path} ]]; then
+    printf '%s\n' absent
+    return 0
+  fi
+  [[ -f ${path} && ! -L ${path} ]] || return 1
+  metadata=$(/usr/bin/stat -Lc '%u:%g:%a:%h:%s' -- "${path}") || return 1
+  IFS=: read -r owner group mode links size <<< "${metadata}"
+  [[ ${owner} == 0 && ${group} == 0 && ${mode} == 600 && ${links} == 1 \
+    && ${size} =~ ^[0-9]+$ && ${size} -ge 2 \
+    && ${size} -le ${MAX_OAUTH_BYTES} ]] || return 1
+  # OAuth state is an opaque native credential. Validate only filesystem
+  # safety and a bounded size; never parse, print, or expose its contents.
+  digest=$(raw_fingerprint "${path}") || return 1
+  printf 'present:%s\n' "${digest}"
+}
+
+onboarding_state() {
+  local path=$1 metadata owner group mode links size digest
+  if [[ ! -e ${path} && ! -L ${path} ]]; then
+    printf '%s\n' absent
+    return 0
+  fi
+  [[ -f ${path} && ! -L ${path} ]] || return 1
+  metadata=$(/usr/bin/stat -Lc '%u:%g:%a:%h:%s' -- "${path}") || return 1
+  IFS=: read -r owner group mode links size <<< "${metadata}"
+  [[ ${owner} == 0 && ${group} == 0 && ${mode} == 600 && ${links} == 1 \
+    && ${size} =~ ^[0-9]+$ && ${size} -ge 2 && ${size} -le 4096 ]] \
+    || return 1
+  /usr/bin/jq --exit-status '
+    type == "object"
+    and (keys == [
+      "consumerOnboardingComplete",
+      "enterpriseOnboardingComplete"
+    ])
+    and all(.[]; type == "boolean")
+  ' "${path}" >/dev/null || return 1
+  /usr/bin/jq --stream --slurp --exit-status '
+    map(select(length == 2)) as $values
+    | ($values | length) == 2
+      and ($values | map(.[0][0]) | sort) == [
+        "consumerOnboardingComplete",
+        "enterpriseOnboardingComplete"
+      ]
+      and all($values[];
+        (.[0] | length) == 1 and (.[1] | type) == "boolean")
+  ' "${path}" >/dev/null || return 1
+  digest=$(raw_fingerprint "${path}") || return 1
+  printf 'present:%s\n' "${digest}"
+}
+
+privacy_finalize=false
+if (( $# == 1 )) && [[ $1 == --privacy-finalize ]]; then
+  privacy_finalize=true
+elif (( $# != 0 )); then
+  printf 'Usage: ha-antigravity-login\n' >&2
+  exit 64
+fi
+if [[ ${privacy_finalize} == false && ( ! -t 0 || ! -t 1 ) ]]; then
+  printf '%s\n' \
+    'ha-antigravity-login requires an authenticated interactive Web or SSH terminal.' >&2
+  exit 69
+fi
+for protected_directory in "${SAFE_CWD}" "${STAGING_HOME}"; do
+  if [[ ! -d ${protected_directory} || -L ${protected_directory} \
+    || $(/usr/bin/stat --format='%u:%g:%a' -- "${protected_directory}") \
+      != 0:0:700 ]]; then
+    printf '%s\n' 'A protected onboarding directory is unavailable or unsafe.' >&2
+    exit 70
+  fi
+done
+unset protected_directory
+
+if [[ ! -f ${SESSION_LOCK} || -L ${SESSION_LOCK} ]]; then
+  printf '%s\n' 'The protected native-session lock is unavailable or unsafe.' >&2
+  exit 70
+fi
+session_lock_metadata=$(/usr/bin/stat -Lc '%u:%g:%a:%h:%s:%d:%i' "${SESSION_LOCK}")
+if [[ ! ${session_lock_metadata} =~ ^0:0:600:1:0:[0-9]+:[0-9]+$ ]]; then
+  printf '%s\n' 'The protected native-session lock is unsafe.' >&2
+  exit 70
+fi
+exec 8>>"${SESSION_LOCK}"
+if [[ $(/usr/bin/stat -Lc '%u:%g:%a:%h:%s:%d:%i' "${SESSION_LOCK}") \
+    != "${session_lock_metadata}" ]]; then
+  printf '%s\n' 'The protected native-session lock is unsafe.' >&2
+  exit 70
+fi
+if ! /usr/bin/flock --exclusive --nonblock 8; then
+  printf '%s\n' 'A normal Antigravity or onboarding session is already active.' >&2
+  exit 75
+fi
+unset session_lock_metadata
+
+if [[ ! -f ${SETTINGS_LOCK} || -L ${SETTINGS_LOCK} ]]; then
+  printf '%s\n' 'The protected settings-update lock is unavailable or unsafe.' >&2
+  exit 70
+fi
+settings_lock_metadata=$(/usr/bin/stat -Lc '%u:%g:%a:%h:%s:%d:%i' "${SETTINGS_LOCK}")
+if [[ ! ${settings_lock_metadata} =~ ^0:0:600:1:0:[0-9]+:[0-9]+$ ]]; then
+  printf '%s\n' 'The protected settings-update lock is unsafe.' >&2
+  exit 70
+fi
+exec 9>>"${SETTINGS_LOCK}"
+if [[ $(/usr/bin/stat -Lc '%u:%g:%a:%h:%s:%d:%i' "${SETTINGS_LOCK}") \
+    != "${settings_lock_metadata}" ]]; then
+  printf '%s\n' 'The protected settings-update lock is unsafe.' >&2
+  exit 70
+fi
+if ! /usr/bin/flock --exclusive --nonblock 9; then
+  printf '%s\n' 'A settings update is already active.' >&2
+  exit 75
+fi
+unset settings_lock_metadata
+
+if [[ ! -f ${ACTIVE_MARKER} || -L ${ACTIVE_MARKER} \
+  || $(/usr/bin/stat -Lc '%u:%g:%a:%h' "${ACTIVE_MARKER}") \
+    != 0:0:600:1 ]]; then
+  printf '%s\n' 'The onboarding safety marker is unavailable or unsafe.' >&2
+  exit 70
+fi
+
+if [[ ! -d ${TRANSACTION_ROOT} || -L ${TRANSACTION_ROOT} \
+  || $(/usr/bin/stat --format='%u:%g:%a' -- "${TRANSACTION_ROOT}") \
+    != 0:0:700 ]]; then
+  printf '%s\n' 'The persistent onboarding recovery directory is unsafe.' >&2
+  exit 70
+fi
+
+# The native run never clears its own quarantine. The authenticated wrapper
+# returns through this exact internal mode only after it has either verified
+# and cleared the same Web tmux pane history or performed the best-effort SSH
+# terminal erase. A wrapper crash or cleanup failure therefore leaves normal
+# native sessions blocked until App restart.
+if [[ ${privacy_finalize} == true ]]; then
+  privacy_marker_metadata=$(
+    /usr/bin/stat -Lc '%u:%g:%a:%h:%s' "${ACTIVE_MARKER}"
+  ) || exit 78
+  if [[ ${privacy_marker_metadata} == 0:0:600:1:0 ]]; then
+    exit 77
+  fi
+  [[ ${privacy_marker_metadata} == 0:0:600:1:8 ]] || exit 78
+  privacy_marker_value=$(< "${ACTIVE_MARKER}")
+  case "${privacy_marker_value}" in
+    partial)
+      [[ $(/usr/bin/node "${TRANSACTION_HELPER}" status) == partial \
+        && $(/usr/bin/node "${TRANSACTION_HELPER}" restart-status) == absent ]] \
+        || exit 78
+      exit 79
+      ;;
+    restart)
+      [[ $(/usr/bin/node "${TRANSACTION_HELPER}" status) == absent \
+        && $(/usr/bin/node "${TRANSACTION_HELPER}" restart-status) == required ]] \
+        || exit 78
+      exit 79
+      ;;
+    privacy) ;;
+    *) exit 78 ;;
+  esac
+  unset privacy_marker_metadata privacy_marker_value
+  if [[ $(/usr/bin/node "${TRANSACTION_HELPER}" status) != absent \
+    || $(/usr/bin/node "${TRANSACTION_HELPER}" restart-status) != absent ]]; then
+    exit 78
+  fi
+  shopt -s dotglob nullglob
+  staging_entries=("${STAGING_HOME}"/*)
+  shopt -u dotglob nullglob
+  if (( ${#staging_entries[@]} != 0 )); then
+    exit 78
+  fi
+  unset staging_entries
+  /usr/bin/node "${TRANSACTION_HELPER}" marker clear || exit 70
+  [[ $(/usr/bin/stat -Lc '%u:%g:%a:%h:%s' "${ACTIVE_MARKER}") \
+    == 0:0:600:1:0 ]] || exit 70
+  exit 0
+fi
+unset privacy_finalize
+
+# A no-secret journal binds every legal settings -> OAuth -> consumer-marker
+# crash prefix. A complete prefix can be finalized locally; a partial prefix
+# stays quarantined and becomes the baseline of this fresh OAuth retry.
+transaction_state=$(/usr/bin/node "${TRANSACTION_HELPER}" status) || {
+  printf '%s\n' \
+    'A persistent onboarding transaction could not be recovered safely.' >&2
+  exit 70
+}
+recovery_mode=false
+case "${transaction_state}" in
+  absent)
+    if [[ $(/usr/bin/stat -Lc '%s' "${ACTIVE_MARKER}") != 0 ]]; then
+      printf '%s\n' \
+        'A prior onboarding run did not close safely; restart the App before retrying.' >&2
+      exit 70
+    fi
+    ;;
+  complete)
+    finalize_result=$(/usr/bin/node "${TRANSACTION_HELPER}" finalize) || exit 70
+    [[ ${finalize_result} == finalized ]] || exit 70
+    /usr/bin/node "${TRANSACTION_HELPER}" marker privacy || exit 70
+    /bin/rm -rf --one-file-system -- "${STAGING_HOME}"
+    /usr/bin/install -d -m 0700 -- "${STAGING_HOME}"
+    printf '%s\n' \
+      'Recovered and validated an interrupted consumer onboarding save.' \
+      'Remote Terms acceptance was not inferred.' \
+      'Return through ha-antigravity-login to finish terminal privacy cleanup.'
+    exit 0
+    ;;
+  complete-restart)
+    finalize_result=$(/usr/bin/node "${TRANSACTION_HELPER}" finalize) || exit 70
+    [[ ${finalize_result} == restart-required ]] || exit 70
+    /usr/bin/node "${TRANSACTION_HELPER}" marker restart || exit 70
+    /bin/rm -rf --one-file-system -- "${STAGING_HOME}"
+    /usr/bin/install -d -m 0700 -- "${STAGING_HOME}"
+    printf '%s\n' \
+      'Recovered and validated an interrupted consumer onboarding save.' \
+      'Restart the App before starting a normal Antigravity session.'
+    exit 79
+    ;;
+  partial)
+    marker_size=$(/usr/bin/stat -Lc '%s' "${ACTIVE_MARKER}")
+    marker_value=$(< "${ACTIVE_MARKER}")
+    if [[ ${marker_size} != 5 && ${marker_size} != 7 \
+      && ${marker_size} != 8 ]] \
+      || [[ ${marker_value} != init && ${marker_value} != active \
+        && ${marker_value} != partial ]]; then
+      printf '%s\n' 'The partial onboarding quarantine marker is invalid.' >&2
+      exit 70
+    fi
+    /usr/bin/node "${TRANSACTION_HELPER}" marker partial || exit 70
+    recovery_mode=true
+    unset marker_size marker_value
+    ;;
+  *)
+    printf '%s\n' 'The onboarding recovery helper returned an invalid result.' >&2
+    exit 70
+    ;;
+esac
+unset transaction_state
+
+baseline_invariant=$(settings_invariant_fingerprint "${REAL_SETTINGS}") || {
+  printf '%s\n' 'The protected native settings file is unavailable, unsafe, or invalid.' >&2
+  exit 70
+}
+baseline_raw=$(raw_fingerprint "${REAL_SETTINGS}") || exit 70
+baseline_oauth=$(oauth_state "${REAL_OAUTH}") || {
+  printf '%s\n' 'The native OAuth token file is unsafe or invalid.' >&2
+  exit 70
+}
+if [[ ! -d ${REAL_CACHE} || -L ${REAL_CACHE} \
+  || $(/usr/bin/stat -Lc '%u:%g:%a' "${REAL_CACHE}") != 0:0:700 ]]; then
+  printf '%s\n' 'The native onboarding cache directory is unsafe.' >&2
+  exit 70
+fi
+baseline_onboarding=$(onboarding_state "${REAL_ONBOARDING}") || {
+  printf '%s\n' 'The native onboarding status is unsafe or invalid.' >&2
+  exit 70
+}
+/usr/bin/node "${TRANSACTION_HELPER}" clean || {
+  printf '%s\n' 'Unsafe stale onboarding temporary files require App repair.' >&2
+  exit 70
+}
+baseline_enterprise=false
+if [[ ${baseline_onboarding} == present:* ]]; then
+  baseline_enterprise=$(
+    /usr/bin/jq --raw-output '.enterpriseOnboardingComplete // false' \
+      "${REAL_ONBOARDING}"
+  )
+fi
+if [[ ${baseline_enterprise} != false ]]; then
+  printf '%s\n' \
+    'Enterprise onboarding is unsupported by this consumer-only helper.' >&2
+  exit 70
+fi
+
+# Reset only the fixed root-owned ephemeral runtime staging home. Native config, project,
+# cache, and customization writes never reach the persistent shared HOME.
+/bin/rm -rf --one-file-system -- "${STAGING_HOME}"
+/usr/bin/install -d -m 0700 -- "${STAGING_HOME}" \
+  "${STAGING_HOME}/.gemini" "${STAGED_CLI_HOME}" \
+  "${STAGED_CLI_HOME}/cache" "${STAGING_HOME}/tmp"
+/usr/bin/install -m 0600 -- "${REAL_SETTINGS}" "${STAGED_SETTINGS}"
+if [[ ${baseline_oauth} == present:* ]]; then
+  /usr/bin/install -m 0600 -- "${REAL_OAUTH}" "${STAGED_OAUTH}"
+fi
+if [[ ${baseline_onboarding} == present:* ]]; then
+  /usr/bin/install -m 0600 -- "${REAL_ONBOARDING}" "${STAGED_ONBOARDING}"
+fi
+
+# Non-empty means normal launchers fail closed if this controller is killed or
+# cannot safely synchronize the three validated native onboarding outputs.
+activation_marker=active
+activation_size=7
+if [[ ${recovery_mode} == true ]]; then
+  activation_marker=partial
+  activation_size=8
+fi
+/usr/bin/node "${TRANSACTION_HELPER}" marker "${activation_marker}" || exit 70
+if [[ $(/usr/bin/stat -Lc '%u:%g:%a:%h:%s' "${ACTIVE_MARKER}") \
+    != "0:0:600:1:${activation_size}" ]]; then
+  printf '%s\n' 'Could not activate the onboarding safety marker.' >&2
+  exit 70
+fi
+unset activation_marker activation_size
+
+printf '%s\n' \
+  'Starting a time-bounded Antigravity login/onboarding session.' \
+  'This protected helper supports the personal/consumer Google OAuth flow only.' \
+  'Do not select Google Cloud project or enterprise onboarding in this session.' \
+  'Automatic browser helpers are intentionally disabled in this protected session.' \
+  'Click or copy the displayed HTTPS login link, then paste the authorization code when asked.' \
+  'Complete OAuth and the Terms of Service screens only.' \
+  'When the normal agent screen appears, do not enter a prompt; press Ctrl+C to close this session.' \
+  'Do not start another Agy or Telegram request until this helper exits.' \
+  'The onboarding-only session closes automatically after 15 minutes.' \
+  ''
+
+cd "${SAFE_CWD}"
+# Ctrl+C is delivered to every process in the foreground terminal process
+# group. Keep the trusted controller alive so it can validate, durably commit
+# or quarantine, and clean staging after the native UI closes. The first child
+# resets these signals before timeout/native start, so the user's Ctrl+C still
+# reaches and closes the native UI.
+trap '' INT QUIT
+set +e
+/usr/bin/env --default-signal=INT --default-signal=QUIT -i PATH=/usr/bin:/bin \
+  /usr/bin/setpriv --pdeathsig KILL \
+  /usr/bin/timeout --foreground --signal=INT --kill-after=5 15m \
+  /usr/bin/setpriv --pdeathsig KILL \
+  /usr/bin/env -i \
+  AGY_CLI_DISABLE_AUTO_UPDATE=true \
+  HOME="${STAGING_HOME}" \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  TERM=xterm-256color \
+  TMPDIR="${STAGING_HOME}/tmp" \
+  /usr/local/libexec/antigravity-real 8>&- 9>&-
+native_status=$?
+set -e
+
+current_invariant=$(settings_invariant_fingerprint "${STAGED_SETTINGS}") || {
+  printf '\n%s\n' 'The staged native settings file is unsafe or invalid.' >&2
+  printf '%s\n' 'Restart the App before starting a normal Antigravity session.' >&2
+  exit 70
+}
+current_raw=$(raw_fingerprint "${STAGED_SETTINGS}") || exit 70
+if [[ ${current_invariant} != "${baseline_invariant}" ]]; then
+  printf '\n%s\n' 'The onboarding UI changed settings outside the telemetry choice.' >&2
+  printf '%s\n' 'Persistent settings were not changed; restart the App before retrying.' >&2
+  exit 70
+fi
+current_oauth=$(oauth_state "${STAGED_OAUTH}") || {
+  printf '\n%s\n' 'The staged OAuth token is unsafe or invalid.' >&2
+  printf '%s\n' 'Persistent authentication was not changed; restart the App before retrying.' >&2
+  exit 70
+}
+if [[ ${baseline_oauth} == present:* && ${current_oauth} == absent ]]; then
+  printf '\n%s\n' 'The protected onboarding session removed its OAuth token.' >&2
+  printf '%s\n' 'Persistent authentication was not changed; restart the App before retrying.' >&2
+  exit 70
+fi
+current_onboarding=$(onboarding_state "${STAGED_ONBOARDING}") || {
+  printf '\n%s\n' 'The staged onboarding status is unsafe or invalid.' >&2
+  printf '%s\n' 'Persistent onboarding status was not changed; restart the App before retrying.' >&2
+  exit 70
+}
+if [[ ${baseline_onboarding} == present:* && ${current_onboarding} == absent ]]; then
+  printf '\n%s\n' 'The protected session removed its onboarding status.' >&2
+  printf '%s\n' 'Persistent onboarding status was not changed; restart the App before retrying.' >&2
+  exit 70
+fi
+current_consumer=false
+current_enterprise=false
+if [[ ${current_onboarding} == present:* ]]; then
+  current_consumer=$(
+    /usr/bin/jq --raw-output '.consumerOnboardingComplete // false' \
+      "${STAGED_ONBOARDING}"
+  )
+  current_enterprise=$(
+    /usr/bin/jq --raw-output '.enterpriseOnboardingComplete // false' \
+      "${STAGED_ONBOARDING}"
+  )
+fi
+if [[ ${current_enterprise} != "${baseline_enterprise}" ]]; then
+  printf '\n%s\n' 'The protected consumer flow changed enterprise onboarding state.' >&2
+  printf '%s\n' 'Persistent onboarding status was not changed; restart the App before retrying.' >&2
+  exit 70
+fi
+if [[ ${current_consumer} == true && ${current_oauth} == absent ]]; then
+  printf '\n%s\n' \
+    'Consumer onboarding completed without a bounded native OAuth credential.' >&2
+  printf '%s\n' 'Persistent onboarding state was not changed; restart the App before retrying.' >&2
+  exit 70
+fi
+
+if [[ ${current_raw} == "${baseline_raw}" ]]; then
+  settings_save_result='not observed'
+else
+  settings_save_result=observed
+fi
+
+# Only an expected user close after the exact consumer marker and an OAuth
+# credential may commit staging. A timeout, native failure, enterprise flow,
+# or incomplete consumer flow discards every staged byte and leaves the real
+# shared identity unchanged.
+onboarding_committed=false
+if [[ ${native_status} == 0 || ${native_status} == 130 ]] \
+  && [[ ${current_consumer} == true ]]; then
+  /usr/bin/node "${TRANSACTION_HELPER}" candidate || exit 70
+  candidate_raw=$(raw_fingerprint "${STAGED_SETTINGS_CANDIDATE}") || exit 70
+  candidate_onboarding=$(onboarding_state "${STAGED_ONBOARDING}") || exit 70
+  /usr/bin/node "${TRANSACTION_HELPER}" commit || exit 70
+  [[ $(settings_invariant_fingerprint "${REAL_SETTINGS}") == "${baseline_invariant}" \
+    && $(raw_fingerprint "${REAL_SETTINGS}") == "${candidate_raw}" \
+    && $(oauth_state "${REAL_OAUTH}") == "${current_oauth}" \
+    && $(onboarding_state "${REAL_ONBOARDING}") == "${candidate_onboarding}" ]] \
+    || exit 70
+  finalize_result=$(/usr/bin/node "${TRANSACTION_HELPER}" finalize) || exit 70
+  if [[ ${recovery_mode} == true ]]; then
+    [[ ${finalize_result} == restart-required ]] || exit 70
+  else
+    [[ ${finalize_result} == finalized ]] || exit 70
+  fi
+  unset finalize_result
+  onboarding_committed=true
+else
+  [[ $(settings_invariant_fingerprint "${REAL_SETTINGS}") == "${baseline_invariant}" \
+    && $(raw_fingerprint "${REAL_SETTINGS}") == "${baseline_raw}" \
+    && $(oauth_state "${REAL_OAUTH}") == "${baseline_oauth}" \
+    && $(onboarding_state "${REAL_ONBOARDING}") == "${baseline_onboarding}" ]] \
+    || exit 70
+fi
+unset baseline_invariant baseline_raw baseline_oauth baseline_onboarding
+unset baseline_enterprise current_invariant current_raw current_oauth
+unset current_onboarding current_consumer current_enterprise
+unset candidate_raw candidate_onboarding
+
+/bin/rm -rf --one-file-system -- "${STAGING_HOME}"
+/usr/bin/install -d -m 0700 -- "${STAGING_HOME}"
+if [[ ${onboarding_committed} == true && ${recovery_mode} == true ]]; then
+  /usr/bin/node "${TRANSACTION_HELPER}" marker restart || exit 70
+elif [[ ${recovery_mode} == false ]]; then
+  /usr/bin/node "${TRANSACTION_HELPER}" marker privacy || exit 70
+fi
+expected_marker_size=8
+if [[ $(/usr/bin/stat -Lc '%u:%g:%a:%h:%s' "${ACTIVE_MARKER}") \
+    != "0:0:600:1:${expected_marker_size}" ]]; then
+  printf '\n%s\n' 'Could not clear the onboarding safety marker.' >&2
+  printf '%s\n' 'Restart the App before starting a normal Antigravity session.' >&2
+  exit 70
+fi
+unset expected_marker_size
+
+case "${native_status}" in
+  124 | 137)
+    printf '\n%s\n' \
+      'The onboarding-only session reached its time limit and was closed.' \
+      "Native settings save: ${settings_save_result}." \
+      'Staged authentication and onboarding state were discarded.' \
+      'No local Terms-acceptance result was inferred; rerun ha-antigravity-login.' >&2
+    exit 124
+    ;;
+  0 | 130)
+    if [[ ${onboarding_committed} == true ]]; then
+      if [[ ${recovery_mode} == true ]]; then
+        printf '\n%s\n' \
+          'Validated consumer onboarding files were saved; remote Terms acceptance was not inferred.' \
+          "Native settings save: ${settings_save_result}." \
+          'Restart the App before starting a normal Antigravity session.'
+        exit 79
+      else
+        printf '\n%s\n' \
+          'Validated consumer onboarding files were saved; remote Terms acceptance was not inferred.' \
+          "Native settings save: ${settings_save_result}." \
+          'Return through ha-antigravity-login to finish terminal privacy cleanup.'
+      fi
+    else
+      printf '\n%s\n' \
+        'Consumer onboarding was not completed; staged files were discarded.' \
+        "Native settings save: ${settings_save_result}." \
+        'Rerun ha-antigravity-login to complete the personal Google OAuth flow.' >&2
+      exit 76
+    fi
+    exit 0
+    ;;
+  *)
+    printf '\n%s\n' \
+      "The native onboarding process failed with status ${native_status}." \
+      "Native settings save: ${settings_save_result}." \
+      'Staged authentication and onboarding state were discarded.' \
+      'No local Terms-acceptance result was inferred; inspect sanitized App logs before retrying.' >&2
+    exit "${native_status}"
+    ;;
+esac

@@ -266,7 +266,7 @@ def test_apparmor_docs_describe_discrete_px_profiles() -> None:
         )
 
 
-def test_v212_docs_preserve_history_and_bind_current_field_evidence() -> None:
+def test_v213_docs_preserve_history_and_bind_current_field_evidence() -> None:
     changelog = re.sub(
         r"\s+",
         " ",
@@ -274,8 +274,38 @@ def test_v212_docs_preserve_history_and_bind_current_field_evidence() -> None:
     )
     assert changelog.startswith(
         "# Changelog All notable changes to this App are documented in this file. "
-        "## [2.1.2] - 2026-08-21"
+        "## [2.1.3] - 2026-08-21"
     )
+    for fragment in (
+        "authenticated, manual `ha-antigravity-login` controller",
+        "personal/consumer Google OAuth first-run path",
+        "root-owned staging HOME under `/run`",
+        "cannot read real Antigravity state, `/config`",
+        "automatic browser launch disabled",
+        "official HTTPS login URL",
+        "enterprise/Google Cloud onboarding state is rejected",
+        "foreground-only, bounded to 15 minutes",
+        "native status `0` or an intentional Ctrl+C status `130`",
+        "exact completed consumer marker and a present OAuth file",
+        "bounded opaque OAuth credential file",
+        "exact two native onboarding booleans",
+        "Timeout, unexpected exit, and incomplete onboarding discard staging",
+        "normal Web and Telegram native sessions",
+        "`enableTelemetry:false`",
+        "digest-bound `agy-settings patch` mediator",
+        "`false` is stored explicitly",
+        "native-canonical `true` may be omitted",
+        "Normal native sessions still receive no broad final-settings write permission",
+        "On public 2.1.2 on real HAOS amd64",
+        "Done and Enter on the Terms/data-use screen",
+        "settings.json.<uuid>.tmp -> settings.json",
+        "`agy-settings` hash was identical",
+        "Ctrl+C worked",
+        "does not establish whether the separate remote Terms request succeeded",
+        "Real-HAOS 2.1.3 install/update",
+        "overall v2 acceptance remains `PARTIAL`",
+    ):
+        assert fragment in changelog, f"2.1.3 changelog evidence drift: {fragment}"
     for fragment in (
         "Make Telegram headless-permission recovery mode-aware and fail closed",
         "native command denial in `request-review` may enter the bounded proposal replan once",
@@ -444,6 +474,7 @@ def test_v212_docs_preserve_history_and_bind_current_field_evidence() -> None:
         content = read(surface)
         normalized_content = re.sub(r"\s+", " ", content)
         for fragment in (
+            "2.1.3",
             "2.1.2",
             "unexpected_permission_denied",
             "2.1.1",
@@ -468,6 +499,24 @@ def test_v212_docs_preserve_history_and_bind_current_field_evidence() -> None:
         assert "denied before shell execution" not in normalized_content
         assert "shell 실행 전에 거부" not in normalized_content
         assert "명령이 실행 전 거부" not in normalized_content
+
+    for user_guide in (
+        ROOT / "antigravity_home_assistant" / "DOCS.md",
+        ROOT / "antigravity_home_assistant" / "DOCS.en.md",
+    ):
+        guide = re.sub(r"\s+", " ", read(user_guide))
+        for fragment in (
+            "enableTelemetry:false",
+            "agy-settings sha256",
+            "expected_sha256",
+            "agy-settings patch",
+            "fresh digest",
+            "broad final-settings write",
+        ):
+            assert fragment in guide, (
+                f"{user_guide.relative_to(ROOT)} omits safe telemetry opt-out: "
+                f"{fragment}"
+            )
 
     migration = re.sub(r"\s+", " ", read(V2 / "migration-release.md"))
     for fragment in (
@@ -501,6 +550,38 @@ def test_v212_docs_preserve_history_and_bind_current_field_evidence() -> None:
         "2.1.2의 real-HAOS install/update",
     ):
         assert fragment in migration, f"2.1.2 migration evidence drift: {fragment}"
+    for fragment in (
+        "공개 2.1.2 실제 HAOS amd64의 authenticated Web TUI",
+        "Done·Enter와 Ctrl+C가 작동",
+        "settings.json.<uuid>.tmp",
+        "`agy-settings` hash는 전후 `SAME`",
+        "remote Terms 요청의 성공 여부는 증명하지 않는다",
+        "`ha-antigravity-login`을 consumer Google OAuth/Terms 전용 controller",
+        "root-owned `/run` staging HOME",
+        "automatic browser helper를 열지 않는다",
+        "native status `0` 또는 의도한 Ctrl+C `130`",
+        "completed consumer marker와 OAuth present",
+        "bounded opaque OAuth credential file",
+        "timeout, unexpected exit와 incomplete flow는 staging을 폐기",
+        "local file/marker로 remote Terms 수락을 단정하지 않는다",
+        "`enableTelemetry:false` opt-out",
+        "opt-in 또는 re-enable은 제공하지 않고",
+        "별도 authenticated consent flow가 필요",
+        "normal native runtime에 broad settings write 권한을 추가하지 않는다",
+        "`breaking_versions`에는 2.1.3을 추가하지 않는다",
+        "2.1.3 real-HAOS install/update",
+        "전체 v2 수용은 `PARTIAL`",
+    ):
+        assert fragment in migration, f"2.1.3 migration evidence drift: {fragment}"
+
+    contract = re.sub(r"\s+", " ", read(V2 / "antigravity-contract.md"))
+    for fragment in (
+        "`enableTelemetry`, `modelProvider`",
+        "`enableTelemetry`는 privacy-strengthening opt-out인 `false`만 허용",
+        "patch:{enableTelemetry:false}",
+        "fresh digest에 묶어 mediator로만 수행",
+    ):
+        assert fragment in contract, f"2.1.3 settings contract drift: {fragment}"
 
     plan = re.sub(r"\s+", " ", read(V2 / "test-plan.md"))
     for fragment in (
@@ -999,7 +1080,7 @@ def test_v210_docs_define_receipt_fallback_multi_choice_and_restart_boundary() -
     assert "## [2.0.10]" in changelog
     assert "full App or broker restart rejects an unstarted in-memory proposal" in changelog
     assert "live Telegram/OAuth E2E" not in changelog
-    assert 'version: "2.1.2"' in documents["migration"]
+    assert 'version: "2.1.3"' in documents["migration"]
 
 
 def test_v209_docs_match_native_sandbox_and_mediated_settings_policy() -> None:
@@ -1174,7 +1255,7 @@ def test_release_evidence_docs_preserve_phase_and_architecture_boundaries() -> N
         "telegram_session_delivery",
     }
     template = json.loads(read(V2 / "release-evidence-template.json"))
-    assert template["version"] == "2.1.2"
+    assert template["version"] == "2.1.3"
     assert set(template["gates"]) == expected_gates
     assert "HA-008" not in json.dumps(template, sort_keys=True)
     for gate in template["gates"].values():

@@ -63,6 +63,21 @@ policy/proc/Recorder-write/raw-host 경계는 항상 막으며 `full_access`, Do
 host-root/PID mount는 추가하지 않습니다. 자동 회귀는 HAOS 증거가 아니므로 2.1.0
 amd64/aarch64 실기기 수용은 배포 시점 `NOT RUN`, 전체 v2 수용은 `PARTIAL`입니다.
 
+공개 2.1.2의 실제 HAOS amd64에서는 인증된 Web TUI가 Terms/data-use 화면의
+Done·Enter와 Ctrl+C를 정상 처리했지만, native local save가
+`settings.json.<uuid>.tmp`에서 final `settings.json`으로 atomic rename하지 못했습니다.
+`agy-settings` hash는 전후 동일했습니다. 이는 terminal input 문제가 아니라 보호된
+final-settings 교체 실패라는 실제 증거이며, 별도 remote Terms 요청의 성공 여부는
+증명하지 않습니다. 2.1.3은 consumer Google OAuth/Terms 전용 수동 controller와
+격리된 `/run` staging HOME을 추가합니다. production HOME, `/config`, command, MCP,
+proposal과 자동 browser helper를 onboarding native에서 차단하고, 완료된 consumer
+marker·OAuth·정상 또는 의도한 Ctrl+C 종료를 함께 확인한 뒤 telemetry-compatible
+settings, bounded opaque OAuth credential file과 exact onboarding boolean만 no-secret
+journal에 바인딩된 순서로 crash-consistent commit합니다. 각 destination 교체만 개별적으로
+atomic하며 중단된 prefix는 격리 후 재시도됩니다.
+2.1.3의 실제 HAOS install/update, enforced onboarding AppArmor, OAuth/Terms persistence,
+정상 Web/Telegram 회귀와 aarch64 수용은 `NOT RUN`이며 전체 v2는 `PARTIAL`입니다.
+
 native `read_file`/`write_file`은 symlink alias 우회를 막기 위해 두 모드에서 전역
 deny합니다. ordinary file은 confined `ha_files`의 `ha_files_list`,
 `ha_files_read_text`, `ha_files_write_text`만 사용합니다. 허용 root는 `/config`, `/share`,
@@ -106,7 +121,8 @@ App을 선택하고 설치합니다. 공개 릴리스는 HA 장치에서 소스�
 2. 로그에서 init, 별도 AppArmor 실행 프로필, read broker, memory와 Web terminal 시작
    결과를 확인합니다. token이나 내부 응답 본문을 공유하지 마세요.
 3. **OPEN WEB UI**를 엽니다. shell은 `/config`에서 시작합니다.
-4. 읽기 전용 요청으로 연결을 먼저 시험합니다.
+4. 최초 사용이면 아래 로그인 절차를 끝내고 helper를 닫은 뒤 `agy`를 실행합니다.
+   그 다음 읽기 전용 요청으로 연결을 먼저 시험합니다.
 
 ```text
 현재 Home Assistant 구조와 최근 Core 오류를 읽기 전용으로 요약해 줘.
@@ -117,24 +133,62 @@ App을 선택하고 설치합니다. 공개 릴리스는 HA 장치에서 소스�
 
 ### Google OAuth
 
-Web terminal 또는 공개키 SSH의 controlling TTY에서 처음 한 번 실행합니다.
+Web terminal 또는 공개키 SSH의 controlling TTY에서 처음 한 번 실행합니다. 실행 전에
+다른 `agy` session과 Telegram 작업이 없는지 확인합니다.
 
 ```bash
 ha-antigravity-login
 ```
 
-CLI가 표시하는 공식 Google OAuth 절차를 완료합니다. helper는 native Antigravity를
-직접 실행하며 존재하지 않는 별도 login subcommand나 App 전용 API token을
-사용하지 않습니다. 완료 뒤 새 세션을 시작합니다.
+personal/consumer Google 흐름을 선택하고 Google Cloud project/enterprise onboarding은
+선택하지 마세요. 보호된 session에서는 자동 browser helper를 의도적으로 실행하지
+않습니다. CLI가 표시한 공식 HTTPS URL을 브라우저에서 열고, 반환된 authorization
+code를 controlling TTY에 붙여 넣은 뒤 Terms/data-use 화면까지 완료합니다. 정상 agent
+화면이 나타나면 prompt를 입력하지 말고 Ctrl+C를 눌러 helper를 닫습니다. helper가
+완전히 종료되기 전에는 다른 `agy`나 Telegram 요청을 시작하지 마세요.
+
+Web UI에서는 OAuth URL과 붙여 넣은 code가 reconnect 가능한 scrollback에 남지 않도록
+helper 종료 시 **현재 Web pane의 전체 history를 지웁니다**. pane/socket을 동일한 것으로
+재검증하지 못하거나 지우기에 실패하면 helper는 성공으로 끝나지 않습니다. 브라우저
+history, clipboard, screenshot과 SSH client 자체 scrollback은 App 경계 밖이므로 사용자가
+별도로 지워야 합니다. SSH의 terminal saved scrollback 삭제는 best-effort입니다.
+
+helper는 최대 15분 실행됩니다. timeout, unexpected exit 또는 incomplete 안내가
+나오면 정상 session을 시작하지 말고 App을 재시작한 다음 처음부터 다시 실행합니다.
+완료 메시지는 local validation/sync 결과일 뿐 remote Terms 수락을 단정하지 않습니다.
+다음 실행에서 Terms가 다시 나타나면 helper를 다시 실행하세요. helper가 정상 종료된
+뒤 새 session을 시작합니다.
 
 ```bash
 agy
 ```
 
-`antigravity`와 `ha-antigravity`도 같은 native CLI wrapper입니다. OAuth 자료는
-`/data/home/.gemini/**` 아래 CLI가 관리하며 App 재시작과 일반 update 뒤에도
-보존됩니다. 해당 디렉터리, authorization header 또는 credential 내용을 출력하거나
-Git·Telegram·지원 이슈에 복사하지 마세요.
+`antigravity`와 `ha-antigravity`도 같은 native CLI wrapper입니다. 2.1.3 login helper는
+native를 root-owned `/run` staging HOME에서 실행한 뒤, 성공한 consumer 흐름의
+telemetry-compatible settings, bounded opaque OAuth credential file과 exact onboarding marker만 검증해
+shared HOME에 no-secret journal이 보호하는 순서로 crash-consistent commit합니다. 각 destination
+교체만 개별적으로 atomic하고 중단된 prefix는 격리됩니다. normal Web/Telegram session의 final-settings
+write/link/lock deny는 유지됩니다. OAuth 자료는 `/data/home/.gemini/**` 아래 CLI가
+관리하며 App 재시작과 일반 update 뒤에도 보존됩니다. 해당 디렉터리, authorization
+header 또는 credential 내용을 출력하거나 Git·Telegram·지원 이슈에 복사하지 마세요.
+
+### Data-use telemetry 사후 opt-out
+
+Terms 화면에서 허용한 telemetry는 나중에 끌 수 있습니다. `settings.json`을 editor,
+native file tool 또는 shell redirection으로 직접 바꾸지 말고 authenticated Web/SSH
+terminal에서 fresh digest에 묶인 mediator만 사용하세요.
+
+```bash
+digest="$(agy-settings sha256)"
+jq -nc --arg digest "${digest}" \
+  '{expected_sha256:$digest,patch:{enableTelemetry:false}}' \
+  | agy-settings patch
+```
+
+`false`는 opt-out으로 명시 저장됩니다. 2.1.3 mediator는 privacy-strengthening
+false-only이며 opt-in 또는 re-enable을 제공하지 않습니다. 재활성화에는 별도의
+authenticated consent flow가 필요합니다. 각 opt-out마다 새 digest를 얻어야 하며 이
+mediator는 normal native session에 broad final-settings write 권한을 주지 않습니다.
 
 ### Native 경로와 plugin
 
@@ -211,7 +265,7 @@ native `read_file`/`write_file`은 이 모드에서도 deny되고 file 작업은
 `proceed-in-sandbox`만 legacy upgrade 입력이며 `request-review`로 정규화됩니다.
 2.0.12부터 Telegram이 켜지면
 root-owned single-link regular·256 KiB 이하·parse 가능한 settings를 시작 transaction으로
-backup합니다. 현재 2.1.2는 App 관리 보안 field, 선택 mode의 sparse native shape와
+backup합니다. 현재 2.1.3은 App 관리 보안 field, 선택 mode의 sparse native shape와
 known permission bucket을 exact policy로 정규화하고 retired `enableTerminalSandbox`를
 제거합니다. unknown custom allow/ask/deny는 제거하지만 이 App 관리 permission 경계 밖의
 top-level 설정, global MCP/plugin/OAuth와 `/config`는 보존하고 기존 mode는 0600으로
@@ -288,7 +342,9 @@ port-forward하지 말고 신뢰하는 VPN 또는 mesh VPN을 사용하세요.
 > 보호하세요. 실제 HAOS OAuth/AppArmor/Bot API 통합 E2E는 아직 `NOT RUN`입니다.
 
 지원 scalar key는 `altScreenMode`, `clearScrollbackOnResize`, `colorScheme`,
-`disableSlashCommands`, `modelProvider`, `showFeedbackSurvey`, `showTips`입니다.
+`disableSlashCommands`, `enableTelemetry`, `modelProvider`, `showFeedbackSurvey`,
+`showTips`입니다. `enableTelemetry`는 privacy-strengthening opt-out인 `false`만
+허용하며 위의 digest-bound mediator를 사용합니다.
 
 Web UI 또는 SSH에서 `ha-antigravity-login`으로 한 번 로그인합니다. Telegram도 같은
 `/data/home` identity를 사용하므로 별도 `ha-telegram-login`은 없습니다.

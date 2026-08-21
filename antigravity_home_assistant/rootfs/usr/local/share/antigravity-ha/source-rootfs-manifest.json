@@ -15,8 +15,8 @@
     {
       "mode": "0644",
       "path": "/etc/motd",
-      "sha256": "sha256:d3d0be2c7414984ef7c8b1aa70afe47f819dabd74c04ae0963db93fc0a5a317b",
-      "size": 250
+      "sha256": "sha256:9cbd346bc5601312bd6c7c48fa420a0a450411af71d9bfffbcecdd1118763f19",
+      "size": 382
     },
     {
       "mode": "0644",
@@ -291,8 +291,8 @@
     {
       "mode": "0755",
       "path": "/usr/local/bin/antigravity-ha-init",
-      "sha256": "sha256:a23329bb8a9e5a6ebe29eafbb14fa69eca72beda371296bc36ee41d0efba1c04",
-      "size": 22297
+      "sha256": "sha256:c1dbbd1fb1f4f91cd903b1515209f2669b1b9ca97e95c198b8873d708266681d",
+      "size": 32589
     },
     {
       "mode": "0755",
@@ -315,8 +315,8 @@
     {
       "mode": "0755",
       "path": "/usr/local/bin/ha-antigravity-login",
-      "sha256": "sha256:409ff596aec32cafd929f9374af0ab694a8291ca2fd41b52415f3084a159c9d8",
-      "size": 150
+      "sha256": "sha256:0a25e516ff1a7b39f23bb05049a6e605b88bfe3002cd63c192c20f52ffd354bd",
+      "size": 6314
     },
     {
       "mode": "0755",
@@ -477,8 +477,8 @@
     {
       "mode": "0755",
       "path": "/usr/local/bin/tmux-session-shell",
-      "sha256": "sha256:413c321ff63ea02d11725cb2adaf76f68955652f7f6e858d99fc49a41ca2d275",
-      "size": 580
+      "sha256": "sha256:a4c8c15e73a429f27fdfb476bb823a879f488fae4c71f8ed71aa8a97280e913a",
+      "size": 869
     },
     {
       "mode": "0755",
@@ -525,14 +525,26 @@
     {
       "mode": "0755",
       "path": "/usr/local/libexec/antigravity-interactive-restricted",
-      "sha256": "sha256:39645d8cd73f20a3e43074336df02f520b93c6ad9159f3b18ceb411a749e176a",
-      "size": 2187
+      "sha256": "sha256:0065f1d4d40f571ce4b1ca3b24fd8b6e9851ae471dd899157c80d2d4d49eba19",
+      "size": 3477
     },
     {
       "mode": "0755",
       "path": "/usr/local/libexec/antigravity-interactive-sensitive-read",
-      "sha256": "sha256:b712ed7ff89db3bf3337c1280636d4a4d1695bce357f2fddff536c680bd04455",
-      "size": 2594
+      "sha256": "sha256:25af08a0ad764170005fa2c6caff92d7b531200e287082fc2c8ac830bb1702f8",
+      "size": 3476
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/libexec/antigravity-native-session-guard",
+      "sha256": "sha256:4c2a260fc8e3786a103dc107c6d5566a8e5c9ba5d8f4ac8e6a97fa9286743884",
+      "size": 3769
+    },
+    {
+      "mode": "0755",
+      "path": "/usr/local/libexec/antigravity-onboarding-controller",
+      "sha256": "sha256:724b57d1cd11283b4254a62d012cd6fb9ffb87a0467d4ea1b9e7eeaea3485bc1",
+      "size": 22069
     },
     {
       "mode": "0755",
@@ -549,8 +561,8 @@
     {
       "mode": "0755",
       "path": "/usr/local/libexec/ha-interactive-shell",
-      "sha256": "sha256:06780e040e33806ac84f6f2dbba1795cecded73f37b58e9f1f1f911d4d97a9a5",
-      "size": 529
+      "sha256": "sha256:d7d420bad41a9ab9318a3facf968c4ac4d3ecc713232609050ba5bb18d3075f6",
+      "size": 831
     },
     {
       "mode": "0755",
@@ -585,14 +597,14 @@
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/AGENTS.md",
-      "sha256": "sha256:53fba1ffbd6b450fa619f9d977af7dcc6cc7186895188c44e627fb2f96f98b59",
-      "size": 11927
+      "sha256": "sha256:15588ac446bd57a63c49ab9770a0dd1421701ffd3de5dbfded0ff6ad8937a9ae",
+      "size": 12005
     },
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/antigravity-settings-update.mjs",
-      "sha256": "sha256:295dbf60b4c4f90dda5450e224ac652607b5f12ba4f31f781dbb7064e0f8f3d6",
-      "size": 9669
+      "sha256": "sha256:229c8834124e400ffc2290c05a7e73f174e5e522c9d733bd57c44cd5dd969bde",
+      "size": 9924
     },
     {
       "mode": "0644",
@@ -704,6 +716,18 @@
     },
     {
       "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/onboarding-settings-fingerprint.mjs",
+      "sha256": "sha256:90351b59da0b63c52b8f14f4cb6eb29a9f2f4ebcea1a7b943370c2f4dc134c62",
+      "size": 3658
+    },
+    {
+      "mode": "0644",
+      "path": "/usr/local/share/antigravity-ha/onboarding-transaction.mjs",
+      "sha256": "sha256:dcdf3e1f14f518d74c003682d1221df98762d1e8c2c76b5081052afc6059d1af",
+      "size": 20214
+    },
+    {
+      "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/playwright-init-page.ts",
       "sha256": "sha256:3f02f249fc60d4bcb7b2ce5943f5adbd50324800cd321f04224cd0cefe8c6330",
       "size": 631
@@ -735,8 +759,8 @@
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/rules/home-assistant-safety.md",
-      "sha256": "sha256:6e2152ce2826278d95fed08174355d7502da9be3225891d2388add4244e73485",
-      "size": 5490
+      "sha256": "sha256:e12c5e1770786d634999b858a8367ea22b48440725d111cb907af53814605635",
+      "size": 5596
     },
     {
       "mode": "0644",
@@ -765,8 +789,8 @@
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assistant-operations/SKILL.md",
-      "sha256": "sha256:f42cd95caa4cd2c654102841fa42db98fafd2c0b79523c2ec8a3bcadf77a53fb",
-      "size": 5325
+      "sha256": "sha256:3449794b6ca18108afa0e92aae37a2dd29ae18ee80183598295ff717a4b378c0",
+      "size": 5426
     },
     {
       "mode": "0644",
@@ -836,5 +860,5 @@
     }
   ],
   "schema": "antigravity-ha-source-rootfs/v1",
-  "source_rootfs_sha256": "sha256:d6dfc88db9bdeb32794bb0dd348a0d43a635552c2142f2c90e4896eb6f9a2cb8"
+  "source_rootfs_sha256": "sha256:e3524f71f96a908223b2f14ba4c1dd45675f41c5417990ff8cc09d86bd2b6aa9"
 }

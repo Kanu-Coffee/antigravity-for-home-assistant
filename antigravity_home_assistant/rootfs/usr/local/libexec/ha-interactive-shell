@@ -12,10 +12,21 @@ if [[ ! "${terminal}" =~ ^[A-Za-z0-9._+-]{1,64}$ ]]; then
   terminal=xterm-256color
 fi
 
+tmux_pane_environment=()
+if [[ -n ${TMUX_PANE:-} ]]; then
+  if [[ ! ${TMUX_PANE} =~ ^%[0-9]+$ ]]; then
+    printf '%s\n' 'ha-interactive-shell: invalid tmux pane binding' >&2
+    exit 78
+  fi
+  tmux_pane_environment=("TMUX_PANE=${TMUX_PANE}")
+fi
+unset TMUX_PANE TMUX
+
 exec /usr/bin/env -i \
   HOME=/data/home \
   LANG=C.UTF-8 \
   LC_ALL=C.UTF-8 \
   PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
   TERM="${terminal}" \
+  "${tmux_pane_environment[@]}" \
   /bin/bash -l

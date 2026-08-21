@@ -32,6 +32,24 @@
 > consult each release's evidence for complete install, update, and rollback
 > verification on both real HAOS architectures.
 
+**2.1.3 Web OAuth/TOS persistence boundary:** On public 2.1.2 on real HAOS
+amd64, the authenticated Terms/data-use TUI accepted Done and Enter but failed
+the atomic rename from `settings.json.<uuid>.tmp` to final `settings.json`.
+The `agy-settings` hash stayed identical and Ctrl+C worked, establishing a
+local final-settings replacement failure rather than missing input. Version
+2.1.3 runs the manual personal/consumer Google OAuth and Terms flow through
+`ha-antigravity-login` in an isolated `/run` staging HOME. Automatic browser
+helpers are intentionally blocked; open the displayed HTTPS URL and paste the
+authorization code. Only a successful or intentional Ctrl+C close with a
+completed consumer marker can commit telemetry-compatible settings, a bounded
+opaque OAuth credential file, and the exact two onboarding booleans in a
+no-secret journaled, ordered, crash-consistent sequence. Each destination
+replacement is individually atomic; interrupted prefixes stay quarantined for retry.
+Normal Web/Telegram final-settings denies and command/MCP/HA-sensitive
+boundaries remain intact. A local file or marker is not evidence of remote
+Terms acceptance. Real-HAOS 2.1.3 acceptance is `NOT RUN` before installation,
+so overall v2 remains `PARTIAL`.
+
 **2.1.2 Telegram command-permission diagnostics:** On public 2.1.1 on real
 HAOS amd64, Telegram no-tool response, `ha_read_state`, and confined
 `ha_files_list` passed, but an explicit-`always-proceed` read-only native
@@ -153,21 +171,29 @@ Antigravity. This is not a HACS integration.
    release App pulls the architecture-specific image from
    `ghcr.io/kanu-coffee/antigravity-for-home-assistant` instead of building source
    on the HA device.
-4. Open **OPEN WEB UI** and start native OAuth once.
+4. Open **OPEN WEB UI** and start consumer Google OAuth once. Do not start
+   another `agy` or Telegram request while the helper is active.
 
    ```bash
    ha-antigravity-login
    ```
 
-5. Complete the Google flow shown by the CLI, then start a new session.
+5. Select the personal/consumer flow, not Google Cloud/enterprise. Automatic
+   browser helpers are disabled, so open the HTTPS URL shown by the CLI, paste
+   the authorization code, and finish the Terms screen. When the normal agent
+   screen appears, do not enter a prompt; press Ctrl+C to close the helper,
+   then start a new session.
 
    ```bash
    agy
    ```
 
-`ha-antigravity-login` does not emulate a nonexistent login subcommand. It starts
-the official Antigravity first-run OAuth in a controlling TTY. Never print or
-attach OAuth material to an issue.
+`ha-antigravity-login` does not emulate a nonexistent login subcommand. It runs
+the official consumer first-run flow in a controlling TTY for at most 15
+minutes. After a timeout, unexpected exit, or incomplete result, do not start
+normal `agy`; restart the App and rerun the helper. Even a completion message
+does not prove remote Terms acceptance, so rerun it if Terms appear again.
+Never print or attach OAuth material to an issue.
 
 ## Telegram setup
 
@@ -261,7 +287,7 @@ inputs for stored Supervisor options and normalize to `request-review`.
 
 Starting in 2.0.12, enabling
 Telegram transactionally backs up a root-owned, single-link regular, parseable
-settings file of at most 256 KiB. In its current 2.1.2 form, it restores
+settings file of at most 256 KiB. In its current 2.1.3 form, it restores
 `allowNonWorkspaceAccess=true`, `artifactReviewPolicy=agent-decides`, the selected
 mode's sparse `toolPermission` representation, and that mode's known permission
 buckets, while removing retired `enableTerminalSandbox`. `request-review` omits

@@ -9,7 +9,7 @@ public App은 사용자의 HAOS에서 source build하지 않고 GHCR prebuilt im
 받는다.
 
 ```yaml
-version: "2.1.2"
+version: "2.1.3"
 arch:
   - amd64
   - aarch64
@@ -166,6 +166,42 @@ denial로 오인하지 않는다. 이 진단·복구 보강은 2.1.0의 trust bo
 patch이므로 `breaking_versions`에는 2.1.2를 추가하지 않는다. 2.1.2의 real-HAOS
 install/update, direct command, request-review proposal/approval, restart, rollback과
 aarch64 수용은 배포 전 모두 `NOT RUN`이며 전체 v2 수용은 `PARTIAL`이다.
+
+공개 2.1.2 실제 HAOS amd64의 authenticated Web TUI에서는 Terms/data-use 화면의
+Done·Enter와 Ctrl+C가 작동했지만 native가
+`settings.json.<uuid>.tmp`를 final `settings.json`으로 atomic rename하지 못했다.
+`agy-settings` hash는 전후 `SAME`이었다. 이는 terminal input 부재가 아니라 local
+final-settings replacement 실패를 증명하지만, 별도 remote Terms 요청의 성공 여부는
+증명하지 않는다.
+
+2.1.3은 authenticated controlling TTY에서 명시적으로 실행하는
+`ha-antigravity-login`을 consumer Google OAuth/Terms 전용 controller로 바꾼다. native
+first-run은 persistent HOME 대신 root-owned `/run` staging HOME과 빈 fixed workspace를
+사용한다. onboarding runtime에는 real HOME, `/config`, command exec, MCP/plugin,
+proposal/managed-HA socket과 automatic browser helper를 열지 않는다. 사용자는 표시된
+HTTPS URL을 열고 authorization code를 붙여 넣으며 Google Cloud/enterprise flow를
+선택하지 않는다.
+
+controller는 native status `0` 또는 의도한 Ctrl+C `130`, completed consumer marker와
+OAuth present를 모두 요구한다. 기존 settings에서 native telemetry 선택만 달라진
+settings, root-owned single-link 0600의 bounded opaque OAuth credential file, exact
+`consumerOnboardingComplete`/`enterpriseOnboardingComplete` boolean만 검증하고 no-secret
+journal에 바인딩된 settings→OAuth→marker 순서로 crash-consistent commit한다. 각
+destination의 fixed same-directory temporary 교체만 개별적으로 atomic하며, 중단된
+prefix는 격리 후 재시도한다. timeout, unexpected exit와
+incomplete flow는 staging을 폐기하고 normal session 시작을 안내하지 않는다. normal
+Web/Telegram final-settings write/link/lock deny와 command/MCP/HA 민감 경계는 유지한다.
+local file/marker로 remote Terms 수락을 단정하지 않는다. 이 patch는 2.1.0 trust
+boundary를 넓히지 않으므로 `breaking_versions`에는 2.1.3을 추가하지 않는다. 2.1.3
+real-HAOS install/update, enforced onboarding AppArmor, consumer OAuth/Terms persistence,
+normal Web/Telegram regression, restart/rollback과 aarch64 수용은 배포 전 `NOT RUN`이며
+전체 v2 수용은 `PARTIAL`이다.
+
+Terms 화면에서 선택한 data-use 설정은 이후에도 opt-out할 수 있다. 단,
+`settings.json`을 직접 쓰지 않고 fresh digest에 묶인 `agy-settings patch` mediator에서
+지원하는 privacy-strengthening `enableTelemetry:false` opt-out만 사용한다. opt-in 또는
+re-enable은 제공하지 않고 별도 authenticated consent flow가 필요하다. 이 기능은 normal
+native runtime에 broad settings write 권한을 추가하지 않는다.
 
 native `read_file(*)`/`write_file(*)`는 symlink alias 우회를 막기 위해 두 mode에서
 mandatory deny한다. ordinary file access는 server `ha_files`의

@@ -170,7 +170,9 @@ def test_antigravity_release_is_pinned_and_verified(addon_root: Path) -> None:
     assert "cli_linux_arm64.tar.gz" in dockerfile
     assert "sha512sum --check --strict -" in dockerfile
     assert "antigravity-real" in dockerfile
-    assert 'antigravity_version_output="$(antigravity --version' in dockerfile
+    assert dockerfile.count(
+        'antigravity_version_output="$(/usr/local/libexec/antigravity-real --version)"'
+    ) == 2
     assert (addon_root / "rootfs/usr/local/bin/antigravity").is_file()
     assert (addon_root / "rootfs/usr/local/bin/agy").is_file()
 
@@ -200,6 +202,9 @@ def test_native_self_updater_is_disabled_at_every_antigravity_boundary(
     managed_plugin_update = (
         rootfs / "usr/local/share/antigravity-ha/managed-plugin-update.mjs"
     ).read_text(encoding="utf-8")
+    native_session_guard = (
+        rootfs / "usr/local/libexec/antigravity-native-session-guard"
+    ).read_text(encoding="utf-8")
     docker_smoke = (repository_root / "tests/docker-smoke.sh").read_text(
         encoding="utf-8"
     )
@@ -215,8 +220,10 @@ def test_native_self_updater_is_disabled_at_every_antigravity_boundary(
         launcher = (rootfs / "usr/local/libexec" / launcher_name).read_text(
             encoding="utf-8"
         )
-        assert "exec /usr/local/libexec/antigravity-native-env -i" in launcher
         assert disable_contract in launcher
+        assert "/usr/local/libexec/antigravity-native-session-guard" in launcher
+    assert "exec /usr/local/libexec/antigravity-native-env -i" in native_session_guard
+    assert disable_contract in native_session_guard
     assert disable_contract in telegram_runtime
     assert 'AGY_CLI_DISABLE_AUTO_UPDATE: "true"' in telegram_bridge
     assert 'AGY_CLI_DISABLE_AUTO_UPDATE: "true"' in feedback
@@ -509,15 +516,292 @@ def test_login_helper_delegates_to_native_first_run_oauth(rootfs: Path) -> None:
     login_helper = (rootfs / "usr/local/bin/ha-antigravity-login").read_text(
         encoding="utf-8"
     )
+    controller = (
+        rootfs / "usr/local/libexec/antigravity-onboarding-controller"
+    ).read_text(encoding="utf-8")
     session_helper = (rootfs / "usr/local/bin/ha-antigravity").read_text(
         encoding="utf-8"
     )
+    init_script = (rootfs / "usr/local/bin/antigravity-ha-init").read_text(
+        encoding="utf-8"
+    )
+    native_guard = (
+        rootfs / "usr/local/libexec/antigravity-native-session-guard"
+    ).read_text(encoding="utf-8")
 
-    assert "cd /config" in login_helper
-    assert 'exec antigravity "$@"' in login_helper
-    assert 'install -d -m 0700 "${ANTIGRAVITY_HOME}"' not in login_helper
+    assert login_helper.startswith("#!/bin/bash -p\n")
+    assert "(( $# != 0 ))" in login_helper
+    assert "cd /\n" in login_helper
+    assert "trap '' INT QUIT" in login_helper
+    assert "/usr/bin/env --default-signal=INT --default-signal=QUIT -i" in login_helper
+    assert 'readonly TMUX_SOCKET=/data/tmux/tmux-0/default' in login_helper
+    assert "#{pane_id} #{pane_tty}" in login_helper
+    assert login_helper.count("%u:%g:%a:%h:%d:%i") == 3
+    assert 'clear-history -t "${tmux_target}"' in login_helper
+    assert "tmux_cleanup_succeeded=false" in login_helper
+    assert login_helper.index("printf '\\033[3J\\033[2J\\033[H'") < (
+        login_helper.index('clear-history -t "${tmux_target}"')
+    )
+    assert "controller_status=80" in login_helper
+    assert "controller_status=81" in login_helper
+    assert "privacy_cleanup_ready=false" in login_helper
+    assert "--privacy-finalize" in login_helper
+    assert "shared Web pane history could not be verified as cleared" in login_helper
+    assert "remote Terms acceptance was not inferred" in login_helper
+    assert "\\033[3J\\033[2J\\033[H" in login_helper
+    assert "/usr/local/libexec/antigravity-onboarding-controller" in login_helper
+    assert "cd /config" not in login_helper
+    assert 'exec antigravity "$@"' not in login_helper
+
+    assert controller.startswith("#!/bin/bash -p\n")
+    assert "(( $# != 0 ))" in controller
+    assert "--privacy-finalize" in controller
+    assert 'privacy_marker_value=$(< "${ACTIVE_MARKER}")' in controller
+    for typed_marker in ("partial)", "restart)", "privacy) ;;"):
+        assert typed_marker in controller
+    assert "finish terminal privacy cleanup" in controller
+    assert "privacy_finalize} == false && ( ! -t 0 || ! -t 1 )" in controller
+    assert "native-session.lock" in controller
+    assert "user-files-update.lock" in controller
+    assert "onboarding-active" in controller
+    assert controller.count("/usr/bin/flock --exclusive --nonblock") == 2
+    assert "onboarding-workspace" in controller
+    assert "cd /tmp" not in controller
+    assert "trap '' INT QUIT" in controller
+    assert (
+        "/usr/bin/env --default-signal=INT --default-signal=QUIT -i "
+        "PATH=/usr/bin:/bin"
+    ) in controller
+    assert controller.count("/usr/bin/setpriv --pdeathsig KILL") == 2
+    assert "/usr/bin/timeout --foreground --signal=INT --kill-after=5 15m" in controller
+    assert "settings_invariant_fingerprint" in controller
+    assert "onboarding-settings-fingerprint.mjs" in controller
+    assert "onboarding-transaction.mjs" in controller
+    assert '"${TRANSACTION_HELPER}" status' in controller
+    assert '"${TRANSACTION_HELPER}" commit' in controller
+    assert '"${TRANSACTION_HELPER}" finalize' in controller
+    assert "complete-restart)" in controller
+    assert "restart-required" in controller
+    assert "restartRequired" in (
+        rootfs
+        / "usr/local/share/antigravity-ha/onboarding-transaction.mjs"
+    ).read_text(encoding="utf-8")
+    assert "SETTINGS_DRAIN_SECONDS" not in controller
+    assert "${RUNTIME_DIR}/onboarding-home" in controller
+    assert '"${STAGING_HOME}/tmp"' in controller
+    assert 'TMPDIR="${STAGING_HOME}/tmp"' in controller
+    assert "cache/onboarding.json" in controller
+    assert "consumerOnboardingComplete" in controller
+    assert "enterpriseOnboardingComplete" in controller
+    assert 'and (keys == [' in controller
+    assert "current_consumer} == true" in controller
+    assert 'current_enterprise} != "${baseline_enterprise}"' in controller
+    assert 'baseline_enterprise} != false' in controller
+    assert 'current_consumer} == true && ${current_oauth} == absent' in controller
+    assert 'native_status} == 0 || ${native_status} == 130' in controller
+    assert "onboarding_committed=false" in controller
+    assert "incomplete consumer flow discards every staged byte" in controller
+    assert "OAuth state is an opaque native credential" in controller
+    assert "type == \"object\"" not in controller.split("oauth_state()", 1)[1].split(
+        "onboarding_state()", 1
+    )[0]
+    assert controller.index('"${TRANSACTION_HELPER}" commit') < controller.index(
+        'case "${native_status}"'
+    )
+    assert "personal/consumer Google OAuth flow only" in controller
+    assert "Do not select Google Cloud project or enterprise" in controller
+    assert "Automatic browser helpers are intentionally disabled" in controller
+    assert "Click or copy the displayed HTTPS login link" in controller
+    assert "/usr/local/libexec/antigravity-real &" not in controller
+    assert "/usr/local/libexec/antigravity-real 8>&- 9>&-" in controller
+    assert "No local Terms-acceptance result was inferred" in controller
+    assert "Staged authentication and onboarding state were discarded" in controller
+    assert "Consumer onboarding was not completed; staged files were discarded" in (
+        controller
+    )
+    assert "exit 76" in controller
+    assert '"$@"' not in controller
+    for unsafe_environment in (
+        "BASH_ENV",
+        "LD_PRELOAD",
+        "NODE_OPTIONS",
+        "PYTHONPATH",
+        "SUPERVISOR_TOKEN",
+    ):
+        assert f"unset " in controller and unsafe_environment in controller
+
+    assert '"${RUNTIME_DIR}/onboarding-workspace"' in init_script
+    assert '"${ONBOARDING_HOME}"' in init_script
+    assert "native-session.lock" in init_script
+    assert "user-files-update.lock" in init_script
+    assert "onboarding-active" in init_script
+    assert "user_files_reconciled=false" in init_script
+    assert "Skipped Antigravity user-file reconciliation while a partial" in init_script
+    assert '"${ONBOARDING_TRANSACTION_HELPER}" restart-status' in init_script
+    assert '"${ONBOARDING_TRANSACTION_HELPER}" clear-restart' in init_script
+    assert "onboarding_restart_state} == absent" in init_script
+    assert '"${ONBOARDING_TRANSACTION_HELPER}" marker init' in init_script
+    assert '"${ONBOARDING_TRANSACTION_HELPER}" marker clear' in init_script
+    assert "NATIVE_OAUTH_TOKEN" in init_script
+    assert "! -f ${NATIVE_OAUTH_TOKEN}" in init_script
+    assert "native_oauth_links} != 1" in init_script
+    assert "native_oauth_size} -gt 1048576" in init_script
+    assert 'chmod 0600 "${NATIVE_OAUTH_TOKEN}"' in init_script
+    assert "NATIVE_ONBOARDING_MARKER" in init_script
+    assert "native_onboarding_size} -gt 4096" in init_script
+    assert "all(.[]; type == \"boolean\")" in init_script
+    assert "jq --stream --slurp --exit-status" in init_script
+    assert "ambiguous duplicate fields" in init_script
+    assert "jq --stream --slurp --exit-status" in controller
+    assert 'chmod 0600 "${NATIVE_ONBOARDING_MARKER}"' in init_script
+    assert init_script.index('chmod 0600 "${NATIVE_OAUTH_TOKEN}"') < (
+        init_script.index('"${ONBOARDING_TRANSACTION_HELPER}" marker clear')
+    )
+    assert native_guard.startswith("#!/bin/bash -p\n")
+    assert "onboarding-active" in native_guard
+    assert "onboarding-active.tmp" in native_guard
+    assert "retry-required.json" in native_guard
+    assert "restart-required" in native_guard
+    assert "sensitive-data-access.enabled" in native_guard
+    assert "exec /usr/local/libexec/antigravity-native-env -i" in native_guard
     assert 'exec antigravity "$@"' in session_helper
     assert "antigravity_BIN" not in session_helper
+
+
+def test_onboarding_settings_write_is_manual_bounded_and_profile_scoped(
+    addon_root: Path,
+) -> None:
+    source = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
+
+    onboarding = source.split(
+        "profile antigravity_home_assistant-onboarding ", maxsplit=1
+    )[1].split("\n}\n", maxsplit=1)[0]
+    onboarding_runtime = source.split(
+        "profile antigravity_home_assistant-onboarding-runtime ", maxsplit=1
+    )[1].split("\n}\n", maxsplit=1)[0]
+    restricted_bootstrap = source.split(
+        "profile antigravity_home_assistant-interactive-restricted ", maxsplit=1
+    )[1].split("\n}\n", maxsplit=1)[0]
+    sensitive_bootstrap = source.split(
+        "profile antigravity_home_assistant-interactive-sensitive-read ",
+        maxsplit=1,
+    )[1].split("\n}\n", maxsplit=1)[0]
+    restricted = source.split(
+        "profile antigravity_home_assistant-interactive-runtime-restricted ",
+        maxsplit=1,
+    )[1].split("\n}\n", maxsplit=1)[0]
+    sensitive = source.split(
+        "profile antigravity_home_assistant-interactive-runtime-sensitive-read ",
+        maxsplit=1,
+    )[1].split("\n}\n", maxsplit=1)[0]
+    command = source.split(
+        "profile antigravity_home_assistant-command ", maxsplit=1
+    )[1].split("\n}\n", maxsplit=1)[0]
+    shell = source.split(
+        "profile antigravity_home_assistant-shell ", maxsplit=1
+    )[1].split("\n}\n", maxsplit=1)[0]
+
+    controller_transition = (
+        "/usr/local/libexec/antigravity-onboarding-controller "
+        "Px -> antigravity_home_assistant-onboarding,"
+    )
+    native_transition = (
+        "/usr/local/libexec/antigravity-real "
+        "Px -> antigravity_home_assistant-onboarding-runtime,"
+    )
+    assert source.count(controller_transition) == 1
+    assert controller_transition in shell
+    assert native_transition in onboarding
+    assert "/bin/bash rix," in onboarding
+    assert "/usr/bin/bash rix," in onboarding
+    assert "/usr/bin/** rix," not in onboarding
+    assert "/data/home/.gemini/antigravity-cli/settings.json rwkl," in onboarding
+    assert "/usr/local/share/antigravity-ha/onboarding-transaction.mjs r," in (
+        onboarding
+    )
+    assert "/data/antigravity-ha/onboarding/retry-required.json{,.tmp} rwkl," in (
+        onboarding
+    )
+    assert "/data/antigravity-ha/onboarding/restart-required{,.tmp} rwkl," in (
+        onboarding
+    )
+    assert (
+        "/data/home/.gemini/antigravity-cli/cache/onboarding.json rwkl,"
+        in onboarding
+    )
+    assert (
+        "/data/home/.gemini/antigravity-cli/cache/"
+        "onboarding.json.onboarding.tmp rwkl,"
+        in onboarding
+    )
+    assert "/run/antigravity-ha/onboarding-home/** rwk," in onboarding
+    assert "/run/antigravity-ha/native-session.lock rwk," in onboarding
+    assert "/run/antigravity-ha/user-files-update.lock rwk," in onboarding
+    assert "/run/antigravity-ha/onboarding-active{,.tmp} rwkl," in onboarding
+    assert "deny /config/** rwklmx," in onboarding
+    assert "deny /tmp/** rwklmx," in onboarding
+
+    assert "/run/antigravity-ha/onboarding-home/** rwk," in onboarding_runtime
+    assert "deny /data/home/.gemini/** rwklm," in onboarding_runtime
+    assert "deny /data/antigravity-ha/** rwklm," in onboarding_runtime
+    assert "deny /config/** rwklmx," in onboarding_runtime
+    assert "deny /share/** rwklmx," in onboarding_runtime
+    assert "deny /media/** rwklmx," in onboarding_runtime
+    assert "deny /tmp/** rwklmx," in onboarding_runtime
+    assert "deny /usr/bin/** x," in onboarding_runtime
+    assert "deny /usr/local/bin/** x," in onboarding_runtime
+    assert "deny /usr/local/libexec/** x," in onboarding_runtime
+    assert "/data/home/.gemini/antigravity-cli/*/** rwk," not in onboarding_runtime
+    assert "/data/home/.gemini/config/*/** rwk," not in onboarding_runtime
+    assert "deny /run/antigravity-ha/native-session.lock rwklm," in (
+        onboarding_runtime
+    )
+    assert "deny /run/antigravity-ha/onboarding-active{,.tmp} rwklm," in (
+        onboarding_runtime
+    )
+    assert " Px -> " not in onboarding_runtime
+    assert " rix," not in onboarding_runtime
+
+    for bootstrap in (restricted_bootstrap, sensitive_bootstrap):
+        assert "/usr/bin/{env,flock,setpriv,stat} rix," in bootstrap
+        assert "/usr/local/libexec/antigravity-native-session-guard rix," in (
+            bootstrap
+        )
+        assert "/run/antigravity-ha/native-session.lock rwk," in bootstrap
+        assert "/run/antigravity-ha/onboarding-active{,.tmp} r," in bootstrap
+        assert (
+            "/data/antigravity-ha/onboarding/"
+            "{retry-required.json,restart-required} r," in bootstrap
+        )
+
+    settings_deny = (
+        "deny /data/home/.gemini/antigravity-cli/settings.json wkl,"
+    )
+    assert settings_deny in restricted
+    assert settings_deny in sensitive
+    assert (
+        "deny /data/home/.gemini/antigravity-cli/settings.json rwklm,"
+        in command
+    )
+    assert (
+        "deny /usr/local/libexec/antigravity-onboarding-controller x,"
+        in command
+    )
+    assert "deny /usr/local/libexec/antigravity-native-session-guard x," in command
+    assert "deny /run/antigravity-ha/native-session.lock rwklm," in command
+    assert "deny /run/antigravity-ha/onboarding-active{,.tmp} rwklm," in command
+    assert "deny /run/antigravity-ha/onboarding-home/** rwklmx," in command
+    token_deny = (
+        "deny /data/home/.gemini/antigravity-cli/"
+        "antigravity-oauth-token{,.*} rwklm,"
+    )
+    assert token_deny in command
+    assert "deny /usr/local/libexec/antigravity-native-session-guard x," in shell
+    assert "deny /run/antigravity-ha/native-session.lock rwklm," in shell
+    assert "deny /run/antigravity-ha/onboarding-active{,.tmp} rwklm," in shell
+    assert "deny /run/antigravity-ha/onboarding-home/** rwklmx," in shell
+    assert token_deny in shell
+    assert source.count(token_deny) >= 6
 
 
 def test_boolean_option_reader_accepts_an_explicit_false(rootfs: Path) -> None:
@@ -554,6 +838,9 @@ def test_web_terminal_uses_tmux_and_returns_to_shell(rootfs: Path) -> None:
     session_shell = (rootfs / "usr/local/bin/tmux-session-shell").read_text(
         encoding="utf-8"
     )
+    interactive_shell = (
+        rootfs / "usr/local/libexec/ha-interactive-shell"
+    ).read_text(encoding="utf-8")
 
     assert "export TERM=xterm-256color" in entrypoint
     assert '[[ "$1" != --background ]]' in entrypoint
@@ -563,7 +850,12 @@ def test_web_terminal_uses_tmux_and_returns_to_shell(rootfs: Path) -> None:
     assert "antigravity_ha_config_true" in session_shell
     assert "web_terminal_auto_start_antigravity" in session_shell
     assert "if ha-antigravity; then" in session_shell
+    assert "press Ctrl+C and run ha-antigravity-login" in session_shell
+    assert "protected settings save failed, run ha-antigravity-login" in session_shell
     assert "exec /usr/local/libexec/ha-interactive-shell --login" in session_shell
+    assert '[[ ! ${TMUX_PANE} =~ ^%[0-9]+$ ]]' in interactive_shell
+    assert 'tmux_pane_environment=("TMUX_PANE=${TMUX_PANE}")' in interactive_shell
+    assert '"${tmux_pane_environment[@]}"' in interactive_shell
 
 
 def test_supervisor_credential_is_not_inherited_by_agent_surfaces(rootfs: Path) -> None:
@@ -658,6 +950,9 @@ def test_sensitive_data_option_selects_only_the_gated_interactive_launcher(
     sensitive = (
         rootfs / "usr/local/libexec/antigravity-interactive-sensitive-read"
     ).read_text(encoding="utf-8")
+    native_guard = (
+        rootfs / "usr/local/libexec/antigravity-native-session-guard"
+    ).read_text(encoding="utf-8")
     init_script = (rootfs / "usr/local/bin/antigravity-ha-init").read_text(
         encoding="utf-8"
     )
@@ -681,14 +976,21 @@ def test_sensitive_data_option_selects_only_the_gated_interactive_launcher(
     assert restricted.splitlines()[:3] == hardened_prefix
     assert sensitive.splitlines()[:3] == hardened_prefix
     assert "sensitive-data-access.enabled" not in restricted
-    assert "sensitive-data-access.enabled" in sensitive
-    assert '[[ ! -f "${ACCESS_MARKER}" || -L "${ACCESS_MARKER}" ]]' in sensitive
-    assert "stat -c '%u:%a:%h'" in sensitive
-    assert "!= 0:400:1" in sensitive
+    assert "sensitive-data-access.enabled" not in sensitive
+    assert "sensitive-data-access.enabled" in native_guard
+    assert "[[ ! -f ${ACCESS_MARKER} || -L ${ACCESS_MARKER}" in native_guard
+    assert "stat -Lc '%u:%g:%a:%h'" in native_guard
+    assert "!= 0:0:400:1" in native_guard
     for launcher in (restricted, sensitive):
-        assert "exec /usr/local/libexec/antigravity-native-env -i" in launcher
+        assert "--shared --nonblock --close --conflict-exit-code 75" in launcher
+        assert "--ignore-signal=INT --ignore-signal=QUIT" in launcher
+        assert "--default-signal=INT --default-signal=QUIT -i" in launcher
+        assert "/usr/bin/setpriv --pdeathsig KILL" in launcher
+        assert "/usr/local/libexec/antigravity-native-session-guard" in launcher
         assert "PATH=/usr/local/libexec/antigravity-command-bin:" in launcher
-        assert "/usr/local/libexec/antigravity-real" in launcher
+        assert "/usr/local/libexec/antigravity-real" not in launcher
+    assert "exec /usr/local/libexec/antigravity-native-env -i" in native_guard
+    assert "/usr/local/libexec/antigravity-real" in native_guard
 
     assert (
         "antigravity_sensitive_data_access: "
@@ -741,6 +1043,7 @@ def test_global_settings_updates_use_the_validated_atomic_helper(rootfs: Path) -
         '"clearScrollbackOnResize"',
         '"colorScheme"',
         '"disableSlashCommands"',
+        '"enableTelemetry"',
         '"modelProvider"',
         '"showFeedbackSurvey"',
         '"showTips"',
@@ -749,6 +1052,17 @@ def test_global_settings_updates_use_the_validated_atomic_helper(rootfs: Path) -
     assert "SUPPORTED_SCALAR_PATCHES" in helper
     assert "patch contains an unsupported top-level setting" in helper
     assert "patch contains an unsupported scalar setting value" in helper
+    assert '["enableTelemetry", (value) => value === false]' in helper
+    assert 'key === "enableTelemetry" && value === null' in helper
+    for guidance_path in (
+        "usr/local/share/antigravity-ha/AGENTS.md",
+        "usr/local/share/antigravity-ha/plugins/home-assistant/rules/"
+        "home-assistant-safety.md",
+        "usr/local/share/antigravity-ha/plugins/home-assistant/skills/"
+        "home-assistant-operations/SKILL.md",
+    ):
+        guidance = (rootfs / guidance_path).read_text(encoding="utf-8")
+        assert "`enableTelemetry`" in guidance
 
 
 def test_init_starts_background_tmux(rootfs: Path) -> None:

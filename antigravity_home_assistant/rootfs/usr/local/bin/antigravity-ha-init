@@ -13,7 +13,15 @@ export -n supervisor_credential_bootstrap
 umask 077
 
 readonly RUNTIME_DIR=/run/antigravity-ha
+readonly ONBOARDING_HOME=${RUNTIME_DIR}/onboarding-home
+readonly NATIVE_SESSION_LOCK=${RUNTIME_DIR}/native-session.lock
+readonly USER_FILES_UPDATE_LOCK=${RUNTIME_DIR}/user-files-update.lock
+readonly ONBOARDING_ACTIVE=${RUNTIME_DIR}/onboarding-active
+readonly APP_STATE_ROOT=/data/antigravity-ha
+readonly ONBOARDING_TRANSACTION_ROOT=${APP_STATE_ROOT}/onboarding
+readonly ONBOARDING_TRANSACTION_HELPER=/usr/local/share/antigravity-ha/onboarding-transaction.mjs
 readonly DATA_HOME=/data/home
+readonly NATIVE_OAUTH_TOKEN=${DATA_HOME}/.gemini/antigravity-cli/antigravity-oauth-token
 readonly ANTIGRAVITY_DATA=/data/antigravity
 readonly GITHUB_CLI_DATA=/data/github-cli
 readonly SSH_DATA=/data/ssh
@@ -29,9 +37,11 @@ readonly SENSITIVE_DATA_ACCESS_MARKER=${RUNTIME_DIR}/sensitive-data-access.enabl
 readonly MANAGED_PLUGIN_UPDATE=/usr/local/share/antigravity-ha/managed-plugin-update.mjs
 readonly SUPERVISOR_OPTIONS_MIGRATION=/usr/local/share/antigravity-ha/supervisor-options-migrate.mjs
 
-rm -rf -- "${PLAYWRIGHT_HOME}" "${PLAYWRIGHT_OUTPUT}"
+rm -rf -- "${PLAYWRIGHT_HOME}" "${PLAYWRIGHT_OUTPUT}" "${ONBOARDING_HOME}"
 install -d -m 0700 \
   "${RUNTIME_DIR}" \
+  "${ONBOARDING_HOME}" \
+  "${RUNTIME_DIR}/onboarding-workspace" \
   "${DATA_HOME}" \
   "${ANTIGRAVITY_DATA}" \
   "${SSH_DATA}" \
@@ -40,6 +50,107 @@ install -d -m 0700 \
   "${PLAYWRIGHT_OUTPUT}" \
   /root/.ssh
 install -d -m 0755 /run/sshd
+
+for persistent_directory in \
+  "${APP_STATE_ROOT}" \
+  "${ONBOARDING_TRANSACTION_ROOT}"; do
+  if [[ -L ${persistent_directory} \
+    || ( -e ${persistent_directory} && ! -d ${persistent_directory} ) \
+    || ( -d ${persistent_directory} \
+      && $(stat -Lc '%u:%g' "${persistent_directory}") != 0:0 ) ]]; then
+    bashio::log.fatal "Unsafe persistent onboarding directory: ${persistent_directory}"
+    exit 1
+  fi
+  install -d -m 0700 -- "${persistent_directory}"
+  if [[ $(stat -Lc '%u:%g:%a' "${persistent_directory}") != 0:0:700 ]]; then
+    bashio::log.fatal "Unsafe persistent onboarding directory metadata: ${persistent_directory}"
+    exit 1
+  fi
+done
+unset persistent_directory
+
+for runtime_control_file in \
+  "${NATIVE_SESSION_LOCK}" \
+  "${USER_FILES_UPDATE_LOCK}" \
+  "${ONBOARDING_ACTIVE}"; do
+  if [[ -L ${runtime_control_file} \
+    || ( -e ${runtime_control_file} && ! -f ${runtime_control_file} ) ]]; then
+    bashio::log.fatal "Unsafe runtime control file: ${runtime_control_file}"
+    exit 1
+  fi
+  if [[ ! -e ${runtime_control_file} ]]; then
+    install -m 0600 /dev/null "${runtime_control_file}"
+  fi
+  if [[ $(stat -Lc '%u:%g:%a:%h' "${runtime_control_file}") != 0:0:600:1 ]]; then
+    bashio::log.fatal "Unsafe runtime control file metadata: ${runtime_control_file}"
+    exit 1
+  fi
+done
+unset runtime_control_file
+if [[ $(stat -Lc '%s' "${NATIVE_SESSION_LOCK}") != 0 \
+  || $(stat -Lc '%s' "${USER_FILES_UPDATE_LOCK}") != 0 ]]; then
+  bashio::log.fatal 'Runtime lock files must be empty'
+  exit 1
+fi
+# Quarantine normal native sessions until the settings transaction below has
+# completed. An interrupted onboarding marker stays fail-closed until this
+# boot-time reconciliation succeeds.
+/usr/bin/node "${ONBOARDING_TRANSACTION_HELPER}" marker init || {
+  bashio::log.fatal 'Could not activate the startup onboarding quarantine'
+  exit 1
+}
+
+# The no-secret journal binds old/new digests for every legal marker-last crash
+# prefix. Complete prefixes can finalize before settings reconciliation. Partial
+# prefixes must keep both the updater and normal native sessions quarantined;
+# the authenticated login helper rebases them with a fresh OAuth retry.
+onboarding_transaction_state=''
+if ! onboarding_transaction_state=$(
+  /usr/bin/node "${ONBOARDING_TRANSACTION_HELPER}" status
+); then
+  bashio::log.fatal 'An interrupted onboarding save could not be recovered safely'
+  exit 1
+fi
+case "${onboarding_transaction_state}" in
+  absent) ;;
+  complete | complete-restart)
+    onboarding_finalize_result=''
+    if ! onboarding_finalize_result=$(
+      /usr/bin/node "${ONBOARDING_TRANSACTION_HELPER}" finalize
+    ); then
+      bashio::log.fatal 'A complete interrupted onboarding save could not be finalized'
+      exit 1
+    fi
+    if [[ ( ${onboarding_transaction_state} == complete \
+          && ${onboarding_finalize_result} != finalized ) \
+      || ( ${onboarding_transaction_state} == complete-restart \
+          && ${onboarding_finalize_result} != restart-required ) ]]; then
+      bashio::log.fatal 'The onboarding finalize helper returned an invalid result'
+      exit 1
+    fi
+    unset onboarding_finalize_result
+    onboarding_transaction_state=absent
+    bashio::log.warning 'Finalized an interrupted consumer onboarding save'
+    ;;
+  partial)
+    bashio::log.warning 'A partial onboarding save remains quarantined; settings reconciliation is deferred until ha-antigravity-login succeeds and the App restarts'
+    ;;
+  *)
+    bashio::log.fatal 'The onboarding recovery helper returned an invalid result'
+    exit 1
+    ;;
+esac
+onboarding_restart_state=$(
+  /usr/bin/node "${ONBOARDING_TRANSACTION_HELPER}" restart-status
+) || {
+  bashio::log.fatal 'The onboarding restart marker is unsafe'
+  exit 1
+}
+if [[ ${onboarding_transaction_state} == partial \
+  && ${onboarding_restart_state} != absent ]]; then
+  bashio::log.fatal 'Conflicting onboarding recovery markers require manual repair'
+  exit 1
+fi
 
 if [[ -L "${GITHUB_CLI_DATA}" ]] || [[ -e "${GITHUB_CLI_DATA}" && ! -d "${GITHUB_CLI_DATA}" ]]; then
   bashio::log.warning 'Persistent GitHub CLI storage is unsafe; ha-feedback GitHub login and direct submission will remain unavailable'
@@ -156,7 +267,10 @@ bashio::log.info "Configured headless browser approval policy: ${browser_approva
 unset browser_approval_policy
 
 user_files_update_result=''
-if user_files_update_result=$(/usr/local/bin/antigravity-user-files-update); then
+user_files_reconciled=false
+if [[ ${onboarding_transaction_state} == partial ]]; then
+  bashio::log.warning 'Skipped Antigravity user-file reconciliation while a partial onboarding save is quarantined'
+elif user_files_update_result=$(/usr/local/bin/antigravity-user-files-update); then
   if ! jq --exit-status \
     '(.created | type == "array")
       and (.refreshed | type == "array")
@@ -213,6 +327,7 @@ if user_files_update_result=$(/usr/local/bin/antigravity-user-files-update); the
     bashio::log.warning "${user_files_warning}"
   done < <(jq --raw-output '.warnings[]' <<< "${user_files_update_result}")
   unset user_files_backup user_files_warning
+  user_files_reconciled=true
 else
   user_files_update_status=$?
   if (( user_files_update_status == 30 )); then
@@ -223,6 +338,126 @@ else
   unset user_files_update_status
 fi
 unset user_files_update_result
+
+readonly NATIVE_ONBOARDING_CACHE=${DATA_HOME}/.gemini/antigravity-cli/cache
+readonly NATIVE_ONBOARDING_MARKER=${NATIVE_ONBOARDING_CACHE}/onboarding.json
+if [[ -L ${NATIVE_ONBOARDING_CACHE} \
+  || ( -e ${NATIVE_ONBOARDING_CACHE} && ! -d ${NATIVE_ONBOARDING_CACHE} ) ]]; then
+  bashio::log.fatal 'The native onboarding cache directory is unsafe'
+  exit 1
+fi
+install -d -m 0700 -- "${NATIVE_ONBOARDING_CACHE}"
+if [[ $(stat -Lc '%u:%g:%a' "${NATIVE_ONBOARDING_CACHE}") != 0:0:700 ]]; then
+  bashio::log.fatal 'The native onboarding cache directory metadata is unsafe'
+  exit 1
+fi
+
+# Native 1.1.13 from an affected 2.1.2 install may already have written the
+# local consumer onboarding marker before the protected settings rename failed.
+# Preserve only its exact bounded two-boolean schema and normalize the private
+# mode; never print its contents or infer remote Terms acceptance from it.
+if [[ -L ${NATIVE_ONBOARDING_MARKER} \
+  || ( -e ${NATIVE_ONBOARDING_MARKER} && ! -f ${NATIVE_ONBOARDING_MARKER} ) ]]; then
+  bashio::log.fatal 'The native onboarding status path is unsafe'
+  exit 1
+elif [[ -e ${NATIVE_ONBOARDING_MARKER} ]]; then
+  native_onboarding_metadata=$(stat -Lc '%u:%g:%h:%s' "${NATIVE_ONBOARDING_MARKER}")
+  IFS=: read -r native_onboarding_owner native_onboarding_group \
+    native_onboarding_links native_onboarding_size <<< "${native_onboarding_metadata}"
+  if [[ ${native_onboarding_owner} != 0 || ${native_onboarding_group} != 0 \
+    || ${native_onboarding_links} != 1 \
+    || ! ${native_onboarding_size} =~ ^[0-9]+$ \
+    || ${native_onboarding_size} -lt 2 || ${native_onboarding_size} -gt 4096 ]] \
+    || ! jq --exit-status '
+      type == "object"
+      and (keys == [
+        "consumerOnboardingComplete",
+        "enterpriseOnboardingComplete"
+      ])
+      and all(.[]; type == "boolean")
+    ' "${NATIVE_ONBOARDING_MARKER}" >/dev/null; then
+    bashio::log.fatal 'The native onboarding status is unsafe or invalid'
+    exit 1
+  fi
+  if ! jq --stream --slurp --exit-status '
+    map(select(length == 2)) as $values
+    | ($values | length) == 2
+      and ($values | map(.[0][0]) | sort) == [
+        "consumerOnboardingComplete",
+        "enterpriseOnboardingComplete"
+      ]
+      and all($values[];
+        (.[0] | length) == 1 and (.[1] | type) == "boolean")
+  ' "${NATIVE_ONBOARDING_MARKER}" >/dev/null; then
+    bashio::log.fatal 'The native onboarding status has ambiguous duplicate fields'
+    exit 1
+  fi
+  chmod 0600 "${NATIVE_ONBOARDING_MARKER}"
+  if [[ $(stat -Lc '%u:%g:%a:%h:%s' "${NATIVE_ONBOARDING_MARKER}") \
+      != "0:0:600:1:${native_onboarding_metadata##*:}" ]]; then
+    bashio::log.fatal 'The native onboarding status mode could not be normalized'
+    exit 1
+  fi
+  unset native_onboarding_metadata native_onboarding_owner
+  unset native_onboarding_group native_onboarding_links native_onboarding_size
+fi
+
+if ! /usr/bin/node "${ONBOARDING_TRANSACTION_HELPER}" clean; then
+  bashio::log.fatal 'Unsafe stale onboarding temporary files require App repair'
+  exit 1
+fi
+
+# Native 1.1.13 may have created this opaque credential before an older App
+# failed to replace settings.json on the Terms screen. Never parse or print it;
+# accept only a bounded root-owned regular file and normalize its private mode.
+if [[ -L ${NATIVE_OAUTH_TOKEN} \
+  || ( -e ${NATIVE_OAUTH_TOKEN} && ! -f ${NATIVE_OAUTH_TOKEN} ) ]]; then
+  bashio::log.fatal 'The native OAuth credential path is unsafe'
+  exit 1
+elif [[ -e ${NATIVE_OAUTH_TOKEN} ]]; then
+  native_oauth_metadata=$(stat -Lc '%u:%g:%h:%s' "${NATIVE_OAUTH_TOKEN}")
+  IFS=: read -r native_oauth_owner native_oauth_group \
+    native_oauth_links native_oauth_size <<< "${native_oauth_metadata}"
+  if [[ ${native_oauth_owner} != 0 || ${native_oauth_group} != 0 \
+    || ${native_oauth_links} != 1 || ! ${native_oauth_size} =~ ^[0-9]+$ \
+    || ${native_oauth_size} -lt 2 || ${native_oauth_size} -gt 1048576 ]]; then
+    bashio::log.fatal 'The native OAuth credential metadata is unsafe'
+    exit 1
+  fi
+  chmod 0600 "${NATIVE_OAUTH_TOKEN}"
+  if [[ $(stat -Lc '%u:%g:%a:%h:%s' "${NATIVE_OAUTH_TOKEN}") \
+      != "0:0:600:1:${native_oauth_metadata##*:}" ]]; then
+    bashio::log.fatal 'The native OAuth credential mode could not be normalized'
+    exit 1
+  fi
+  unset native_oauth_metadata native_oauth_owner native_oauth_group
+  unset native_oauth_links native_oauth_size
+fi
+
+if [[ ${onboarding_transaction_state} != partial \
+  && ( ${onboarding_restart_state} == absent \
+    || ${user_files_reconciled} == true ) ]]; then
+  if [[ ${onboarding_restart_state} == required ]]; then
+    if ! /usr/bin/node "${ONBOARDING_TRANSACTION_HELPER}" clear-restart; then
+      bashio::log.fatal 'Could not clear the onboarding restart requirement after reconciliation'
+      exit 1
+    fi
+    bashio::log.notice 'Completed settings reconciliation after a recovered onboarding retry'
+  fi
+  if ! /usr/bin/node "${ONBOARDING_TRANSACTION_HELPER}" marker clear; then
+    bashio::log.fatal 'Could not atomically clear the onboarding quarantine'
+    exit 1
+  fi
+  if [[ $(stat -Lc '%u:%g:%a:%h:%s' "${ONBOARDING_ACTIVE}") \
+      != 0:0:600:1:0 ]]; then
+    bashio::log.fatal 'Could not clear the onboarding quarantine after settings reconciliation'
+    exit 1
+  fi
+else
+  bashio::log.warning 'Normal Antigravity sessions remain quarantined until protected onboarding recovery and required settings reconciliation succeed'
+fi
+unset user_files_reconciled
+unset onboarding_transaction_state onboarding_restart_state
 
 if [[ -e "${ANTIGRAVITY_DATA}/auth.json" ]]; then
   chmod 0600 "${ANTIGRAVITY_DATA}/auth.json"

@@ -52,11 +52,17 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
     done
 
     install -d -m 0700 \
+      /data/antigravity-ha/onboarding \
       /data/home/.gemini/antigravity-cli \
       /data/home/.gemini/config/rules \
       /data/home/.gemini/config/plugins/user-global-marker \
       /data/home/.gemini/config/plugins/home-assistant \
+      /run/antigravity-ha \
       /config/.agents
+    for control in native-session.lock user-files-update.lock onboarding-active; do
+      install -m 0600 /dev/null "/run/antigravity-ha/${control}"
+    done
+    unset control
     install -m 0600 /etc/antigravity/settings.json \
       /data/home/.gemini/antigravity-cli/settings.json
     cp -a /usr/local/share/antigravity-ha/plugins/home-assistant/. \
@@ -149,7 +155,7 @@ docker run --rm --platform "$TEST_PLATFORM" --network none \
     [[ -f /data/home/.gemini/config/plugins/user-global-marker/telegram-wrote-plugin.marker ]]
     ! grep -Eq -- "(^|=)(--|-)?(no-)?sandbox($|=)" /tmp/shared-launcher-args
 
-    install -d -m 0755 /run/antigravity-ha
+    install -d -m 0700 /run/antigravity-ha
     install -m 0400 /dev/null /run/antigravity-ha/sensitive-data-access.enabled
     SUPERVISOR_TOKEN=must-not-cross \
       NODE_OPTIONS=must-not-cross \

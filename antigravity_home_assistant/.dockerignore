@@ -185,6 +185,8 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/telegram-act
 !rootfs/usr/local/libexec/antigravity-command-bin/bash
 !rootfs/usr/local/libexec/antigravity-interactive-restricted
 !rootfs/usr/local/libexec/antigravity-interactive-sensitive-read
+!rootfs/usr/local/libexec/antigravity-native-session-guard
+!rootfs/usr/local/libexec/antigravity-onboarding-controller
 !rootfs/usr/local/libexec/ha-change-broker-runtime
 !rootfs/usr/local/libexec/ha-init-runtime
 !rootfs/usr/local/libexec/ha-interactive-shell
@@ -213,6 +215,8 @@ rootfs/usr/local/share/antigravity-ha/plugins/home-assistant/skills/telegram-act
 !rootfs/usr/local/share/antigravity-ha/ha-telegram-pair.mjs
 !rootfs/usr/local/share/antigravity-ha/ha-validate-mcp.mjs
 !rootfs/usr/local/share/antigravity-ha/managed-plugin-update.mjs
+!rootfs/usr/local/share/antigravity-ha/onboarding-settings-fingerprint.mjs
+!rootfs/usr/local/share/antigravity-ha/onboarding-transaction.mjs
 !rootfs/usr/local/share/antigravity-ha/playwright-init-page.ts
 !rootfs/usr/local/share/antigravity-ha/playwright-mcp-proxy.mjs
 !rootfs/usr/local/share/antigravity-ha/playwright-mcp.json

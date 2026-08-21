@@ -88,6 +88,9 @@
   interactive Web/SSH의 native-stable top-level scalar setting만 digest-bound
   `agy-settings patch`로 매개 수정할 수 있고 unknown non-null key와 object/array는
   거부한다. unknown top-level `null`은 stale 값 제거에만 허용하며,
+  `enableTelemetry:false`만 privacy-strengthening opt-out으로 명시 저장한다. opt-in과
+  re-enable은 제공하지 않고 별도 authenticated consent flow가 필요하다. 이 mediator는
+  broad settings write를 허용하지 않는다.
   `permissions`, `enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`,
   `artifactReviewPolicy`는 거부한다. global plugin·agent·rule·skill은 계속 공유·직접
   공유한다. Telegram customization mutation은 approved exact terminal/script proposal로만

@@ -15,6 +15,8 @@ readonly PROFILE_NAME="antigravity_home_assistant_ci_${GITHUB_RUN_ID:-local}_${G
 readonly FIRST_CONTAINER="${TEST_ID}-cold"
 readonly RESTART_CONTAINER="${TEST_ID}-restart"
 readonly COMMAND_ENDPOINT_CONTAINER="${TEST_ID}-command-endpoint"
+readonly ONBOARDING_CONTROLLER_CONTAINER="${TEST_ID}-onboarding-controller"
+readonly ONBOARDING_STUB_SOURCE_CONTAINER="${TEST_ID}-onboarding-stub-source"
 readonly COMMAND_ENDPOINT_ALIAS=always-command-endpoint
 readonly DATA_VOLUME="${TEST_ID}-data"
 readonly CONFIG_VOLUME="${TEST_ID}-config"
@@ -25,6 +27,8 @@ readonly HELPER_RUNTIME_VOLUME="${TEST_ID}-helper-runtime"
 readonly COMMAND_DATA_VOLUME="${TEST_ID}-command-data"
 readonly COMMAND_CONFIG_VOLUME="${TEST_ID}-command-config"
 readonly COMMAND_NETWORK="${TEST_ID}-command-network"
+readonly ONBOARDING_DATA_VOLUME="${TEST_ID}-onboarding-data"
+readonly ONBOARDING_RUNTIME_VOLUME="${TEST_ID}-onboarding-runtime"
 readonly SUPERVISOR_TOKEN=apparmor-enforced-smoke-token-do-not-use
 readonly EXPECTED_ANTIGRAVITY_VERSION=1.1.13
 readonly ANTIGRAVITY_AUTH_REQUIRED_MARKER="Error: authentication required. Run 'antigravity-real' to log in, then retry."
@@ -99,6 +103,14 @@ fail() {
         || true
     fi
   done
+  if docker inspect "$ONBOARDING_CONTROLLER_CONTAINER" >/dev/null 2>&1; then
+    printf 'Enforced onboarding controller state: %s\n' \
+      "$(docker inspect --format \
+        '{{.State.Status}}/{{.State.ExitCode}}/{{json .State.Error}}' \
+        "$ONBOARDING_CONTROLLER_CONTAINER")" >&2
+    docker logs "$ONBOARDING_CONTROLLER_CONTAINER" 2>&1 \
+      | redact_probe_output >&2 || true
+  fi
   print_failure_audit_denials || true
   exit 1
 }
@@ -125,12 +137,14 @@ cleanup() {
   local status=$?
   trap - EXIT
   docker rm --force "$FIRST_CONTAINER" "$RESTART_CONTAINER" \
-    "$COMMAND_ENDPOINT_CONTAINER" \
+    "$COMMAND_ENDPOINT_CONTAINER" "$ONBOARDING_CONTROLLER_CONTAINER" \
+    "$ONBOARDING_STUB_SOURCE_CONTAINER" \
     >/dev/null 2>&1 || true
   docker volume rm --force "$DATA_VOLUME" "$CONFIG_VOLUME" \
     "$SHARE_VOLUME" "$MEDIA_VOLUME" "$BACKUP_VOLUME" \
     "$HELPER_RUNTIME_VOLUME" "$COMMAND_DATA_VOLUME" \
-    "$COMMAND_CONFIG_VOLUME" \
+    "$COMMAND_CONFIG_VOLUME" "$ONBOARDING_DATA_VOLUME" \
+    "$ONBOARDING_RUNTIME_VOLUME" \
     >/dev/null 2>&1 || true
   docker network rm "$COMMAND_NETWORK" >/dev/null 2>&1 || true
   if [[ $PROFILE_LOADED == true ]]; then
@@ -216,7 +230,7 @@ rendered = primary + separator + secondary
 declarations = re.findall(
     r"^[ ]*profile ([^ ]+)", rendered, flags=re.MULTILINE
 )
-if len(declarations) != 24 or declarations[0] != profile_name:
+if len(declarations) != 26 or declarations[0] != profile_name:
     raise SystemExit(f"unexpected rendered profile set: {declarations!r}")
 output_path.write_text(rendered, encoding="utf-8")
 output_path.chmod(0o600)
@@ -280,6 +294,7 @@ options = {
     "home_assistant_browser_auto_auth": False,
     "log_level": "info",
 }
+
 sys.stdout.write(json.dumps(options, separators=(",", ":")))
 PY
 
@@ -357,6 +372,341 @@ PY
         /data/home/.gnupg/private-keys-v1.d \
         /data/home/.pypirc /data/home/.git-credentials
     '
+}
+
+run_onboarding_profile_probe() {
+  local before_real_hash
+  local before_staged_hash
+  local controller_logs
+  local controller_status
+  local native_output
+  local native_status
+  local signal_output
+  local signal_status
+  local staged_hash
+
+  docker volume create "$ONBOARDING_DATA_VOLUME" >/dev/null
+  docker volume create "$ONBOARDING_RUNTIME_VOLUME" >/dev/null
+
+  docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --entrypoint /bin/bash \
+    --volume "${ONBOARDING_DATA_VOLUME}:/data" \
+    --volume "${ONBOARDING_RUNTIME_VOLUME}:/run/antigravity-ha" \
+    "$IMAGE" -p -ceu '
+      install -d -m 0700 \
+        /data/home/.gemini/antigravity-cli \
+        /run/antigravity-ha \
+        /run/antigravity-ha/onboarding-home/.gemini/antigravity-cli \
+        /run/antigravity-ha/onboarding-home/tmp \
+        /run/antigravity-ha/onboarding-workspace
+      install -m 0600 /etc/antigravity/settings.json \
+        /data/home/.gemini/antigravity-cli/settings.json
+      jq --compact-output ".enableTelemetry = false" \
+        /etc/antigravity/settings.json \
+        > /run/antigravity-ha/onboarding-home/.gemini/antigravity-cli/settings.json
+      chmod 0600 \
+        /run/antigravity-ha/onboarding-home/.gemini/antigravity-cli/settings.json
+      printf "%s\n" real-home-token-denial-canary \
+        > /data/home/.gemini/antigravity-cli/antigravity-oauth-token
+      chmod 0600 \
+        /data/home/.gemini/antigravity-cli/antigravity-oauth-token
+    '
+  before_real_hash=$(docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --entrypoint /usr/bin/sha256sum \
+    --volume "${ONBOARDING_DATA_VOLUME}:/data:ro" \
+    "$IMAGE" /data/home/.gemini/antigravity-cli/settings.json)
+  before_real_hash=${before_real_hash%% *}
+  before_staged_hash=$(docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --entrypoint /usr/bin/sha256sum \
+    --volume "${ONBOARDING_RUNTIME_VOLUME}:/run/antigravity-ha:ro" \
+    "$IMAGE" \
+    /run/antigravity-ha/onboarding-home/.gemini/antigravity-cli/settings.json)
+  before_staged_hash=${before_staged_hash%% *}
+
+  set +e
+  native_output=$(docker run --rm --interactive \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --security-opt \
+      apparmor=antigravity_home_assistant-onboarding-runtime \
+    --entrypoint /usr/local/libexec/antigravity-real \
+    --env AGY_CLI_DISABLE_AUTO_UPDATE=true \
+    --env HOME=/run/antigravity-ha/onboarding-home \
+    --env LANG=C.UTF-8 \
+    --env LC_ALL=C.UTF-8 \
+    --env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    --env TERM=xterm-256color \
+    --env TMPDIR=/run/antigravity-ha/onboarding-home/tmp \
+    --volume "${ONBOARDING_DATA_VOLUME}:/data" \
+    --volume "${ONBOARDING_RUNTIME_VOLUME}:/run/antigravity-ha" \
+    --workdir /run/antigravity-ha/onboarding-workspace \
+    "$IMAGE" agent </dev/null 2>&1)
+  native_status=$?
+  set -e
+  if (( native_status != 0 )); then
+    printf '%s\n' "$native_output" | redact_probe_output >&2
+    fail "the onboarding runtime native fixture returned ${native_status}"
+  fi
+
+  staged_hash=$(docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --entrypoint /usr/bin/sha256sum \
+    --volume "${ONBOARDING_RUNTIME_VOLUME}:/run/antigravity-ha:ro" \
+    "$IMAGE" \
+    /run/antigravity-ha/onboarding-home/.gemini/antigravity-cli/settings.json)
+  staged_hash=${staged_hash%% *}
+  [[ $staged_hash != "$before_staged_hash" ]] \
+    || fail 'the enforced onboarding runtime did not atomically normalize staging'
+  docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --entrypoint /usr/bin/jq \
+    --volume "${ONBOARDING_RUNTIME_VOLUME}:/run/antigravity-ha:ro" \
+    "$IMAGE" --exit-status '.enableTelemetry == false' \
+    /run/antigravity-ha/onboarding-home/.gemini/antigravity-cli/settings.json \
+    >/dev/null \
+    || fail 'the onboarding runtime did not preserve telemetry=false'
+  [[ $(docker run --rm \
+      --platform "$TEST_PLATFORM" \
+      --network none \
+      --entrypoint /usr/bin/sha256sum \
+      --volume "${ONBOARDING_DATA_VOLUME}:/data:ro" \
+      "$IMAGE" /data/home/.gemini/antigravity-cli/settings.json \
+      | cut -d ' ' -f 1) == "$before_real_hash" ]] \
+    || fail 'the onboarding runtime changed persistent settings directly'
+
+  # OAuth remains functional through the native manual URL/code flow; broad
+  # desktop browser helpers must never become an execution escape from the
+  # onboarding-only profile.
+  if docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --security-opt \
+      apparmor=antigravity_home_assistant-onboarding-runtime \
+    --entrypoint /usr/bin/xdg-open \
+    --volume "${ONBOARDING_RUNTIME_VOLUME}:/run/antigravity-ha" \
+    "$IMAGE" https://example.invalid/onboarding-manual-url \
+      >/dev/null 2>&1; then
+    fail 'the onboarding runtime executed the automatic browser helper'
+  fi
+
+  if docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --security-opt \
+      apparmor=antigravity_home_assistant-onboarding-runtime \
+    --entrypoint /bin/bash \
+    --volume "${ONBOARDING_DATA_VOLUME}:/data" \
+    "$IMAGE" -p -c \
+      'printf tampered > /data/home/.gemini/antigravity-cli/antigravity-oauth-token' \
+      >/dev/null 2>&1; then
+    fail 'the onboarding runtime wrote the persistent OAuth credential'
+  fi
+
+  # The same minified file must stay unchanged in the normal operational
+  # runtime, proving that only the dedicated ephemeral staging profile gets
+  # atomic replace.
+  docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --entrypoint /bin/bash \
+    --volume "${ONBOARDING_DATA_VOLUME}:/data" \
+    "$IMAGE" -p -ceu '
+      jq --compact-output ".enableTelemetry = false" \
+        /etc/antigravity/settings.json \
+        > /data/home/.gemini/antigravity-cli/settings.json
+      chmod 0600 /data/home/.gemini/antigravity-cli/settings.json
+    '
+  before_real_hash=$(docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --entrypoint /usr/bin/sha256sum \
+    --volume "${ONBOARDING_DATA_VOLUME}:/data:ro" \
+    "$IMAGE" /data/home/.gemini/antigravity-cli/settings.json)
+  before_real_hash=${before_real_hash%% *}
+  set +e
+  native_output=$(docker run --rm --interactive \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --security-opt \
+      apparmor=antigravity_home_assistant-interactive-runtime-restricted \
+    --entrypoint /usr/local/libexec/antigravity-real \
+    --env AGY_CLI_DISABLE_AUTO_UPDATE=true \
+    --env HOME=/data/home \
+    --env LANG=C.UTF-8 \
+    --env LC_ALL=C.UTF-8 \
+    --env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    --env TERM=xterm-256color \
+    --volume "${ONBOARDING_DATA_VOLUME}:/data" \
+    --workdir /data/home \
+    "$IMAGE" agent </dev/null 2>&1)
+  native_status=$?
+  set -e
+  (( native_status == 0 )) || {
+    printf '%s\n' "$native_output" | redact_probe_output >&2
+    fail "the normal-runtime write-deny fixture returned ${native_status}"
+  }
+  [[ $(docker run --rm \
+      --platform "$TEST_PLATFORM" \
+      --network none \
+      --entrypoint /usr/bin/sha256sum \
+      --volume "${ONBOARDING_DATA_VOLUME}:/data:ro" \
+      "$IMAGE" /data/home/.gemini/antigravity-cli/settings.json \
+      | cut -d ' ' -f 1) == "$before_real_hash" ]] \
+    || fail 'the normal runtime replaced protected settings.json'
+
+  # Exercise the exact shell -> controller -> onboarding-runtime Px chain.
+  # Bind a same-image cat ELF over the native path so the confined native child
+  # waits on the PTY while an unconfined test fixture writes synthetic staging.
+  docker create --name "$ONBOARDING_STUB_SOURCE_CONTAINER" \
+    --platform "$TEST_PLATFORM" "$IMAGE" >/dev/null
+  docker cp \
+    "${ONBOARDING_STUB_SOURCE_CONTAINER}:/bin/cat" \
+    "${WORK_DIR}/onboarding-native-cat"
+  docker rm "$ONBOARDING_STUB_SOURCE_CONTAINER" >/dev/null
+  chmod 0755 "${WORK_DIR}/onboarding-native-cat"
+  docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --entrypoint /bin/bash \
+    --volume "${ONBOARDING_DATA_VOLUME}:/data" \
+    --volume "${ONBOARDING_RUNTIME_VOLUME}:/run/antigravity-ha" \
+    "$IMAGE" -p -ceu '
+      rm -rf -- /data/* /run/antigravity-ha/*
+      install -d -m 0700 \
+        /data/antigravity-ha/onboarding \
+        /data/home/.gemini/antigravity-cli/cache \
+        /run/antigravity-ha \
+        /run/antigravity-ha/onboarding-home \
+        /run/antigravity-ha/onboarding-workspace
+      install -m 0600 /etc/antigravity/settings.json \
+        /data/home/.gemini/antigravity-cli/settings.json
+      for control in native-session.lock user-files-update.lock onboarding-active; do
+        install -m 0600 /dev/null "/run/antigravity-ha/${control}"
+      done
+      for stale in \
+        /data/home/.gemini/antigravity-cli/settings.json.onboarding.tmp \
+        /data/home/.gemini/antigravity-cli/antigravity-oauth-token.onboarding.tmp \
+        /data/home/.gemini/antigravity-cli/cache/onboarding.json.onboarding.tmp; do
+        printf "stale\n" > "$stale"
+        chmod 0600 "$stale"
+      done
+    '
+  docker run --detach --interactive --tty \
+    --platform "$TEST_PLATFORM" \
+    --name "$ONBOARDING_CONTROLLER_CONTAINER" \
+    --network none \
+    --security-opt apparmor=antigravity_home_assistant-shell \
+    --entrypoint /usr/local/bin/ha-antigravity-login \
+    --volume "${ONBOARDING_DATA_VOLUME}:/data" \
+    --volume "${ONBOARDING_RUNTIME_VOLUME}:/run/antigravity-ha" \
+    --volume \
+      "${WORK_DIR}/onboarding-native-cat:/usr/local/libexec/antigravity-real:ro" \
+    "$IMAGE" >/dev/null
+  docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --entrypoint /bin/bash \
+    --volume "${ONBOARDING_RUNTIME_VOLUME}:/run/antigravity-ha" \
+    "$IMAGE" -p -ceu '
+      for _ in $(seq 1 200); do
+        if test -s /run/antigravity-ha/onboarding-active \
+          && test -f /run/antigravity-ha/onboarding-home/.gemini/antigravity-cli/settings.json; then
+          exit 0
+        fi
+        sleep 0.05
+      done
+      exit 1
+    ' || fail 'the enforced onboarding controller did not activate staging'
+  docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --entrypoint /bin/bash \
+    --volume "${ONBOARDING_RUNTIME_VOLUME}:/run/antigravity-ha" \
+    "$IMAGE" -p -ceu '
+      cli=/run/antigravity-ha/onboarding-home/.gemini/antigravity-cli
+      jq ".enableTelemetry = false" "$cli/settings.json" \
+        > "$cli/settings.json.synthetic"
+      chmod 0600 "$cli/settings.json.synthetic"
+      mv -fT "$cli/settings.json.synthetic" "$cli/settings.json"
+      printf "%s\n" synthetic-opaque-oauth-state \
+        > "$cli/antigravity-oauth-token"
+      install -d -m 0700 "$cli/cache"
+      printf "%s\n" \
+        "{\"consumerOnboardingComplete\":true,\"enterpriseOnboardingComplete\":false}" \
+        > "$cli/cache/onboarding.json"
+      chmod 0600 "$cli/antigravity-oauth-token" "$cli/cache/onboarding.json"
+    '
+  set +e
+  # The synthetic native is an ELF cat process with its stdin held open by the
+  # detached container. Signal the container PTY's foreground process group
+  # directly so EOF can never masquerade as a successful operator close.
+  signal_output=$(docker exec "$ONBOARDING_CONTROLLER_CONTAINER" \
+    /bin/bash -p -ceu '
+      foreground_pgid=$(ps -o tpgid= -p 1 | tr -d " ")
+      [[ $foreground_pgid =~ ^[1-9][0-9]*$ ]]
+      kill -INT -- "-${foreground_pgid}"
+    ' 2>&1)
+  signal_status=$?
+  set -e
+  (( signal_status == 0 )) || {
+    printf '%s\n' "$signal_output" | redact_probe_output >&2
+    fail "the enforced onboarding foreground SIGINT returned ${signal_status}"
+  }
+  for _ in $(seq 1 100); do
+    [[ $(docker inspect --format '{{.State.Running}}' \
+      "$ONBOARDING_CONTROLLER_CONTAINER") == false ]] && break
+    sleep 0.05
+  done
+  if [[ $(docker inspect --format '{{.State.Running}}' \
+      "$ONBOARDING_CONTROLLER_CONTAINER") != false ]]; then
+    printf '%s\n' "$signal_output" | redact_probe_output >&2
+    fail 'the enforced onboarding controller did not close after foreground SIGINT'
+  fi
+  controller_status=$(docker inspect --format '{{.State.ExitCode}}' \
+    "$ONBOARDING_CONTROLLER_CONTAINER")
+  controller_logs=$(docker logs "$ONBOARDING_CONTROLLER_CONTAINER" 2>&1)
+  (( controller_status == 0 )) || {
+    printf '%s\n%s\n' "$signal_output" "$controller_logs" \
+      | redact_probe_output >&2
+    fail "the enforced onboarding controller returned ${controller_status}"
+  }
+  grep -Fq 'Validated consumer onboarding files were saved' \
+    <<< "$controller_logs" \
+    || fail 'the enforced onboarding controller omitted its validated commit'
+  docker run --rm \
+    --platform "$TEST_PLATFORM" \
+    --network none \
+    --entrypoint /bin/bash \
+    --volume "${ONBOARDING_DATA_VOLUME}:/data" \
+    --volume "${ONBOARDING_RUNTIME_VOLUME}:/run/antigravity-ha" \
+    "$IMAGE" -p -ceu '
+      cli=/data/home/.gemini/antigravity-cli
+      jq --exit-status ".enableTelemetry == false" "$cli/settings.json" >/dev/null
+      test "$(stat -Lc "%u:%g:%a:%h" "$cli/antigravity-oauth-token")" \
+        = 0:0:600:1
+      jq --exit-status \
+        ".consumerOnboardingComplete == true
+          and .enterpriseOnboardingComplete == false
+          and length == 2" "$cli/cache/onboarding.json" >/dev/null
+      test "$(stat -Lc "%u:%g:%a:%h:%s" \
+        /run/antigravity-ha/onboarding-active)" = 0:0:600:1:0
+      test "$(stat -Lc "%u:%g:%a" \
+        /run/antigravity-ha/onboarding-home)" = 0:0:700
+      test -z "$(find /run/antigravity-ha/onboarding-home \
+        -mindepth 1 -print -quit)"
+      test ! -e "$cli/settings.json.onboarding.tmp"
+      test ! -e "$cli/antigravity-oauth-token.onboarding.tmp"
+      test ! -e "$cli/cache/onboarding.json.onboarding.tmp"
+    ' || fail 'the enforced onboarding controller transaction was incomplete'
+  docker rm "$ONBOARDING_CONTROLLER_CONTAINER" >/dev/null
 }
 
 run_helper_credential_boundary_probe() {
@@ -1408,6 +1758,7 @@ assert_relevant_audit_denials() {
   local audit_log="${WORK_DIR}/kernel-audit.log"
   local relevant_log="${WORK_DIR}/relevant-denials.log"
   local canary_seen=false
+  local browser_helper_denial_count=0
   local line
 
   if ! capture_relevant_audit_denials "$audit_log" "$relevant_log"; then
@@ -1421,12 +1772,28 @@ assert_relevant_audit_denials() {
       canary_seen=true
       continue
     fi
+    # Production intentionally uses a plain (non-audit) executable deny. Some
+    # kernels stop silently on that x check; others first report this exact
+    # read/open denial while resolving the script. The probe above independently
+    # requires xdg-open to fail, so accept at most one exact optional record.
+    if [[ $line == *'operation="open"'* \
+      && $line == *'class="file"'* \
+      && $line == *'profile="antigravity_home_assistant-onboarding-runtime"'* \
+      && $line == *'name="/usr/bin/xdg-open"'* \
+      && $line == *'comm="xdg-open"'* \
+      && $line == *'requested_mask="r"'* \
+      && $line == *'denied_mask="r"'* ]]; then
+      (( browser_helper_denial_count += 1 ))
+      continue
+    fi
     printf 'unexpected AppArmor audit denial: %s\n' "$line" >&2
     fail 'kernel audit contains a non-canary denial for the enforced profile set'
   done < "$relevant_log"
 
   [[ $canary_seen == true ]] \
     || fail 'kernel audit did not capture the AppArmor denial positive control'
+  (( browser_helper_denial_count <= 1 )) \
+    || fail 'kernel audit captured multiple onboarding browser-helper denial records'
 }
 
 require_enforcement_host
@@ -1444,6 +1811,7 @@ AUDIT_START_EPOCH=$(date --utc +%s)
 load_and_verify_profiles
 generate_disposable_ssh_key
 seed_volumes
+run_onboarding_profile_probe
 run_helper_credential_boundary_probe
 
 start_container "$FIRST_CONTAINER"

@@ -8,12 +8,18 @@ set -Eeuo pipefail
 cd /config
 
 if antigravity_ha_config_true 'web_terminal_auto_start_antigravity'; then
-  printf '\nStarting antigravity in /config. Exit antigravity to return to this shell.\n\n'
+  printf '%s\n' \
+    '' \
+    'Starting antigravity in /config. Exit antigravity to return to this shell.' \
+    'If first-time OAuth/Terms is incomplete, or a 2.1.2 settings save failed, press Ctrl+C and run ha-antigravity-login from the shell.' \
+    ''
   if ha-antigravity; then
     :
   else
     exit_code=$?
     printf '\nantigravity exited with status %d; returning to the shell.\n' "${exit_code}" >&2
+    printf '%s\n' \
+      'If OAuth/Terms is incomplete or a protected settings save failed, run ha-antigravity-login.' >&2
   fi
 fi
 

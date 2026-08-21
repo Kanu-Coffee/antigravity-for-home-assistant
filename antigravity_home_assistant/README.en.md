@@ -27,6 +27,21 @@ Use antigravity inside Home Assistant to inspect your setup and improve dashboar
 > [!WARNING]
 > This app is a powerful administrative tool that can directly change your Home Assistant configuration. Telegram is equivalent to the CLI as an administrator channel, so protect the bot token, authorized chats, and Telegram accounts. Back up important data, review plans and diffs, and never expose the SSH port directly to the internet.
 
+**2.1.3 Web OAuth/TOS persistence boundary:** On public 2.1.2 on real HAOS
+amd64, the authenticated Terms screen processed Done, Enter, and Ctrl+C, but
+the atomic rename from `settings.json.<uuid>.tmp` to final `settings.json`
+failed and the `agy-settings` hash did not change. Version 2.1.3 runs only the
+consumer Google OAuth/Terms flow through manual `ha-antigravity-login` in an
+isolated `/run` staging HOME. Use the displayed HTTPS URL and authorization
+code; automatic browser helpers, real HOME, `/config`, commands, MCP, and HA
+proposal paths are blocked. Telemetry-compatible settings, a bounded opaque OAuth
+credential file, and exact onboarding booleans are committed in a no-secret
+journaled, ordered, crash-consistent sequence only after a completed consumer
+marker with OAuth and a normal or intentional Ctrl+C close. Each destination
+replacement is individually atomic; interrupted prefixes stay quarantined for retry.
+A local marker is not proof of remote Terms acceptance. Real-HAOS 2.1.3
+acceptance is `NOT RUN`, so overall v2 remains `PARTIAL`.
+
 **2.1.2 Telegram command-permission diagnostics:** On public 2.1.1 on real
 HAOS amd64, Telegram no-tool and managed state/file reads passed, but an
 explicit-`always-proceed` read-only native `run_command` turn was classified by
@@ -92,9 +107,18 @@ downgrade is not a clean, safe, or lossless fallback.
 
 1. Install and start the app. It currently supports **amd64 and aarch64**, uses `stage: experimental`, and has `boot: manual`.
 2. Select **OPEN WEB UI**.
-3. Sign in once with `ha-antigravity-login`.
-4. Run `ha-antigravity`.
-5. Start with: “Inspect my current setup in read-only mode and do not change anything yet.”
+3. With no other `agy` or Telegram request active, run
+   `ha-antigravity-login` and select the personal/consumer Google flow.
+4. Open the displayed HTTPS URL, paste the authorization code, and complete
+   Terms. At the normal agent screen, do not enter a prompt; press Ctrl+C to
+   close the helper.
+5. Run `ha-antigravity`.
+6. Start with: “Inspect my current setup in read-only mode and do not change anything yet.”
+
+The helper is limited to 15 minutes. After a timeout, unexpected exit, or
+incomplete result, do not start a normal session; restart the App and retry.
+A completion message does not prove remote Terms acceptance, so rerun the
+helper if Terms appear again.
 
 When enabled, Telegram uses the same OAuth, global plugins, agents, rules, MCP,
 and permission policy. Its first request keeps one conversation until `/new`,
@@ -129,7 +153,7 @@ global MCP, plugins, OAuth, and `/config`, and repairs drift on every startup
 until returned to `preserve`.
 Starting in 2.0.12, a Telegram-enabled startup automatically repairs an eligible
 root-owned, single-link regular, parseable settings file of at most 256 KiB. In
-its current 2.1.2 form, it restores the App-managed security fields, selected
+its current 2.1.3 form, it restores the App-managed security fields, selected
 mode's sparse native shape, and known permission buckets, so a supported update
 does not require a manual `reset_v2`. Unknown allow/ask/deny rules are not
 retained and an existing mode is hardened to 0600;

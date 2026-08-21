@@ -70,6 +70,23 @@ Docker socket, or host-root/PID mount is added. Automated regressions are not
 HAOS evidence; 2.1.0 real-device acceptance on amd64 and aarch64 is `NOT RUN`
 at publication and overall v2 acceptance remains `PARTIAL`.
 
+On public 2.1.2 on real HAOS amd64, the authenticated Web TUI processed Done,
+Enter, and Ctrl+C on the Terms/data-use screen, but native local save could not
+atomically rename `settings.json.<uuid>.tmp` to final `settings.json`. The
+`agy-settings` hash was identical before and after. This is real evidence of a
+protected final-settings replacement failure rather than missing terminal
+input; it does not prove the separate remote Terms request succeeded. Version
+2.1.3 adds a manual consumer-Google-OAuth/Terms controller with an isolated
+`/run` staging HOME. It blocks production HOME, `/config`, command, MCP,
+proposal, and automatic browser-helper access from onboarding native, then
+commits only telemetry-compatible settings, a bounded opaque OAuth credential
+file, and exact onboarding booleans in a no-secret journaled, ordered,
+crash-consistent sequence after a completed consumer marker
+with OAuth and a normal or intentional Ctrl+C close. Real-HAOS 2.1.3
+install/update, enforced onboarding AppArmor, OAuth/Terms persistence, normal
+Web/Telegram regression, and aarch64 acceptance are `NOT RUN`; overall v2
+remains `PARTIAL`.
+
 Native `read_file` and `write_file` are denied globally in both modes to block
 symlink-alias bypasses. Ordinary file access uses only the confined `ha_files`
 tools `ha_files_list`, `ha_files_read_text`, and `ha_files_write_text`. They are
@@ -115,7 +132,8 @@ image pull fails, first confirm that the selected version actually publishes a
 2. Check the log for init, discrete AppArmor execution profiles, read broker, memory, and Web
    terminal startup results. Do not share tokens or internal response bodies.
 3. Open **OPEN WEB UI**. The shell starts in `/config`.
-4. Test the connection with a read-only request first.
+4. On first use, complete the sign-in procedure below and close its helper,
+   then run `agy`. Test the connection with a read-only request first.
 
 ```text
 Summarize the current Home Assistant structure and recent Core errors read-only.
@@ -127,23 +145,68 @@ Do not change files, registries, or device states yet.
 ### Google OAuth
 
 Run this once from a controlling TTY in the Web terminal or public-key SSH.
+First confirm that no other `agy` session or Telegram job is active.
 
 ```bash
 ha-antigravity-login
 ```
 
-Complete the official Google OAuth flow displayed by the CLI. The helper runs
-native Antigravity directly; it does not use a fabricated login subcommand or an
-App-specific API token. Start a new session afterward.
+Select the personal/consumer Google flow; do not select Google Cloud project or
+enterprise onboarding. Automatic browser helpers are intentionally disabled in
+this protected session. Open the official HTTPS URL shown by the CLI, paste the
+returned authorization code into the controlling TTY, and complete the
+Terms/data-use screen. When the normal agent screen appears, do not enter a
+prompt; press Ctrl+C to close the helper. Do not start another `agy` or Telegram
+request until it has fully exited.
+
+In the Web UI, the helper clears the **entire history of the current Web pane**
+when it closes so the OAuth URL and pasted code do not remain in reconnectable
+scrollback. It does not report success if it cannot revalidate the same pane and
+socket or clear that history. Browser history, the clipboard, screenshots, and
+an SSH client's own scrollback are outside the App boundary and must be cleared
+separately; the SSH terminal saved-scrollback erase is best effort.
+
+The helper is bounded to 15 minutes. After a timeout, unexpected exit, or
+incomplete result, do not start a normal session; restart the App and retry from
+the beginning. Its completion message reports only local validation and sync,
+not remote Terms acceptance. Rerun it if Terms appear on the next launch. Start
+a new session only after the helper closes successfully.
 
 ```bash
 agy
 ```
 
-`antigravity` and `ha-antigravity` are wrappers for the same native CLI. The CLI
-manages OAuth material under `/data/home/.gemini/**`, which persists across App
-restarts and normal updates. Never print that directory, authorization headers,
-or credential contents, or copy them into Git, Telegram, or a support issue.
+`antigravity` and `ha-antigravity` are wrappers for the same native CLI. The
+2.1.3 login helper runs native under a root-owned `/run` staging HOME, then
+validates and commits only successful consumer-flow telemetry-compatible
+settings, a bounded opaque OAuth credential file, and the exact onboarding
+marker into the shared HOME in a no-secret journaled, ordered, crash-consistent
+sequence. Each destination replacement is individually atomic; interrupted
+prefixes remain quarantined. Normal Web/Telegram final-settings write/link/lock
+denies remain in place. The CLI manages OAuth material under
+`/data/home/.gemini/**`, which persists across App restarts and normal updates.
+Never print that directory, authorization headers, or credential contents, or
+copy them into Git, Telegram, or a support issue.
+
+### Post-Terms data-use telemetry opt-out
+
+You can turn off telemetry after accepting it on the Terms screen. Do not edit
+`settings.json` directly with an editor, native file tool, or shell redirection.
+Use only the mediator from an authenticated Web/SSH terminal, bound to a fresh
+digest:
+
+```bash
+digest="$(agy-settings sha256)"
+jq -nc --arg digest "${digest}" \
+  '{expected_sha256:$digest,patch:{enableTelemetry:false}}' \
+  | agy-settings patch
+```
+
+`false` is stored explicitly as the opt-out. This 2.1.3 mediator is
+privacy-strengthening and false-only: it does not provide opt-in or re-enable,
+which requires a separate authenticated consent flow. Obtain a fresh digest for
+every opt-out. This mediator does not grant normal native sessions broad
+final-settings write permission.
 
 ### Native paths and plugin
 
@@ -222,7 +285,7 @@ Native `read_file` and `write_file` stay denied and files still go through
 `proceed-in-sandbox` are legacy upgrade inputs normalized to `request-review`.
 Starting in 2.0.12, enabling
 Telegram transactionally backs up a root-owned, single-link regular, parseable
-settings file of at most 256 KiB. In its current 2.1.2 form, it restores the
+settings file of at most 256 KiB. In its current 2.1.3 form, it restores the
 App-managed security fields, selected mode's sparse native shape, and known
 permission buckets, while removing retired `enableTerminalSandbox`. Unknown
 custom allow/ask/deny rules are removed, while top-level settings outside this
@@ -309,8 +372,9 @@ Password and keyboard-interactive login are disabled. Do not port-forward TCP
 > Integrated OAuth, AppArmor, and Bot API E2E on real HAOS remain `NOT RUN`.
 
 The supported scalar keys are `altScreenMode`, `clearScrollbackOnResize`,
-`colorScheme`, `disableSlashCommands`, `modelProvider`, `showFeedbackSurvey`,
-and `showTips`.
+`colorScheme`, `disableSlashCommands`, `enableTelemetry`, `modelProvider`,
+`showFeedbackSurvey`, and `showTips`. `enableTelemetry` accepts only `false` as
+a privacy-strengthening opt-out and uses the digest-bound mediator above.
 
 Sign in once with `ha-antigravity-login` in the Web UI or SSH. Telegram uses the
 same `/data/home` identity; there is no separate `ha-telegram-login`.

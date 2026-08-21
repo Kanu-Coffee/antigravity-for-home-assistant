@@ -6,6 +6,13 @@ unset PYTHONHOME PYTHONINSPECT PYTHONPATH PYTHONSTARTUP
 unset GCONV_PATH GETCONF_DIR HOSTALIASES LOCALDOMAIN LOCPATH MALLOC_TRACE
 unset NLSPATH RES_OPTIONS TMPDIR TZDIR
 
+readonly MODE=${1:-}
+if [[ ${MODE} != restricted && ${MODE} != sensitive-read ]]; then
+  printf '%s\n' 'antigravity: invalid native session mode' >&2
+  exit 64
+fi
+shift
+
 requester_environment=()
 if [[ -v ANTIGRAVITY_HA_CHANNEL || -v HA_TELEGRAM_USER_ID \
   || -v HA_TELEGRAM_CHAT_ID || -v HA_TELEGRAM_SESSION_GENERATION \
@@ -22,7 +29,7 @@ if [[ -v ANTIGRAVITY_HA_CHANNEL || -v HA_TELEGRAM_USER_ID \
       && ! "${HA_ANTIGRAVITY_CONVERSATION_ID}" =~ ^[A-Za-z0-9._:-]{1,256}$ ) \
     || ! "${HA_TELEGRAM_ACTION_PROPOSAL_SOCKET:-}" \
       =~ ^/run/antigravity-ha/[A-Za-z0-9._-]{1,120}\.sock$ ]]; then
-    printf 'antigravity: invalid Telegram requester binding\n' >&2
+    printf '%s\n' 'antigravity: invalid Telegram requester binding' >&2
     exit 78
   fi
   requester_environment=(
@@ -41,30 +48,33 @@ unset ANTIGRAVITY_HA_CHANNEL HA_TELEGRAM_USER_ID HA_TELEGRAM_CHAT_ID \
   HA_TELEGRAM_RUN_NONCE HA_ANTIGRAVITY_CONVERSATION_ID \
   HA_TELEGRAM_ACTION_PROPOSAL_SOCKET
 
-readonly SESSION_LOCK=/run/antigravity-ha/native-session.lock
-if [[ ! -f ${SESSION_LOCK} || -L ${SESSION_LOCK} ]]; then
-  printf '%s\n' 'antigravity: native-session lock is unavailable or unsafe' >&2
+readonly ACTIVE_MARKER=/run/antigravity-ha/onboarding-active
+readonly ACTIVE_MARKER_TMP=/run/antigravity-ha/onboarding-active.tmp
+readonly ONBOARDING_JOURNAL=/data/antigravity-ha/onboarding/retry-required.json
+readonly RESTART_REQUIRED=/data/antigravity-ha/onboarding/restart-required
+if [[ ! -f ${ACTIVE_MARKER} || -L ${ACTIVE_MARKER} \
+  || $(/usr/bin/stat -Lc '%u:%g:%a:%h:%s' "${ACTIVE_MARKER}") \
+    != 0:0:600:1:0 \
+  || -e ${ACTIVE_MARKER_TMP} || -L ${ACTIVE_MARKER_TMP} \
+  || -e ${ONBOARDING_JOURNAL} || -L ${ONBOARDING_JOURNAL} \
+  || -e ${RESTART_REQUIRED} || -L ${RESTART_REQUIRED} ]]; then
+  printf '%s\n' \
+    'antigravity: onboarding did not close safely; restart the App, then run ha-antigravity-login if OAuth/Terms is incomplete' >&2
   exit 78
 fi
-session_lock_metadata=$(/usr/bin/stat -Lc '%u:%g:%a:%h:%s:%d:%i' "${SESSION_LOCK}")
-if [[ ! ${session_lock_metadata} =~ ^0:0:600:1:0:[0-9]+:[0-9]+$ ]]; then
-  printf '%s\n' 'antigravity: native-session lock is unsafe' >&2
-  exit 78
-fi
-if [[ $(/usr/bin/stat -Lc '%u:%g:%a:%h:%s:%d:%i' "${SESSION_LOCK}") \
-    != "${session_lock_metadata}" ]]; then
-  printf '%s\n' 'antigravity: native-session lock is unsafe' >&2
-  exit 78
-fi
-unset session_lock_metadata
 
-# flock retains the shared lock in a trusted holder while --close prevents the
-# native process and every model-controlled child from inheriting its fd.
-exec /usr/bin/env --ignore-signal=INT --ignore-signal=QUIT \
-  /usr/bin/flock \
-  --shared --nonblock --close --conflict-exit-code 75 \
-  "${SESSION_LOCK}" \
-  /usr/bin/env --default-signal=INT --default-signal=QUIT -i \
+if [[ ${MODE} == sensitive-read ]]; then
+  readonly ACCESS_MARKER=/run/antigravity-ha/sensitive-data-access.enabled
+  if [[ ! -f ${ACCESS_MARKER} || -L ${ACCESS_MARKER} \
+    || $(/usr/bin/stat -Lc '%u:%g:%a:%h' "${ACCESS_MARKER}") \
+      != 0:0:400:1 ]]; then
+    printf '%s\n' \
+      'Sensitive Home Assistant reads are disabled or unsafe; enable the App option and restart' >&2
+    exit 78
+  fi
+fi
+
+exec /usr/local/libexec/antigravity-native-env -i \
   AGY_CLI_DISABLE_AUTO_UPDATE=true \
   HOME=/data/home \
   LANG=C.UTF-8 \
@@ -72,5 +82,4 @@ exec /usr/bin/env --ignore-signal=INT --ignore-signal=QUIT \
   PATH=/usr/local/libexec/antigravity-command-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
   TERM=xterm-256color \
   "${requester_environment[@]}" \
-  /usr/bin/setpriv --pdeathsig KILL \
-  /usr/local/libexec/antigravity-native-session-guard restricted "$@"
+  /usr/local/libexec/antigravity-real "$@"

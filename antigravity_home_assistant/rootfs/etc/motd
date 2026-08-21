@@ -3,3 +3,5 @@ Antigravity for Home Assistant
 This shell can write all of /config and use the Home Assistant Core and
 Supervisor manager APIs. Review changes, run ha-config-check before restart,
 and never paste or commit antigravity auth.json or SUPERVISOR_TOKEN.
+For first-time OAuth/Terms or the 2.1.2 settings-save failure, exit Agy and run
+ha-antigravity-login from this authenticated shell.
