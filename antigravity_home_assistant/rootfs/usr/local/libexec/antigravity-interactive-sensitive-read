@@ -1,6 +1,10 @@
 #!/bin/bash -p
 set -Eeuo pipefail
 unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
+unset GLIBC_TUNABLES LD_AUDIT LD_DEBUG LD_LIBRARY_PATH LD_PRELOAD
+unset PYTHONHOME PYTHONINSPECT PYTHONPATH PYTHONSTARTUP
+unset GCONV_PATH GETCONF_DIR HOSTALIASES LOCALDOMAIN LOCPATH MALLOC_TRACE
+unset NLSPATH RES_OPTIONS TMPDIR TZDIR
 
 requester_environment=()
 if [[ -v ANTIGRAVITY_HA_CHANNEL || -v HA_TELEGRAM_USER_ID \
@@ -37,19 +41,30 @@ unset ANTIGRAVITY_HA_CHANNEL HA_TELEGRAM_USER_ID HA_TELEGRAM_CHAT_ID \
   HA_TELEGRAM_RUN_NONCE HA_ANTIGRAVITY_CONVERSATION_ID \
   HA_TELEGRAM_ACTION_PROPOSAL_SOCKET
 
-readonly ACCESS_MARKER=/run/antigravity-ha/sensitive-data-access.enabled
-if [[ ! -f "${ACCESS_MARKER}" || -L "${ACCESS_MARKER}" ]]; then
-  printf '%s\n' \
-    'Sensitive Home Assistant reads are disabled; enable the App option and restart' \
-    >&2
+readonly SESSION_LOCK=/run/antigravity-ha/native-session.lock
+if [[ ! -f ${SESSION_LOCK} || -L ${SESSION_LOCK} ]]; then
+  printf '%s\n' 'antigravity: native-session lock is unavailable or unsafe' >&2
   exit 78
 fi
-if [[ "$(stat -c '%u:%a:%h' "${ACCESS_MARKER}")" != 0:400:1 ]]; then
-  printf '%s\n' 'Sensitive data access marker is unsafe' >&2
+session_lock_metadata=$(/usr/bin/stat -Lc '%u:%g:%a:%h:%s:%d:%i' "${SESSION_LOCK}")
+if [[ ! ${session_lock_metadata} =~ ^0:0:600:1:0:[0-9]+:[0-9]+$ ]]; then
+  printf '%s\n' 'antigravity: native-session lock is unsafe' >&2
   exit 78
 fi
+if [[ $(/usr/bin/stat -Lc '%u:%g:%a:%h:%s:%d:%i' "${SESSION_LOCK}") \
+    != "${session_lock_metadata}" ]]; then
+  printf '%s\n' 'antigravity: native-session lock is unsafe' >&2
+  exit 78
+fi
+unset session_lock_metadata
 
-exec /usr/local/libexec/antigravity-native-env -i \
+# Keep the lock in flock rather than the native fd table. The guard validates
+# both runtime markers only after this shared lock has been acquired.
+exec /usr/bin/env --ignore-signal=INT --ignore-signal=QUIT \
+  /usr/bin/flock \
+  --shared --nonblock --close --conflict-exit-code 75 \
+  "${SESSION_LOCK}" \
+  /usr/bin/env --default-signal=INT --default-signal=QUIT -i \
   AGY_CLI_DISABLE_AUTO_UPDATE=true \
   HOME=/data/home \
   LANG=C.UTF-8 \
@@ -57,4 +72,5 @@ exec /usr/local/libexec/antigravity-native-env -i \
   PATH=/usr/local/libexec/antigravity-command-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
   TERM=xterm-256color \
   "${requester_environment[@]}" \
-  /usr/local/libexec/antigravity-real "$@"
+  /usr/bin/setpriv --pdeathsig KILL \
+  /usr/local/libexec/antigravity-native-session-guard sensitive-read "$@"

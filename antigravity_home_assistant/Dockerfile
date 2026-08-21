@@ -153,7 +153,7 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 
 # Release-only metadata must stay after the dependency layer so routine App
 # updates can reuse its content-addressed layers on Home Assistant hosts.
-ARG BUILD_VERSION=2.1.2
+ARG BUILD_VERSION=2.1.3
 ARG SOURCE_REVISION=""
 ARG SOURCE_ROOTFS_SHA256=""
 
@@ -250,6 +250,8 @@ RUN manifest=/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
       /usr/local/share/antigravity-ha/ha-memory-mcp.mjs \
       /usr/local/share/antigravity-ha/ha-memory.mjs \
       /usr/local/share/antigravity-ha/managed-plugin-update.mjs \
+      /usr/local/share/antigravity-ha/onboarding-settings-fingerprint.mjs \
+      /usr/local/share/antigravity-ha/onboarding-transaction.mjs \
       /usr/local/share/antigravity-ha/ha-change-broker-client.mjs \
       /usr/local/share/antigravity-ha/ha-change-broker.mjs \
       /usr/local/share/antigravity-ha/ha-change-proposal-mcp.mjs \
@@ -277,12 +279,14 @@ RUN manifest=/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
       /usr/local/share/antigravity-ha/app-version
 
 RUN install -d -m 0700 /data/home /data/antigravity /data/github-cli \
-    && antigravity_version_output="$(antigravity --version)" \
+    && antigravity_version_output="$(/usr/local/libexec/antigravity-real --version)" \
     && [[ "${antigravity_version_output}" == "${ANTIGRAVITY_VERSION}" ]] \
     && gh_version_output="$(gh --version | head -n 1)" \
     && [[ "${gh_version_output}" == "gh version ${GH_VERSION} "* ]] \
     && node --check /usr/local/share/antigravity-ha/ha-feedback.mjs \
     && node --check /usr/local/share/antigravity-ha/managed-plugin-update.mjs \
+    && node --check /usr/local/share/antigravity-ha/onboarding-settings-fingerprint.mjs \
+    && node --check /usr/local/share/antigravity-ha/onboarding-transaction.mjs \
     && node --check /usr/local/share/antigravity-ha/supervisor-options-migrate.mjs \
     && node --check /usr/local/share/antigravity-ha/telegram-action-coordinator.mjs \
     && node --check /usr/local/share/antigravity-ha/telegram-action-executor.mjs \

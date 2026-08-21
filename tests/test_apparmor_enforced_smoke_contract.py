@@ -32,7 +32,7 @@ def test_enforced_smoke_loads_and_cleans_up_a_real_kernel_profile() -> None:
 
     assert "Mirror Supervisor's adjust_profile implementation" in smoke
     assert 'r"^profile antigravity_home_assistant(?= )"' in smoke
-    assert "len(declarations) != 24" in smoke
+    assert "len(declarations) != 26" in smoke
     assert 'source.replace("antigravity_home_assistant", profile_name)' not in smoke
     host_checks = smoke.split("require_enforcement_host() {", 1)[1].split(
         "\n}", 1
@@ -41,6 +41,36 @@ def test_enforced_smoke_loads_and_cleans_up_a_real_kernel_profile() -> None:
     assert host_checks.count("|| fail") >= 6
     assert "unexpected primary AppArmor declarations" in smoke
     assert "generated profile label already exists" in smoke
+
+
+def test_enforced_smoke_exercises_onboarding_profiles_and_transaction() -> None:
+    smoke = read("tests/apparmor-enforced-smoke.sh")
+
+    for token in (
+        "run_onboarding_profile_probe",
+        "apparmor=antigravity_home_assistant-onboarding-runtime",
+        "the enforced onboarding runtime did not atomically normalize staging",
+        "the onboarding runtime changed persistent settings directly",
+        "TMPDIR=/run/antigravity-ha/onboarding-home/tmp",
+        "--entrypoint /usr/bin/xdg-open",
+        "the onboarding runtime executed the automatic browser helper",
+        "apparmor=antigravity_home_assistant-interactive-runtime-restricted",
+        "the normal runtime replaced protected settings.json",
+        "apparmor=antigravity_home_assistant-shell",
+        "onboarding-native-cat:/usr/local/libexec/antigravity-real:ro",
+        "Validated consumer onboarding files were saved",
+        "ps -o tpgid= -p 1",
+        'kill -INT -- "-${foreground_pgid}"',
+        "did not close after foreground SIGINT",
+        "EOF can never masquerade as a successful operator close",
+        "the enforced onboarding controller transaction was incomplete",
+        "antigravity-oauth-token.onboarding.tmp",
+        "onboarding.json.onboarding.tmp",
+    ):
+        assert token in smoke
+    assert smoke.index("load_and_verify_profiles") < smoke.index(
+        "run_onboarding_profile_probe\n"
+    )
 
 
 def test_enforced_smoke_requires_two_clean_startups_and_a_denial_canary() -> None:
@@ -90,6 +120,8 @@ def test_enforced_smoke_requires_two_clean_startups_and_a_denial_canary() -> Non
     assert "capture_relevant_audit_denials" in smoke
     assert "print_failure_audit_denials" in smoke
     failure_body = smoke.split("fail() {", 1)[1].split("\n}", 1)[0]
+    assert 'docker logs "$ONBOARDING_CONTROLLER_CONTAINER"' in failure_body
+    assert "Enforced onboarding controller state" in failure_body
     assert failure_body.index("print_failure_audit_denials") < failure_body.index(
         "exit 1"
     )
@@ -114,6 +146,17 @@ def test_enforced_smoke_requires_two_clean_startups_and_a_denial_canary() -> Non
         "kernel audit did not capture the AppArmor denial positive control"
         in smoke
     )
+    assert "browser_helper_denial_count <= 1" in smoke
+    for field in (
+        'profile="antigravity_home_assistant-onboarding-runtime"',
+        'name="/usr/bin/xdg-open"',
+        'comm="xdg-open"',
+        'requested_mask="r"',
+        'denied_mask="r"',
+    ):
+        assert field in smoke
+    assert "captured multiple onboarding browser-helper denial records" in smoke
+    assert "requires xdg-open to fail" in smoke
     assert "apparmor-enforced-smoke-token-do-not-use" in smoke
     assert "[REDACTED_HOME_ASSISTANT_TOKEN]" in smoke
     assert '--env "SUPERVISOR_TOKEN=${SUPERVISOR_TOKEN}"' in smoke

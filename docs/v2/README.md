@@ -115,7 +115,7 @@ Antigravity 명령이나 설정을 추정하지 않는다. 문서와 고정 bina
   confined `ha_files`만 사용한다.
 - 2.0.12부터 `telegram_enabled=true`이면 안전하게 읽고 parse할 수 있는 기존
   `settings.json`의 Telegram permission 경계를 migration mode와 무관하게 transaction
-  backup 뒤 canonical policy로 reconcile한다. 2.1.2의 공통 관리 대상은
+  backup 뒤 canonical policy로 reconcile한다. 2.1.3의 공통 관리 대상은
   `allowNonWorkspaceAccess`, `artifactReviewPolicy`, `permissions`다. `request-review`는
   top-level `toolPermission`을 생략하고 `allow`/`deny`/`ask`를 기록하며,
   `always-proceed`는 `toolPermission: "always-proceed"`와 `allow`/`deny`만 기록한다.

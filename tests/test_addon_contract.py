@@ -23,6 +23,8 @@ EXPECTED_APPARMOR_PROFILES = {
     "antigravity_home_assistant-interactive-runtime-sensitive-read",
     "antigravity_home_assistant-interactive-sensitive-read",
     "antigravity_home_assistant-memory",
+    "antigravity_home_assistant-onboarding",
+    "antigravity_home_assistant-onboarding-runtime",
     "antigravity_home_assistant-playwright-bootstrap",
     "antigravity_home_assistant-read-broker",
     "antigravity_home_assistant-read-client",
@@ -321,13 +323,20 @@ def test_apparmor_directed_transitions_resolve_to_loaded_top_level_profiles(
 
     assert loaded_profiles == EXPECTED_APPARMOR_PROFILES
     # The two operational native profiles intentionally add broad command
-    # transitions. Five user entry profiles also route raw log wrappers through
-    # the sanitized read client instead of the credential-bearing helper, and
-    # four operational profiles route the managed file wrapper to its client.
-    assert len(directed_transitions) == 108
-    assert transition_modes.count("Px") == 106
+    # transitions. The dedicated onboarding controller adds exactly the shell
+    # entry and native-runtime transitions while all normal paths stay intact.
+    assert (
+        "Px",
+        "antigravity_home_assistant-onboarding",
+    ) in directed_transitions
+    assert (
+        "Px",
+        "antigravity_home_assistant-onboarding-runtime",
+    ) in directed_transitions
+    assert len(directed_transitions) == 110
+    assert transition_modes.count("Px") == 108
     assert transition_modes.count("rPx") == 3
-    assert len(transition_modes) == 109
+    assert len(transition_modes) == 111
     assert re.search(r"\b(?:c|C)x\b", source) is None
     assert {target for _, target in directed_transitions} <= loaded_profiles
 
@@ -500,8 +509,9 @@ def test_apparmor_allows_only_resolved_cold_start_executable_targets(
         "antigravity_home_assistant-file-client",
         "antigravity_home_assistant-interactive-restricted",
         "antigravity_home_assistant-interactive-sensitive-read",
-        "antigravity_home_assistant-memory",
-        "antigravity_home_assistant-read-broker",
+            "antigravity_home_assistant-memory",
+            "antigravity_home_assistant-onboarding",
+            "antigravity_home_assistant-read-broker",
         "antigravity_home_assistant-read-client",
         "antigravity_home_assistant-settings-update",
         "antigravity_home_assistant-sshd",
@@ -617,11 +627,12 @@ def test_apparmor_allows_only_resolved_cold_start_executable_targets(
         "aare: /package/admin/s6-overlay-3.2.2.0/command/with-contenv"
         "   ->   /package/admin/s6-overlay-3\\.2\\.2\\.0/command/with-contenv"
     ) == 1
-    # One init read rule plus four operational deny rules compile this path.
+    # One init read rule plus the four operational and two onboarding deny
+    # rules compile this path.
     assert parser_rules.count(
         "aare: /run/s6/container_environment/   ->   "
         "/run/s6/container_environment/"
-    ) == 5
+    ) == 7
     assert parser_rules.count(
         "aare: /run/s6/container_environment/*   ->   "
         "/run/s6/container_environment/[^/\\x00][^/\\x00]*"
@@ -780,10 +791,12 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
         "/usr/share/ca-certificates/ r,": {
             "antigravity_home_assistant-interactive-runtime-restricted",
             "antigravity_home_assistant-interactive-runtime-sensitive-read",
+            "antigravity_home_assistant-onboarding-runtime",
         },
         "/usr/share/ca-certificates/** r,": {
             "antigravity_home_assistant-interactive-runtime-restricted",
             "antigravity_home_assistant-interactive-runtime-sensitive-read",
+            "antigravity_home_assistant-onboarding-runtime",
         },
         "/usr/share/mime/mime.cache r,": {
             "antigravity_home_assistant-browser"
@@ -805,6 +818,8 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
             "antigravity_home_assistant-init",
             "antigravity_home_assistant-interactive-runtime-restricted",
             "antigravity_home_assistant-interactive-runtime-sensitive-read",
+            "antigravity_home_assistant-onboarding",
+            "antigravity_home_assistant-onboarding-runtime",
             "antigravity_home_assistant-settings-update",
             "antigravity_home_assistant-shell",
             "antigravity_home_assistant-sshd",
@@ -821,6 +836,8 @@ def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
             "antigravity_home_assistant-interactive-runtime-sensitive-read",
             "antigravity_home_assistant-interactive-sensitive-read",
             "antigravity_home_assistant-memory",
+            "antigravity_home_assistant-onboarding",
+            "antigravity_home_assistant-onboarding-runtime",
             "antigravity_home_assistant-playwright-bootstrap",
             "antigravity_home_assistant-read-client",
             "antigravity_home_assistant-settings-update",
@@ -984,9 +1001,7 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
 ) -> None:
     profile_path = addon_root / "apparmor.txt"
     profile = profile_path.read_text(encoding="utf-8")
-    main_profile, _interactive_profiles = profile.split(
-        "profile antigravity_home_assistant-interactive-restricted", maxsplit=1
-    )
+    main_profile = _apparmor_profile(profile, "antigravity_home_assistant")
     restricted_profile = _apparmor_profile(
         profile,
         "antigravity_home_assistant-interactive-runtime-restricted",
@@ -1121,8 +1136,12 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
         "/usr/local/libexec/antigravity-real Px -> "
         "antigravity_home_assistant-interactive-runtime-sensitive-read,"
     ) in sensitive_bootstrap
-    assert "/usr/bin/stat rix," not in restricted_bootstrap
-    assert "/usr/bin/stat rix," in sensitive_bootstrap
+    for bootstrap_profile in (restricted_bootstrap, sensitive_bootstrap):
+        assert "/usr/bin/{env,flock,setpriv,stat} rix," in bootstrap_profile
+        assert (
+            "/usr/local/libexec/antigravity-native-session-guard rix,"
+            in bootstrap_profile
+        )
     for bootstrap_profile in (restricted_bootstrap, sensitive_bootstrap):
         assert "/etc/ld.so.cache r," in bootstrap_profile
         assert "/etc/nsswitch.conf r," in bootstrap_profile
@@ -1144,7 +1163,11 @@ def test_custom_apparmor_profile_protects_home_assistant_secrets(
         assert "deny /data/home/.gemini/config/mcp_config.json wkl," in (
             runtime_profile
         )
-    assert profile.count("  /usr/local/libexec/antigravity-real rm,\n") == 2
+    onboarding_runtime = _apparmor_profile(
+        profile, "antigravity_home_assistant-onboarding-runtime"
+    )
+    assert "/usr/local/libexec/antigravity-real rm," in onboarding_runtime
+    assert profile.count("  /usr/local/libexec/antigravity-real rm,\n") == 3
     for credential_profile in (
         main_profile,
         restricted_profile,

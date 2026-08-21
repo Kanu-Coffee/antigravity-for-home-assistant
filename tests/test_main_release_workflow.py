@@ -22,7 +22,7 @@ def test_main_release_is_manual_main_only_and_minimally_authorized() -> None:
         "candidate_run_attempt",
         "confirm",
     }
-    assert inputs["version"]["default"] == "2.1.2"
+    assert inputs["version"]["default"] == "2.1.3"
     assert workflow["permissions"] == {"contents": "read"}
     publish = workflow["jobs"]["publish"]
     assert publish["if"] == "github.ref == 'refs/heads/main'"
@@ -182,6 +182,43 @@ def test_main_release_creates_annotated_tag_and_prerelease_without_fake_evidence
         "are excluded" in text
     )
     assert (
+        "Public 2.1.2 real amd64 HAOS evidence" in text
+        and "selecting Done and confirming with Enter" in text
+        and "settings.json.<uuid>.tmp -> settings.json" in text
+        and "settings hash was the same before and after" in text
+        and "Ctrl+C worked" in text
+        and "does not establish whether the separate remote Terms request "
+        "succeeded" in text
+    )
+    assert (
+        "2.1.3 adds an authenticated, manual, consumer-Google-OAuth-only "
+        "`ha-antigravity-login` controller" in text
+        and "isolated `/run` staging HOME" in text
+        and "no real HOME, `/config`, command, MCP, proposal, or browser-helper "
+        "execution surface" in text
+        and "displayed HTTPS URL" in text
+        and "Google Cloud/enterprise onboarding is rejected" in text
+    )
+    assert (
+        "successful or intentional-close consumer onboarding run" in text
+        and "telemetry-compatible native settings" in text
+        and "bounded opaque OAuth credential file" in text
+        and "exact consumer/enterprise onboarding booleans" in text
+        and "Normal Web and Telegram sessions retain the final-settings "
+        "write/link/lock deny" in text
+        and "never reported as proof that the remote Terms of Service request "
+        "succeeded" in text
+    )
+    assert (
+        "Later data-use opt-out is available only through a fresh-digest-bound "
+        "`agy-settings patch`" in text
+        and "`enableTelemetry:false`" in text
+        and "privacy-strengthening and false-only" in text
+        and "opt-in or re-enable is not provided" in text
+        and "separate authenticated consent flow" in text
+        and "does not grant broad settings writes" in text
+    )
+    assert (
         "Telegram tokens and allowlists remain in `/data/options.json`" in text
         and "Bridge is a separate S6 service" in text
         and "managed proposal MCP is `telegram_action`" in text
@@ -192,10 +229,10 @@ def test_main_release_creates_annotated_tag_and_prerelease_without_fake_evidence
         "`ha_files_write_text`" in text
     )
     assert (
-        "2.1.2 automated settings-canonicalization, mode-aware denial, exact "
-        "native command/proposal, policy, PTY, managed-tool, read/write, "
-        "session-quarantine, multi-arch and exact-digest gates: `PASS` for this "
-        "exact Candidate; this is not HAOS evidence" in text
+        "2.1.3 automated onboarding-controller, staging-isolation, "
+        "settings/token/marker validation, native-session lock/signal, "
+        "settings-canonicalization, policy, multi-arch and exact-digest gates: "
+        "`PASS` for this exact Candidate; this is not HAOS evidence" in text
     )
     assert (
         "Rollback warning: 2.0.12 is not a direct or lossless downgrade; its "
@@ -204,9 +241,9 @@ def test_main_release_creates_annotated_tag_and_prerelease_without_fake_evidence
         "`/data`" in text
     )
     assert (
-        "amd64 2.1.2 HAOS install/update, Web/AppArmor, direct command, "
-        "request-review proposal/approval, restart, browser, memory, and "
-        "rollback acceptance at publication: `NOT RUN`" in text
+        "amd64 2.1.3 HAOS install/update, enforced onboarding/AppArmor, consumer "
+        "OAuth/Terms persistence, normal Web/Telegram regression, restart, "
+        "browser, memory, and rollback acceptance at publication: `NOT RUN`" in text
     )
     assert (
         "aarch64 HAOS acceptance at publication: `NOT RUN`; owner-waived for "
@@ -226,7 +263,7 @@ def test_repository_advertises_the_numeric_tag_published_by_main_release() -> No
         )
     )
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
-    assert config["version"] == inputs["version"]["default"] == "2.1.2"
+    assert config["version"] == inputs["version"]["default"] == "2.1.3"
     assert (
         config["image"]
         == "ghcr.io/kanu-coffee/antigravity-for-home-assistant"

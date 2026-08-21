@@ -114,6 +114,10 @@ App은 기존 복구 표면을 유지하고 rollback 절차를 안내한다.
   JSON 경로만 사용한다.
 - 로그인은 공식 CLI OAuth 흐름만 사용한다. App option으로 임의 API token을
   주입하지 않는다.
+- Terms의 data-use 선택은 이후 authenticated Web/SSH에서 fresh digest에 묶인
+  `agy-settings patch` mediator의 `enableTelemetry:false`로만 opt-out한다. opt-in 또는
+  re-enable은 제공하지 않고 별도 authenticated consent flow가 필요하다. normal native
+  profile에 broad final-settings write 권한을 추가하지 않는다.
 
 ### FR-003 Ingress와 SSH
 
@@ -290,7 +294,7 @@ settings를 backup하고 기존 ownership state와 무관하게 managed field와
 
 2.0.12부터 `telegram_enabled=true`이면 이 option이 `preserve` 또는
 `refresh_managed`여도 root-owned single-link regular·256 KiB 이하의 parse 가능한 existing
-settings를 transaction backup한다. 현재 2.1.2는 `allowNonWorkspaceAccess`,
+settings를 transaction backup한다. 현재 2.1.3은 `allowNonWorkspaceAccess`,
 `artifactReviewPolicy`, selected mode의 sparse `toolPermission` 표현과 known permission
 bucket을 exact Telegram policy로 reconcile하고 retired `enableTerminalSandbox`를
 제거한다. 이 App 관리 permission 경계 밖의 unrelated top-level settings, global MCP,

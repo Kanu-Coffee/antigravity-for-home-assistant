@@ -134,10 +134,10 @@ regular file이고 parse 가능한 기존 settings에 한해 migration mode와 o
 관계없이 Telegram permission 경계를 transaction backup 뒤 reconcile한다. 공개
 2.1.0까지는 `allowNonWorkspaceAccess`, `artifactReviewPolicy`, `toolPermission`,
 `enableTerminalSandbox`와 세 permission bucket을 기록했지만, 이 형식은 native 1.1.13의
-sparse persistence와 맞지 않아 2.1.2의 현재 계약이 아니다. 이 과거 형식에서도 App 관리
+sparse persistence와 맞지 않아 2.1.3의 현재 계약이 아니다. 이 과거 형식에서도 App 관리
 경계 밖의 사용자 top-level key는 보존했고, 입력과 출력은 256 KiB 이하이며 안전한 기존
 mode drift는 transaction에서 0600으로 강화했다.
-2.1.1부터 현재 2.1.2까지 native 1.1.13의 mode-specific sparse top-level shape를 설치한다.
+2.1.1부터 현재 2.1.3까지 native 1.1.13의 mode-specific sparse top-level shape를 설치한다.
 `request-review`는 `toolPermission`을 생략하고, `always-proceed`는 exact
 `"toolPermission":"always-proceed"`를 유지하며, 두 mode 모두
 `enableTerminalSandbox`를 생략한다. 선택 mode는 App option에서도 expected value로
@@ -336,10 +336,23 @@ App-managed proposal approval은 native option으로 완화되지 않는다.
 App 관리 permission enforcement의 self-bypass를 막기 위해 raw file tool의
 `settings.json` 직접 read/write는 exact deny다. interactive Web/SSH의 일반 전역 설정은 먼저
 `agy-settings sha256`으로 현재 digest를 얻고 `expected_sha256`과 JSON merge `patch`를
-stdin으로 `agy-settings patch`에 전달해 원자적으로 수정한다. 2.1.2 helper는 native
+stdin으로 `agy-settings patch`에 전달해 원자적으로 수정한다. 2.1.3 helper는 native
 1.1.13과 byte-stable하다고 검증한 top-level scalar
 `altScreenMode`, `clearScrollbackOnResize`, `colorScheme`, `disableSlashCommands`,
-`modelProvider`, `showFeedbackSurvey`, `showTips`만 받는다. 알 수 없는 non-null key와
+`enableTelemetry`, `modelProvider`, `showFeedbackSurvey`, `showTips`만 받는다.
+`enableTelemetry`는 privacy-strengthening opt-out인 `false`만 허용한다. opt-in 또는
+re-enable은 제공하지 않으며 별도의 authenticated consent flow가 필요하다. 예를 들어
+사후 data-use opt-out은 broad raw write가 아니라 다음처럼 fresh
+digest에 묶어 mediator로만 수행한다.
+
+```bash
+digest="$(agy-settings sha256)"
+jq -nc --arg digest "${digest}" \
+  '{expected_sha256:$digest,patch:{enableTelemetry:false}}' \
+  | agy-settings patch
+```
+
+알 수 없는 non-null key와
 object/array 값은 final settings를 바꾸기 전에 거부한다. 알 수 없는 top-level
 `null`은 이전 helper가 남긴 stale 값 제거에만 허용한다. helper는 top-level
 `permissions`, `enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`,

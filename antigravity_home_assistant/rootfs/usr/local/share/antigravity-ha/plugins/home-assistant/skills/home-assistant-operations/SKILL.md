@@ -67,9 +67,10 @@ request to change global Antigravity settings, obtain the current digest with
 `enableTerminalSandbox`, `allowNonWorkspaceAccess`, `toolPermission`, and
 `artifactReviewPolicy` keys. It atomically updates only `altScreenMode`,
 `clearScrollbackOnResize`, `colorScheme`, `disableSlashCommands`,
-`modelProvider`, `showFeedbackSurvey`, and `showTips`; `null` may remove a
-non-protected top-level stale setting. Unknown non-null settings and object or
-array values are rejected.
+`modelProvider`, `showFeedbackSurvey`, and `showTips`; `enableTelemetry`
+accepts only `false` for a privacy-strengthening opt-out. `null` may remove a
+non-protected top-level stale setting except `enableTelemetry`. Unknown
+non-null settings and object or array values are rejected.
 
 If a `request-review` Telegram side effect cannot be represented by
 `ha_change_propose` or `telegram_action_propose`, report that limitation and

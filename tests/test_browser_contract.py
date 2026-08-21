@@ -590,6 +590,10 @@ def test_real_playwright_mcp_smoke_is_part_of_container_validation(
     )
     assert approval_smoke.startswith("#!/usr/bin/env bash\nset -Eeuo pipefail\n")
     assert "antigravity-user-files-update" in approval_smoke
+    assert (
+        "for control in native-session.lock user-files-update.lock "
+        "onboarding-active; do" in approval_smoke
+    )
     assert "/data/home/.gemini/antigravity-cli/settings.json" in approval_smoke
     assert 'mcp(playwright/${tool})' in approval_smoke
     assert "settings.permissions" in approval_smoke

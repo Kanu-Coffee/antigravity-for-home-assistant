@@ -82,7 +82,15 @@ start_probe() {
   CONTAINERS+=("${name}")
   docker start "${name}" >/dev/null
   docker exec "${name}" /bin/sh -c \
-    'install -d -m 0700 /run/antigravity-ha /data/home /data/antigravity; install -d -m 0755 /config'
+    'install -d -m 0700 \
+      /run/antigravity-ha \
+      /data/antigravity-ha/onboarding \
+      /data/home \
+      /data/antigravity
+    install -d -m 0755 /config
+    for control in native-session.lock user-files-update.lock onboarding-active; do
+      install -m 0600 /dev/null "/run/antigravity-ha/${control}"
+    done'
   printf '%s' "${options_json}" \
     | docker exec --interactive "${name}" /bin/sh -c \
       'umask 077; cat > /data/options.json'

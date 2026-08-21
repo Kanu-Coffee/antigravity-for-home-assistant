@@ -88,7 +88,7 @@ policy-integrity 경계와 Recorder write는 차단하고 Recorder read는 sensi
 
 2.0.12에서 `telegram_enabled=true`인 startup은 위 2.0.11 일반 migration보다 강한
 permission 경계로 도입됐다. root-owned single-link regular·256 KiB 이하의 parse 가능한
-existing settings를 transaction backup한 뒤, 현재 2.1.2는
+existing settings를 transaction backup한 뒤, 현재 2.1.3은
 `allowNonWorkspaceAccess=true`, `artifactReviewPolicy=agent-decides`, selected mode의
 sparse `toolPermission` 표현과 known permission bucket을 shared canonical policy로
 교체하고 retired `enableTerminalSandbox`를 제거한다. 이때 bucket 안의 user-owned rule과
@@ -489,7 +489,9 @@ broker에서 저위험 자동 실행하는 mutation은 없다. `expected_state`/
 - App 관리 settings와 native MCP config raw direct read/write는 exact deny다. authenticated
   Web/SSH의 native-stable top-level scalar setting만 digest-bound `agy-settings patch`로
   매개 수정할 수 있고 unknown non-null key와 object/array는 거부한다. unknown
-  top-level `null`은 stale 값 제거에만 허용한다. protected key는 App
+  top-level `null`은 stale 값 제거에만 허용한다. `enableTelemetry`는 이 mediator에서
+  privacy-strengthening `false` opt-out만 허용하고 opt-in/re-enable은 제공하지 않는다.
+  normal native profile에 broad settings write를 열지 않는다. protected key는 App
   option+restart로만 변경한다. Telegram customization
   mutation은 approved exact terminal/script proposal로만 수행한다.
 

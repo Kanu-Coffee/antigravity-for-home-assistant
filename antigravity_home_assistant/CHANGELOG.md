@@ -2,6 +2,58 @@
 
 All notable changes to this App are documented in this file.
 
+## [2.1.3] - 2026-08-21
+
+### Fixed
+
+- Add an authenticated, manual `ha-antigravity-login` controller for the
+  personal/consumer Google OAuth first-run path. Native Antigravity runs with a
+  fixed, root-owned staging HOME under `/run`, not the persistent shared HOME,
+  while it performs OAuth and presents the Terms screens. The native onboarding
+  runtime cannot read real Antigravity state, `/config`, Home Assistant or
+  proposal sockets, or execute commands, MCP servers, browser helpers, plugins,
+  or other child programs.
+- Keep automatic browser launch disabled inside that boundary. The controlling
+  Web or SSH TTY displays the official HTTPS login URL and accepts the returned
+  authorization code. The helper supports consumer onboarding only; a change
+  to enterprise/Google Cloud onboarding state is rejected. Its session is
+  foreground-only, bounded to 15 minutes, and mutually exclusive with normal
+  Web and Telegram native sessions.
+- After native status `0` or an intentional Ctrl+C status `130`, require an
+  exact completed consumer marker and a present OAuth file before committing.
+  The trusted controller accepts only the existing settings with an optional
+  native telemetry choice, a bounded opaque OAuth credential file, and the exact
+  two native onboarding booleans. It then installs those three validated files
+  through fixed same-directory temporary paths. Timeout, unexpected exit, and
+  incomplete onboarding discard staging and do not recommend a normal session.
+- Preserve the normal security boundary. Web and Telegram Antigravity retain
+  the final `settings.json` write/link/lock deny; the onboarding native runtime
+  receives no `/config`, command, MCP, proposal, managed-HA, persistent plugin,
+  or real-HOME access. A protected lock and fail-closed marker prevent normal
+  native work during or after an interrupted onboarding transaction.
+- Preserve the Terms screen's later data-use opt-out. `enableTelemetry:false`
+  is the only telemetry mutation accepted by the digest-bound `agy-settings
+  patch` mediator; `false` is stored explicitly. This is a
+  privacy-strengthening, false-only opt-out; opt-in
+  or re-enable is not provided and requires a separate authenticated consent
+  flow. During onboarding reconciliation, native-canonical `true` may be omitted
+  while `false` remains explicit. Normal native sessions still receive no broad final-settings write
+  permission.
+
+### Field evidence and limitations
+
+- On public 2.1.2 on real HAOS amd64, the authenticated Web TUI accepted Done
+  and Enter on the Terms/data-use screen, then reported
+  `Failed to save settings: atomic rename .../settings.json.<uuid>.tmp -> settings.json`.
+  The protected `agy-settings` hash was identical before and after the attempt,
+  and Ctrl+C worked. This establishes that terminal input reached the native
+  save path and that final settings replacement failed; it does not establish
+  whether the separate remote Terms request succeeded.
+- Source and component results for 2.1.3 are automated evidence only. Real-HAOS
+  2.1.3 install/update, enforced onboarding AppArmor, consumer OAuth/Terms
+  persistence, normal Web/Telegram regression, restart, rollback, and aarch64
+  acceptance remain `NOT RUN`; overall v2 acceptance remains `PARTIAL`.
+
 ## [2.1.2] - 2026-08-21
 
 ### Fixed

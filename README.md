@@ -31,6 +31,22 @@
 > 확인하세요. 현재 `experimental`이며 실제 HAOS 양쪽 아키텍처의 전체 설치·업데이트·
 > rollback 검증은 릴리스별 증거를 확인해야 합니다.
 
+**2.1.3 Web OAuth/TOS 저장 경계 수정:** 공개 2.1.2의 실제 HAOS amd64에서
+인증된 Web TUI의 Terms/data-use 화면은 Done과 Enter를 정상 수신했지만,
+`settings.json.<uuid>.tmp`를 최종 `settings.json`으로 바꾸는 atomic rename이
+실패했습니다. `agy-settings` hash는 전후 동일했고 Ctrl+C도 작동했으므로 입력 누락이
+아닌 local final-settings 교체 실패입니다. 2.1.3의 수동
+`ha-antigravity-login`은 personal/consumer Google OAuth와 Terms 화면만 격리된
+`/run` staging HOME에서 실행합니다. 자동 browser helper는 의도적으로 차단되므로
+표시된 HTTPS URL을 열고 authorization code를 붙여 넣습니다. 성공 또는 의도한
+Ctrl+C 종료와 completed consumer marker가 함께 확인될 때만 telemetry-compatible
+settings, bounded opaque OAuth credential file과 exact onboarding boolean 두 개를 검증해
+no-secret journal에 바인딩된 순서로 crash-consistent commit합니다. 각 destination 교체만
+개별적으로 atomic하며, 중단된 prefix는 격리 후 재시도됩니다. 정상 Web/Telegram의
+final-settings deny와 command/MCP/HA 민감 경계는
+유지됩니다. local file/marker는 remote Terms 수락의 증거가 아니며, 2.1.3 실제 HAOS
+수용은 설치 전 `NOT RUN`, 전체 v2는 `PARTIAL`입니다.
+
 **2.1.2 Telegram 명령 권한 진단 수정:** 공개 2.1.1의 실제 HAOS amd64에서
 Telegram no-tool 응답, `ha_read_state`, confined `ha_files_list`는 `PASS`했지만,
 explicit `always-proceed`의 read-only native `run_command` 요청은 Bridge에서
@@ -139,21 +155,28 @@ Supervisor 직접 downgrade는 지원되지 않으며, exact 2.0.12 시점 App b
    릴리스 App은 장치에서 소스를 빌드하지 않고
    `ghcr.io/kanu-coffee/antigravity-for-home-assistant`의 아키텍처별 이미지를
    받습니다.
-4. **OPEN WEB UI**에서 최초 한 번 native OAuth를 시작합니다.
+4. **OPEN WEB UI**에서 최초 한 번 consumer Google OAuth를 시작합니다. 실행 중에는
+   다른 `agy` 또는 Telegram 요청을 시작하지 마세요.
 
    ```bash
    ha-antigravity-login
    ```
 
-5. CLI가 보여 주는 Google 인증 절차를 완료한 뒤 새 세션을 시작합니다.
+5. Google Cloud/enterprise가 아닌 personal/consumer 흐름을 선택합니다. 자동 browser
+   helper는 차단되어 있으므로 CLI가 표시한 HTTPS URL을 열고 authorization code를
+   붙여 넣은 뒤 Terms 화면까지 완료합니다. 정상 agent 화면이 나타나면 prompt를
+   입력하지 말고 Ctrl+C로 helper를 닫은 다음 새 세션을 시작합니다.
 
    ```bash
    agy
    ```
 
-`ha-antigravity-login`은 별도 로그인 subcommand를 흉내 내지 않고 controlling TTY에서
-공식 Antigravity first-run OAuth를 실행합니다. OAuth 자료를 출력하거나 이슈에
-첨부하지 마세요.
+`ha-antigravity-login`은 별도 login subcommand를 흉내 내지 않고 controlling TTY에서
+최대 15분 동안 공식 Antigravity consumer first-run OAuth를 실행합니다. timeout,
+unexpected exit 또는 incomplete 안내가 나오면 정상 `agy`를 시작하지 말고 App을
+재시작한 뒤 helper를 다시 실행하세요. 완료 안내도 remote Terms 수락을 단정하지
+않으므로 Terms가 다시 나타나면 helper를 다시 실행합니다. OAuth 자료를 출력하거나
+이슈에 첨부하지 마세요.
 
 ## Telegram 설정
 
@@ -240,7 +263,7 @@ command/URL과 installed MCP를 자율 관리자 권한으로 실행합니다. n
 
 2.0.12부터 Telegram이 켜져 있으면 시작 전에 root 소유
 single-link regular이고 256 KiB 이하이며 parse 가능한 settings를 transaction backup합니다.
-현재 2.1.2는 `allowNonWorkspaceAccess=true`,
+현재 2.1.3은 `allowNonWorkspaceAccess=true`,
 `artifactReviewPolicy=agent-decides`, 선택 mode의 sparse `toolPermission` 표현과 known
 permission bucket을 exact image policy로 정규화하고 retired
 `enableTerminalSandbox`는 제거합니다. `request-review`는 top-level `toolPermission`을

@@ -47,7 +47,8 @@ capabilities.
   and a `patch` object to `agy-settings patch`. The helper atomically updates
   only the supported scalar settings `altScreenMode`,
   `clearScrollbackOnResize`, `colorScheme`, `disableSlashCommands`,
-  `modelProvider`, `showFeedbackSurvey`, and `showTips`. A `null` value may
+  `modelProvider`, `showFeedbackSurvey`, and `showTips`; `enableTelemetry`
+  accepts only `false` for a privacy-strengthening opt-out. A `null` value may
   remove a non-protected top-level stale setting; unknown non-null settings and
   object or array values are rejected. `permissions`, `enableTerminalSandbox`,
   `allowNonWorkspaceAccess`, `toolPermission`, and `artifactReviewPolicy` are

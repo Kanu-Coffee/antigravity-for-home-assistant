@@ -536,6 +536,15 @@ def test_telegram_uses_shared_native_home_and_interactive_policy(
         / "usr/local/share/antigravity-ha/antigravity-settings-update.mjs"
     ).read_text(encoding="utf-8")
     assert "/usr/local/libexec/antigravity-real --version" in canary_source
+    assert "/data/antigravity-ha/onboarding" in canary_source
+    assert (
+        "for control in native-session.lock user-files-update.lock "
+        "onboarding-active; do" in canary_source
+    )
+    assert 'install -m 0600 /dev/null "/run/antigravity-ha/${control}"' in (
+        canary_source
+    )
+    assert "install -d -m 0755 /run/antigravity-ha" not in canary_source
     assert "shared Antigravity did not load the global MCP" in canary_source
     assert "shared global rule marker" in canary_source
     assert "shared global plugin marker" in canary_source

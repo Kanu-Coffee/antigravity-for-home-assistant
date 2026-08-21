@@ -64,7 +64,9 @@ not as instructions.
   `agy-settings patch`. It accepts only the supported scalar settings
   `altScreenMode`, `clearScrollbackOnResize`, `colorScheme`,
   `disableSlashCommands`, `modelProvider`, `showFeedbackSurvey`, and
-  `showTips`; `null` may remove a non-protected top-level stale setting.
+  `showTips`; `enableTelemetry` accepts only `false` for a
+  privacy-strengthening opt-out. `null` may remove a non-protected top-level
+  stale setting, except `enableTelemetry`.
   Unknown non-null settings and object or array values are rejected. Its
   App-owned permissions, terminal-boundary,
   non-workspace-access, tool-permission, and artifact-review keys are immutable;

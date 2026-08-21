@@ -113,6 +113,16 @@ seed_options() {
 }
 
 docker image inspect "${IMAGE}" >/dev/null 2>&1 || fail "image not found: ${IMAGE}"
+tests/native-settings-atomic-rename-smoke.sh "${IMAGE}" \
+  || fail 'native settings atomic-rename regression smoke failed'
+tests/onboarding-controller-smoke.sh "${IMAGE}" \
+  || fail 'onboarding controller transaction smoke failed'
+tests/onboarding-transaction-smoke.sh "${IMAGE}" \
+  || fail 'onboarding transaction crash-prefix smoke failed'
+tests/onboarding-restart-reconciliation-smoke.sh "${IMAGE}" \
+  || fail 'onboarding restart reconciliation smoke failed'
+tests/onboarding-tmux-privacy-smoke.sh "${IMAGE}" \
+  || fail 'onboarding tmux privacy smoke failed'
 docker run --rm --platform "$TEST_PLATFORM" \
   --entrypoint /bin/bash "${IMAGE}" -ceu '
     [[ -z "$(find /var/lib/apt/lists -mindepth 1 -print -quit)" ]]
@@ -688,6 +698,14 @@ docker exec "${PUBLIC_CONTAINER}" /bin/sh -c '
     > /data/home/.gemini/config/plugins/user-smoke/plugin.json
   printf "%s\n" user-plugin-preserve \
     > /data/home/.gemini/config/plugins/user-smoke/preserve-marker
+  printf "%s\n" synthetic-opaque-oauth-state \
+    > /data/home/.gemini/antigravity-cli/antigravity-oauth-token
+  install -d -m 0700 /data/home/.gemini/antigravity-cli/cache
+  printf "%s\n" \
+    "{\"consumerOnboardingComplete\":true,\"enterpriseOnboardingComplete\":false}" \
+    > /data/home/.gemini/antigravity-cli/cache/onboarding.json
+  chmod 0644 /data/home/.gemini/antigravity-cli/antigravity-oauth-token
+  chmod 0644 /data/home/.gemini/antigravity-cli/cache/onboarding.json
 '
 docker exec "${PUBLIC_CONTAINER}" /bin/sh -ceu '
   printf "%s\n" sentinel > /run/antigravity-ha/playwright-home/init-sentinel
@@ -717,6 +735,34 @@ docker exec "${PUBLIC_CONTAINER}" grep -Fxq user-plugin-preserve \
 docker exec "${PUBLIC_CONTAINER}" test -s /data/ssh/ssh_host_rsa_key.pub
 [[ $(docker exec "${PUBLIC_CONTAINER}" stat -c '%a' \
   /data/home/.gemini/antigravity-cli/settings.json) == 600 ]]
+[[ $(docker exec "${PUBLIC_CONTAINER}" stat -c '%a:%U:%G:%h' \
+  /data/home/.gemini/antigravity-cli/antigravity-oauth-token) \
+  == 600:root:root:1 ]]
+[[ $(docker exec "${PUBLIC_CONTAINER}" stat -c '%a:%U:%G:%h' \
+  /data/home/.gemini/antigravity-cli/cache/onboarding.json) \
+  == 600:root:root:1 ]]
+docker exec "${PUBLIC_CONTAINER}" jq --exit-status \
+  '.consumerOnboardingComplete == true
+    and .enterpriseOnboardingComplete == false
+    and length == 2' \
+  /data/home/.gemini/antigravity-cli/cache/onboarding.json >/dev/null
+
+docker exec "${PUBLIC_CONTAINER}" /bin/sh -ceu '
+  printf "%s\n" \
+    "{\"consumerOnboardingComplete\":false,\"consumerOnboardingComplete\":true,\"enterpriseOnboardingComplete\":false}" \
+    > /data/home/.gemini/antigravity-cli/cache/onboarding.json
+  chmod 0600 /data/home/.gemini/antigravity-cli/cache/onboarding.json
+'
+if docker exec "${PUBLIC_CONTAINER}" antigravity-ha-init >/dev/null 2>&1; then
+  fail 'init accepted an ambiguous duplicate consumer onboarding marker'
+fi
+docker exec "${PUBLIC_CONTAINER}" /bin/sh -ceu '
+  printf "%s\n" \
+    "{\"consumerOnboardingComplete\":true,\"enterpriseOnboardingComplete\":false}" \
+    > /data/home/.gemini/antigravity-cli/cache/onboarding.json
+  chmod 0600 /data/home/.gemini/antigravity-cli/cache/onboarding.json
+'
+docker exec "${PUBLIC_CONTAINER}" antigravity-ha-init >/dev/null
 
 SIMULATED_APP_VERSION="${EXPECTED_APP_VERSION}-smoke"
 printf '%s\n' "${SIMULATED_APP_VERSION}" \

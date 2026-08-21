@@ -31,7 +31,7 @@ state의 type/mode/schema가 안전하지 않으면 대기하지 않고 fail clo
 
 2.0.12 init은 Telegram이 활성화됐고 기존 settings가 root-owned single-link regular,
 256 KiB 이하이며 parse 가능하면 3의 경계를 확인하기 전에 transaction backup한다.
-현재 2.1.2는 `allowNonWorkspaceAccess`, `artifactReviewPolicy`, selected mode의 sparse
+현재 2.1.3은 `allowNonWorkspaceAccess`, `artifactReviewPolicy`, selected mode의 sparse
 `toolPermission` 표현과 known permission bucket을 canonical policy로 reconcile하고
 retired `enableTerminalSandbox`를 제거한다. 이 App 관리 permission 경계 밖의 unrelated
 top-level settings, global MCP, plugin, OAuth와 `/config`는 보존하고 mode를 0600으로
@@ -521,7 +521,7 @@ optional `expected_sha256`를 강제한다. secrets/storage/.gemini/credential/p
 Recorder write는 fail closed하며 sensitive-data marker 없이 Recorder read도 거부한다.
 
 2.0.12에서 Telegram-enabled startup은 위 일반 preserve migration을 좁게 재정의했다.
-현재 2.1.2는 ownership state와 관계없이 App 관리 보안 field, selected mode의 sparse
+현재 2.1.3은 ownership state와 관계없이 App 관리 보안 field, selected mode의 sparse
 native shape와 known permission bucket의 user-owned rule/stronger deny를 shared
 canonical policy로 교체한다. 그 밖의 user customization과 global MCP/OAuth는 그대로
 보존하며, canonical input의 재시작은 새

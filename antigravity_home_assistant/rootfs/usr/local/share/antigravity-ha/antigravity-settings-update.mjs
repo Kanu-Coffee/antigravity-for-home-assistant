@@ -54,6 +54,9 @@ const SUPPORTED_SCALAR_PATCHES = new Map([
   ["clearScrollbackOnResize", (value) => typeof value === "boolean"],
   ["colorScheme", isUnicodeScalarString],
   ["disableSlashCommands", (value) => typeof value === "boolean"],
+  // Any caller may request a privacy-strengthening opt-out. Re-enabling data
+  // collection remains an authenticated native-UI consent action.
+  ["enableTelemetry", (value) => value === false],
   ["modelProvider", isUnicodeScalarString],
   ["showFeedbackSurvey", (value) => typeof value === "boolean"],
   ["showTips", (value) => typeof value === "boolean"],
@@ -172,7 +175,8 @@ function validateSupportedPatch(patch) {
     // default apply. Objects, arrays and unknown native typed settings are
     // deliberately rejected: the App cannot safely reproduce every private
     // native schema transformation while settings.json remains write-protected.
-    if (value !== null && !validator(value)) {
+    if ((key === "enableTelemetry" && value === null) ||
+        (value !== null && !validator(value))) {
       throw new Error("patch contains an unsupported scalar setting value");
     }
   }
