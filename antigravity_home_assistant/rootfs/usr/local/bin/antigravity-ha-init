@@ -2,469 +2,200 @@
 # shellcheck shell=bash
 set -Eeuo pipefail
 
-# The AppArmor transition launcher preserves only this injected credential.
-# Capture it before the first external command, immediately remove the exported
-# name, and keep the bootstrap copy as a non-exported shell variable until the
-# scoped runtime credential file can be created after migration bootstrapping.
+# Capture the injected Supervisor credential before any external command, then
+# remove it from the environment inherited by ordinary services and agents.
 supervisor_credential_bootstrap=${SUPERVISOR_TOKEN:-}
 unset SUPERVISOR_TOKEN
 export -n supervisor_credential_bootstrap
-
 umask 077
 
 readonly RUNTIME_DIR=/run/antigravity-ha
-readonly ONBOARDING_HOME=${RUNTIME_DIR}/onboarding-home
-readonly NATIVE_SESSION_LOCK=${RUNTIME_DIR}/native-session.lock
-readonly USER_FILES_UPDATE_LOCK=${RUNTIME_DIR}/user-files-update.lock
-readonly ONBOARDING_ACTIVE=${RUNTIME_DIR}/onboarding-active
-readonly APP_STATE_ROOT=/data/antigravity-ha
-readonly ONBOARDING_TRANSACTION_ROOT=${APP_STATE_ROOT}/onboarding
-readonly ONBOARDING_TRANSACTION_HELPER=/usr/local/share/antigravity-ha/onboarding-transaction.mjs
 readonly DATA_HOME=/data/home
-readonly NATIVE_OAUTH_TOKEN=${DATA_HOME}/.gemini/antigravity-cli/antigravity-oauth-token
+readonly APP_STATE_ROOT=/data/antigravity-ha
 readonly ANTIGRAVITY_DATA=/data/antigravity
 readonly GITHUB_CLI_DATA=/data/github-cli
-readonly SSH_DATA=/data/ssh
 readonly TMUX_DATA=/data/tmux
-readonly LEGACY_PLAYWRIGHT_SECRETS=${RUNTIME_DIR}/playwright-secrets.env
 readonly PLAYWRIGHT_HOME=${RUNTIME_DIR}/playwright-home
 readonly PLAYWRIGHT_OUTPUT=${RUNTIME_DIR}/playwright-output
+readonly OPTIONS_SNAPSHOT=${RUNTIME_DIR}/ha-feedback-options.json
+readonly SENSITIVE_DATA_ACCESS_MARKER=${RUNTIME_DIR}/sensitive-data-access.enabled
 readonly HA_RENDER_UPSTREAM=${RUNTIME_DIR}/home-assistant-render-upstream.conf
 readonly HA_BROWSER_AUTH_STATUS=${RUNTIME_DIR}/browser-auth-status.json
 readonly HA_BROWSER_NETWORK_STATUS=${RUNTIME_DIR}/browser-network-info.json
-readonly HA_FEEDBACK_OPTIONS=${RUNTIME_DIR}/ha-feedback-options.json
-readonly SENSITIVE_DATA_ACCESS_MARKER=${RUNTIME_DIR}/sensitive-data-access.enabled
+readonly FACTORY_RESET=/usr/local/share/antigravity-ha/v3-factory-reset.mjs
+readonly OPTIONS_RESET=/usr/local/share/antigravity-ha/supervisor-options-migrate.mjs
+readonly OPTIONS_RESET_MARKER=/data/.antigravity-ha-v3-options-complete.json
 readonly MANAGED_PLUGIN_UPDATE=/usr/local/share/antigravity-ha/managed-plugin-update.mjs
-readonly SUPERVISOR_OPTIONS_MIGRATION=/usr/local/share/antigravity-ha/supervisor-options-migrate.mjs
 
-rm -rf -- "${PLAYWRIGHT_HOME}" "${PLAYWRIGHT_OUTPUT}" "${ONBOARDING_HOME}"
+factory_reset_result=$(/usr/bin/node "${FACTORY_RESET}") || {
+  bashio::log.fatal 'The required 3.0 App-data factory reset could not be completed safely'
+  exit 1
+}
+if ! jq --exit-status '
+  type == "object"
+  and (.status == "reset" or .status == "already_complete")
+  and (.removed | type == "array")
+' <<< "${factory_reset_result}" >/dev/null; then
+  bashio::log.fatal 'The 3.0 factory reset helper returned an invalid result'
+  exit 1
+fi
+if jq --exit-status '.status == "reset"' <<< "${factory_reset_result}" >/dev/null; then
+  bashio::log.warning 'Completed the one-time 3.0 factory reset of App-owned data; Home Assistant configuration was not touched'
+fi
+unset factory_reset_result
+
+rm -rf -- "${PLAYWRIGHT_HOME}" "${PLAYWRIGHT_OUTPUT}"
 install -d -m 0700 \
   "${RUNTIME_DIR}" \
-  "${ONBOARDING_HOME}" \
-  "${RUNTIME_DIR}/onboarding-workspace" \
   "${DATA_HOME}" \
+  "${APP_STATE_ROOT}" \
   "${ANTIGRAVITY_DATA}" \
-  "${SSH_DATA}" \
+  "${GITHUB_CLI_DATA}" \
   "${TMUX_DATA}" \
   "${PLAYWRIGHT_HOME}" \
-  "${PLAYWRIGHT_OUTPUT}" \
-  /root/.ssh
-install -d -m 0755 /run/sshd
+  "${PLAYWRIGHT_OUTPUT}"
 
 for persistent_directory in \
+  "${DATA_HOME}" \
   "${APP_STATE_ROOT}" \
-  "${ONBOARDING_TRANSACTION_ROOT}"; do
-  if [[ -L ${persistent_directory} \
-    || ( -e ${persistent_directory} && ! -d ${persistent_directory} ) \
-    || ( -d ${persistent_directory} \
-      && $(stat -Lc '%u:%g' "${persistent_directory}") != 0:0 ) ]]; then
-    bashio::log.fatal "Unsafe persistent onboarding directory: ${persistent_directory}"
+  "${ANTIGRAVITY_DATA}" \
+  "${GITHUB_CLI_DATA}" \
+  "${TMUX_DATA}"; do
+  if [[ -L ${persistent_directory} || ! -d ${persistent_directory} \
+    || $(stat -Lc '%u:%g' "${persistent_directory}") != 0:0 ]]; then
+    bashio::log.fatal "Unsafe persistent App directory: ${persistent_directory}"
     exit 1
   fi
-  install -d -m 0700 -- "${persistent_directory}"
-  if [[ $(stat -Lc '%u:%g:%a' "${persistent_directory}") != 0:0:700 ]]; then
-    bashio::log.fatal "Unsafe persistent onboarding directory metadata: ${persistent_directory}"
-    exit 1
-  fi
+  chmod 0700 "${persistent_directory}"
 done
 unset persistent_directory
-
-for runtime_control_file in \
-  "${NATIVE_SESSION_LOCK}" \
-  "${USER_FILES_UPDATE_LOCK}" \
-  "${ONBOARDING_ACTIVE}"; do
-  if [[ -L ${runtime_control_file} \
-    || ( -e ${runtime_control_file} && ! -f ${runtime_control_file} ) ]]; then
-    bashio::log.fatal "Unsafe runtime control file: ${runtime_control_file}"
-    exit 1
-  fi
-  if [[ ! -e ${runtime_control_file} ]]; then
-    install -m 0600 /dev/null "${runtime_control_file}"
-  fi
-  if [[ $(stat -Lc '%u:%g:%a:%h' "${runtime_control_file}") != 0:0:600:1 ]]; then
-    bashio::log.fatal "Unsafe runtime control file metadata: ${runtime_control_file}"
-    exit 1
-  fi
-done
-unset runtime_control_file
-if [[ $(stat -Lc '%s' "${NATIVE_SESSION_LOCK}") != 0 \
-  || $(stat -Lc '%s' "${USER_FILES_UPDATE_LOCK}") != 0 ]]; then
-  bashio::log.fatal 'Runtime lock files must be empty'
-  exit 1
-fi
-# Quarantine normal native sessions until the settings transaction below has
-# completed. An interrupted onboarding marker stays fail-closed until this
-# boot-time reconciliation succeeds.
-/usr/bin/node "${ONBOARDING_TRANSACTION_HELPER}" marker init || {
-  bashio::log.fatal 'Could not activate the startup onboarding quarantine'
-  exit 1
-}
-
-# The no-secret journal binds old/new digests for every legal marker-last crash
-# prefix. Complete prefixes can finalize before settings reconciliation. Partial
-# prefixes must keep both the updater and normal native sessions quarantined;
-# the authenticated login helper rebases them with a fresh OAuth retry.
-onboarding_transaction_state=''
-if ! onboarding_transaction_state=$(
-  /usr/bin/node "${ONBOARDING_TRANSACTION_HELPER}" status
-); then
-  bashio::log.fatal 'An interrupted onboarding save could not be recovered safely'
-  exit 1
-fi
-case "${onboarding_transaction_state}" in
-  absent) ;;
-  complete | complete-restart)
-    onboarding_finalize_result=''
-    if ! onboarding_finalize_result=$(
-      /usr/bin/node "${ONBOARDING_TRANSACTION_HELPER}" finalize
-    ); then
-      bashio::log.fatal 'A complete interrupted onboarding save could not be finalized'
-      exit 1
-    fi
-    if [[ ( ${onboarding_transaction_state} == complete \
-          && ${onboarding_finalize_result} != finalized ) \
-      || ( ${onboarding_transaction_state} == complete-restart \
-          && ${onboarding_finalize_result} != restart-required ) ]]; then
-      bashio::log.fatal 'The onboarding finalize helper returned an invalid result'
-      exit 1
-    fi
-    unset onboarding_finalize_result
-    onboarding_transaction_state=absent
-    bashio::log.warning 'Finalized an interrupted consumer onboarding save'
-    ;;
-  partial)
-    bashio::log.warning 'A partial onboarding save remains quarantined; settings reconciliation is deferred until ha-antigravity-login succeeds and the App restarts'
-    ;;
-  *)
-    bashio::log.fatal 'The onboarding recovery helper returned an invalid result'
-    exit 1
-    ;;
-esac
-onboarding_restart_state=$(
-  /usr/bin/node "${ONBOARDING_TRANSACTION_HELPER}" restart-status
-) || {
-  bashio::log.fatal 'The onboarding restart marker is unsafe'
-  exit 1
-}
-if [[ ${onboarding_transaction_state} == partial \
-  && ${onboarding_restart_state} != absent ]]; then
-  bashio::log.fatal 'Conflicting onboarding recovery markers require manual repair'
-  exit 1
-fi
-
-if [[ -L "${GITHUB_CLI_DATA}" ]] || [[ -e "${GITHUB_CLI_DATA}" && ! -d "${GITHUB_CLI_DATA}" ]]; then
-  bashio::log.warning 'Persistent GitHub CLI storage is unsafe; ha-feedback GitHub login and direct submission will remain unavailable'
-elif [[ ! -e "${GITHUB_CLI_DATA}" ]]; then
-  install -d -m 0700 "${GITHUB_CLI_DATA}"
-elif [[ "$(stat -c '%u' "${GITHUB_CLI_DATA}")" != 0 ]]; then
-  bashio::log.warning 'Persistent GitHub CLI storage is not root-owned; ha-feedback will reject it without changing ownership'
-else
-  chmod 0700 "${GITHUB_CLI_DATA}"
-  find -P "${GITHUB_CLI_DATA}" -mindepth 1 -type d -exec chmod 0700 {} +
-  find -P "${GITHUB_CLI_DATA}" -mindepth 1 -type f -links 1 -exec chmod 0600 {} +
-fi
-
-# shellcheck source=/dev/null
-. /usr/local/lib/antigravity-ha/browser-approval.sh
 
 if ! jq --exit-status 'type == "object"' /data/options.json >/dev/null; then
   bashio::log.fatal '/data/options.json is missing or invalid'
   exit 1
 fi
-if jq --exit-status '.antigravity_terminal_sandbox == true' \
-  /data/options.json >/dev/null; then
-  bashio::log.warning 'antigravity_terminal_sandbox=true is deprecated and ignored; run_command uses the non-privileged AppArmor command boundary'
-fi
-if jq --exit-status \
-  '.antigravity_tool_permission == "strict"
-    or .antigravity_tool_permission == "proceed-in-sandbox"' \
-  /data/options.json >/dev/null; then
-  bashio::log.warning 'The selected legacy tool policy is normalized to request-review; choose always-proceed explicitly for autonomous operational tools'
+
+# Until the one-time Supervisor options reset has been confirmed, ignore all
+# stored legacy options and use the 3.0 defaults. The snapshot is the only App
+# option surface visible outside the init confinement.
+options_reset_complete=false
+if [[ -e ${OPTIONS_RESET_MARKER} || -L ${OPTIONS_RESET_MARKER} ]]; then
+  if [[ -L ${OPTIONS_RESET_MARKER} || ! -f ${OPTIONS_RESET_MARKER} ]]; then
+    bashio::log.fatal 'The 3.0 option-reset marker is unsafe'
+    exit 1
+  fi
+  options_marker_metadata=$(stat -c '%f:%d:%i:%u:%g:%a:%h:%s:%Y:%Z' \
+    -- "${OPTIONS_RESET_MARKER}" 2>/dev/null) || {
+    bashio::log.fatal 'The 3.0 option-reset marker is unavailable'
+    exit 1
+  }
+  IFS=: read -r marker_raw_mode marker_device marker_inode marker_owner \
+    marker_group marker_mode marker_links marker_size _ \
+    <<< "${options_marker_metadata}"
+  if [[ ! ${marker_raw_mode} =~ ^8[0-9a-fA-F]{3}$ \
+    || ! ${marker_device} =~ ^[0-9]+$ || ! ${marker_inode} =~ ^[0-9]+$ \
+    || ${marker_owner} != 0 || ${marker_group} != 0 \
+    || ${marker_mode} != 600 || ${marker_links} != 1 \
+    || ! ${marker_size} =~ ^[0-9]+$ ]] \
+    || (( marker_size < 2 || marker_size > 4096 )) \
+    || ! jq --exit-status '
+      type == "object"
+      and keys == ["completed", "schema"]
+      and .completed == true
+      and .schema == "antigravity-ha-v3-options-reset/v1"
+    ' "${OPTIONS_RESET_MARKER}" >/dev/null \
+    || [[ $(stat -c '%f:%d:%i:%u:%g:%a:%h:%s:%Y:%Z' \
+      -- "${OPTIONS_RESET_MARKER}" 2>/dev/null) != "${options_marker_metadata}" ]]; then
+    bashio::log.fatal 'The 3.0 option-reset marker is invalid or unstable'
+    exit 1
+  fi
+  options_reset_complete=true
+  unset options_marker_metadata marker_raw_mode marker_device marker_inode \
+    marker_owner marker_group marker_mode marker_links marker_size
 fi
 
-feedback_options_tmp=$(mktemp "${RUNTIME_DIR}/.ha-feedback-options.XXXXXX")
-if ! jq --exit-status '
-    def option_string($key; $default):
-      (if has($key) then .[$key] else $default end)
-      | if type == "string" then . else error("invalid safe string option") end;
-    def option_bool($key; $default):
-      (if has($key) then .[$key] else $default end)
-      | if type == "boolean" then . else error("invalid safe boolean option") end;
-    def option_string_array($key):
-      (if has($key) then .[$key] else [] end)
-      | if type == "array" and all(.[]; type == "string")
-        then . else error("invalid safe string array option") end;
-    {
-      authorized_keys: option_string_array("authorized_keys"),
-      web_terminal_auto_start_antigravity: option_bool("web_terminal_auto_start_antigravity"; false),
-      antigravity_tool_permission:
-        (option_string("antigravity_tool_permission"; "request-review")
-          | if . == "request-review" or . == "always-proceed" then .
-            elif . == "strict" or . == "proceed-in-sandbox"
-              then "request-review"
-            else error("invalid native tool permission") end),
-      antigravity_terminal_sandbox:
-        (option_bool("antigravity_terminal_sandbox"; false) | false),
-      antigravity_sensitive_data_access: option_bool("antigravity_sensitive_data_access"; false),
-      browser_approval_policy: option_string("browser_approval_policy"; "safe"),
-      antigravity_user_files_update_mode: option_string("antigravity_user_files_update_mode"; "preserve"),
-      home_assistant_browser_auto_auth: option_bool("home_assistant_browser_auto_auth"; true),
-      log_level: option_string("log_level"; "info"),
-      tmux_session_name: option_string("tmux_session_name"; "antigravity-ha")
-    }
-  ' /data/options.json > "${feedback_options_tmp}"; then
-  rm -f "${feedback_options_tmp}"
-  bashio::log.fatal 'Could not build the allowlisted ha-feedback option snapshot'
+options_tmp=$(mktemp "${RUNTIME_DIR}/.options.XXXXXX")
+if [[ ${options_reset_complete} == false ]]; then
+  jq --null-input '{
+    remote_control_name: "home-assistant",
+    antigravity_sensitive_data_access: false,
+    home_assistant_browser_auto_auth: true,
+    log_level: "info"
+  }' > "${options_tmp}"
+elif ! jq --exit-status '
+  def option_string($key; $default):
+    (if has($key) then .[$key] else $default end)
+    | if type == "string" then . else error("invalid string option") end;
+  def option_bool($key; $default):
+    (if has($key) then .[$key] else $default end)
+    | if type == "boolean" then . else error("invalid boolean option") end;
+  {
+    remote_control_name: option_string("remote_control_name"; "home-assistant"),
+    antigravity_sensitive_data_access: option_bool("antigravity_sensitive_data_access"; false),
+    home_assistant_browser_auto_auth: option_bool("home_assistant_browser_auto_auth"; true),
+    log_level: option_string("log_level"; "info")
+  }
+  | .log_level as $log_level
+  | if (.remote_control_name | test("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"))
+      and (["trace", "debug", "info", "notice", "warning", "error", "fatal"] | index($log_level) != null)
+    then . else error("invalid 3.0 option") end
+' /data/options.json > "${options_tmp}"; then
+  rm -f "${options_tmp}"
+  bashio::log.fatal 'The active 3.0 App options are invalid'
   exit 1
 fi
-chmod 0600 "${feedback_options_tmp}"
-mv -f "${feedback_options_tmp}" "${HA_FEEDBACK_OPTIONS}"
+chmod 0600 "${options_tmp}"
+mv -f "${options_tmp}" "${OPTIONS_SNAPSHOT}"
+unset options_reset_complete
 
-# Every process outside the init confinement reads only this allowlisted,
-# non-secret snapshot. The raw Supervisor options file may contain the
-# Telegram bot token and is never the default for shared configuration helpers.
 # shellcheck source=/dev/null
 . /usr/local/lib/antigravity-ha/config.sh
-if ! antigravity_ha_config_validate; then
+antigravity_ha_config_validate || {
   bashio::log.fatal 'The allowlisted App option snapshot is invalid'
   exit 1
-fi
+}
 
 rm -f "${SENSITIVE_DATA_ACCESS_MARKER}"
-if jq --exit-status '.antigravity_sensitive_data_access == true' \
-  "${HA_FEEDBACK_OPTIONS}" >/dev/null; then
-  sensitive_access_tmp=$(mktemp "${RUNTIME_DIR}/.sensitive-data-access.XXXXXX")
-  printf 'enabled\n' > "${sensitive_access_tmp}"
-  chmod 0400 "${sensitive_access_tmp}"
-  mv -f "${sensitive_access_tmp}" "${SENSITIVE_DATA_ACCESS_MARKER}"
-  unset sensitive_access_tmp
+if antigravity_ha_config_true antigravity_sensitive_data_access; then
+  sensitive_tmp=$(mktemp "${RUNTIME_DIR}/.sensitive-data-access.XXXXXX")
+  printf 'enabled\n' > "${sensitive_tmp}"
+  chmod 0400 "${sensitive_tmp}"
+  mv -f "${sensitive_tmp}" "${SENSITIVE_DATA_ACCESS_MARKER}"
+  unset sensitive_tmp
 fi
 
-if [[ ! -d /config ]]; then
-  bashio::log.fatal '/config is not mounted; map homeassistant_config to /config'
+if [[ ! -d /config || ! -w /config ]]; then
+  bashio::log.fatal '/config must be mounted read-write'
   exit 1
 fi
-
-if [[ ! -w /config ]]; then
-  bashio::log.fatal '/config is not writable; read_only must be false'
-  exit 1
-fi
-
 write_probe=$(mktemp /config/.antigravity-ha-write-test.XXXXXX)
 rm -f "${write_probe}"
 bashio::log.info 'Verified read-write access to /config'
 
-if ! browser_approval_policy=$(antigravity_ha_config_string 'browser_approval_policy' 'safe'); then
-  bashio::log.fatal 'Invalid headless browser approval policy'
-  exit 1
-fi
-if ! antigravity_ha_browser_approval_policy_validate "${browser_approval_policy}"; then
-  bashio::log.fatal 'Invalid headless browser approval policy'
-  exit 1
-fi
-bashio::log.info "Configured headless browser approval policy: ${browser_approval_policy}"
-
-unset browser_approval_policy
-
-user_files_update_result=''
-user_files_reconciled=false
-if [[ ${onboarding_transaction_state} == partial ]]; then
-  bashio::log.warning 'Skipped Antigravity user-file reconciliation while a partial onboarding save is quarantined'
-elif user_files_update_result=$(/usr/local/bin/antigravity-user-files-update); then
-  if ! jq --exit-status \
-    '(.created | type == "array")
-      and (.refreshed | type == "array")
-      and (.warnings | type == "array")
-      and (.recovered | type == "boolean")
-      and (.mode | type == "string")
-      and (.requested_mode | type == "string")
-      and (
-        .requested_mode == "preserve"
-        or .requested_mode == "refresh_managed"
-        or .requested_mode == "reset_v2"
-        or .requested_mode == "refresh_agents"
-        or .requested_mode == "refresh_all"
-      )
-      and (if .requested_mode == "refresh_agents"
-              or .requested_mode == "refresh_all"
-        then .mode == "refresh_managed"
-        else .mode == .requested_mode
-        end)' \
-    <<< "${user_files_update_result}" >/dev/null; then
-    bashio::log.fatal 'antigravity user-file update helper returned an invalid result'
+# Create only the two native bootstrap files on a fresh HOME. Future App starts
+# preserve user settings; the image-managed plugin has its own transaction.
+install -d -m 0700 \
+  "${DATA_HOME}/.gemini" \
+  "${DATA_HOME}/.gemini/antigravity-cli" \
+  "${DATA_HOME}/.gemini/config"
+for source_and_target in \
+  '/etc/antigravity/settings.json:/data/home/.gemini/antigravity-cli/settings.json' \
+  '/etc/antigravity/mcp_config.json:/data/home/.gemini/config/mcp_config.json'; do
+  source_path=${source_and_target%%:*}
+  target_path=${source_and_target#*:}
+  if [[ ! -e ${target_path} && ! -L ${target_path} ]]; then
+    install -m 0600 "${source_path}" "${target_path}"
+  elif [[ ! -f ${target_path} || -L ${target_path} \
+    || $(stat -Lc '%u:%g:%h' "${target_path}") != 0:0:1 ]]; then
+    bashio::log.fatal "Unsafe Antigravity user file: ${target_path}"
     exit 1
-  fi
-  if jq --exit-status '.created | index("settings") != null' \
-    <<< "${user_files_update_result}" >/dev/null; then
-    bashio::log.info 'Created persistent Antigravity CLI settings.json'
-  elif jq --exit-status '.refreshed | index("settings") != null' \
-    <<< "${user_files_update_result}" >/dev/null; then
-    bashio::log.notice 'Reset persistent Antigravity CLI settings.json from this App version'
   else
-    bashio::log.info 'Preserved existing Antigravity CLI settings.json'
+    chmod 0600 "${target_path}"
   fi
+done
+unset source_and_target source_path target_path
 
-  if jq --exit-status '.created | index("mcp") != null' \
-    <<< "${user_files_update_result}" >/dev/null; then
-    bashio::log.info 'Created persistent Antigravity global MCP configuration'
-  elif jq --exit-status '.refreshed | index("mcp") != null' \
-    <<< "${user_files_update_result}" >/dev/null; then
-    bashio::log.notice 'Reset persistent Antigravity global MCP configuration from this App version'
-  else
-    bashio::log.info 'Preserved existing Antigravity global MCP configuration'
-  fi
-
-  if jq --exit-status '.recovered' \
-    <<< "${user_files_update_result}" >/dev/null; then
-    bashio::log.warning 'Recovered an interrupted antigravity user-file update transaction'
-  fi
-  user_files_backup=$(jq --raw-output '.backup_directory // empty' \
-    <<< "${user_files_update_result}")
-  if [[ -n "${user_files_backup}" ]]; then
-    bashio::log.notice "Stored the antigravity user-file refresh transaction in ${user_files_backup}"
-  fi
-  while IFS= read -r user_files_warning; do
-    bashio::log.warning "${user_files_warning}"
-  done < <(jq --raw-output '.warnings[]' <<< "${user_files_update_result}")
-  unset user_files_backup user_files_warning
-  user_files_reconciled=true
-else
-  user_files_update_status=$?
-  if (( user_files_update_status == 30 )); then
-    bashio::log.fatal 'An interrupted or unsafe antigravity user-file update could not be recovered; refusing to continue'
-    exit 1
-  fi
-  bashio::log.error 'The optional antigravity user-file refresh was not applied; existing files were preserved'
-  unset user_files_update_status
-fi
-unset user_files_update_result
-
-readonly NATIVE_ONBOARDING_CACHE=${DATA_HOME}/.gemini/antigravity-cli/cache
-readonly NATIVE_ONBOARDING_MARKER=${NATIVE_ONBOARDING_CACHE}/onboarding.json
-if [[ -L ${NATIVE_ONBOARDING_CACHE} \
-  || ( -e ${NATIVE_ONBOARDING_CACHE} && ! -d ${NATIVE_ONBOARDING_CACHE} ) ]]; then
-  bashio::log.fatal 'The native onboarding cache directory is unsafe'
-  exit 1
-fi
-install -d -m 0700 -- "${NATIVE_ONBOARDING_CACHE}"
-if [[ $(stat -Lc '%u:%g:%a' "${NATIVE_ONBOARDING_CACHE}") != 0:0:700 ]]; then
-  bashio::log.fatal 'The native onboarding cache directory metadata is unsafe'
-  exit 1
-fi
-
-# Native 1.1.13 from an affected 2.1.2 install may already have written the
-# local consumer onboarding marker before the protected settings rename failed.
-# Preserve only its exact bounded two-boolean schema and normalize the private
-# mode; never print its contents or infer remote Terms acceptance from it.
-if [[ -L ${NATIVE_ONBOARDING_MARKER} \
-  || ( -e ${NATIVE_ONBOARDING_MARKER} && ! -f ${NATIVE_ONBOARDING_MARKER} ) ]]; then
-  bashio::log.fatal 'The native onboarding status path is unsafe'
-  exit 1
-elif [[ -e ${NATIVE_ONBOARDING_MARKER} ]]; then
-  native_onboarding_metadata=$(stat -Lc '%u:%g:%h:%s' "${NATIVE_ONBOARDING_MARKER}")
-  IFS=: read -r native_onboarding_owner native_onboarding_group \
-    native_onboarding_links native_onboarding_size <<< "${native_onboarding_metadata}"
-  if [[ ${native_onboarding_owner} != 0 || ${native_onboarding_group} != 0 \
-    || ${native_onboarding_links} != 1 \
-    || ! ${native_onboarding_size} =~ ^[0-9]+$ \
-    || ${native_onboarding_size} -lt 2 || ${native_onboarding_size} -gt 4096 ]] \
-    || ! jq --exit-status '
-      type == "object"
-      and (keys == [
-        "consumerOnboardingComplete",
-        "enterpriseOnboardingComplete"
-      ])
-      and all(.[]; type == "boolean")
-    ' "${NATIVE_ONBOARDING_MARKER}" >/dev/null; then
-    bashio::log.fatal 'The native onboarding status is unsafe or invalid'
-    exit 1
-  fi
-  if ! jq --stream --slurp --exit-status '
-    map(select(length == 2)) as $values
-    | ($values | length) == 2
-      and ($values | map(.[0][0]) | sort) == [
-        "consumerOnboardingComplete",
-        "enterpriseOnboardingComplete"
-      ]
-      and all($values[];
-        (.[0] | length) == 1 and (.[1] | type) == "boolean")
-  ' "${NATIVE_ONBOARDING_MARKER}" >/dev/null; then
-    bashio::log.fatal 'The native onboarding status has ambiguous duplicate fields'
-    exit 1
-  fi
-  chmod 0600 "${NATIVE_ONBOARDING_MARKER}"
-  if [[ $(stat -Lc '%u:%g:%a:%h:%s' "${NATIVE_ONBOARDING_MARKER}") \
-      != "0:0:600:1:${native_onboarding_metadata##*:}" ]]; then
-    bashio::log.fatal 'The native onboarding status mode could not be normalized'
-    exit 1
-  fi
-  unset native_onboarding_metadata native_onboarding_owner
-  unset native_onboarding_group native_onboarding_links native_onboarding_size
-fi
-
-if ! /usr/bin/node "${ONBOARDING_TRANSACTION_HELPER}" clean; then
-  bashio::log.fatal 'Unsafe stale onboarding temporary files require App repair'
-  exit 1
-fi
-
-# Native 1.1.13 may have created this opaque credential before an older App
-# failed to replace settings.json on the Terms screen. Never parse or print it;
-# accept only a bounded root-owned regular file and normalize its private mode.
-if [[ -L ${NATIVE_OAUTH_TOKEN} \
-  || ( -e ${NATIVE_OAUTH_TOKEN} && ! -f ${NATIVE_OAUTH_TOKEN} ) ]]; then
-  bashio::log.fatal 'The native OAuth credential path is unsafe'
-  exit 1
-elif [[ -e ${NATIVE_OAUTH_TOKEN} ]]; then
-  native_oauth_metadata=$(stat -Lc '%u:%g:%h:%s' "${NATIVE_OAUTH_TOKEN}")
-  IFS=: read -r native_oauth_owner native_oauth_group \
-    native_oauth_links native_oauth_size <<< "${native_oauth_metadata}"
-  if [[ ${native_oauth_owner} != 0 || ${native_oauth_group} != 0 \
-    || ${native_oauth_links} != 1 || ! ${native_oauth_size} =~ ^[0-9]+$ \
-    || ${native_oauth_size} -lt 2 || ${native_oauth_size} -gt 1048576 ]]; then
-    bashio::log.fatal 'The native OAuth credential metadata is unsafe'
-    exit 1
-  fi
-  chmod 0600 "${NATIVE_OAUTH_TOKEN}"
-  if [[ $(stat -Lc '%u:%g:%a:%h:%s' "${NATIVE_OAUTH_TOKEN}") \
-      != "0:0:600:1:${native_oauth_metadata##*:}" ]]; then
-    bashio::log.fatal 'The native OAuth credential mode could not be normalized'
-    exit 1
-  fi
-  unset native_oauth_metadata native_oauth_owner native_oauth_group
-  unset native_oauth_links native_oauth_size
-fi
-
-if [[ ${onboarding_transaction_state} != partial \
-  && ( ${onboarding_restart_state} == absent \
-    || ${user_files_reconciled} == true ) ]]; then
-  if [[ ${onboarding_restart_state} == required ]]; then
-    if ! /usr/bin/node "${ONBOARDING_TRANSACTION_HELPER}" clear-restart; then
-      bashio::log.fatal 'Could not clear the onboarding restart requirement after reconciliation'
-      exit 1
-    fi
-    bashio::log.notice 'Completed settings reconciliation after a recovered onboarding retry'
-  fi
-  if ! /usr/bin/node "${ONBOARDING_TRANSACTION_HELPER}" marker clear; then
-    bashio::log.fatal 'Could not atomically clear the onboarding quarantine'
-    exit 1
-  fi
-  if [[ $(stat -Lc '%u:%g:%a:%h:%s' "${ONBOARDING_ACTIVE}") \
-      != 0:0:600:1:0 ]]; then
-    bashio::log.fatal 'Could not clear the onboarding quarantine after settings reconciliation'
-    exit 1
-  fi
-else
-  bashio::log.warning 'Normal Antigravity sessions remain quarantined until protected onboarding recovery and required settings reconciliation succeed'
-fi
-unset user_files_reconciled
-unset onboarding_transaction_state onboarding_restart_state
-
-if [[ -e "${ANTIGRAVITY_DATA}/auth.json" ]]; then
-  chmod 0600 "${ANTIGRAVITY_DATA}/auth.json"
-fi
-
-managed_plugin_result=''
-if ! managed_plugin_result=$(
+managed_plugin_result=$(
   /usr/bin/env -i \
     AGY_CLI_DISABLE_AUTO_UPDATE=true \
     HOME="${DATA_HOME}" \
@@ -472,272 +203,119 @@ if ! managed_plugin_result=$(
     LC_ALL=C.UTF-8 \
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     /usr/bin/node "${MANAGED_PLUGIN_UPDATE}"
-); then
-  bashio::log.fatal 'The image-managed Home Assistant plugin could not be installed or recovered safely'
+) || {
+  bashio::log.fatal 'The image-managed Home Assistant plugin could not be installed safely'
   exit 1
-fi
+}
 if ! jq --exit-status '
-    type == "object"
-    and (.backup_directory == null or (.backup_directory | type == "string"))
-    and (.degraded | type == "boolean")
-    and (.recovered | type == "boolean")
-    and (.updated | type == "boolean")
-    and (.version == null or (.version | type == "string"))
-    and (.warning == null or (.warning | type == "string"))
-  ' <<< "${managed_plugin_result}" >/dev/null; then
-  bashio::log.fatal 'The managed plugin update helper returned an invalid result'
+  type == "object"
+  and (.degraded | type == "boolean")
+  and (.recovered | type == "boolean")
+  and (.updated | type == "boolean")
+' <<< "${managed_plugin_result}" >/dev/null; then
+  bashio::log.fatal 'The managed plugin helper returned an invalid result'
   exit 1
-fi
-if jq --exit-status '.recovered' <<< "${managed_plugin_result}" >/dev/null; then
-  bashio::log.warning 'Recovered an interrupted managed plugin transaction'
 fi
 if jq --exit-status '.degraded' <<< "${managed_plugin_result}" >/dev/null; then
   bashio::log.warning "$(jq --raw-output '.warning' <<< "${managed_plugin_result}")"
 elif jq --exit-status '.updated' <<< "${managed_plugin_result}" >/dev/null; then
-  bashio::log.notice 'Installed the image-managed Home Assistant Antigravity plugin transactionally'
-else
-  bashio::log.info 'Validated the existing image-managed Home Assistant Antigravity plugin'
+  bashio::log.notice 'Installed the image-managed Home Assistant plugin'
 fi
-managed_plugin_backup=$(jq --raw-output '.backup_directory // empty' \
-  <<< "${managed_plugin_result}")
-if [[ -n "${managed_plugin_backup}" ]]; then
-  bashio::log.notice "Stored the previous managed plugin in ${managed_plugin_backup}"
-fi
-unset managed_plugin_backup managed_plugin_result
+unset managed_plugin_result
 
-rm -f "${RUNTIME_DIR}/runtime.env"
 supervisor_credential_available=false
-if [[ -n "${supervisor_credential_bootstrap}" ]]; then
-  if [[ "${supervisor_credential_bootstrap}" == *$'\n'* \
-    || "${supervisor_credential_bootstrap}" == *$'\r'* \
+if [[ -n ${supervisor_credential_bootstrap} ]]; then
+  if [[ ${supervisor_credential_bootstrap} == *$'\n'* \
+    || ${supervisor_credential_bootstrap} == *$'\r'* \
     || ${#supervisor_credential_bootstrap} -gt 4096 ]]; then
     unset supervisor_credential_bootstrap
     bashio::log.fatal 'Supervisor token is unavailable or unsafe'
     exit 1
   fi
-  supervisor_credential_tmp=$(mktemp "${RUNTIME_DIR}/.supervisor.token.XXXXXX")
-  printf '%s' "${supervisor_credential_bootstrap}" > "${supervisor_credential_tmp}"
-  chmod 0400 "${supervisor_credential_tmp}"
-  mv -f "${supervisor_credential_tmp}" "${RUNTIME_DIR}/supervisor.token"
+  credential_tmp=$(mktemp "${RUNTIME_DIR}/.supervisor.token.XXXXXX")
+  printf '%s' "${supervisor_credential_bootstrap}" > "${credential_tmp}"
+  chmod 0400 "${credential_tmp}"
+  mv -f "${credential_tmp}" "${RUNTIME_DIR}/supervisor.token"
   supervisor_credential_available=true
-  unset supervisor_credential_tmp
+  unset credential_tmp
 else
   rm -f "${RUNTIME_DIR}/supervisor.token"
 fi
-# The raw Supervisor credential is now owned by the scoped helper boundary.
 unset supervisor_credential_bootstrap
 
-supervisor_options_migration_result=''
-if [[ "${supervisor_credential_available}" == true ]]; then
-  if supervisor_options_migration_result=$(
-    /usr/bin/node "${SUPERVISOR_OPTIONS_MIGRATION}"
-  ) && jq --exit-status '
+if [[ ${supervisor_credential_available} == true ]]; then
+  if options_reset_result=$(/usr/bin/node "${OPTIONS_RESET}") \
+    && jq --exit-status '
       type == "object"
-      and keys == ["status"]
-      and (.status == "migrated" or .status == "not_required")
-    ' <<< "${supervisor_options_migration_result}" >/dev/null; then
-    if jq --exit-status '.status == "migrated"' \
-      <<< "${supervisor_options_migration_result}" >/dev/null; then
-      bashio::log.notice 'Removed or normalized deprecated App options through the Supervisor self-options API'
-    else
-      bashio::log.info 'No deprecated App option migration was required'
+      and (.status == "reset" or .status == "already_complete")
+    ' <<< "${options_reset_result}" >/dev/null; then
+    if jq --exit-status '.status == "reset"' <<< "${options_reset_result}" >/dev/null; then
+      bashio::log.notice 'Reset Supervisor App options to the 3.0 interface'
     fi
   else
-    bashio::log.warning 'Could not persist deprecated App option migration through Supervisor; safe runtime mappings remain active and persistence will retry on the next App start'
+    bashio::log.warning 'The Supervisor option reset is pending and will retry on the next App start'
   fi
+  unset options_reset_result
+  bashio::log.info 'Configured the isolated Core and Supervisor helper credential'
 else
-  bashio::log.info 'Skipped Supervisor option migration because no Supervisor credential is available'
+  bashio::log.warning 'SUPERVISOR_TOKEN is unavailable; API helpers and option reset remain disabled'
 fi
-unset supervisor_options_migration_result
 
 if /usr/local/bin/ha-memory init >/dev/null 2>&1; then
-  bashio::log.info 'Validated the persistent Home Assistant memory store'
+  bashio::log.info 'Initialized the Home Assistant memory store'
 else
-  bashio::log.error 'Home Assistant memory is unavailable; its existing store was preserved and other App services will continue'
-fi
-
-ssh_environment_tmp=$(mktemp /root/.ssh/.environment.XXXXXX)
-{
-  printf 'BASH_ENV=%s\n' '/etc/profile.d/antigravity-ha.sh'
-  printf 'ANTIGRAVITY_HOME=%s\n' "${ANTIGRAVITY_DATA}"
-  printf 'HA_URL=%s\n' 'http://supervisor/core/api'
-  printf 'SUPERVISOR_URL=%s\n' 'http://supervisor'
-  printf 'LANG=%s\n' 'C.UTF-8'
-  printf 'LC_ALL=%s\n' 'C.UTF-8'
-} > "${ssh_environment_tmp}"
-chmod 0600 "${ssh_environment_tmp}"
-mv -f "${ssh_environment_tmp}" /root/.ssh/environment
-
-if [[ "${supervisor_credential_available}" != true ]]; then
-  bashio::log.warning 'SUPERVISOR_TOKEN is unavailable; API helpers will remain disabled'
-else
-  bashio::log.info 'Configured the isolated Core and Supervisor helper credential'
+  bashio::log.error 'Home Assistant memory is unavailable; other services will continue'
 fi
 
 unset NODE_OPTIONS NODE_PATH
-for variable in "${!PLAYWRIGHT_MCP_@}"; do
-  unset "${variable}"
-done
-rm -f "${LEGACY_PLAYWRIGHT_SECRETS}"
+for variable in "${!PLAYWRIGHT_MCP_@}"; do unset "${variable}"; done
 /usr/local/bin/ha-browser-auth-ensure --quiet || true
 browser_auth_status=$(jq --raw-output '.status // "unavailable"' \
   "${HA_BROWSER_AUTH_STATUS}" 2>/dev/null || printf 'unavailable')
-browser_auth_reason=$(jq --raw-output '.reason // "not_configured"' \
-  "${HA_BROWSER_AUTH_STATUS}" 2>/dev/null || printf 'not_configured')
 case "${browser_auth_status}" in
-  ready)
-    browser_auth_source=$(jq --raw-output '.source // "unknown"' \
-      "${HA_BROWSER_AUTH_STATUS}" 2>/dev/null || printf 'unknown')
-    bashio::log.info "Validated dedicated local-only, read-only Home Assistant browser authentication (${browser_auth_source})"
-    unset browser_auth_source
-    ;;
-  disabled)
-    bashio::log.info 'Home Assistant browser automatic authentication is disabled by the App option; any managed identity is preserved'
-    ;;
-  unconfigured)
-    bashio::log.warning 'Automatic managed browser authentication could not be configured; check ha-browser-auth-status and run ha-browser-auth-setup manually only to obtain a sanitized detailed error'
-    ;;
-  *)
-    bashio::log.warning "Dashboard auto-login is unavailable because browser authentication was rejected (${browser_auth_reason})"
-    ;;
+  ready) bashio::log.info 'Validated the local-only read-only browser identity' ;;
+  disabled) bashio::log.info 'Browser automatic authentication is disabled' ;;
+  *) bashio::log.warning 'Browser automatic authentication is not ready; inspect ha-browser-auth-status' ;;
 esac
-unset browser_auth_status browser_auth_reason
+unset browser_auth_status
 
 ha_frontend_scheme=http
 ha_frontend_port=8123
-if [[ "${supervisor_credential_available}" == true ]]; then
+if [[ ${supervisor_credential_available} == true ]]; then
   core_info_tmp=$(mktemp "${RUNTIME_DIR}/.core-info.XXXXXX")
-  if /usr/local/bin/supervisor-api --raw GET /core/info \
-    > "${core_info_tmp}" 2>/dev/null; then
-    candidate_port=$(jq --exit-status --raw-output \
-      'select(.result == "ok") | .data.port // 8123 | tostring' \
-      "${core_info_tmp}" 2>/dev/null || true)
-    candidate_scheme=$(jq --exit-status --raw-output \
-      'select(.result == "ok") | if (.data.ssl // false) then "https" else "http" end' \
-      "${core_info_tmp}" 2>/dev/null || true)
-    if [[ "${candidate_port}" =~ ^[0-9]+$ ]] \
+  if /usr/local/bin/supervisor-api --raw GET /core/info > "${core_info_tmp}" 2>/dev/null; then
+    candidate_port=$(jq --raw-output 'select(.result == "ok") | .data.port // 8123' "${core_info_tmp}" 2>/dev/null || true)
+    candidate_scheme=$(jq --raw-output 'select(.result == "ok") | if (.data.ssl // false) then "https" else "http" end' "${core_info_tmp}" 2>/dev/null || true)
+    if [[ ${candidate_port} =~ ^[0-9]+$ ]] \
       && (( candidate_port >= 1 && candidate_port <= 65535 )) \
-      && [[ "${candidate_scheme}" == http || "${candidate_scheme}" == https ]]; then
+      && [[ ${candidate_scheme} == http || ${candidate_scheme} == https ]]; then
       ha_frontend_port=${candidate_port}
       ha_frontend_scheme=${candidate_scheme}
-    else
-      bashio::log.warning 'Supervisor Core info did not contain a valid frontend endpoint; using the internal default'
     fi
-  else
-    bashio::log.warning 'Supervisor Core info is unavailable; using the internal Home Assistant frontend default'
   fi
   rm -f "${core_info_tmp}"
 fi
-unset supervisor_credential_available
+unset supervisor_credential_available candidate_port candidate_scheme
 
-ha_render_upstream_tmp=$(mktemp "${RUNTIME_DIR}/.home-assistant-render-upstream.XXXXXX")
+upstream_tmp=$(mktemp "${RUNTIME_DIR}/.home-assistant-render-upstream.XXXXXX")
+# shellcheck disable=SC2016  # nginx variable must remain literal.
 printf 'set %s "%s://homeassistant:%s";\n' \
-  "\$ha_frontend_upstream" "${ha_frontend_scheme}" "${ha_frontend_port}" \
-  > "${ha_render_upstream_tmp}"
-chmod 0600 "${ha_render_upstream_tmp}"
-mv -f "${ha_render_upstream_tmp}" "${HA_RENDER_UPSTREAM}"
-bashio::log.info 'Configured the loopback Home Assistant browser gateway'
+  '$ha_frontend_upstream' "${ha_frontend_scheme}" "${ha_frontend_port}" > "${upstream_tmp}"
+chmod 0600 "${upstream_tmp}"
+mv -f "${upstream_tmp}" "${HA_RENDER_UPSTREAM}"
 
-browser_network_tmp=$(mktemp "${RUNTIME_DIR}/.browser-network-info.XXXXXX")
-if /usr/local/bin/ha-browser-network-info > "${browser_network_tmp}" 2>/dev/null; then
-  chmod 0600 "${browser_network_tmp}"
-  mv -f "${browser_network_tmp}" "${HA_BROWSER_NETWORK_STATUS}"
-  browser_source_ip=$(jq --raw-output '.socket_source_ip' "${HA_BROWSER_NETWORK_STATUS}")
-  bashio::log.info "Home Assistant browser traffic uses current App address ${browser_source_ip}; this dynamic address is not trusted_networks identity"
+network_tmp=$(mktemp "${RUNTIME_DIR}/.browser-network-info.XXXXXX")
+if /usr/local/bin/ha-browser-network-info > "${network_tmp}" 2>/dev/null; then
+  chmod 0600 "${network_tmp}"
+  mv -f "${network_tmp}" "${HA_BROWSER_NETWORK_STATUS}"
 else
-  rm -f "${browser_network_tmp}" "${HA_BROWSER_NETWORK_STATUS}"
-  bashio::log.warning 'Home Assistant browser request source address is not available yet; run ha-browser-network-info after Core is ready'
+  rm -f "${network_tmp}" "${HA_BROWSER_NETWORK_STATUS}"
 fi
 
-for key_type in ed25519 rsa; do
-  host_key="${SSH_DATA}/ssh_host_${key_type}_key"
-  if [[ ! -s "${host_key}" ]]; then
-    rm -f "${host_key}" "${host_key}.pub"
-    if [[ "${key_type}" == rsa ]]; then
-      ssh-keygen -q -t rsa -b 3072 -N '' -f "${host_key}"
-    else
-      ssh-keygen -q -t ed25519 -N '' -f "${host_key}"
-    fi
-    bashio::log.info "Generated persistent SSH ${key_type} host key"
-  fi
-  chmod 0600 "${host_key}"
-  host_key_pub_tmp=$(mktemp "${SSH_DATA}/.ssh_host_${key_type}.pub.XXXXXX")
-  if ! ssh-keygen -y -f "${host_key}" > "${host_key_pub_tmp}"; then
-    rm -f "${host_key_pub_tmp}"
-    bashio::log.fatal "Persistent SSH ${key_type} host key is invalid; refusing to replace its identity"
-    exit 1
-  fi
-  chmod 0644 "${host_key_pub_tmp}"
-  if [[ ! -s "${host_key}.pub" ]] || ! cmp -s "${host_key_pub_tmp}" "${host_key}.pub"; then
-    mv -f "${host_key_pub_tmp}" "${host_key}.pub"
-  else
-    rm -f "${host_key_pub_tmp}"
-  fi
-  chmod 0644 "${host_key}.pub"
-done
-
-authorized_keys_json=$(antigravity_ha_config_json 'authorized_keys' '[]')
-if ! jq --exit-status 'type == "array"' <<< "${authorized_keys_json}" >/dev/null; then
-  bashio::log.fatal 'authorized_keys must be a list'
-  exit 1
-fi
-
-authorized_keys_tmp=$(mktemp "${SSH_DATA}/.authorized_keys.XXXXXX")
-key_probe=$(mktemp "${SSH_DATA}/.key-probe.XXXXXX")
-valid_key_count=0
-invalid_key_count=0
-while IFS= read -r encoded_key; do
-  public_key=$(printf '%s' "${encoded_key}" | base64 --decode)
-  if [[ -z "${public_key}" ]]; then
-    continue
-  fi
-  if [[ "${public_key}" == *$'\n'* || "${public_key}" == *$'\r'* ]]; then
-    invalid_key_count=$((invalid_key_count + 1))
-    continue
-  fi
-  if [[ ! "${public_key}" =~ ^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)[[:space:]]+[A-Za-z0-9+/=]+([[:space:]].*)?$ ]]; then
-    invalid_key_count=$((invalid_key_count + 1))
-    continue
-  fi
-  printf '%s\n' "${public_key}" > "${key_probe}"
-  if ! ssh-keygen -l -f "${key_probe}" >/dev/null 2>&1; then
-    invalid_key_count=$((invalid_key_count + 1))
-    continue
-  fi
-  printf '%s\n' "${public_key}" >> "${authorized_keys_tmp}"
-  valid_key_count=$((valid_key_count + 1))
-done < <(jq --raw-output '.[] | @base64' <<< "${authorized_keys_json}")
-rm -f "${key_probe}"
-
-chmod 0600 "${authorized_keys_tmp}"
-mv -f "${authorized_keys_tmp}" "${SSH_DATA}/authorized_keys"
-
-if (( invalid_key_count > 0 )); then
-  bashio::log.warning "Ignored ${invalid_key_count} invalid SSH public key(s)"
-fi
-
-if (( valid_key_count == 0 )); then
-  : > "${RUNTIME_DIR}/ssh-disabled"
-  chmod 0600 "${RUNTIME_DIR}/ssh-disabled"
-  bashio::log.warning 'No valid authorized_keys configured; SSH is disabled while the web terminal remains available'
-else
-  rm -f "${RUNTIME_DIR}/ssh-disabled"
-  bashio::log.info "Enabled public-key SSH with ${valid_key_count} authorized key(s)"
-fi
-
-# OpenSSH rejects public keys for a locked account. Password authentication stays disabled in sshd_config.
-passwd -d root >/dev/null
-usermod -s /usr/local/libexec/ha-ssh-session root
-
-find "${TMUX_DATA}" -mindepth 1 -maxdepth 1 -type d -name 'tmux-*' -exec rm -rf -- {} +
-
-sshd -t -f /etc/ssh/sshd_config
 nginx -t -c /etc/nginx/nginx.conf
+native_version=$(/usr/local/libexec/antigravity-real --version)
+bashio::log.info "Antigravity ${native_version} runtime ready"
+unset native_version
 
-bashio::log.info "antigravity runtime ready: $(antigravity --version)"
-
-session_name=$(antigravity_ha_config_string 'tmux_session_name' 'antigravity-ha')
-if [[ "${session_name}" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then
-  bashio::log.info "Initializing background tmux session '${session_name}'"
-  /usr/local/bin/web-terminal-entrypoint --background || true
-fi
+bashio::log.info 'Initializing the Ingress recovery terminal'
+/usr/local/bin/web-terminal-entrypoint --background || true

@@ -1,407 +1,86 @@
-# product_spec.md — 제품 요구사항
+# 3.0 product specification
 
-> 역사 문서입니다. Telegram까지 shared OAuth/customization/permission을 사용하는
-> 2.0.7 제품 계약은 [v2 product spec](../v2/product-spec.md)을 따릅니다.
+## Product goal
 
-## 1. 제품 정의
+Antigravity for Home Assistant installs Google Antigravity inside HAOS so a
+trusted administrator can inspect and change the real Home Assistant project
+from the official browser-based Remote Control Dashboard. The product favors a
+small, observable runtime over custom remote transport and approval machinery.
 
-`Antigravity for Home Assistant`는 HAOS의 Supervisor가 관리하는 Home Assistant App이다. 사용자는 Home Assistant 안의 웹 터미널, 일반 SSH 또는 App의 SSH endpoint에 직접 연결하는 ChatGPT mobile Remote를 통해 동일한 antigravity 환경에 접근한다.
+## Supported workflow
 
-antigravity는 Home Assistant 설정과 런타임을 관찰·수정·시험하는 신뢰된 운영 에이전트로 사용된다.
+1. The administrator installs the App on `amd64` or `aarch64` HAOS/Supervised.
+2. Ingress remains available for one-time authentication and recovery.
+3. `ha-antigravity-remote-login` performs the official interactive URL/code
+   Google sign-in.
+4. The running service detects authentication and starts the Remote daemon;
+   no restart is required.
+5. The administrator uses the same Google Account at
+   <https://antigravity.google.com/>, selects the instance, and manages tasks.
+6. After an App or HAOS restart, valid stored authentication starts Remote
+   automatically.
 
-## 2. 목표
+Missing authentication is a healthy waiting state, not an App startup failure.
+The daemon binds only App-internal loopback and publishes no external port.
 
-- 대시보드, 자동화, 스크립트, 테마, 패키지 등 `/config` 전체를 antigravity가 직접 관리한다.
-- 엔티티·기기·구역·통계·Trace·로그를 분석한다.
-- 실제 서비스 호출로 조명·스위치 등 기기를 시험한다.
-- 설정 변경 후 검사, 재로드/재시작, 재시험을 한 작업 흐름에서 수행한다.
-- antigravity가 개발한 Web UI와 Home Assistant 대시보드를 실제 Chromium으로 렌더링해 반응형 화면, 콘솔 오류, 네트워크·리소스 상태를 확인한다.
-- App 자체의 버그와 기능 제안을 읽기 전용으로 검증하고, 공개 가능한 구조화 보고서를 사용자의 최종 확인 뒤 공식 GitHub 저장소로 전달한다.
-- 별도 SMB, 외부 Ubuntu 중계 서버, 별도 진단 프록시 없이 HAOS 내부에서 완결한다.
+## User-visible capabilities
 
-## 3. 주요 사용자 시나리오
+- Project work in `/config`, `/share`, and `/media`.
+- Bounded Home Assistant Core/Supervisor reads and configuration validation.
+- Managed browser inspection of dashboard desktop/mobile UI, console, and
+  network behavior.
+- Local verified memory for user-stated or evidence-backed HA context.
+- `/ha-feedback` for read-only bug investigation and feature-report drafting.
+- Ingress diagnostics and recovery when Remote is unavailable.
 
-### US-001 웹에서 즉시 antigravity 사용
+## Public options
 
-사용자는 Home Assistant의 App 화면에서 Web UI를 열고 일반 셸 또는 자동 실행된 antigravity TUI를 사용한다.
+| Option | Default | Contract |
+| --- | --- | --- |
+| `remote_control_name` | `home-assistant` | 1–63 lowercase letters, digits, or `-`, beginning and ending alphanumeric; applied on service start |
+| `antigravity_sensitive_data_access` | `false` | Opt-in, read-only Recorder diagnosis; never permits DB writes |
+| `home_assistant_browser_auto_auth` | `true` | Manage an App-local read-only dashboard identity |
+| `log_level` | `info` | One of the App's schema-defined log levels |
 
-### US-002 Windows 터미널에서 SSH 사용
+No additional compatibility options are accepted in the 3.0 schema. Supervisor
+options are normalized to these four defaults during the transition. Until the
+credentialed Supervisor request succeeds, runtime services see only the four
+defaults and the request is retried on a later start.
 
-사용자는 공개키로 App에 SSH 접속하고 `/config`에서 `antigravity`, Git, YAML 검사, API helper를 사용한다.
+## 3.0 breaking reset
 
-### US-003 ChatGPT mobile Remote 직접 SSH 사용
-
-ChatGPT mobile Remote는 App의 공개키 SSH endpoint에 직접 연결하고, App에 내장된 antigravity app-server로 `/config` 프로젝트를 열어 파일 수정, 명령 실행과 테스트를 수행한다. 별도의 Mac/Windows desktop app 또는 중계 host는 필요하지 않다.
-
-### US-004 자동화 오류 진단
-
-antigravity는 자동화 YAML, 현재 상태, 과거 이력, Trace, Core/App 로그를 함께 분석하고 원인을 수정한다.
-
-### US-005 실제 기기 검증
-
-antigravity는 대상 엔티티의 현재 상태를 기록하고 서비스를 호출한 뒤 상태·로그·Trace를 재확인한다. 안전한 경우 원래 상태로 복원한다.
-
-### US-006 Home Assistant 운영
-
-antigravity는 설정 검사, Core 로그 조회, App 로그 조회, Core/App 재시작 등 `manager` 역할 범위의 운영 작업을 수행한다.
-
-### US-007 실제 브라우저 UI 회귀 검사
-
-antigravity는 Playwright Headless Chromium으로 대상 URL을 열고 데스크톱과 모바일 viewport에서 스크린샷을 비교한다. 같은 세션에서 JavaScript console/page error와 성공·실패한 정적/API resource를 확인하고 수정 후 다시 렌더링한다. Home Assistant 대시보드는 외부에 새 포트를 열지 않는 App 내부 loopback gateway를 통해 검사한다.
-
-### US-008 검증된 Home Assistant 메모리 사용
-
-antigravity는 Home Assistant의 엔티티·장치·영역·자동화 관계를 빠르게 찾고, 사용자가 설명한 별칭·실제 용도·선호를 검증된 메모리로 재사용한다. 일시 상태나 단일 추론은 활성 메모리로 승격하지 않으며 실제 HA와 충돌하면 출처와 충돌을 기록한 뒤 권위 있는 근거로 교정한다.
-
-### US-009 검증된 App 피드백 제출
-
-사용자는 `$ha-feedback bug <증상>` 또는 `$ha-feedback feature <요청>`를 실행한다. antigravity는 Home Assistant를 변경하지 않고 재현 가능성·현재 동작·기대 동작·검증 한계를 조사해 private JSON과 공개용 Markdown 보고서를 만든다. 사용자는 유사 이슈 후보와 고정 저장소·제목·라벨·본문을 검토하고 현재 대화에서 별도로 확인한 뒤 직접 GitHub 이슈를 만들거나 Issue Form 폴백을 사용한다.
-
-## 4. 기능 요구사항
-
-### FR-001 Antigravity CLI
-
-- 컨테이너에 공식 Antigravity CLI를 포함한다.
-- `antigravity`가 웹 터미널 및 SSH login shell의 PATH에서 동작한다.
-- 기본 작업 디렉터리는 `/config`다.
-- 버전은 App 이미지에 pin한다.
-
-### FR-002 antigravity 인증 영속화
-
-- `antigravity_HOME=/data/antigravity`를 사용한다.
-- `auth.json`, `config.toml`, 세션 데이터가 App 재시작/업데이트 후 유지된다.
-- `ha-antigravity-login` 장치 코드 로그인 명령을 제공한다.
-- 인증 파일은 로그와 Git에 노출하지 않는다.
-
-### FR-003 Ingress 웹 터미널
-
-- Home Assistant Ingress를 사용한다.
-- 외부 웹 터미널 포트를 노출하지 않는다.
-- WebSocket 스트리밍과 터미널 크기 변경을 지원한다.
-- tmux로 브라우저 재접속 시 세션을 복구한다.
-
-### FR-004 웹 터미널 antigravity 자동 실행
-
-App 옵션:
-
-```yaml
-web_terminal_auto_start_antigravity: false
-```
-
-- `false`: 일반 login shell 표시
-- `true`: antigravity를 한 번 실행, 종료 후 일반 shell로 복귀
-
-### FR-005 SSH
-
-- OpenSSH server를 제공한다.
-- 공개키 인증만 허용한다.
-- 컨테이너 포트 `22/tcp`, 기본 host port `2224`을 사용한다.
-- host port는 Home Assistant App의 Network 설정에서 변경 가능하다.
-- SSH host keys는 `/data`에 영속화한다.
-
-### FR-006 Remote SSH
-
-- ChatGPT mobile Remote가 App의 SSH host와 port에 직접 연결할 수 있어야 한다.
-- login shell에서 `antigravity`가 PATH에 있어야 한다.
-- 원격 antigravity 인증이 완료되어 있어야 한다.
-- `/config`를 원격 프로젝트로 열 수 있어야 한다.
-- mobile Remote가 SSH를 통해 App 내장 antigravity app-server를 bootstrap해야 한다.
-- Mac/Windows desktop app이나 중계 host가 없어도 이 경로가 동작해야 한다.
-
-### FR-007 `/config` 전체 관리
-
-다음 매핑을 사용한다.
-
-```yaml
-map:
-  - type: homeassistant_config
-    path: /config
-    read_only: false
-```
-
-하위 폴더를 별도 제한하지 않는다.
-
-### FR-008 Home Assistant Core API
-
-```yaml
-homeassistant_api: true
-```
-
-antigravity는 다음을 할 수 있어야 한다.
-
-- 현재 상태 및 서비스 조회
-- REST/WebSocket API 사용
-- 서비스 호출 및 실제 기기 테스트
-- 자동화/스크립트 실행
-- 이력·통계·Trace 조회가 가능한 공식 API 사용
-
-### FR-009 Supervisor API
-
-```yaml
-hassio_api: true
-hassio_role: manager
-```
-
-antigravity는 manager 역할이 허용하는 범위에서 다음을 수행한다.
-
-- Core/Supervisor/App 로그 조회
-- 설정 검사
-- Core 및 App 정보/상태 조회
-- Core/App 시작·중지·재시작 등 운영
-
-실제 허용 범위는 통합 테스트로 확인하며, 실패했다고 자동으로 `admin`으로 올리지 않는다.
-
-### FR-010 API helper 명령
-
-최소 명령:
+The first 3.0 start deletes these fixed App-owned roots once, without backup:
 
 ```text
-ha-antigravity
-ha-antigravity-login
-ha-api
-supervisor-api
-ha-config-check
-ha-core-logs
-ha-addon-logs
+/data/home
+/data/antigravity
+/data/antigravity-ha
+/data/antigravity-ha-memory
+/data/browser-auth
+/data/github-cli
+/data/ssh
+/data/tmux
 ```
 
-helper는 토큰을 출력하지 않고 HTTP 오류를 명확히 반환한다. 로그 helper는 Supervisor가 지원하는 `text/x-log`를 요청하고 동적 response media type은 고정 allowlist만 허용한다.
+It preserves `/config`, `/share`, `/media`, and the `/data/options.json` file
+itself. Before deletion, every target must resolve to the exact fixed path, must
+not be a symlink, and must satisfy the expected ownership check. An unsafe
+target stops startup. Completion uses an atomic marker; interruption safely
+retries the same operation on the next start.
 
-### FR-011 App 설정
+The reset intentionally removes all App-side authentication, customization,
+browser identity, memory, and feedback submission state. The user authenticates
+and configures retained features again from an empty state.
 
-최소 JSON 옵션:
+## Acceptance criteria
 
-- `authorized_keys`
-- `web_terminal_auto_start_antigravity`
-- `tmux_session_name`
-- `antigravity_approval_policy`
-- `antigravity_sandbox_mode`
-- `browser_approval_policy` (기본 `safe`)
-- `antigravity_user_files_update_mode` (기본 `preserve`)
-- `home_assistant_browser_auto_auth` (기본 `true`)
-- `log_level`
-
-SSH 외부 포트는 JSON 옵션이 아니라 Network 설정이다.
-
-### FR-012 Git 도구
-
-컨테이너에서 Git을 사용할 수 있어야 한다. 실제 Home Assistant `/config`의 Git 관리 여부는 사용자가 결정하며, App 소스 저장소와 HA 설정 저장소를 혼동하지 않는다.
-
-### FR-013 antigravity 운영 가드레일
-
-- `antigravity_HOME/AGENTS.md`와 `AGENTS.override.md`가 모두 없으면 Home Assistant 운영 안전 지침을 생성한다.
-- 기존 전역 지침은 기본 `antigravity_user_files_update_mode: preserve`에서 빈 파일과 심볼릭 링크를 포함해 내용과 권한을 변경하지 않고 보존한다.
-- 지침은 비밀값 비노출, 진단과 변경 권한의 분리, `.storage`/DB 보호, 변경 후 설정 검사, 고위험 동작 승인 규칙을 포함한다.
-- `/config`에 사용자가 둔 프로젝트별 `AGENTS.md`는 공식 antigravity 계층 규칙에 따라 더 구체적인 지침을 추가할 수 있다.
-- 사용자가 `refresh_agents` 또는 `refresh_all`을 명시하면 현재 App version에서 아직 갱신하지 않은 base `AGENTS.md`만 image 기본 지침으로 한 번 교체할 수 있다. `AGENTS.override.md`는 항상 보존되며 더 높은 우선순위에서 계속 적용된다.
-
-### FR-014 Playwright Headless Chromium renderer
-
-- App 이미지에 Microsoft `@playwright/mcp`와 그 lockfile, Alpine `chromium-headless-shell`을 포함하고 버전 입력을 고정한다.
-- antigravity에는 `/etc/antigravity/config.toml`의 공식 STDIO MCP server로 노출하며 브라우저 실패가 antigravity·웹 터미널·SSH 시작을 막지 않도록 optional server로 구성한다.
-- 같은 image-managed system config의 `developer_instructions`와 MCP navigation tool 설명은 Home Assistant dashboard 요청에 `http://127.0.0.1:8099/`와 Playwright MCP를 첫 경로로 지정한다. 일반 업데이트는 기존 사용자 config나 `AGENTS.md`를 덮어쓰지 않으며, 별도의 명시적 사용자 파일 갱신 option만 예외다.
-- 브라우저는 headless·isolated context로 실행하고 기본 desktop viewport `1440x900`과 mobile viewport `390x844`를 지원한다.
-- 최소 도구 집합은 탐색·snapshot·resize·screenshot·console message와 network request/resource 목록의 URL/status 검사를 제공한다. 민감 header/body를 포함할 수 있는 단일 request 상세 도구는 노출하지 않는다.
-- MCP enforcement proxy는 screenshot/console/network 호출의 선택적 `filename`을 거부해 image response와 `/run` output만 허용한다. 사용자가 영속 파일을 명시적으로 요청하면 browser tool 밖의 별도 파일 작업으로 취급한다.
-- `browser_run_code_unsafe`, 임의 file upload, code generation처럼 요구사항에 필요하지 않은 고위험 기능은 노출하지 않는다.
-- console warning/error와 uncaught page error, 2xx/3xx/4xx/5xx 및 전송 실패 resource를 구분해 보고할 수 있어야 한다.
-- `browser_approval_policy`는 `safe`, `never`, `always`만 허용한다. 누락값은 `safe`; safe는 탐색·조회 11개를 자동 승인하고 click/form/key/select/type 5개는 prompt, never는 현재 allowlist 전체 approve, always는 현재 allowlist 전체 prompt로 매핑한다.
-- server 기본은 prompt이고 현재 허용 도구 16개만 명시적으로 override해 미래 도구를 fail closed한다. 이 설정은 proxy allowlist나 Home Assistant 권한을 늘리지 않으며 top-level `antigravity_approval_policy=never`의 전역 자동 승인보다 강한 prompt 경계로 간주하지 않는다.
-
-### FR-015 Home Assistant dashboard loopback gateway
-
-- 인증된 대시보드 렌더링에는 컨테이너 loopback `127.0.0.1:8099` gateway를 사용하고 `config.yaml`의 Ingress·Network port를 추가하지 않는다.
-- gateway는 Home Assistant frontend asset, auth, Core REST/WebSocket을 같은 direct Core browser origin으로 결합해 전용 사용자의 permission을 일관되게 적용한다.
-- Supervisor token은 renderer에 전달하지 않는다. 기본 `true`인 `home_assistant_browser_auto_auth`는 App init과 새 MCP 시작 시 지원되는 Home Assistant API로 전용 active·local-only·non-admin·sole `system-read-only` user와 long-lived token을 자동 생성 또는 재사용하고 임시 password credential/OAuth refresh token을 제거한다. option이 누락된 기존 설치도 `true`로 해석한다.
-- 자동 인증 OFF는 다음 App/MCP browser session부터 runtime token 주입과 자동 생성을 중지하되 `/data`와 Home Assistant의 관리형 identity는 보존한다. ON 재시작은 같은 identity를 재사용한다. 완전 삭제는 OFF로 전환하고 App/browser session을 재시작한 뒤 명시적 `ha-browser-auth-remove`만 수행하며 ON에서는 재생성 경쟁을 막기 위해 삭제를 거부한다. optional App secret의 수동 token은 ON 상태에서만 명시적 override로 유지한다.
-- 동적으로 재할당되는 App `/32`와 Docker 대역을 `trusted_networks`/`trusted_proxies`에 추가하지 않고 기존 `homeassistant` auth provider를 그대로 유지한다.
-- 관리형 recovery state와 LLAT는 `/data/browser-auth`의 root-only `0700`/`0600` 파일에 원자 저장하고, exact ready state만 `/run`의 `0600` runtime token으로 활성화한다. token은 command argument, URL, MCP 응답, screenshot, console/network artifact 또는 App log에 원문으로 남기지 않는다. Playwright `--secrets` 입력값 치환은 사용하지 않고 관리 proxy가 stdout/stderr exact 문자열만 직접 마스킹한다.
-- App init과 각 MCP 시작은 user policy, credential 부재와 exact single LLAT metadata를 재검증한다. token이 없거나 검증·Core/DNS/TLS가 실패하면 일반 Web UI 렌더링 기능은 유지하되 Home Assistant 자동 인증은 하지 않고 login 화면 또는 인증 부재를 결과에 명시한다. gateway HTTPS는 image CA와 `homeassistant` hostname을 검증한다.
-- ensure/setup/remove는 kernel lock으로 직렬화하고 self-revoke를 재접속으로 확인한다. 모호한 `local_only` auth rejection이나 transport 실패에서는 영구 복구 자료를 보존하고 runtime만 fail closed한다. `ha-browser-auth-setup`은 자동 ensure 실패의 수동 재시도·진단용이며 OFF에서는 mutation 전에 거부한다.
-
-### FR-016 업데이트와 사용자 antigravity 설정 보존
-
-- App이 관리하는 Playwright MCP 기본값은 이미지 계층의 `/etc/antigravity/config.toml`에 둔다.
-- `antigravity_user_files_update_mode`는 `preserve`, `refresh_agents`, `refresh_all`만 허용하고 누락되거나 기본값이면 `preserve`로 해석한다. 따라서 기존 설치의 `0.2.3` 첫 시작도 사용자 파일을 변경하지 않는다.
-- `preserve`에서는 `/data/antigravity/config.toml`과 전역 지침의 기존 사용자 내용을 일반 App 업데이트 과정에서 수정·병합·초기화하지 않는다. 파일이 없는 신규 설치에는 기존 최초 provisioning 계약에 따라 기본본을 생성한다.
-- `refresh_agents`는 base `AGENTS.md`를 image 기본 지침으로, `refresh_all`은 `AGENTS.md`와 `config.toml`을 각각 image 지침/current App option 기반 기본 config로 교체한다. 선택은 target별로 같은 App version에 한 번만 적용되며 같은 version의 재시작에서는 반복하지 않는다. option을 유지하면 다음 App version에서 해당 target을 다시 한 번 갱신한다.
-- `config.toml` 갱신은 사용자가 추가한 MCP, model, provider와 기타 antigravity 설정을 기본본으로 되돌리는 파괴적 선택이다. 적용 전 기존 target을 `/data/antigravity/backups/user-files` 아래 root-only backup으로 보존한다.
-- `AGENTS.override.md`, antigravity 인증·session, SSH identity, browser identity와 Home Assistant `/config`는 어느 갱신 mode에서도 대상이 아니다.
-- 갱신 target이 symbolic link, 다중 hardlink 또는 일반 파일이 아니거나 안전한 소유권 검사를 통과하지 못하면 링크를 따라가지 않고 전체 선택 갱신을 fail closed한다.
-- 공식 antigravity 우선순위에 따라 사용자·신뢰된 프로젝트 config가 system MCP 기본값을 재정의하거나 비활성화할 수 있어야 한다.
-- Playwright/Chromium 설치는 image build에서 끝내고 App 시작 시 `npm install`, browser download 또는 `latest` resolution을 수행하지 않는다.
-
-### FR-017 검증형 Home Assistant 메모리 저장소와 bootstrap
-
-- 영속 메모리는 root-only `/data/antigravity-ha-memory/memory.sqlite3`의 SQLite와 FTS5를 사용한다. 디렉터리는 `0700`, database와 journal 계열 파일은 `0600`으로 유지한다. Daemon refresh와 CLI/MCP 조회의 정상적인 동시 WAL contention은 connection 시작부터 bounded wait하고, 검사 중 다른 connection의 commit이 확인되며 모든 row가 exact `search_fts` table 범위인 FTS5 진단만 재검사하며 새/빈 schema initialization은 writer와 직렬화한다. WAL/SHM/journal이 검사 중 정상 소멸한 경우만 해당 ephemeral 보조 파일에 한해 허용한다. Lock-only 무결성 진단은 `database_busy`로 구분하되 남아 있는 보조 파일의 안전 위반, 안정된 FTS5 진단을 포함한 다른 결과나 실제 손상은 자동 복구하지 않고 fail closed한다.
-- 독립 S6 서비스 `ha-memoryd`가 Core 연결과 refresh를 담당한다. memory service나 Core가 준비되지 않아도 antigravity, 웹 터미널, SSH, browser 기능은 계속 시작하며 메모리는 명확한 degraded/stale 상태와 closed token/DNS/transport/timeout/auth/protocol/command/snapshot code를 반환한다. daemon log에는 command 원문이 아니라 allowlist code만 남긴다.
-- 빈 store에서도 `ha-memoryd`는 시작 직후 수동 명령 없이 첫 refresh를 시도하고, 성공 이후 정기 refresh한다. 고정 Supervisor Core WebSocket proxy와 image-pinned `ws` runtime을 통해 entity/device/area registry, `get_states`, automation config와 related 결과만 수집한다. automation graph는 공식 계약대로 `search/related`의 `item_type=automation`, `item_id=<automation entity_id>`로 요청하며 의미가 다른 `item_type=entity` 응답을 대체 graph로 합치지 않는다. `HA_WS_URL` 환경 override, Upgrade credential header나 direct-Core credential fallback을 제공하지 않는다. 공식 command의 지원 여부와 응답 오류를 검사하고 임의 WebSocket command나 `.storage` 직접 읽기로 우회하지 않는다.
-- entity/device/area의 식별자·표시명·설명·연결 관계와 automation의 식별자·alias·description·정규화된 관련 대상만 allowlist schema로 저장한다. automation은 entity registry와 state 합집합으로 발견한다. `get_states`의 raw state와 임의 attributes는 저장하지 않되 표시명, device class, icon, automation id/mode 같은 명시적 allowlist metadata만 정규화할 수 있다.
-- automation raw config, 임의 API response, `/config` 원문, 대화 transcript, prompt, token, secret, credential과 비밀 가능성이 있는 비허용 field는 database와 FTS index에 저장하지 않는다.
-- refresh는 필수 응답을 정규화한 뒤 transaction으로 snapshot을 교체한다. unavailable automation의 성공 응답 `config: null`은 빈 config와 bounded warning을 가진 완전한 응답으로 처리한다. Core가 개별 `search/related`에 정상 result envelope의 `success:false`, `error.code=unknown_error`를 반환한 경우에만 optional graph enrichment를 빈 객체와 bounded warning으로 격리하고, 성공한 automation config에서 allowlist area/device/entity 직접 관계를 추출해 나머지 snapshot을 보존한다. 그 밖의 server command code, server/client timeout, unauthorized, invalid format, config 실패, auth/transport/WebSocket close/protocol 오류, 누락·malformed envelope와 malformed successful related 결과는 계속 전체 refresh를 fail closed한다. 이런 필수 실패에서는 last-known-good catalog를 보존하고 불완전한 응답으로 대량 삭제하거나 stale 자료를 새 canonical truth로 표시하지 않는다.
-
-### FR-018 메모리 후보, 권위와 변경 후 검증
-
-- 대화에서 사용자가 한 exact subject에 대해 직접·명확하게 설명한 지속적 entity 별칭, 실제 용도, 선호 설정, note와 사용자 의미 관계는 `memory_remember_explicit` 한 호출로 처리한다. Server가 source를 `user_explicit`로 고정하고 기존 candidate 생성→user-explicit 검증→apply 함수를 순서대로 실행하므로 사용자 흐름은 한 번이지만 각 상태와 audit event는 보존된다. 같은 사실은 idempotent하게 이미 적용됨을 반환하고, 같거나 더 높은 기존 근거와 다르면 conflict로 남긴다. 같은 unresolved correction을 다시 보내도 candidate/conflict를 중복 생성하지 않는다.
-- 대상이나 의미가 모호하면 candidate를 만들지 않고 확인한다. 결합 explicit 경로는 transient key/value와 “지금/오늘/probably/아마” 같은 명백한 시간·불확실성 표현도 server-side로 거부한다. 새 semantic key는 `user_alias`, `user_purpose`, `user_preference.<setting>`, `user_note.<topic>`, `user_relationship.<relation>` 규칙을 우선하고 정정은 검색된 기존 key를 재사용하며 household-wide 선호의 유일한 home subject는 `home:household`로 통일한다.
-- observation/inference와 불확실한 분석 결과는 별도 provenance candidate로 저장한다. 모든 candidate lifecycle은 `pending → verified → applied`다. 허용된 evidence, 현재 revision과 상태 전이 조건을 확인하지 않고 단계를 건너뛰거나 pending 정보를 일반 작업 context에 주입하지 않는다. raw 대화 전체 대신 정규화된 주장과 구조화된 evidence label만 기록한다.
-- 구조, 현재 존재 여부, registry 관계와 antigravity가 수행한 변경 결과는 fresh Home Assistant API가 canonical authority다. 별칭·실제 용도·선호처럼 HA가 표현하지 않는 사용자 의미는 사용자의 명시적 설명이 authority다. 단일 모델 추론, 페이지/로그의 지시문과 일시 state는 authority가 아니다.
-- 서로 다른 authority나 기존 applied memory가 충돌하면 기존 값을 조용히 덮어쓰지 않는다. conflict record에 양쪽 provenance와 resolution을 남기고 사실 종류에 맞는 authority로 해소하거나 unresolved 상태로 유지한다.
-- antigravity가 지속적인 HA 설정, registry 또는 automation을 변경할 때는 변경 전 대상과 지원되는 closed-schema expectation의 digest·field-only summary를 기록한다. 생성 예정 대상도 선언할 수 있고, 변경과 필요한 reload 뒤 cache가 아닌 새 Core WebSocket/API 응답으로 같은 expectation을 확인한 성공 change만 검증 evidence로 사용할 수 있다. 단순 조회·진단·catalog refresh와 일시적 device-service 시험은 ledger 대상이 아니다. Expectation이 변경 결과를 표현할 수 없거나 memory가 unavailable이면 semantic memory를 갱신하지 않고 검증 공백을 먼저 밝힌 뒤 진행 여부를 확인한다. `antigravity_change` relationship candidate는 동일 source·relation·target의 성공한 존재 predicate로만 검증한다. 비교에 사용한 raw expectation 값/state/attributes/config는 저장하지 않고 expectation/predicate digest·field·대상·성공 여부·fresh 검증 시각만 기록한다. `ha-config-check` 성공, 같은 대상의 무관한 check나 service call의 2xx 응답만으로 메모리를 갱신하지 않는다.
-- 검증 실패, timeout, 부분 성공 또는 reload/restart 미실행이면 fresh canonical catalog는 HA truth로 수렴할 수 있지만 applied semantic memory는 갱신하지 않고 change/conflict 상태와 실패 근거만 남긴다.
-
-### FR-019 관련 검색, 감사 이력과 rollback
-
-- `ha-memory` CLI와 image-managed optional STDIO `ha_memory` MCP는 동일한 local store를 사용한다. Search query는 정규화 후 최대 256자, 기본 8·최대 20 subject, serialized JSON 최대 32 KiB다. 각 search subject는 outgoing/incoming relation 각각 기본 12개, applied memory 20개와 open conflict 10개로 제한하고 exact show만 relation 한도를 각각 30개로 늘린다. exact show/history/conflict는 별도 row/field 한도와 MCP 2 MiB hard ceiling을 사용한다. 기본 search/show는 canonical catalog와 비충돌 applied memory 중 질문에 관련된 최소 결과만 반환한다.
-- 전체 database, 전체 catalog, pending candidate, raw evidence 또는 audit log를 매 요청 context로 읽지 않는다. Candidate 후속 관리는 exact subject/status와 최대 20건으로 제한한 `memory_list_candidates`, 철회는 `memory_reject_candidate`를 사용하며 history/conflict 조회도 사용자가 요청하거나 검증 workflow가 필요할 때만 별도 bounded 도구로 수행한다.
-- candidate 생성, evidence 추가, 검증, 적용, conflict 해결과 rollback은 actor/source, before/after, 시각과 결과가 있는 history-preserving audit event를 남긴다.
-- rollback은 current-row precondition을 확인하고 새 compensating event를 추가해 메모리 mutation을 되돌린다. 감사 이력을 삭제하지 않고 원 event에는 rollback linkage만 기록하며 HA-derived catalog를 과거 snapshot으로 rollback하지 않는다. HA catalog는 fresh refresh로만 교정한다.
-- 기본 `AGENTS.md`에는 메모리 사용·검색·검증 규칙과 helper 위치만 기록하고 entity별 alias·purpose·preference·relationship·candidate/catalog 데이터는 어떤 AGENTS 계열 파일에도 넣지 않는다. 기존 설치의 base `AGENTS.md`가 기본 `preserve`로 유지되므로 `/etc/antigravity/config.toml`의 image-managed MCP와 developer instruction에도 bounded search, empty/degraded/stale 고지, 같은 요청의 explicit remember와 변경 검증 규칙을 함께 제공한다.
-
-### FR-020 검증형 App 피드백 자동화
-
-- `0.9.7` image는 image-managed `$ha-feedback` Skill과 `/usr/local/bin/ha-feedback` helper를 제공한다. 명시적 `bug`/`feature` 호출과 App 버그·기능 제안으로 해석되는 자연어 요청은 이 흐름으로 라우팅하되 Skill을 사용할 수 없는 환경에는 같은 필드와 안전 경계를 가진 수동 Issue Form 경로를 제공한다.
-- 피드백 조사는 관찰·진단만 수행한다. Home Assistant 설정·registry·dashboard·automation·device·App·프로젝트를 변경하지 않고, 서비스 호출·reload·restart·update·recovery·restore·install·remove를 실행하지 않는다. 조사 중 허용되는 로컬 write는 보고서 bundle뿐이며, 제출 단계는 private runtime preview state와 bundle 내부 claim/receipt만 추가로 쓸 수 있다. GitHub 제출은 별도의 외부 write다.
-- 입력은 command line 본문이 아니라 `0600`, regular, single-link private JSON 파일로 전달한다. Helper는 `collect bug|feature`, `validate`, `render`를 제공하고 결과를 `/config/antigravity-workspace/feedback/<UTC>-<kind>-<report-id>/` 아래 `0700` 디렉터리와 `0600` `report.json`, `public-report.md`로 원자 저장한다. Rendered Markdown은 검증된 JSON에서만 재생성하며 손으로 수정하지 않는다.
-- Bug report는 재현 단계와 관측 사실에서 분리한 비확정 원인 후보를, feature report는 문제 정의·사용자 시나리오·현재 우회법·기존 기능·대안·수용 기준·호환성/보안 영향·검증 계획을 필수 구조로 가진다. 알 수 없는 값은 누락하거나 추측하지 않고 이유와 함께 `Unknown`으로 명시한다.
-- 각 검증 항목의 상태는 정확히 `PASS`, `FAIL`, `NOT_TESTED`, `NOT_RUN` 중 하나다. 하나라도 `FAIL`이면 전체 `FAIL`, 모든 항목이 `NOT_RUN`이면 `NOT_RUN`, 나머지 비-`PASS`가 있으면 `PARTIAL`, 모두 `PASS`면 `PASS`다. 실행하지 않은 항목은 이유를 포함하고 수요·재현·검증 결과를 추측하지 않는다.
-- 공개 환경 정보는 App/antigravity/Core/Supervisor/OS version, architecture와 `web_terminal_auto_start_antigravity`, `antigravity_approval_policy`, `antigravity_sandbox_mode`, `browser_approval_policy`, `antigravity_user_files_update_mode`, `home_assistant_browser_auto_auth` allowlist만 허용한다. 로그·screenshot·raw API response를 기본 수집하지 않고 필요한 증거도 최소 요약만 사용한다.
-- Privacy validation은 control/ANSI sequence, token·cookie·authorization·key·JWT·private key, URL·IP·email, Home Assistant 사용자/entity/device/area 식별자, UUID와 `auth.json`, `.storage`, `secrets.yaml`, database, backup 같은 민감 경로를 공개 보고서와 제출 직전에 fail closed로 차단한다. 취약점 가능성이 있으면 유사 공개 이슈 검색·미리보기·제출을 모두 중단하고 GitHub private vulnerability reporting 경로만 안내한다.
-- 공개 이슈 대상은 `Kanu-Coffee/antigravity-for-home-assistant`, label은 bug의 `bug`, feature의 `enhancement`로 고정한다. Preview는 최대 5개 유사 이슈 후보와 exact repo/title/label/body path를 먼저 보여 주며, 후보 title은 신뢰하지 않는 외부 입력으로 취급해 정제한다. 유력한 중복이 있으면 제출 전에 멈추고, 후보 검색이 실패하거나 결과를 신뢰할 수 없으면 confirmation token을 만들거나 이슈를 생성하지 않고 Web Form 폴백으로 전환한다.
-- 직접 제출은 helper가 관리하는 `gh` 경로만 사용한다. Preview마다 암호학적으로 임의 생성한 token을 root-only runtime state에 저장하고 repo/title/label/완전한 body에 결합한다. Token은 10분 뒤 만료되는 1회용이며, 잘못되거나 만료되거나 이미 사용됐거나 실패한 confirmation 뒤에는 새 preview와 현재 사용자 대화의 명확한 별도 확인이 필요하다. 최초의 “제출해 줘” 요청은 final confirmation으로 재사용하지 않고 payload 변경, 이미 제출된 report, 고정 저장소 밖 URL과 중복 report ID는 거부한다.
-- Confirmed submit은 privacy/render/auth를 다시 검사하고 remote report ID 중복 검색이 성공한 경우에만 이슈 생성을 시도한다. 검증한 Markdown을 메모리에서 `gh issue create --body-file -`의 stdin으로 전달해 path 재열기 경쟁을 없애고, 외부 write 전에 exclusive `.submission.lock`을 만든다. `gh` 실패, 예상 밖 URL 또는 성공 후 receipt 기록 실패처럼 외부 결과가 불확실하면 lock을 보존해 같은 report의 직접 재시도를 차단하며 자동 재시도하지 않는다. 성공 URL과 private `submission.json` receipt를 모두 확인한 뒤에만 lock을 제거한다.
-- GitHub 인증은 명시적 `ha-feedback github login|logout`에서만 변경하고 `GH_CONFIG_DIR=/data/github-cli`를 사용한다. Helper는 `GH_TOKEN`, `GITHUB_TOKEN`, `SUPERVISOR_TOKEN` 등 상속 token을 제거한 최소 환경으로 `gh`를 실행한다. 로그인 전 이 root-only 영속 경로의 평문 credential이 Home Assistant App backup에 포함될 수 있음을 경고하고 사용자가 위험을 확인해야 한다.
-- 미인증, 후보·remote 중복 검색 실패 또는 `gh` 제출 실패 시 자동 재시도하거나 token을 요구하지 않는다. 짧게 prefill된 Issue Form URL과 복사용 `public-report.md`를 제공하고 브라우저의 최종 제출은 사용자가 수행한다. 외부 결과가 불확실한 실패에서는 먼저 고정 저장소에 같은 report ID의 이슈가 생성됐는지 확인하고, 긴 보고서 본문과 민감 정보는 URL에 넣지 않는다.
-
-## 5. 비기능 요구사항
-
-### NFR-001 재현성
-
-Antigravity CLI, base image, `@playwright/mcp` lockfile, Playwright core와 Chromium을 포함한 주요 패키지는 버전 또는 digest로 추적 가능해야 한다. Memory SQLite v1 schema version gating과 FTS5 가용성도 image build·contract test에서 추적한다. 지원 migration이 없는 schema는 자동 변경하지 않는다.
-
-### NFR-002 복구 가능성
-
-App 재설치 전까지 `/data`의 antigravity 인증, 사용자 antigravity 설정, SSH host key, 관리형 browser identity recovery state와 검증형 HA 메모리가 유지된다. 사용자가 명시적으로 user-file refresh를 선택한 경우에는 기존 config/지침을 root-only backup으로 남기고 target별 version 적용 기록으로 재시작 반복을 막는다. browser context와 screenshot/output은 enforcement proxy가 `/run`의 일시 데이터로 제한하며 App 업데이트에 필요한 영속 상태로 취급하지 않는다. 메모리 mutation은 history-preserving audit와 compensating rollback으로 복구하고 HA catalog는 과거 cache 복원이 아니라 fresh API refresh로 수렴시킨다. 설정 변경은 Git checkpoint 및 Home Assistant 설정 검사 절차를 권장한다.
-
-### NFR-003 보안 기본값
-
-- Ingress 관리자 전용
-- SSH 공개키 전용
-- 기본 AppArmor 활성
-- `manager` 역할
-- Docker/host privileged 권한 없음
-- Playwright MCP는 STDIO, Home Assistant gateway는 loopback 전용이며 새 host/Ingress port 없음
-- Chromium `--no-sandbox`는 기존 App 컨테이너 경계 안에서만 허용하며 이를 위해 App privilege를 추가하지 않음
-- 기본 `preserve`에서 기존 사용자 지침을 덮어쓰지 않고, 명시적 refresh에서도 override/프로젝트 지침은 제외하는 영속 antigravity 운영 가드레일. 이 파일은 방어 심층화 지침이며 권한 강제 경계는 아니다.
-- HA 메모리는 root-only SQLite와 container-local STDIO MCP/CLI로만 접근하고 새 host/Ingress port, 외부 vector service 또는 cloud sync를 만들지 않음
-
-### NFR-004 관찰 가능성
-
-App 시작 로그는 antigravity readiness와 loopback gateway 구성을 토큰 없이 기록한다. Playwright/Chromium 버전은 image build·smoke 증거로 남기고, MCP 렌더 결과는 viewport, screenshot 증거, console severity와 resource URL/status를 포함하되 인증 header와 token 원문을 출력하지 않는다. 메모리는 schema version, daemon readiness, 마지막 성공 refresh 시각, stale/degraded 상태, row 개수와 bounded warning 개수만 정제해 보고하고 저장 값·대화·evidence·warning 대상 ID 원문은 App log에 출력하지 않는다.
-
-### NFR-005 플랫폼
-
-- M1: amd64만 실제 지원 표시
-- M3: aarch64 검증 후 추가
-- Alpine system Chromium 조합은 Playwright upstream의 공식 Linux 배포 대상이 아니므로 로컬 amd64 container 검증과 별개로 실제 HAOS/AppArmor 검증 전에는 지원 완료로 표시하지 않음
-
-### NFR-006 메모리 무결성과 제한된 context
-
-- v1 schema initialization/version gating, snapshot refresh와 memory mutation은 transaction, foreign key, 허용 enum과 application current-row/status precondition을 사용한다.
-- 검색은 FTS5와 exact identifier/alias lookup을 사용한다. 일반 search는 결과 row 수와 직렬화 크기를 함께 제한하고 다른 read 명령은 별도 row/field 한도와 MCP hard ceiling을 사용한다.
-- database 손상, unsafe file type/link/ownership, lock 충돌이나 schema 불일치는 자동 재생성·덮어쓰기 대신 fail closed/degraded로 보고한다.
-- 자동 fixture 검증과 실제 HAOS Core WebSocket·App update E2E 증거를 구분한다.
-
-### NFR-007 피드백 프라이버시와 재현성
-
-- GitHub CLI는 공식 `2.93.0` linux amd64 archive와 고정 SHA-256으로 image build에서 검증하고 runtime download나 `latest` resolution을 하지 않는다.
-- Report schema, status enum, privacy scanner와 rendered-body parity는 deterministic fixture로 회귀 검증한다. Fixed repository/label, random 10분 1회용 confirmation state, candidate/remote duplicate fail-closed, stdin body 전달과 exclusive submission claim은 fake `gh`·동시성 fixture로 검증한다.
-- Report와 선택형 GitHub login은 App restart/update 뒤 유지하되 각각 `/config`와 `/data`의 private permission을 보존한다. App backup은 `/data/github-cli`의 평문 credential을 포함할 수 있으므로 credential과 같은 민감자료로 취급한다.
-- 보고서 생성 실패, GitHub 미인증·실패·중복은 Home Assistant, antigravity, Web UI, SSH와 browser 가용성을 낮추지 않고 명확한 fallback 또는 fail-closed 상태를 반환한다.
-
-## 6. 비목표
-
-MVP에서는 다음을 만들지 않는다.
-
-- 별도 GUI 관리 콘솔
-- antigravity 대화 기록 전용 웹 앱
-- raw antigravity 대화 transcript 또는 prompt archive
-- Recorder 대체, entity state/attributes의 시계열 저장소 또는 장기 통계 database
-- memory rollback을 이용한 Home Assistant 설정·registry·기기 상태 자동 되돌리기
-- 외부 vector database, cloud embedding 또는 메모리 동기화 서비스
-- 읽기 전용 API 프록시
-- 세밀한 AppArmor 경로 제한
-- Docker socket 관리
-- HAOS host shell 제공
-- 비밀번호 SSH 로그인
-- 멀티 사용자/역할 분리
-- 자동 Bubble Card 생성 전용 마법사
-- antigravity API key를 GitHub Actions에 자동 복제
-- headed browser, VNC, 원격 debugging port 또는 외부 공개 browser service
-- Firefox/WebKit 다중 browser matrix와 영속 browser profile
-- 피드백 전용 MCP, HTTP API, App route/service, webhook, GitHub Action, telemetry 또는 자동 upload endpoint
-- 임의 GitHub 저장소·label 선택, 사용자 확인 없는 자동 이슈 제출 또는 PAT/App option 입력
-- 피드백 조사 중 Home Assistant 자동 수정, 서비스 호출, reload/restart, update, recovery 또는 restore
-- 로그·screenshot·raw Home Assistant 자료의 자동 첨부와 보안 취약점의 공개 이슈 게시
-
-## 7. MVP 수용 기준
-
-아래가 모두 충족되어야 M1/M2 완료다.
-
-1. App이 HAOS amd64에 설치·시작된다.
-2. Web UI에서 ttyd가 열리고 `/config` shell을 제공한다.
-3. auto-start 옵션이 false/true 모두 정확히 동작한다.
-4. 웹 연결을 끊었다 다시 열어도 tmux 세션이 복구된다.
-5. `antigravity login --device-auth` 후 인증이 App 재시작 뒤에도 남는다.
-6. 공개키 SSH가 기본 host port 2224에서 동작한다.
-7. ChatGPT mobile Remote의 직접 SSH 연결이 App 내장 antigravity app-server로 `/config` 프로젝트를 연다.
-8. antigravity가 `/config` 테스트 파일을 생성·수정·삭제할 수 있다.
-9. Core API로 상태 조회와 안전한 서비스 호출을 성공한다.
-10. Supervisor manager API로 로그 조회 및 설정 검사를 성공한다.
-11. `admin`, Docker API, full access, host network 없이 위 기능이 동작한다.
-12. CI build/lint가 통과하고 GitHub에 코드와 문서가 push된다.
-13. 기본 운영 가드레일이 최초 생성되고 사용자 수정본은 App 재시작 뒤에도 보존된다.
-
-## 8. 브라우저 렌더러 개선 수용 기준
-
-기존 M1/M2 수용 결과와 별도로 다음을 모두 확인해야 Playwright 개선을 HAOS 완료로 판정한다.
-
-1. `antigravity mcp list` 또는 동등한 공식 경로에서 image-managed Playwright server가 보이고 기존 `/data/antigravity/config.toml` 내용이 유지된다.
-2. `antigravity debug prompt-input` 또는 동등한 공식 진단에서 기존 사용자 `AGENTS.md`를 보존한 채 image-managed developer instruction이 Home Assistant dashboard의 첫 browser 경로를 `http://127.0.0.1:8099/`로 지정하고, `browser_navigate` 도구 설명에도 같은 경로가 보인다.
-3. 로컬 fixture Web UI를 `1440x900`과 `390x844`로 렌더링하고 두 PNG screenshot과 viewport별 DOM snapshot을 만든다.
-4. 의도한 console/page error와 2xx, 3xx, 4xx/5xx, 전송 실패 resource를 MCP 도구로 구분한다.
-5. browser, MCP response, process argument, App log와 output artifact 어디에도 fixture Supervisor token과 dedicated browser token 원문이 없다.
-6. 새 host port, Ingress port, `host_network`, Docker API, `full_access`, 추가 privilege 없이 동작한다.
-7. 기존 설치를 삭제하거나 `/data`를 reset하지 않은 일반 App 업데이트 뒤 antigravity 인증·사용자 config·SSH host identity와 Playwright system MCP가 함께 동작한다.
-8. 실제 HAOS amd64에서 Chromium이 기본 AppArmor 아래 시작되고 loopback gateway로 인증된 Home Assistant dashboard를 desktop/mobile 양쪽에서 렌더링한다.
-
-8번은 HAOS 전용이며 로컬 Docker 성공으로 대체하지 않는다. Public `0.2.3`의 실제 HAOS에서 기본 AppArmor를 유지한 dashboard desktop/mobile 경로가 동작했다고 사용자가 확인해 **PASS**로 기록한다. 원본 진단 자료가 저장소에 포함된 자동 증거라는 뜻은 아니며 Chromium·Playwright package revision이 바뀌면 다시 검증한다.
-
-## 9. 검증형 HA 메모리 수용 기준
-
-기존 MVP와 browser 수용 결과와 별도로 다음을 모두 충족해야 메모리 기능을 완료로 판정한다.
-
-1. 첫 성공 bootstrap이 `/data/antigravity-ha-memory` `0700`, `memory.sqlite3`와 SQLite journal 계열 파일 `0600`을 만들고 App 재시작·일반 업데이트 뒤 schema와 applied memory를 보존한다.
-2. fixture가 entity/device/area registry, `get_states`, `automation/config`, `search/related` allowlist를 통과해 정규화된 catalog와 관계를 만들며 raw state, 비허용 attributes, automation config, API response, 대화와 fixture secret은 database·FTS·로그 어디에도 남지 않는다.
-3. 동일 snapshot의 반복 refresh가 중복을 만들지 않는다. 개별 automation-related의 관측된 `unknown_error`만 config-derived 관계와 bounded warning으로 격리하며, 다른 command code·config·transport·timeout·protocol·malformed 응답 실패에서는 last-known-good catalog를 유지하고 stale/degraded 상태를 표시한다.
-4. 별칭·용도·선호·관계 candidate가 `pending → verified → applied`를 순서대로 거치며 추론이나 일시 state만으로 승격되지 않는다.
-5. HA canonical fact와 사용자 semantic fact의 authority가 사실 종류별로 적용되고 충돌은 provenance와 resolution이 있는 conflict record로 확인된다.
-6. 변경 전 저장한 expectation digest와 변경 후 같은 계약의 fresh API response가 일치할 때만 change가 memory evidence가 되며 실패·timeout·부분 성공에서는 applied semantic memory가 바뀌지 않는다.
-7. CLI와 MCP search가 관련 applied/canonical 결과만 정해진 row/32 KiB 한도 안에서 반환하고 exact show/history/conflict도 별도 한도 안에서 전체 database, pending 후보, raw evidence를 기본 context에 포함하지 않는다.
-8. 모든 memory mutation의 audit history가 조회되고 current-row precondition을 지키는 compensating rollback이 동작한다. rollback 뒤에도 원래 event와 linkage가 남고 HA catalog와 실제 HA는 변경되지 않는다.
-9. `ha-memoryd` 또는 Core WebSocket 실패가 antigravity, Web UI, SSH와 browser 시작을 막지 않으며 catalog의 `degraded`/`stale` 상태 또는 memory tool unavailable 오류를 구분한다.
-10. 기존 사용자 `AGENTS.md`와 `/data/antigravity/config.toml`을 보존한 일반 업데이트에서도 image-managed `ha_memory` MCP와 developer instruction이 bounded retrieval·검증 경로를 제공한다.
-11. 1~10의 fixture·contract 검증과 별도로 실제 HAOS amd64에서 첫 bootstrap, Core restart 후 refresh, App restart/update 영속성, semantic candidate 적용, bounded retrieval과 non-fatal degradation을 확인한다. 이 E2E는 로컬 Node/SQLite 테스트로 대체하지 않는다.
-
-## 10. 검증형 App 피드백 수용 기준
-
-1. 새 antigravity session에서 명시적 `$ha-feedback bug|feature`와 App 피드백 자연어 요청이 image-managed Skill로 라우팅되고 기존 사용자 `AGENTS.md`/`config.toml`은 보존된다.
-2. Bug와 feature fixture가 schema를 통과하고 `report.json`과 `public-report.md`를 private permission으로 생성하며 render parity와 정확한 status/overall 판정이 일치한다.
-3. 악성 fixture의 secret, URL/IP, HA 식별자, 민감 경로와 control sequence가 report 생성 또는 제출 전에 fail closed로 차단되고 log/screenshot을 자동 수집하지 않는다.
-4. 조사 과정에서 Home Assistant 설정·registry·dashboard·automation·device·App·프로젝트, 서비스, reload/restart/update/recovery/restore가 변경되지 않는다.
-5. Fake `gh`로 미인증, 로그인 거부, preview, 현재 대화 confirmation 거부, 10분 만료·1회용 token, 성공, 동시 submit, 제출 실패와 중복을 재현하고 fixed repo/label, `--body-file -` stdin 및 환경 token 제거를 확인한다.
-6. 유사 이슈 후보는 최대 5개이며 candidate title을 외부의 신뢰하지 않는 입력으로 정제한다. 후보 또는 remote report ID 중복 검색이 불가능하면 이슈를 만들지 않고 폴백하며, 취약점 후보는 공개 검색·preview·submit 대신 private route로 전환한다.
-7. 미인증 또는 실패 시 긴 report를 URL에 넣지 않는 Issue Form과 exact `public-report.md` 복사 경로를 제공하며 자동 재시도하지 않는다. 외부 write 결과가 불확실한 실패는 `.submission.lock`을 보존해 직접 재시도를 차단한다.
-8. `/config/antigravity-workspace/feedback`은 `0700`/`0600`, `/data/github-cli`는 `0700`/`0600`을 유지한다. Input과 managed path의 symlink, hardlink, non-regular type와 root escape를 거부하고, non-root-owned GitHub config는 소유권을 바꾸지 않은 채 direct login/submit을 비활성화한다.
-9. App image에 checksum 검증된 GitHub CLI `2.93.0`, Skill, helper와 routing instruction이 포함되고 일반 `0.5.0` → `0.9.7` update에서 antigravity 인증/config/AGENTS, SSH/browser identity, memory와 Home Assistant 파일이 보존된다.
-10. 실제 HAOS의 report 생성·restart persistence·Issue Form 폴백은 별도 실기하며, 실제 GitHub 이슈 생성은 저장소에 외부 변경을 남기므로 명시적 승인 전까지 **NOT RUN**으로 기록한다.
+- An authenticated instance appears under its configured name and accepts a
+  task from a browser without a published App port.
+- A missing or expired login leaves Ingress usable and can be repaired with the
+  interactive helper.
+- A restart reconnects automatically from valid authentication.
+- Native permission prompts and results are visible in Remote.
+- `/config` and the other user mounts survive both fresh install and 3.0 reset.
+- Browser, memory, feedback, read helpers, and configuration checks retain
+  their bounded behavior.
+- Secrets and privileged credentials remain inaccessible to the model process.

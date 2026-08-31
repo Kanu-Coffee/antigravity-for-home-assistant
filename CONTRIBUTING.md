@@ -1,35 +1,30 @@
 # Contributing to Antigravity for Home Assistant
 
-Contributions are welcome. This App handles Home Assistant administrator access,
-so changes must preserve the documented security boundaries and include evidence
-proportional to their risk.
+Contributions are welcome. This App has administrator-level access to Home
+Assistant, so changes need evidence proportional to their risk and must preserve
+the documented trust boundaries.
 
-## Read the current contract first
+## Start with the current contract
 
 1. Read [AGENTS.md](AGENTS.md).
-2. Follow the canonical [v2 documentation order](docs/v2/README.md).
-3. Find the affected FR/SEC/TG/MIG requirement and its test IDs in
-   [the checklist](docs/v2/checklist.md).
-4. Inspect the current Git state and preserve unrelated changes.
+2. Read the [3.0 development overview](docs/development/README.md), then the
+   relevant product, architecture, security, test, or release document.
+3. Follow the [local source-development setup](docs/local-development.md).
+4. Inspect Git state and preserve unrelated work.
 
-The files under [`docs/development/`](docs/development/README.md) are superseded
-v1 evidence, not current implementation instructions.
+The App ships separate runtime guidance inside its image. A host-development
+checkout has no access to live `/config`, `/data`, Supervisor credentials, or
+real HAOS state.
 
 ## Development workflow
 
-For a host Codex checkout, first follow the
-[local source-development setup](docs/local-development.md). The root
-`AGENTS.md` is the source-development contract; the App receives its separate
-runtime guidance from the image rootfs.
-
-1. Fork and clone the repository, then create a focused branch.
-2. Make the smallest change that satisfies the canonical contract.
-3. Add positive, negative, failure, and recovery tests where the boundary needs
-   them.
-4. Update Korean canonical documentation, English user documentation, the
-   checklist, and changelog when behavior changes.
-5. Record what ran, on which architecture/image, and what remains unverified.
-6. Open a pull request without credentials, private HA data, or raw logs.
+1. Make the smallest cohesive change that satisfies the 3.0 contract.
+2. Add positive, negative, failure, and recovery tests for changed boundaries.
+3. Update the Korean and English user guides plus the changelog when user
+   behavior changes.
+4. Regenerate and verify the source-rootfs manifest after rootfs changes.
+5. Record exact sanitized commands, results, architecture/image, and remaining
+   verification gaps.
 
 Install local Python tooling with:
 
@@ -37,9 +32,7 @@ Install local Python tooling with:
 python3 -m pip install -r requirements-dev.txt
 ```
 
-## Checks that match CI
-
-Run the relevant checks locally. The complete source checks are:
+Run the smallest relevant checks first. The broad source checks include:
 
 ```bash
 python3 -m pytest -ra
@@ -54,41 +47,34 @@ sudo apparmor_parser --skip-kernel-load --skip-cache \
   antigravity_home_assistant/apparmor.txt
 ```
 
-CI also runs actionlint, Hadolint, the Home Assistant App linter, secret scanning,
-and executable-bit contracts. Consult [the current CI workflow](.github/workflows/ci.yaml)
-instead of copying commands from historical documents.
+Consult [CI](.github/workflows/ci.yaml) for the current complete job set. Do not
+copy stale commands from archived documents.
 
-For an amd64 image and its main smoke suite:
+For an amd64 image and smoke test:
 
 ```bash
 tools/development/build-app build antigravity-for-home-assistant:test linux/amd64
 bash tests/docker-smoke.sh antigravity-for-home-assistant:test
 ```
 
-The build helper uses an ephemeral project-owned, per-checkout Buildx builder,
-removes only that builder's BuildKit cache on exit, and retains at most the two
-newest unreferenced images carrying this checkout's managed labels. It never runs
-a global Docker prune. Use `tools/development/build-app cache-status` or
-`cache-prune` for this checkout only.
-
-Smoke scripts are invoked with `bash` and an explicit image argument; do not rely
-on their executable bit or run `./tests/docker-smoke.sh` without an image. The CI
-workflow also runs feedback, browser, memory, managed-auth, migration/update, and
-emulated arm64 smoke suites.
+The build helper owns an ephemeral per-checkout builder and its cache. Never
+prune Docker's shared default resources from this repository.
 
 ## Evidence and pull requests
 
-A build or emulated arm64 smoke is not proof of runtime support on real HAOS.
-AppArmor enforcement, native OAuth, dashboard rendering, Telegram approval,
-migration, and rollback claims require the HAOS evidence named in
-[the v2 test plan](docs/v2/test-plan.md). Do not mark a checklist item
-`VERIFIED` when any required result is `PARTIAL`, `NOT RUN`, or narrower than the
-requirement.
+Source, container, and emulated-architecture success does not prove behavior on
+real HAOS. Authentication, enforced AppArmor, update reset, Remote reconnect,
+dashboard interaction, restart, and rollback claims require the real-device
+evidence defined in the [test plan](docs/development/test_plan.md).
 
-In the pull request, include:
+In a pull request, include:
 
-- affected requirement and test IDs;
+- user-visible behavior and compatibility impact;
 - exact sanitized commands and results;
-- architecture, image reference/digest, and HAOS versions when applicable;
-- changed user behavior and rollback plan;
-- remaining gaps and known residual risks.
+- architecture, immutable image digest, and HAOS versions when applicable;
+- rollback or recovery behavior; and
+- every `PARTIAL` or `NOT RUN` gap.
+
+Never include credentials, private Home Assistant data, raw authorization
+headers, or unredacted logs. External publication, releases, and destructive
+actions require explicit authorization.

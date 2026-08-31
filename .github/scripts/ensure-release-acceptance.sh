@@ -10,16 +10,12 @@ source_sha=$2
 asset=$3
 asset_name=${asset##*/}
 
-[[ $version =~ ^2\.[0-9]+\.[0-9]+$ ]] || {
-  echo "release acceptance requires a numeric v2 version" >&2
+[[ $version =~ ^3\.[0-9]+\.[0-9]+$ ]] || {
+  echo "release acceptance requires a numeric v3 version" >&2
   exit 64
 }
 [[ $source_sha =~ ^[0-9a-f]{40}$ ]] || exit 64
 case "$asset_name" in
-  ha005-acceptance.json)
-    expected_schema=antigravity-ha-ha005-acceptance/v1
-    expected_test_id=HA-005
-    ;;
   public-install-acceptance.json)
     expected_schema=antigravity-ha-public-install-acceptance/v1
     expected_test_id=HA-008

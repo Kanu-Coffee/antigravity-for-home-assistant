@@ -7,6 +7,13 @@ if (( $# != 1 )); then
 fi
 
 readonly IMAGE=$1
+PINNED_ANTIGRAVITY_VERSION=$(sed -n \
+  's/^ARG ANTIGRAVITY_VERSION=//p' antigravity_home_assistant/Dockerfile)
+readonly PINNED_ANTIGRAVITY_VERSION
+if [[ ! ${PINNED_ANTIGRAVITY_VERSION} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo 'Dockerfile Antigravity version pin is invalid' >&2
+  exit 1
+fi
 if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
   echo "Missing local image: ${IMAGE}" >&2
   exit 1
@@ -18,11 +25,12 @@ if [[ "$(docker image inspect --format '{{.Architecture}}' "${IMAGE}")" != arm64
 fi
 
 docker run --rm --platform linux/arm64 \
+  --env "EXPECTED_ANTIGRAVITY_VERSION=${PINNED_ANTIGRAVITY_VERSION}" \
   --entrypoint /bin/bash \
   "${IMAGE}" -ceu '
     [[ "$(uname -m)" == aarch64 ]]
     [[ "${AGY_CLI_DISABLE_AUTO_UPDATE:-}" == true ]]
-    [[ "$(/usr/local/libexec/antigravity-real --version)" == 1.1.13 ]]
+    [[ "$(/usr/local/libexec/antigravity-real --version)" == "${EXPECTED_ANTIGRAVITY_VERSION}" ]]
     [[ "$(node --version)" == v22.23.2 ]]
     gh --version | grep -Fq "gh version 2.93.0 "
     ttyd --version 2>&1 | grep -Fq "ttyd version 1.7.7"

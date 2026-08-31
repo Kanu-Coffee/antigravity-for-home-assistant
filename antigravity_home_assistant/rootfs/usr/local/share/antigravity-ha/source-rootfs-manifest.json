@@ -15,8 +15,8 @@
     {
       "mode": "0644",
       "path": "/etc/motd",
-      "sha256": "sha256:9cbd346bc5601312bd6c7c48fa420a0a450411af71d9bfffbcecdd1118763f19",
-      "size": 382
+      "sha256": "sha256:199b6092f706b9b671d22b5191038a6fba571904f0b0cec3d5f21f7042f9eaed",
+      "size": 394
     },
     {
       "mode": "0644",
@@ -56,19 +56,25 @@
     },
     {
       "mode": "0644",
-      "path": "/etc/s6-overlay/s6-rc.d/ha-change-broker/dependencies.d/antigravity-ha-init",
+      "path": "/etc/s6-overlay/s6-rc.d/antigravity-remote/dependencies.d/antigravity-ha-init",
       "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
       "size": 1
     },
     {
       "mode": "0755",
-      "path": "/etc/s6-overlay/s6-rc.d/ha-change-broker/run",
-      "sha256": "sha256:f1e74ff3054f961c162f2e63185c29451a28619fdb7be1b9bd24fa5eca56d993",
-      "size": 182
+      "path": "/etc/s6-overlay/s6-rc.d/antigravity-remote/finish",
+      "sha256": "sha256:6c945b23cf7c621bfa389c3fe5bd71b5d9c66e40f75030b03ce29b18020e18a1",
+      "size": 355
+    },
+    {
+      "mode": "0755",
+      "path": "/etc/s6-overlay/s6-rc.d/antigravity-remote/run",
+      "sha256": "sha256:bae58f43809702624adde2254f23e2f09fd41d2023faa87ab0e77def25b7c0ac",
+      "size": 585
     },
     {
       "mode": "0644",
-      "path": "/etc/s6-overlay/s6-rc.d/ha-change-broker/type",
+      "path": "/etc/s6-overlay/s6-rc.d/antigravity-remote/type",
       "sha256": "sha256:d0001a150b83f68f09004c5059045cb76a3f064eed4d42ce072bc3722c118006",
       "size": 8
     },
@@ -140,60 +146,6 @@
     },
     {
       "mode": "0644",
-      "path": "/etc/s6-overlay/s6-rc.d/sshd/dependencies.d/antigravity-ha-init",
-      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
-      "size": 1
-    },
-    {
-      "mode": "0755",
-      "path": "/etc/s6-overlay/s6-rc.d/sshd/finish",
-      "sha256": "sha256:01853d4b30bd117c888236a100ab535c7fe41d82a74b3cd2c7cdecf0f7478d7c",
-      "size": 328
-    },
-    {
-      "mode": "0755",
-      "path": "/etc/s6-overlay/s6-rc.d/sshd/run",
-      "sha256": "sha256:3de3c931573528848ffc04868925fa9d88205310886a1a2711b55bf181f5a61e",
-      "size": 422
-    },
-    {
-      "mode": "0644",
-      "path": "/etc/s6-overlay/s6-rc.d/sshd/type",
-      "sha256": "sha256:d0001a150b83f68f09004c5059045cb76a3f064eed4d42ce072bc3722c118006",
-      "size": 8
-    },
-    {
-      "mode": "0644",
-      "path": "/etc/s6-overlay/s6-rc.d/telegram-bot/dependencies.d/antigravity-ha-init",
-      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
-      "size": 1
-    },
-    {
-      "mode": "0644",
-      "path": "/etc/s6-overlay/s6-rc.d/telegram-bot/dependencies.d/ha-change-broker",
-      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
-      "size": 1
-    },
-    {
-      "mode": "0644",
-      "path": "/etc/s6-overlay/s6-rc.d/telegram-bot/dependencies.d/ha-read-broker",
-      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
-      "size": 1
-    },
-    {
-      "mode": "0755",
-      "path": "/etc/s6-overlay/s6-rc.d/telegram-bot/run",
-      "sha256": "sha256:4c1f090ceb1f14a7cd481a57645af8df1724dd41ddb2173588957caaf81f8a58",
-      "size": 99
-    },
-    {
-      "mode": "0644",
-      "path": "/etc/s6-overlay/s6-rc.d/telegram-bot/type",
-      "sha256": "sha256:d0001a150b83f68f09004c5059045cb76a3f064eed4d42ce072bc3722c118006",
-      "size": 8
-    },
-    {
-      "mode": "0644",
       "path": "/etc/s6-overlay/s6-rc.d/ttyd/dependencies.d/antigravity-ha-init",
       "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
       "size": 1
@@ -224,7 +176,7 @@
     },
     {
       "mode": "0644",
-      "path": "/etc/s6-overlay/s6-rc.d/user/contents.d/ha-change-broker",
+      "path": "/etc/s6-overlay/s6-rc.d/user/contents.d/antigravity-remote",
       "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
       "size": 1
     },
@@ -248,27 +200,9 @@
     },
     {
       "mode": "0644",
-      "path": "/etc/s6-overlay/s6-rc.d/user/contents.d/sshd",
-      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
-      "size": 1
-    },
-    {
-      "mode": "0644",
-      "path": "/etc/s6-overlay/s6-rc.d/user/contents.d/telegram-bot",
-      "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
-      "size": 1
-    },
-    {
-      "mode": "0644",
       "path": "/etc/s6-overlay/s6-rc.d/user/contents.d/ttyd",
       "sha256": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
       "size": 1
-    },
-    {
-      "mode": "0644",
-      "path": "/etc/ssh/sshd_config",
-      "sha256": "sha256:13f5aff9b20414b79924f3405d3b2537c73691fc8b1e77e5da5bfe55d52bcae1",
-      "size": 895
     },
     {
       "mode": "0755",
@@ -278,27 +212,15 @@
     },
     {
       "mode": "0755",
-      "path": "/usr/local/bin/agy-settings",
-      "sha256": "sha256:e3dbff2dce02c049ea711765d933b08e4827d392116c725376aee2fad73a5820",
-      "size": 405
-    },
-    {
-      "mode": "0755",
       "path": "/usr/local/bin/antigravity",
-      "sha256": "sha256:784e6c55d79bdd2ab8cf582e9ec0ef52eda71578af76ee3d96301db8d5689e4d",
-      "size": 2413
+      "sha256": "sha256:d865d73c21b21f06fa1dc24da294c75ba1319bfa8debf4c6ddc2c87d8557b555",
+      "size": 1606
     },
     {
       "mode": "0755",
       "path": "/usr/local/bin/antigravity-ha-init",
-      "sha256": "sha256:c1dbbd1fb1f4f91cd903b1515209f2669b1b9ca97e95c198b8873d708266681d",
-      "size": 32589
-    },
-    {
-      "mode": "0755",
-      "path": "/usr/local/bin/antigravity-user-files-update",
-      "sha256": "sha256:9c65616ccd3ab07507bf4f0bdde35c6e6acb7344a15df58a438c98080d501220",
-      "size": 1293
+      "sha256": "sha256:7ffe6d9d5ced8c0aadd56726c3e8e2842c5804f2dca4d563159ca4295647664a",
+      "size": 13348
     },
     {
       "mode": "0755",
@@ -314,9 +236,9 @@
     },
     {
       "mode": "0755",
-      "path": "/usr/local/bin/ha-antigravity-login",
-      "sha256": "sha256:0a25e516ff1a7b39f23bb05049a6e605b88bfe3002cd63c192c20f52ffd354bd",
-      "size": 6314
+      "path": "/usr/local/bin/ha-antigravity-remote-login",
+      "sha256": "sha256:61cc146a186cc5a62c2da5d2b6882e3055c69c8d2e8f3ae71d827703eea439eb",
+      "size": 2290
     },
     {
       "mode": "0755",
@@ -327,14 +249,14 @@
     {
       "mode": "0755",
       "path": "/usr/local/bin/ha-browser-auth-ensure",
-      "sha256": "sha256:a20c6bf80de907f86cd4af57f8f399ba93a586ce8efff0e0a17be0b14edd7f36",
-      "size": 1139
+      "sha256": "sha256:23810efb4ac727ffd528bce44709bbd8250900ddaa05f5cfc1261ee02284a90b",
+      "size": 918
     },
     {
       "mode": "0755",
       "path": "/usr/local/bin/ha-browser-auth-refresh",
-      "sha256": "sha256:84276d3d0594e77c7d0c3f0f0b3dae13ca4d54d61faf411f5e1aadf20e1acab9",
-      "size": 7514
+      "sha256": "sha256:239b8b3eb61a13ad946f0675e07cdbc038c11d16cdfda204604a7f5ccb4b4493",
+      "size": 7071
     },
     {
       "mode": "0755",
@@ -345,8 +267,8 @@
     {
       "mode": "0755",
       "path": "/usr/local/bin/ha-browser-auth-setup",
-      "sha256": "sha256:865d0dbb7cf7375e0fe0c8f20a9b276f955cae8ed67297952c276c9f42de4586",
-      "size": 3346
+      "sha256": "sha256:27fb634bda87e114559148642c2736dee5c1987d1d4ed8e66d256db11a3bdbf1",
+      "size": 3062
     },
     {
       "mode": "0755",
@@ -359,36 +281,6 @@
       "path": "/usr/local/bin/ha-browser-network-info",
       "sha256": "sha256:b2c4c157b179ee08341a5f793f0e96697fe6ca119ce697336f992359c802731b",
       "size": 2576
-    },
-    {
-      "mode": "0755",
-      "path": "/usr/local/bin/ha-browser-user-create",
-      "sha256": "sha256:885d2fea67183d47ffd77783ecded530b9f1e3c22b87d8010ae4397ae3219bc2",
-      "size": 2214
-    },
-    {
-      "mode": "0755",
-      "path": "/usr/local/bin/ha-browser-user-remove-password",
-      "sha256": "sha256:f0135d1191be43c8fa8e87619f1a372897361d820d468a3445c86e99e266c03a",
-      "size": 965
-    },
-    {
-      "mode": "0755",
-      "path": "/usr/local/bin/ha-change-broker",
-      "sha256": "sha256:987d9de83686a6988012b5a2fa9ed5b9137328f4556ee8369242e9a9d4f6ce4a",
-      "size": 805
-    },
-    {
-      "mode": "0755",
-      "path": "/usr/local/bin/ha-change-broker-client",
-      "sha256": "sha256:c12c26d0168142ed6749385e9336feeaf9e7e4a2e5aafb4a1ba6ff19d089e967",
-      "size": 608
-    },
-    {
-      "mode": "0755",
-      "path": "/usr/local/bin/ha-change-proposal-mcp",
-      "sha256": "sha256:01ee9a137720febf24c789b4d199f2c4369c4c41ca6a44b4d25e07ef3f5b7477",
-      "size": 1189
     },
     {
       "mode": "0755",
@@ -423,14 +315,14 @@
     {
       "mode": "0755",
       "path": "/usr/local/bin/ha-memory-mcp",
-      "sha256": "sha256:50f5b3c21b85ceb49068083d0203cf8bd6d1c27eb576525f72d8599a13af1f39",
-      "size": 753
+      "sha256": "sha256:3e8f18855fe5e74c4ec47b99d436c74778c240a094e6bdd3f12d080054187f36",
+      "size": 713
     },
     {
       "mode": "0755",
       "path": "/usr/local/bin/ha-playwright-mcp",
-      "sha256": "sha256:067719db5156f7a73f0059eb0196cdd56fbd7a6eeaeed068666a55aee85e37d5",
-      "size": 1993
+      "sha256": "sha256:8fc37e39856b3fc4b313016acb90c981ca93aac7c273a58b698fa7b9c4bb8fcc",
+      "size": 1945
     },
     {
       "mode": "0755",
@@ -446,12 +338,6 @@
     },
     {
       "mode": "0755",
-      "path": "/usr/local/bin/ha-telegram-pair",
-      "sha256": "sha256:1da7a510975ef1e5f087421261ce0b213751d0bfc49a47030aeac83f4f1be3b5",
-      "size": 317
-    },
-    {
-      "mode": "0755",
       "path": "/usr/local/bin/ha-validate-mcp",
       "sha256": "sha256:f5a60ec6c094f7d44e8ce187673b4c09eb0a6015bffc60a13647ac1d13f6e888",
       "size": 277
@@ -464,39 +350,21 @@
     },
     {
       "mode": "0755",
-      "path": "/usr/local/bin/telegram-action-executor",
-      "sha256": "sha256:5a930a467b2d69c6e9a62e0dfa6b6f295aca507aefa46193f3dcb8951abf8175",
-      "size": 1791
-    },
-    {
-      "mode": "0755",
-      "path": "/usr/local/bin/telegram-action-proposal-mcp",
-      "sha256": "sha256:19483aec2eff540e87d612ee52a12669299dc1312c541a2870c277f1e5ff0df9",
-      "size": 2257
-    },
-    {
-      "mode": "0755",
       "path": "/usr/local/bin/tmux-session-shell",
-      "sha256": "sha256:a4c8c15e73a429f27fdfb476bb823a879f488fae4c71f8ed71aa8a97280e913a",
-      "size": 869
+      "sha256": "sha256:7568926b34e778d4c2579cac1f8454f9de4636548bb9ff0d5095940ade6981e2",
+      "size": 181
     },
     {
       "mode": "0755",
       "path": "/usr/local/bin/web-terminal-entrypoint",
-      "sha256": "sha256:c2e54d264d5882ddb865e32654ed5e5e9d5b336cf98c4f5c5bb09c935e02d157",
-      "size": 1352
+      "sha256": "sha256:c5f9d6b3c374eaa145c77d2d8afdd93df5c2e2e33bede015530ade1824640850",
+      "size": 1093
     },
     {
       "mode": "0644",
       "path": "/usr/local/lib/antigravity-ha/api-client.sh",
       "sha256": "sha256:4667fe8b8d02d284b5f1ce63c498cdce7e9c7c663862eb06b421e1215c66d990",
       "size": 10217
-    },
-    {
-      "mode": "0644",
-      "path": "/usr/local/lib/antigravity-ha/browser-approval.sh",
-      "sha256": "sha256:9dae355c3832eb38059d96163b828a7c7783cbdc7bc1f17a3a158cfb07a884b7",
-      "size": 373
     },
     {
       "mode": "0644",
@@ -513,8 +381,8 @@
     {
       "mode": "0644",
       "path": "/usr/local/lib/antigravity-ha/supervisor-credential.sh",
-      "sha256": "sha256:8fd7e07257475c5c06c2f07ceb86d09ea0189c43d47d4fe9b057c40410bce2b5",
-      "size": 5069
+      "sha256": "sha256:4a9db71e2d71c9995460283cc8846dbd93f74e95c019a91baaee208cbdc1a280",
+      "size": 5075
     },
     {
       "mode": "0755",
@@ -525,32 +393,26 @@
     {
       "mode": "0755",
       "path": "/usr/local/libexec/antigravity-interactive-restricted",
-      "sha256": "sha256:0065f1d4d40f571ce4b1ca3b24fd8b6e9851ae471dd899157c80d2d4d49eba19",
-      "size": 3477
+      "sha256": "sha256:d12a052846a96cbad810feed3ab056861479f7a40719fdad5c3962713efe3c4f",
+      "size": 744
     },
     {
       "mode": "0755",
       "path": "/usr/local/libexec/antigravity-interactive-sensitive-read",
-      "sha256": "sha256:25af08a0ad764170005fa2c6caff92d7b531200e287082fc2c8ac830bb1702f8",
-      "size": 3476
+      "sha256": "sha256:121d0512536ae4603af2547d940f3cef81936ada84f86023fb49ea55f0883c03",
+      "size": 748
     },
     {
       "mode": "0755",
       "path": "/usr/local/libexec/antigravity-native-session-guard",
-      "sha256": "sha256:4c2a260fc8e3786a103dc107c6d5566a8e5c9ba5d8f4ac8e6a97fa9286743884",
-      "size": 3769
+      "sha256": "sha256:0e9931443974f2177e5856dbc231176fcd45190ca9117aa19e8034bee1d22a84",
+      "size": 1188
     },
     {
       "mode": "0755",
-      "path": "/usr/local/libexec/antigravity-onboarding-controller",
-      "sha256": "sha256:724b57d1cd11283b4254a62d012cd6fb9ffb87a0467d4ea1b9e7eeaea3485bc1",
-      "size": 22069
-    },
-    {
-      "mode": "0755",
-      "path": "/usr/local/libexec/ha-change-broker-runtime",
-      "sha256": "sha256:80b181744aab23bd3dbc1a25b66987904da257a387c27f199ccfe81f237de6b4",
-      "size": 287
+      "path": "/usr/local/libexec/ha-antigravity-remote-runtime",
+      "sha256": "sha256:24e0cdc00de684cad50fac2d24da58c8b9f5c4abf19d34032b0f293d001d6ad7",
+      "size": 12185
     },
     {
       "mode": "0755",
@@ -577,34 +439,10 @@
       "size": 283
     },
     {
-      "mode": "0755",
-      "path": "/usr/local/libexec/ha-ssh-session",
-      "sha256": "sha256:495f1d039a89729fc2a67aeec136de14d696a219c8223ace7a802c22156c131f",
-      "size": 485
-    },
-    {
-      "mode": "0755",
-      "path": "/usr/local/libexec/ha-sshd-runtime",
-      "sha256": "sha256:e1455ffa018a73e6d3fd68e85744344607f08eb1df67e908575f5e2e5b555459",
-      "size": 119
-    },
-    {
-      "mode": "0755",
-      "path": "/usr/local/libexec/ha-telegram-runtime",
-      "sha256": "sha256:b081aa05085bdeeb122f3e945a859ff142806183ba29e84f89b70e2ea7616b8e",
-      "size": 651
-    },
-    {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/AGENTS.md",
-      "sha256": "sha256:15588ac446bd57a63c49ab9770a0dd1421701ffd3de5dbfded0ff6ad8937a9ae",
-      "size": 12005
-    },
-    {
-      "mode": "0644",
-      "path": "/usr/local/share/antigravity-ha/antigravity-settings-update.mjs",
-      "sha256": "sha256:229c8834124e400ffc2290c05a7e73f174e5e522c9d733bd57c44cd5dd969bde",
-      "size": 9924
+      "sha256": "sha256:5f43821b9c69fcc00499e8eb9e8519901fc30ed48219316441720009a265f010",
+      "size": 4840
     },
     {
       "mode": "0644",
@@ -615,32 +453,14 @@
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/browser-user-admin.mjs",
-      "sha256": "sha256:9114ee4ccddca4e6cfdda45c90e42ce816976c94513b40dc894ca9132491586a",
-      "size": 58789
-    },
-    {
-      "mode": "0644",
-      "path": "/usr/local/share/antigravity-ha/ha-change-broker-client.mjs",
-      "sha256": "sha256:d059b2b8b0672090be964aa2dfc5d031cb2a7c34832e69dadeed06c472b6a074",
-      "size": 1834
-    },
-    {
-      "mode": "0644",
-      "path": "/usr/local/share/antigravity-ha/ha-change-broker.mjs",
-      "sha256": "sha256:428c6d1984ab209571acb83d0d4f3070671b60ae61d717dca5d53ff0b1406ac8",
-      "size": 124547
-    },
-    {
-      "mode": "0644",
-      "path": "/usr/local/share/antigravity-ha/ha-change-proposal-mcp.mjs",
-      "sha256": "sha256:10fa8ce422ff7998a667f7cf3aa03a522f01ed78f20925c52ffd2c71e51fab37",
-      "size": 14446
+      "sha256": "sha256:d4f0a55c3bd1f334d85be9ba82a14456bd02a00000b030d576154e5cbae455d6",
+      "size": 53249
     },
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/ha-feedback.mjs",
-      "sha256": "sha256:a08cfcd55666782d6624d998e580d590dd164ac2abd78295e19a3a4782e9744b",
-      "size": 63392
+      "sha256": "sha256:118998458e17f6f2711dc798bb5bcbccac5c2bda7236cb6f53c37c0962a34bd6",
+      "size": 63295
     },
     {
       "mode": "0644",
@@ -698,12 +518,6 @@
     },
     {
       "mode": "0644",
-      "path": "/usr/local/share/antigravity-ha/ha-telegram-pair.mjs",
-      "sha256": "sha256:c06590beb6f14b8a72142dc319a2ab295ce3e1f2b46fe380046e3389fbef5ad3",
-      "size": 1527
-    },
-    {
-      "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/ha-validate-mcp.mjs",
       "sha256": "sha256:833f4993e09d819eb4ccc6b9b63ee8eaafe6a7f2087c0763e981cc0195151f80",
       "size": 8841
@@ -713,18 +527,6 @@
       "path": "/usr/local/share/antigravity-ha/managed-plugin-update.mjs",
       "sha256": "sha256:481d3705d6a14f26d9c46616b04899f459c567a5501a4cab92801fe9961cd6f8",
       "size": 28683
-    },
-    {
-      "mode": "0644",
-      "path": "/usr/local/share/antigravity-ha/onboarding-settings-fingerprint.mjs",
-      "sha256": "sha256:90351b59da0b63c52b8f14f4cb6eb29a9f2f4ebcea1a7b943370c2f4dc134c62",
-      "size": 3658
-    },
-    {
-      "mode": "0644",
-      "path": "/usr/local/share/antigravity-ha/onboarding-transaction.mjs",
-      "sha256": "sha256:dcdf3e1f14f518d74c003682d1221df98762d1e8c2c76b5081052afc6059d1af",
-      "size": 20214
     },
     {
       "mode": "0644",
@@ -747,32 +549,26 @@
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/mcp_config.json",
-      "sha256": "sha256:6b5ce73b9d248f27cf59b541899ce21648a8635da275933e47ec63d4fdd5d8fb",
-      "size": 1050
+      "sha256": "sha256:62f630d6fe29d8c67533f919584de4caf8155b7cccf316efa6db62a027ed648f",
+      "size": 788
     },
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/plugin.json",
-      "sha256": "sha256:e2cfc1f891eb83b10ac3d6089829937c51cbf132fe228dd9f58bcca78868d1de",
-      "size": 205
+      "sha256": "sha256:a83c0227be244cc4169bd0e8d43dea289c1d3635b963401c519346935148e174",
+      "size": 182
     },
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/rules/home-assistant-safety.md",
-      "sha256": "sha256:e12c5e1770786d634999b858a8367ea22b48440725d111cb907af53814605635",
-      "size": 5596
-    },
-    {
-      "mode": "0644",
-      "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/skills/ha-change-proposal/SKILL.md",
-      "sha256": "sha256:718b2077783292d5f71ef63889e69e38e2431bd083be21a3ae8fde7d45cf6089",
-      "size": 4440
+      "sha256": "sha256:a39b9e255aaba9e897ff2214ffd36352436a2f46cc2fe8e1f8ed7d5bf7d8cdee",
+      "size": 1973
     },
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/skills/ha-dashboard/SKILL.md",
-      "sha256": "sha256:e9e3a03fcb7b2e91b87c312723c7e3de44530ca020906f23636ff0ce9a88fc7c",
-      "size": 1312
+      "sha256": "sha256:970d67830e9266b5a1e94e332eaaa8d8aa3706fbbb3a68487a677d7c81089fe2",
+      "size": 783
     },
     {
       "mode": "0644",
@@ -789,14 +585,8 @@
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/skills/home-assistant-operations/SKILL.md",
-      "sha256": "sha256:3449794b6ca18108afa0e92aae37a2dd29ae18ee80183598295ff717a4b378c0",
-      "size": 5426
-    },
-    {
-      "mode": "0644",
-      "path": "/usr/local/share/antigravity-ha/plugins/home-assistant/skills/telegram-action-proposal/SKILL.md",
-      "sha256": "sha256:df846ab0c02314ed25c440a2e55dd540fbd9dadc041d06eeaa21cc76194bb1c9",
-      "size": 2545
+      "sha256": "sha256:15f9e6e612df83571878d2d5e52726caacfb0d47a9229fe8dfd5854764bca582",
+      "size": 2313
     },
     {
       "mode": "0644",
@@ -807,58 +597,16 @@
     {
       "mode": "0644",
       "path": "/usr/local/share/antigravity-ha/supervisor-options-migrate.mjs",
-      "sha256": "sha256:33c00d4115c0f986207f23c5fb0d315398087eb0e1c9ff6053e3813f311e0bbd",
-      "size": 13362
+      "sha256": "sha256:9101fabf624f38cb3f02330e8c38a005a7fe9a2a47d56fbb7cf43d1d13d7424d",
+      "size": 9271
     },
     {
       "mode": "0644",
-      "path": "/usr/local/share/antigravity-ha/telegram-action-coordinator.mjs",
-      "sha256": "sha256:21b613da9e83a17186f4d1fa439f94c75a00e34ef476df6909ae0db894a7a043",
-      "size": 11218
-    },
-    {
-      "mode": "0644",
-      "path": "/usr/local/share/antigravity-ha/telegram-action-executor.mjs",
-      "sha256": "sha256:ce143747282af286b940528549f170bd7e40b6eff3ff04b47ec0ebef250f3206",
-      "size": 13846
-    },
-    {
-      "mode": "0644",
-      "path": "/usr/local/share/antigravity-ha/telegram-action-proposal-mcp.mjs",
-      "sha256": "sha256:e2e690cd7c243e4af790e939a09abfa9f7b172ba0247be4de16394e4656a075d",
-      "size": 44299
-    },
-    {
-      "mode": "0644",
-      "path": "/usr/local/share/antigravity-ha/telegram-bridge.mjs",
-      "sha256": "sha256:a981f6e0345f088c63cb5405bba8c30f584f4c9a9a64ffcbafeb73335d4f7501",
-      "size": 169247
-    },
-    {
-      "mode": "0644",
-      "path": "/usr/local/share/antigravity-ha/telegram-pairing.mjs",
-      "sha256": "sha256:1e96367bb5dc50eb60992370a3a6e893d1b04b417685c755a349977f759edde2",
-      "size": 11281
-    },
-    {
-      "mode": "0644",
-      "path": "/usr/local/share/antigravity-ha/telegram-permission-policy.mjs",
-      "sha256": "sha256:6e23045d14fc2181087fdb3847b7893886aea944e10cbf4ba6c0a0aa4b2455f4",
-      "size": 18630
-    },
-    {
-      "mode": "0644",
-      "path": "/usr/local/share/antigravity-ha/telegram-state.mjs",
-      "sha256": "sha256:dc92d375302e62c7ddbe3a28d95ec56f53235b717df45ecb03d972178abc2eb6",
-      "size": 110311
-    },
-    {
-      "mode": "0644",
-      "path": "/usr/local/share/antigravity-ha/user-files-update.mjs",
-      "sha256": "sha256:78e2fa8b49aaf7841a6b7e84d184122eb52f058c5eba63c5cdc7b946a3b05511",
-      "size": 102627
+      "path": "/usr/local/share/antigravity-ha/v3-factory-reset.mjs",
+      "sha256": "sha256:c7bf04f3a46fee61b36641f10d2681b7064d17f6d3b6a60c26be43a0a2590d04",
+      "size": 5264
     }
   ],
   "schema": "antigravity-ha-source-rootfs/v1",
-  "source_rootfs_sha256": "sha256:e3524f71f96a908223b2f14ba4c1dd45675f41c5417990ff8cc09d86bd2b6aa9"
+  "source_rootfs_sha256": "sha256:a004596aced7f0c2d1aae04ca8619570135619350fd5bc3542549ae1901176f4"
 }

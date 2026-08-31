@@ -195,59 +195,6 @@ jobs:
             git show --check --format= "$HEAD_SHA"
           fi
 
-  telegram-security-contracts:
-    name: Telegram shared context, session, delivery, and broker contracts
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
-        with:
-          node-version: "22.23.2"
-
-      - name: Run Telegram and change-broker security suites
-        run: >-
-          node --test
-          tests/telegram_bridge_test.mjs
-          tests/telegram_bridge_session_delivery_test.mjs
-          tests/telegram_universal_approval_test.mjs
-          tests/telegram_action_coordinator_test.mjs
-          tests/telegram_action_backend_test.mjs
-          tests/telegram_broker_integration_test.mjs
-          tests/telegram_pairing_test.mjs
-          tests/telegram_state_test.mjs
-          tests/ha_change_broker_test.mjs
-
-      - name: Run the shortened GAP-007 contract fixture
-        run: |
-          evidence_file="${RUNNER_TEMP}/gap007-contract.json"
-          tests/performance-durability-soak.sh \
-            --mode contract \
-            --evidence "$evidence_file" >/dev/null
-          node --input-type=module - "$evidence_file" <<'NODE'
-          import assert from "node:assert/strict";
-          import { readFile } from "node:fs/promises";
-
-          const evidence = JSON.parse(await readFile(process.argv[2], "utf8"));
-          assert.equal(evidence.requirement_id, "GAP-007");
-          assert.equal(evidence.mode, "contract");
-          assert.equal(evidence.result, "PASS");
-          assert.equal(evidence.closure_eligible, false);
-          assert.equal(evidence.provenance.source_tree_stable, true);
-          assert.equal(evidence.provenance.module_origin, "host_source_contract");
-          assert.equal(
-            evidence.failure_injection.backoff_implementation,
-            "host_source_telegram_bridge_contract",
-          );
-          assert.equal(evidence.sanitization.external_calls, 0);
-          assert.equal(evidence.telegram.configured_global_workers, 2);
-          assert.equal(evidence.telegram.configured_queue_per_chat, 4);
-          assert.equal(evidence.bounded_io.indexed_entities, 1000);
-          NODE
-
   read-memory-browser-contracts:
     name: Read, validation, memory, and browser isolation contracts
     runs-on: ubuntu-latest
@@ -336,16 +283,12 @@ jobs:
       matrix:
         suite:
           - apparmor-enforced
-          - browser-approval
           - container
           - feedback
           - managed-auth
           - managed-plugin
           - memory
-          - public-v2
-          - telegram-shared-context
-          - update
-          - user-files
+          - v3-upgrade
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -393,9 +336,6 @@ jobs:
             apparmor-enforced)
               exec bash tests/apparmor-enforced-smoke.sh antigravity-for-home-assistant:test
               ;;
-            browser-approval)
-              exec bash tests/browser-approval-smoke.sh antigravity-for-home-assistant:test
-              ;;
             container)
               exec bash tests/docker-smoke.sh antigravity-for-home-assistant:test
               ;;
@@ -411,17 +351,8 @@ jobs:
             memory)
               exec bash tests/memory-smoke.sh antigravity-for-home-assistant:test
               ;;
-            public-v2)
-              exec bash tests/public-v2-upgrade-smoke.sh antigravity-for-home-assistant:test
-              ;;
-            telegram-shared-context)
-              exec bash tests/telegram-shared-context-smoke.sh antigravity-for-home-assistant:test
-              ;;
-            update)
-              exec bash tests/update-smoke.sh antigravity-for-home-assistant:test
-              ;;
-            user-files)
-              exec bash tests/user-files-update-smoke.sh antigravity-for-home-assistant:test
+            v3-upgrade)
+              exec bash tests/v3-upgrade-smoke.sh antigravity-for-home-assistant:test
               ;;
             *)
               exit 64

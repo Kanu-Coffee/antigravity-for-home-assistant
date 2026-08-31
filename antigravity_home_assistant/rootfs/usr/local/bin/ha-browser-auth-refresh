@@ -117,54 +117,44 @@ if [[ "${auto_auth}" != true ]]; then
 fi
 unset auto_auth
 
-if ! browser_token=$(antigravity_ha_config_string home_assistant_browser_token ''); then
-  write_status rejected invalid_options
-  (( quiet )) || echo 'Browser authentication is disabled because the manual token option is invalid' >&2
-  exit 1
-fi
-
 if ! cleanup_managed_temps; then
   write_status rejected managed_storage_unsafe
   (( quiet )) || echo 'Managed browser authentication temporary storage is unsafe' >&2
   exit 1
 fi
 
-source_name=manual
-if [[ -z "${browser_token}" ]]; then
-  source_name=managed
-  if [[ -L "${MANAGED_TOKEN}" || -L "${MANAGED_STATE}" ]]; then
-    write_status rejected managed_storage_unsafe
-    (( quiet )) || echo 'Managed browser authentication storage is unsafe' >&2
-    exit 1
-  fi
-  if [[ ! -f "${MANAGED_TOKEN}" || ! -r "${MANAGED_TOKEN}" \
-    || ! -f "${MANAGED_STATE}" || ! -r "${MANAGED_STATE}" ]]; then
-    write_status unconfigured
-    (( quiet )) || echo 'Dedicated Home Assistant browser authentication is not configured' >&2
-    exit 1
-  fi
-  managed_metadata=$(jq --exit-status --compact-output '
-    select(
-      .version == 1
-      and .phase == "ready"
-      and (.operation_id | type == "string" and test("^[A-Za-z0-9_-]{20,128}$"))
-      and (.user_id | type == "string" and length >= 8 and length <= 128)
-      and .display_name == ("antigravity Browser (managed) " + (.operation_id[0:16]))
-      and .client_name == ("Antigravity for Home Assistant browser " + .operation_id)
-      and (has("temporary_username") | not)
-    )
-    | {user_id, client_name, display_name}
-  ' "${MANAGED_STATE}" 2>/dev/null) || {
-    write_status rejected managed_state_invalid
-    (( quiet )) || echo 'Managed browser authentication state is invalid' >&2
-    exit 1
-  }
-  expected_managed_user_id=$(jq --raw-output '.user_id' <<< "${managed_metadata}")
-  expected_managed_client_name=$(jq --raw-output '.client_name' <<< "${managed_metadata}")
-  expected_managed_display_name=$(jq --raw-output '.display_name' <<< "${managed_metadata}")
-  unset managed_metadata
-  browser_token=$(< "${MANAGED_TOKEN}")
+if [[ -L "${MANAGED_TOKEN}" || -L "${MANAGED_STATE}" ]]; then
+  write_status rejected managed_storage_unsafe
+  (( quiet )) || echo 'Managed browser authentication storage is unsafe' >&2
+  exit 1
 fi
+if [[ ! -f "${MANAGED_TOKEN}" || ! -r "${MANAGED_TOKEN}" \
+  || ! -f "${MANAGED_STATE}" || ! -r "${MANAGED_STATE}" ]]; then
+  write_status unconfigured
+  (( quiet )) || echo 'Dedicated Home Assistant browser authentication is not configured' >&2
+  exit 1
+fi
+managed_metadata=$(jq --exit-status --compact-output '
+  select(
+    .version == 1
+    and .phase == "ready"
+    and (.operation_id | type == "string" and test("^[A-Za-z0-9_-]{20,128}$"))
+    and (.user_id | type == "string" and length >= 8 and length <= 128)
+    and .display_name == ("antigravity Browser (managed) " + (.operation_id[0:16]))
+    and .client_name == ("Antigravity for Home Assistant browser " + .operation_id)
+    and (has("temporary_username") | not)
+  )
+  | {user_id, client_name, display_name}
+' "${MANAGED_STATE}" 2>/dev/null) || {
+  write_status rejected managed_state_invalid
+  (( quiet )) || echo 'Managed browser authentication state is invalid' >&2
+  exit 1
+}
+expected_managed_user_id=$(jq --raw-output '.user_id' <<< "${managed_metadata}")
+expected_managed_client_name=$(jq --raw-output '.client_name' <<< "${managed_metadata}")
+expected_managed_display_name=$(jq --raw-output '.display_name' <<< "${managed_metadata}")
+unset managed_metadata
+browser_token=$(< "${MANAGED_TOKEN}")
 
 if [[ ! "${browser_token}" =~ ^[A-Za-z0-9._~-]{20,}$ ]]; then
   write_status rejected invalid_token_format
@@ -187,14 +177,13 @@ if ! HA_BROWSER_TOKEN="${browser_token}" \
   exit 1
 fi
 
-if [[ "${source_name}" == managed ]] \
-  && [[ $(jq --raw-output '.user.id // ""' "${check_tmp}") != "${expected_managed_user_id}" ]]; then
+if [[ $(jq --raw-output '.user.id // ""' "${check_tmp}") != "${expected_managed_user_id}" ]]; then
   write_status rejected managed_state_user_mismatch
   (( quiet )) || echo 'Managed browser user does not match its private state' >&2
   exit 1
 fi
 
-if ! jq --exit-status --arg source "${source_name}" \
+if ! jq --exit-status --arg source managed \
   'select(.status == "ready") | . + {source: $source}' \
   "${check_tmp}" > "${status_tmp}"; then
   write_status rejected validation_result_invalid

@@ -2,6 +2,61 @@
 
 All notable changes to this App are documented in this file.
 
+## [3.0.0] - Unreleased
+
+### Changed
+
+- Make official Google Antigravity Remote Control the only external control
+  surface. Add the interactive `ha-antigravity-remote-login` URL/code flow,
+  automatic authenticated startup after App/HAOS reboot, the configurable
+  `remote_control_name` defaulting to `home-assistant`, and a loopback-only
+  `4400–4499` launcher with no published external port. Ingress remains
+  available for authentication, diagnostics, and recovery.
+- Update the pinned `amd64` and `aarch64` Antigravity CLI to `1.1.22` and keep
+  runtime self-update disabled so the image and checksums own the installed
+  binary.
+- Reduce public configuration to `remote_control_name`,
+  `antigravity_sensitive_data_access`, `home_assistant_browser_auto_auth`, and
+  `log_level`. Simplify user-file handling to initial defaults plus preservation
+  of user files and image-managed plugin refresh.
+- Use Antigravity native `deny > ask > allow` permissions and Remote approval UI
+  as the single interactive permission contract. Preserve the AppArmor ceiling,
+  model/Supervisor credential separation, bounded Home Assistant helpers,
+  managed browser, verified memory, and `/ha-feedback`.
+
+### Removed
+
+- Remove the Telegram bridge, pairing/session/outbox state, approval cards,
+  transport-specific proposal MCP, channel options, and policy translation.
+- Remove the SSH server, published port, key options and persisted host-key
+  state. There is no compatibility or fallback period for either retired
+  external channel.
+- Remove the change proposal broker and user-selectable permission, terminal,
+  session, and migration/reset modes that existed only for the 2.x channel
+  architecture.
+
+### Breaking reset
+
+- On the first 3.0 start, delete `/data/home`, `/data/antigravity`,
+  `/data/antigravity-ha`, `/data/antigravity-ha-memory`, `/data/browser-auth`,
+  `/data/github-cli`, `/data/ssh`, and `/data/tmux` once, without an App-side
+  backup. Preserve `/config`, `/share`, `/media`, and `/data/options.json`
+  itself, then normalize Supervisor options to the four new defaults.
+- Fail closed before deletion when a reset target is a symlink, resolves outside
+  its literal path, or has unexpected ownership. Record completion atomically
+  and safely retry an interrupted reset on the next start.
+- Require Antigravity Remote/Google and GitHub authentication again after the
+  reset. Managed browser identity, verified memory, and Antigravity
+  customization also restart empty.
+
+### Verification status
+
+- Source, component, container, and emulated-architecture results are not
+  real-HAOS evidence. Fresh install, public 2.1.3 upgrade/reset, enforced
+  AppArmor, Remote task/approval/reconnect, retained-feature regression, and
+  rollback remain `NOT RUN` on each real architecture until recorded against
+  the immutable release image.
+
 ## [2.1.3] - 2026-08-21
 
 ### Fixed

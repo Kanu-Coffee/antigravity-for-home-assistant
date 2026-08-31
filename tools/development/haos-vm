@@ -1,0 +1,3177 @@
+#!/usr/bin/env python3
+"""Checkout-scoped HAOS VM lifecycle automation for host development."""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import datetime as dt
+import fcntl
+import grp
+import hashlib
+import http.client
+import ipaddress
+import json
+import os
+import pwd
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import xml.etree.ElementTree as ET
+from collections.abc import Iterator, Sequence
+from pathlib import Path
+from typing import Any
+
+EX_USAGE = 64
+EX_UNAVAILABLE = 69
+EX_SOFTWARE = 70
+
+HAOS_VERSION = "18.2"
+HAOS_IMAGE_NAME = f"haos_ova-{HAOS_VERSION}.qcow2.xz"
+HAOS_IMAGE_URL = (
+    "https://github.com/home-assistant/operating-system/releases/download/"
+    f"{HAOS_VERSION}/{HAOS_IMAGE_NAME}"
+)
+HAOS_IMAGE_SIZE = 535_936_800
+HAOS_IMAGE_SHA256 = (
+    "254e53f354df0739e3afc09be5431a07df53f0df6b703885404f665c454f254e"
+)
+HAOS_MAX_UNCOMPRESSED_SIZE = 8 * 1024**3
+HAOS_MIN_VIRTUAL_SIZE = 8 * 1024**3
+HAOS_MAX_VIRTUAL_SIZE = 128 * 1024**3
+
+LIBVIRT_URI = "qemu:///system"
+LIBVIRT_NETWORK = "default"
+LIBVIRT_FILTER = "clean-traffic"
+OVMF_CODE = Path("/usr/share/OVMF/OVMF_CODE_4M.fd")
+OVMF_VARS_TEMPLATE = Path("/usr/share/OVMF/OVMF_VARS_4M.fd")
+
+STATE_SCHEMA = "antigravity-ha-haos-vm-state/v1"
+EVIDENCE_SCHEMA = "antigravity-ha-haos-vm-evidence/v1"
+MANAGER = "antigravity-haos-vm/v1"
+DEFAULT_MEMORY_MIB = 4096
+DEFAULT_VCPUS = 2
+DEFAULT_WAIT_SECONDS = 1800
+DEFAULT_STOP_SECONDS = 120
+CONFIG_DISK_SIZE = 64 * 1024**2
+RUNTIME_DIRECTORY_MODE = 0o750
+LOCAL_IMAGE_REPOSITORY = "antigravity-for-home-assistant"
+SOURCE_APP_SLUG = "antigravity_home_assistant"
+LOCAL_APP_SLUG = f"local_{SOURCE_APP_SLUG}"
+GUEST_APP_CONTAINER = f"app_{LOCAL_APP_SLUG}"
+GUEST_LOCAL_APP_DIRECTORY = Path(
+    f"/mnt/data/supervisor/apps/local/{SOURCE_APP_SLUG}"
+)
+GUEST_APP_MARKER = GUEST_LOCAL_APP_DIRECTORY / ".antigravity-haos-vm-owner"
+GUEST_APP_CONFIG = GUEST_LOCAL_APP_DIRECTORY / "config.yaml"
+GUEST_REGISTRY_REPOSITORY = f"localhost:5000/{LOCAL_IMAGE_REPOSITORY}"
+REGISTRY_IMAGE = (
+    "registry:2.8.3@sha256:"
+    "46faa9a1ae6813194b53921a370f2f4f8c5e1aae228a89bceafef5847a6a3278"
+)
+REGISTRY_IMAGE_MANIFEST_SHA256 = (
+    "46faa9a1ae6813194b53921a370f2f4f8c5e1aae228a89bceafef5847a6a3278"
+)
+
+SAFE_ARCHITECTURES = {"aarch64", "amd64", "armhf", "armv7", "i386"}
+SAFE_CHANNELS = {"beta", "dev", "stable"}
+SAFE_LOG_LEVELS = {"critical", "debug", "error", "info", "trace", "warning"}
+SAFE_HA_STATES = {
+    "failed",
+    "initializing",
+    "running",
+    "setup",
+    "shutdown",
+    "startup",
+    "stopped",
+    "stopping",
+}
+SAFE_APP_STATES = {"error", "started", "stopped", "unknown"}
+SAFE_HA_FEATURES = {
+    "disk",
+    "haos",
+    "hostname",
+    "journal",
+    "mount",
+    "network",
+    "os_agent",
+    "reboot",
+    "resolved",
+    "services",
+    "shutdown",
+    "timedate",
+}
+SAFE_VERSION_PATTERN = re.compile(
+    r"[0-9]+(?:\.[0-9A-Za-z]+)+(?:[-+._][0-9A-Za-z]+)*"
+)
+
+TEST_MODE_ENV = "ANTIGRAVITY_HA_DEV_TEST_MODE"
+STATE_ROOT_ENV = "ANTIGRAVITY_HA_VM_STATE_ROOT"
+RUNTIME_ROOT_ENV = "ANTIGRAVITY_HA_VM_RUNTIME_ROOT"
+BINARY_OVERRIDES = {
+    "virsh": "ANTIGRAVITY_HA_VM_VIRSH_BIN",
+    "virt-install": "ANTIGRAVITY_HA_VM_VIRT_INSTALL_BIN",
+    "qemu-img": "ANTIGRAVITY_HA_VM_QEMU_IMG_BIN",
+    "qemu-system-x86_64": "ANTIGRAVITY_HA_VM_QEMU_SYSTEM_BIN",
+    "curl": "ANTIGRAVITY_HA_VM_CURL_BIN",
+    "xz": "ANTIGRAVITY_HA_VM_XZ_BIN",
+    "ssh": "ANTIGRAVITY_HA_VM_SSH_BIN",
+    "ssh-keygen": "ANTIGRAVITY_HA_VM_SSH_KEYGEN_BIN",
+    "mkfs.ext4": "ANTIGRAVITY_HA_VM_MKFS_EXT4_BIN",
+    "docker": "ANTIGRAVITY_HA_VM_DOCKER_BIN",
+}
+
+
+class VmError(RuntimeError):
+    def __init__(self, message: str, exit_code: int = EX_UNAVAILABLE) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+class UsageParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        self.print_usage(sys.stderr)
+        self.exit(EX_USAGE, f"{self.prog}: error: {message}\n")
+
+
+def _safe_environment() -> dict[str, str]:
+    environment = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"),
+        "HOME": str(Path.home()),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C",
+    }
+    for key in ("USER", "LOGNAME", "XDG_RUNTIME_DIR"):
+        value = os.environ.get(key)
+        if value:
+            environment[key] = value
+    return environment
+
+
+def _run(
+    arguments: Sequence[str | Path],
+    *,
+    input_bytes: bytes | None = None,
+    timeout: float | None = None,
+    check: bool = True,
+) -> subprocess.CompletedProcess[bytes]:
+    command = [str(argument) for argument in arguments]
+    try:
+        result = subprocess.run(
+            command,
+            input=input_bytes,
+            capture_output=True,
+            env=_safe_environment(),
+            check=False,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise VmError(f"{Path(command[0]).name} could not complete") from error
+    if check and result.returncode != 0:
+        raise VmError(
+            f"{Path(command[0]).name} failed with exit status {result.returncode}"
+        )
+    return result
+
+
+def _text(result: subprocess.CompletedProcess[bytes]) -> str:
+    return result.stdout.decode("utf-8", errors="strict").strip()
+
+
+def _utc_now() -> str:
+    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _validate_regular_file(
+    path: Path,
+    *,
+    owners: set[int],
+    exact_mode: int | None = None,
+    allow_missing: bool = False,
+) -> None:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        if allow_missing:
+            return
+        raise VmError(f"managed file is missing: {path.name}") from None
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        raise VmError(f"managed file is not a private regular file: {path.name}")
+    if metadata.st_uid not in owners:
+        raise VmError(f"managed file ownership does not match: {path.name}")
+    if path.resolve(strict=True) != path:
+        raise VmError(f"managed file path is not canonical: {path.name}")
+    if exact_mode is not None and stat.S_IMODE(metadata.st_mode) != exact_mode:
+        raise VmError(f"managed file permissions do not match: {path.name}")
+
+
+def _validate_directory(
+    path: Path,
+    *,
+    owners: set[int],
+    exact_mode: int,
+    exact_gid: int | None = None,
+    allow_missing: bool = False,
+) -> None:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        if allow_missing:
+            return
+        raise VmError(f"managed directory is missing: {path.name}") from None
+    if not stat.S_ISDIR(metadata.st_mode) or path.is_symlink():
+        raise VmError(f"managed directory is not a real directory: {path.name}")
+    if metadata.st_uid not in owners:
+        raise VmError(f"managed directory ownership does not match: {path.name}")
+    if exact_gid is not None and metadata.st_gid != exact_gid:
+        raise VmError(f"managed directory group does not match: {path.name}")
+    if stat.S_IMODE(metadata.st_mode) != exact_mode:
+        raise VmError(f"managed directory permissions do not match: {path.name}")
+    if path.resolve(strict=True) != path:
+        raise VmError(f"managed directory path is not canonical: {path.name}")
+
+
+def _ensure_directory(
+    path: Path,
+    *,
+    mode: int,
+    gid: int | None = None,
+    harden_from_mode: int | None = None,
+) -> None:
+    if path.exists() or path.is_symlink():
+        metadata = path.lstat()
+        if not stat.S_ISDIR(metadata.st_mode) or path.is_symlink():
+            raise VmError(f"managed directory is not a real directory: {path}")
+        if metadata.st_uid != os.getuid():
+            raise VmError(f"managed directory has the wrong owner: {path}")
+        if gid is not None and metadata.st_gid != gid:
+            raise VmError(f"managed directory has the wrong group: {path}")
+        actual_mode = stat.S_IMODE(metadata.st_mode)
+        if actual_mode != mode:
+            if harden_from_mode is None or actual_mode != harden_from_mode:
+                raise VmError(f"managed directory has unsafe permissions: {path}")
+            os.chmod(path, mode)
+        return
+    path.mkdir(mode=mode)
+    os.chmod(path, mode)
+    if gid is not None:
+        os.chown(path, -1, gid)
+
+
+def _ensure_chain(
+    root: Path,
+    children: Sequence[str],
+    *,
+    mode: int,
+    gid: int | None,
+    harden_from_mode: int | None = None,
+) -> Path:
+    current = root
+    for child in children:
+        current = current / child
+        _ensure_directory(
+            current,
+            mode=mode,
+            gid=gid,
+            harden_from_mode=harden_from_mode,
+        )
+    return current
+
+
+def _secure_unlink(path: Path, *, owners: set[int], root: Path) -> None:
+    if not path.exists() and not path.is_symlink():
+        return
+    if path.parent.resolve(strict=True) != root.resolve(strict=True):
+        raise VmError(f"refused to remove a file outside its managed directory: {path.name}")
+    _validate_regular_file(path, owners=owners)
+    path.unlink()
+
+
+def _read_json_file(path: Path) -> dict[str, Any]:
+    _validate_regular_file(path, owners={os.getuid()}, exact_mode=0o600)
+    if path.stat().st_size > 64 * 1024:
+        raise VmError("HAOS VM state file is unexpectedly large")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise VmError("HAOS VM state file is invalid") from error
+    if not isinstance(value, dict):
+        raise VmError("HAOS VM state file is invalid")
+    return value
+
+
+def _write_json_file(path: Path, value: dict[str, Any]) -> None:
+    payload = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        os.chmod(path, 0o600)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
+
+
+class Context:
+    def __init__(self) -> None:
+        test_mode_value = os.environ.get(TEST_MODE_ENV, "0")
+        if test_mode_value not in {"0", "1"}:
+            raise VmError(f"{TEST_MODE_ENV} must be 0 or 1", EX_USAGE)
+        self.test_mode = test_mode_value == "1"
+
+        script = Path(__file__).resolve()
+        script_directory = script.parent
+        git = shutil.which("git")
+        if git is None:
+            raise VmError("git is required")
+        root_result = _run(
+            [git, "-C", script_directory, "rev-parse", "--show-toplevel"]
+        )
+        self.repository_root = Path(_text(root_result)).resolve(strict=True)
+        if script_directory != self.repository_root / "tools" / "development":
+            raise VmError("HAOS VM helper path does not match the repository root")
+
+        common_result = _run(
+            [git, "-C", self.repository_root, "rev-parse", "--git-common-dir"]
+        )
+        common = Path(_text(common_result))
+        if not common.is_absolute():
+            common = self.repository_root / common
+        self.git_common_directory = common.resolve(strict=True)
+
+        self.checkout_identity = hashlib.sha256(
+            os.fsencode(str(self.repository_root))
+        ).hexdigest()
+        self.checkout_id = self.checkout_identity[:12]
+        self.domain_name = f"antigravity-haos-{self.checkout_id}"
+        self.description = (
+            f"managed-by={MANAGER};checkout={self.checkout_identity};"
+            "network=shared-system-nat"
+        )
+        mac_bytes = bytes.fromhex(self.checkout_identity[:6])
+        self.mac_address = "52:54:00:" + ":".join(f"{byte:02x}" for byte in mac_bytes)
+
+        private_override = os.environ.get(STATE_ROOT_ENV)
+        runtime_override = os.environ.get(RUNTIME_ROOT_ENV)
+        override_values = [private_override, runtime_override]
+        override_values.extend(os.environ.get(name) for name in BINARY_OVERRIDES.values())
+        if not self.test_mode and any(value for value in override_values):
+            raise VmError(
+                "HAOS VM overrides require ANTIGRAVITY_HA_DEV_TEST_MODE=1",
+                EX_USAGE,
+            )
+
+        self.private_root = (
+            Path(private_override).resolve()
+            if private_override
+            else self.repository_root / ".codex-log" / "haos-vm"
+        )
+        self.runtime_root = (
+            Path(runtime_override).resolve()
+            if runtime_override
+            else Path(
+                f"/var/tmp/antigravity-haos-vm-{os.getuid()}-{self.checkout_id}"
+            )
+        )
+        if not self.test_mode and self.runtime_root.parent != Path("/var/tmp"):
+            raise VmError("HAOS VM runtime root must be a direct child of /var/tmp")
+
+        try:
+            self.kvm_gid = grp.getgrnam("kvm").gr_gid
+            self.qemu_uid = pwd.getpwnam("libvirt-qemu").pw_uid
+        except KeyError as error:
+            if self.test_mode:
+                self.kvm_gid = os.getgid()
+                self.qemu_uid = os.getuid()
+            else:
+                raise VmError("kvm and libvirt-qemu accounts are required") from error
+        self.runtime_owners = {os.getuid(), self.qemu_uid}
+
+        self.cache_directory = self.runtime_root / "cache" / HAOS_VERSION
+        self.compressed_image = self.cache_directory / HAOS_IMAGE_NAME
+        self.base_image = self.cache_directory / HAOS_IMAGE_NAME.removesuffix(".xz")
+        self.instance_directory = self.runtime_root / "instances" / self.domain_name
+        self.overlay = self.instance_directory / "system.qcow2"
+        self.config_disk = self.instance_directory / "CONFIG.ext4"
+        self.nvram = self.instance_directory / "OVMF_VARS.fd"
+
+        self.private_instance = self.private_root / "instances" / self.domain_name
+        self.ssh_key = self.private_instance / "id_ed25519"
+        self.ssh_public_key = self.private_instance / "id_ed25519.pub"
+        self.known_hosts = self.private_instance / "known_hosts"
+        self.state_file = self.private_instance / "state.json"
+        self.lock_file = (
+            self.git_common_directory
+            / f"antigravity-haos-vm-{self.checkout_id}.lock"
+        )
+        self._binaries: dict[str, str] = {}
+
+    def binary(self, name: str) -> str:
+        if name in self._binaries:
+            return self._binaries[name]
+        override_name = BINARY_OVERRIDES.get(name)
+        override = os.environ.get(override_name, "") if override_name else ""
+        resolved = override or shutil.which(name)
+        if not resolved:
+            raise VmError(f"{name} is required")
+        self._binaries[name] = str(Path(resolved).resolve())
+        return self._binaries[name]
+
+    def virsh(self, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[bytes]:
+        return _run(
+            [self.binary("virsh"), "--connect", LIBVIRT_URI, *arguments],
+            check=check,
+        )
+
+    def prepare_directories(self) -> None:
+        private_parent = self.repository_root / ".codex-log"
+        if self.private_root == private_parent / "haos-vm":
+            if not private_parent.exists():
+                private_parent.mkdir(mode=0o700)
+            _ensure_directory(private_parent, mode=0o700)
+            _ensure_directory(self.private_root, mode=0o700)
+        else:
+            if not self.private_root.parent.exists():
+                raise VmError("test state-root parent does not exist")
+            _ensure_directory(self.private_root, mode=0o700)
+        _ensure_chain(self.private_root, ["instances"], mode=0o700, gid=None)
+
+        if not self.runtime_root.parent.exists():
+            raise VmError("HAOS VM runtime parent does not exist")
+        _ensure_directory(
+            self.runtime_root,
+            mode=RUNTIME_DIRECTORY_MODE,
+            gid=self.kvm_gid,
+            harden_from_mode=0o770,
+        )
+        _ensure_chain(
+            self.runtime_root,
+            ["cache"],
+            mode=RUNTIME_DIRECTORY_MODE,
+            gid=self.kvm_gid,
+            harden_from_mode=0o770,
+        )
+        _ensure_chain(
+            self.runtime_root,
+            ["cache", HAOS_VERSION],
+            mode=RUNTIME_DIRECTORY_MODE,
+            gid=self.kvm_gid,
+            harden_from_mode=0o770,
+        )
+        _ensure_chain(
+            self.runtime_root,
+            ["instances"],
+            mode=RUNTIME_DIRECTORY_MODE,
+            gid=self.kvm_gid,
+            harden_from_mode=0o770,
+        )
+
+    @contextlib.contextmanager
+    def locked(self) -> Iterator[None]:
+        descriptor = os.open(
+            self.lock_file,
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
+            0o600,
+        )
+        try:
+            metadata = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or metadata.st_nlink != 1
+            ):
+                raise VmError("HAOS VM lock file is unsafe")
+            os.fchmod(descriptor, 0o600)
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(descriptor)
+
+
+def _network_xml(context: Context) -> ET.Element:
+    result = context.virsh("net-dumpxml", LIBVIRT_NETWORK)
+    try:
+        root = ET.fromstring(result.stdout)
+    except ET.ParseError as error:
+        raise VmError("libvirt default network XML is invalid") from error
+    if root.tag != "network" or root.findtext("name") != LIBVIRT_NETWORK:
+        raise VmError("libvirt default network identity does not match")
+    forward = root.find("forward")
+    if forward is None or forward.get("mode") != "nat":
+        raise VmError("libvirt default network is not the expected shared NAT")
+    return root
+
+
+def _virsh_name_inventory(
+    result: subprocess.CompletedProcess[bytes],
+    *,
+    description: str,
+) -> set[str]:
+    if len(result.stdout) > 1024 * 1024:
+        raise VmError(f"{description} inventory is unexpectedly large")
+    try:
+        lines = result.stdout.decode("utf-8", errors="strict").splitlines()
+    except UnicodeError as error:
+        raise VmError(f"{description} inventory is invalid") from error
+    names: set[str] = set()
+    for line in lines:
+        name = line.strip()
+        if not name:
+            continue
+        if (
+            len(name) > 255
+            or any(ord(character) < 32 or ord(character) == 127 for character in name)
+            or name in names
+        ):
+            raise VmError(f"{description} inventory is invalid")
+        names.add(name)
+    return names
+
+
+def _network_ipv4(
+    context: Context,
+) -> tuple[
+    ipaddress.IPv4Network,
+    ipaddress.IPv4Address,
+    ipaddress.IPv4Address,
+    ipaddress.IPv4Address,
+]:
+    root = _network_xml(context)
+    candidates: list[
+        tuple[
+            ipaddress.IPv4Network,
+            ipaddress.IPv4Address,
+            ipaddress.IPv4Address,
+            ipaddress.IPv4Address,
+        ]
+    ] = []
+    for element in root.findall("ip"):
+        address_text = element.get("address", "")
+        if ":" in address_text:
+            continue
+        mask = element.get("netmask") or element.get("prefix")
+        ranges = element.findall("./dhcp/range")
+        if not address_text or not mask or len(ranges) != 1:
+            continue
+        try:
+            interface = ipaddress.IPv4Interface(f"{address_text}/{mask}")
+            range_start = ipaddress.IPv4Address(ranges[0].get("start", ""))
+            range_end = ipaddress.IPv4Address(ranges[0].get("end", ""))
+        except ValueError as error:
+            raise VmError("libvirt default network IPv4 configuration is invalid") from error
+        if (
+            not interface.network.is_private
+            or interface.network.is_link_local
+            or interface.network.is_loopback
+            or interface.network.is_multicast
+            or interface.ip not in interface.network
+            or range_start not in interface.network
+            or range_end not in interface.network
+            or range_start > range_end
+            or range_start <= interface.ip <= range_end
+        ):
+            raise VmError("libvirt default network DHCP range is invalid")
+        candidates.append(
+            (interface.network, interface.ip, range_start, range_end)
+        )
+    if len(candidates) != 1:
+        raise VmError("libvirt default network must have one IPv4 DHCP subnet")
+    return candidates[0]
+
+
+def _validate_managed_network(
+    context: Context,
+) -> tuple[
+    ipaddress.IPv4Network,
+    ipaddress.IPv4Address,
+    ipaddress.IPv4Address,
+    ipaddress.IPv4Address,
+]:
+    inventories = (
+        (
+            context.virsh("net-list", "--name"),
+            "active libvirt network",
+        ),
+        (
+            context.virsh("net-list", "--all", "--persistent", "--name"),
+            "persistent libvirt network",
+        ),
+        (
+            context.virsh("net-list", "--all", "--autostart", "--name"),
+            "autostart libvirt network",
+        ),
+    )
+    for result, description in inventories:
+        if LIBVIRT_NETWORK not in _virsh_name_inventory(
+            result,
+            description=description,
+        ):
+            raise VmError(f"libvirt default network is not {description.split()[0]}")
+    return _network_ipv4(context)
+
+
+def _check_host(context: Context, *, emit: bool) -> None:
+    required = (
+        "virsh",
+        "virt-install",
+        "qemu-img",
+        "qemu-system-x86_64",
+        "curl",
+        "xz",
+        "ssh",
+        "ssh-keygen",
+        "mkfs.ext4",
+    )
+    for name in required:
+        context.binary(name)
+    if not context.test_mode and not os.access("/dev/kvm", os.R_OK | os.W_OK):
+        raise VmError("read/write access to /dev/kvm is required")
+    for firmware in (OVMF_CODE, OVMF_VARS_TEMPLATE):
+        if not firmware.is_file() or not os.access(firmware, os.R_OK):
+            raise VmError(f"required non-Secure-Boot firmware is missing: {firmware}")
+    uri = _text(context.virsh("uri"))
+    if uri != LIBVIRT_URI:
+        raise VmError("libvirt system connection did not resolve as expected")
+    _validate_managed_network(context)
+    context.virsh("nwfilter-dumpxml", LIBVIRT_FILTER)
+    qemu_version = _text(_run([context.binary("qemu-system-x86_64"), "--version"]))
+    if emit:
+        print("KVM access OK")
+        print(qemu_version.splitlines()[0])
+        print(f"libvirt connection OK: {LIBVIRT_URI}")
+        print(
+            "Network OK: default shared NAT "
+            "(not isolated; guest outbound, host, and LAN access are possible)"
+        )
+        print(
+            f"HAOS image pin: {HAOS_VERSION} sha256:{HAOS_IMAGE_SHA256}"
+        )
+
+
+def _qemu_image_info(context: Context, path: Path) -> dict[str, Any]:
+    result = _run(
+        [
+            context.binary("qemu-img"),
+            "info",
+            "--output=json",
+            "--force-share",
+            path,
+        ]
+    )
+    try:
+        value = json.loads(result.stdout)
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise VmError("qemu-img returned invalid image metadata") from error
+    if not isinstance(value, dict):
+        raise VmError("qemu-img returned invalid image metadata")
+    return value
+
+
+def _validate_base_image_path(
+    context: Context,
+    path: Path,
+    *,
+    owners: set[int],
+) -> None:
+    _validate_regular_file(
+        path,
+        owners=owners,
+        exact_mode=0o440,
+    )
+    info = _qemu_image_info(context, path)
+    if info.get("format") != "qcow2":
+        raise VmError("HAOS base image is not QCOW2")
+    if info.get("backing-filename") or info.get("full-backing-filename"):
+        raise VmError("HAOS base image unexpectedly has a backing file")
+    virtual_size = info.get("virtual-size")
+    if (
+        not isinstance(virtual_size, int)
+        or not HAOS_MIN_VIRTUAL_SIZE <= virtual_size <= HAOS_MAX_VIRTUAL_SIZE
+    ):
+        raise VmError("HAOS base image virtual size is outside the allowed range")
+    _run(
+        [
+            context.binary("qemu-img"),
+            "check",
+            "-f",
+            "qcow2",
+            path,
+        ]
+    )
+
+
+def _validate_base_image(context: Context) -> None:
+    _validate_base_image_path(
+        context,
+        context.base_image,
+        owners=context.runtime_owners,
+    )
+
+
+def _validate_compressed_image(context: Context) -> None:
+    _validate_regular_file(
+        context.compressed_image,
+        owners={os.getuid()},
+        exact_mode=0o440,
+    )
+    if context.compressed_image.stat().st_size != HAOS_IMAGE_SIZE:
+        raise VmError("cached HAOS download has the wrong size")
+    if _sha256_file(context.compressed_image) != HAOS_IMAGE_SHA256:
+        raise VmError("cached HAOS download failed its pinned SHA-256 check")
+
+
+def _xz_uncompressed_size(context: Context, path: Path) -> int:
+    result = _run([context.binary("xz"), "--robot", "--list", path])
+    lines = result.stdout.decode("utf-8", errors="strict").splitlines()
+    totals = [line.split("\t") for line in lines if line.startswith("totals\t")]
+    if len(totals) != 1 or len(totals[0]) < 5:
+        raise VmError("xz did not report an uncompressed image size")
+    try:
+        uncompressed_size = int(totals[0][4])
+    except ValueError as error:
+        raise VmError("xz reported an invalid uncompressed image size") from error
+    if not 128 * 1024**2 <= uncompressed_size <= HAOS_MAX_UNCOMPRESSED_SIZE:
+        raise VmError("HAOS download expands outside the allowed size range")
+    return uncompressed_size
+
+
+def _download_image(context: Context) -> None:
+    context.prepare_directories()
+    if context.compressed_image.exists():
+        _validate_compressed_image(context)
+    else:
+        partial = context.compressed_image.with_suffix(
+            context.compressed_image.suffix + ".part"
+        )
+        _secure_unlink(
+            partial,
+            owners={os.getuid()},
+            root=context.cache_directory,
+        )
+        if (
+            shutil.disk_usage(context.cache_directory).free
+            < HAOS_IMAGE_SIZE + 256 * 1024**2
+        ):
+            raise VmError("insufficient free space for the pinned HAOS download")
+        print(f"Downloading pinned HAOS {HAOS_VERSION} image ({HAOS_IMAGE_SIZE} bytes)...")
+        try:
+            _run(
+                [
+                    context.binary("curl"),
+                    "--disable",
+                    "--max-filesize",
+                    str(HAOS_IMAGE_SIZE),
+                    "--fail",
+                    "--location",
+                    "--silent",
+                    "--show-error",
+                    "--proto",
+                    "=https",
+                    "--proto-redir",
+                    "=https",
+                    "--tlsv1.2",
+                    "--output",
+                    partial,
+                    HAOS_IMAGE_URL,
+                ],
+                timeout=1800,
+            )
+            _validate_regular_file(partial, owners={os.getuid()})
+            if partial.stat().st_size != HAOS_IMAGE_SIZE:
+                raise VmError("downloaded HAOS image has the wrong size")
+            if _sha256_file(partial) != HAOS_IMAGE_SHA256:
+                raise VmError("downloaded HAOS image failed its pinned SHA-256 check")
+            os.chmod(partial, 0o440)
+            os.chown(partial, -1, context.kvm_gid)
+            os.replace(partial, context.compressed_image)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                partial.unlink()
+        _validate_compressed_image(context)
+
+    _run([context.binary("xz"), "--test", context.compressed_image], timeout=600)
+    uncompressed_size = _xz_uncompressed_size(context, context.compressed_image)
+    if context.base_image.exists():
+        _validate_base_image(context)
+        print(f"Verified cached HAOS {HAOS_VERSION} base image.")
+        return
+    if shutil.disk_usage(context.cache_directory).free < uncompressed_size + 1024**3:
+        raise VmError("insufficient free space to unpack the pinned HAOS image")
+
+    partial_base = context.base_image.with_suffix(context.base_image.suffix + ".part")
+    _secure_unlink(
+        partial_base,
+        owners={os.getuid()},
+        root=context.cache_directory,
+    )
+    print("Expanding and validating the pinned HAOS image...")
+    try:
+        descriptor = os.open(
+            partial_base,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+        )
+        with os.fdopen(descriptor, "wb") as output:
+            process = subprocess.run(
+                [context.binary("xz"), "--decompress", "--stdout", context.compressed_image],
+                stdout=output,
+                stderr=subprocess.PIPE,
+                env=_safe_environment(),
+                check=False,
+                timeout=1200,
+            )
+        if process.returncode != 0:
+            raise VmError(f"xz failed with exit status {process.returncode}")
+        _validate_regular_file(partial_base, owners={os.getuid()})
+        if partial_base.stat().st_size != uncompressed_size:
+            raise VmError("expanded HAOS image has an unexpected size")
+        os.chmod(partial_base, 0o440)
+        os.chown(partial_base, -1, context.kvm_gid)
+        _validate_base_image_path(
+            context,
+            partial_base,
+            owners={os.getuid()},
+        )
+        os.replace(partial_base, context.base_image)
+        _validate_base_image(context)
+    except Exception:
+        with contextlib.suppress(FileNotFoundError):
+            partial_base.unlink()
+        raise
+    print(f"Prepared HAOS {HAOS_VERSION} base image.")
+
+
+def _domain_names(context: Context) -> set[str]:
+    return _virsh_name_inventory(
+        context.virsh("list", "--all", "--name"),
+        description="libvirt domain",
+    )
+
+
+def _domain_exists(context: Context) -> bool:
+    return context.domain_name in _domain_names(context)
+
+
+def _domain_state(context: Context) -> str:
+    if not _domain_exists(context):
+        return "absent"
+    result = context.virsh("domstate", context.domain_name)
+    lines = _text(result).splitlines()
+    if len(lines) != 1:
+        raise VmError("libvirt returned an invalid domain state")
+    state = re.sub(r"\s*\([^)]*\)\s*$", "", lines[0].strip().lower())
+    if not re.fullmatch(r"[a-z][a-z ]{0,31}", state):
+        raise VmError("libvirt returned an invalid domain state")
+    return state
+
+
+def _expected_state(context: Context, *, memory_mib: int, vcpus: int) -> dict[str, Any]:
+    return {
+        "schema": STATE_SCHEMA,
+        "phase": "prepared",
+        "checkout_identity": context.checkout_identity,
+        "domain_name": context.domain_name,
+        "domain_uuid": None,
+        "description": context.description,
+        "mac_address": context.mac_address,
+        "libvirt_uri": LIBVIRT_URI,
+        "network": LIBVIRT_NETWORK,
+        "network_isolated": False,
+        "outbound_network_acknowledged": True,
+        "haos_version": HAOS_VERSION,
+        "haos_image_sha256": HAOS_IMAGE_SHA256,
+        "memory_mib": memory_mib,
+        "vcpus": vcpus,
+        "runtime_root": str(context.runtime_root),
+        "instance_directory": str(context.instance_directory),
+        "overlay": str(context.overlay),
+        "config_disk": str(context.config_disk),
+        "nvram": str(context.nvram),
+        "ssh_key": str(context.ssh_key),
+        "ssh_public_key": str(context.ssh_public_key),
+        "known_hosts": str(context.known_hosts),
+        "created_at_utc": _utc_now(),
+    }
+
+
+def _validate_state(context: Context, state: dict[str, Any]) -> None:
+    expected = {
+        "schema": STATE_SCHEMA,
+        "checkout_identity": context.checkout_identity,
+        "domain_name": context.domain_name,
+        "description": context.description,
+        "mac_address": context.mac_address,
+        "libvirt_uri": LIBVIRT_URI,
+        "network": LIBVIRT_NETWORK,
+        "network_isolated": False,
+        "outbound_network_acknowledged": True,
+        "haos_version": HAOS_VERSION,
+        "haos_image_sha256": HAOS_IMAGE_SHA256,
+        "runtime_root": str(context.runtime_root),
+        "instance_directory": str(context.instance_directory),
+        "overlay": str(context.overlay),
+        "config_disk": str(context.config_disk),
+        "nvram": str(context.nvram),
+        "ssh_key": str(context.ssh_key),
+        "ssh_public_key": str(context.ssh_public_key),
+        "known_hosts": str(context.known_hosts),
+    }
+    for key, value in expected.items():
+        if state.get(key) != value:
+            raise VmError(f"HAOS VM state ownership check failed: {key}")
+    if state.get("phase") not in {"prepared", "defined"}:
+        raise VmError("HAOS VM state phase is invalid")
+    if not isinstance(state.get("memory_mib"), int) or not isinstance(
+        state.get("vcpus"), int
+    ):
+        raise VmError("HAOS VM state resources are invalid")
+    uuid = state.get("domain_uuid")
+    if uuid is not None and not re.fullmatch(
+        r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", uuid
+    ):
+        raise VmError("HAOS VM state UUID is invalid")
+    app = state.get("app")
+    if app is not None:
+        if not isinstance(app, dict):
+            raise VmError("HAOS VM App state is invalid")
+        app_expected = {
+            "slug": LOCAL_APP_SLUG,
+            "remote_directory": str(GUEST_LOCAL_APP_DIRECTORY),
+            "remote_marker": str(GUEST_APP_MARKER),
+        }
+        for key, value in app_expected.items():
+            if app.get(key) != value:
+                raise VmError(f"HAOS VM App state ownership check failed: {key}")
+        container_name = app.get("container_name")
+        if container_name not in {
+            GUEST_APP_CONTAINER,
+            f"addon_{LOCAL_APP_SLUG}",
+        }:
+            raise VmError("HAOS VM App container name is invalid")
+        if app.get("phase") == "ready" and container_name != GUEST_APP_CONTAINER:
+            raise VmError("HAOS VM ready App container name is obsolete")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", str(app.get("image_id", ""))):
+            raise VmError("HAOS VM App image ID is invalid")
+        if not re.fullmatch(
+            rf"{re.escape(LOCAL_IMAGE_REPOSITORY)}:[A-Za-z0-9._-]+",
+            str(app.get("image_tag", "")),
+        ):
+            raise VmError("HAOS VM App image tag is invalid")
+        if not re.fullmatch(r"[0-9a-f]{40}", str(app.get("source_revision", ""))):
+            raise VmError("HAOS VM App source revision is invalid")
+        if not re.fullmatch(
+            r"sha256:[0-9a-f]{64}", str(app.get("source_rootfs_sha256", ""))
+        ):
+            raise VmError("HAOS VM App source rootfs digest is invalid")
+        if not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._-]{0,127}", str(app.get("version", ""))):
+            raise VmError("HAOS VM App version is invalid")
+        if app.get("phase") not in {"built", "loaded", "ready"}:
+            raise VmError("HAOS VM App phase is invalid")
+        guest_image_tag = app.get("guest_image_tag")
+        if guest_image_tag is not None and guest_image_tag != (
+            f"{GUEST_REGISTRY_REPOSITORY}:{app['version']}"
+        ):
+            raise VmError("HAOS VM guest App image tag is invalid")
+        registry_digest = app.get("registry_manifest_sha256")
+        if registry_digest is not None and registry_digest != REGISTRY_IMAGE_MANIFEST_SHA256:
+            raise VmError("HAOS VM local registry pin is invalid")
+        registry_image_id = app.get("registry_image_id")
+        if registry_image_id is not None and not re.fullmatch(
+            r"sha256:[0-9a-f]{64}", str(registry_image_id)
+        ):
+            raise VmError("HAOS VM local registry image ID is invalid")
+        if app.get("phase") == "ready" and (
+            guest_image_tag is None
+            or registry_digest is None
+            or registry_image_id is None
+        ):
+            raise VmError("HAOS VM ready App state lacks its registry binding")
+
+
+def _load_state(context: Context, *, required: bool = True) -> dict[str, Any] | None:
+    if not context.state_file.exists() and not context.state_file.is_symlink():
+        if required:
+            raise VmError("no managed HAOS VM state exists")
+        return None
+    state = _read_json_file(context.state_file)
+    _validate_state(context, state)
+    return state
+
+
+def _domain_xml(context: Context) -> ET.Element:
+    result = context.virsh("dumpxml", context.domain_name)
+    try:
+        return ET.fromstring(result.stdout)
+    except ET.ParseError as error:
+        raise VmError("managed domain XML is invalid") from error
+
+
+def _validate_domain(
+    context: Context,
+    state: dict[str, Any],
+    *,
+    require_uuid: bool = True,
+) -> ET.Element:
+    root = _domain_xml(context)
+    if root.get("type") != "kvm":
+        raise VmError("domain type does not match managed KVM")
+    if root.findtext("name") != context.domain_name:
+        raise VmError("domain name ownership check failed")
+    if root.findtext("description") != context.description:
+        raise VmError("domain metadata ownership check failed")
+    domain_uuid = root.findtext("uuid")
+    if require_uuid and domain_uuid != state.get("domain_uuid"):
+        raise VmError("domain UUID ownership check failed")
+
+    devices = root.find("devices")
+    if devices is None:
+        raise VmError("managed domain has no device description")
+    for forbidden in ("filesystem", "hostdev", "redirdev", "tpm", "graphics"):
+        if devices.find(forbidden) is not None:
+            raise VmError(f"managed domain unexpectedly contains {forbidden}")
+
+    _validate_directory(
+        context.instance_directory,
+        owners={os.getuid()},
+        exact_mode=RUNTIME_DIRECTORY_MODE,
+        exact_gid=context.kvm_gid,
+    )
+    _validate_directory(
+        context.private_instance,
+        owners={os.getuid()},
+        exact_mode=0o700,
+    )
+    # Reject links, hard links, foreign ownership, and unexpected modes before
+    # handing any managed disk to qemu-img for inactive-domain verification.
+    _validate_regular_file(
+        context.overlay,
+        owners=context.runtime_owners,
+        exact_mode=0o660,
+    )
+    _validate_regular_file(
+        context.config_disk,
+        owners=context.runtime_owners,
+        exact_mode=0o440,
+    )
+    _validate_regular_file(
+        context.nvram,
+        owners=context.runtime_owners,
+        exact_mode=0o660,
+    )
+
+    interfaces = devices.findall("interface")
+    if len(interfaces) != 1 or interfaces[0].get("type") != "network":
+        raise VmError("managed domain network ownership check failed")
+    interface = interfaces[0]
+    source = interface.find("source")
+    mac = interface.find("mac")
+    filterref = interface.find("filterref")
+    if source is None or source.get("network") != LIBVIRT_NETWORK:
+        raise VmError("managed domain network source does not match")
+    if mac is None or mac.get("address", "").lower() != context.mac_address:
+        raise VmError("managed domain MAC ownership check failed")
+    if filterref is None or filterref.get("filter") != LIBVIRT_FILTER:
+        raise VmError("managed domain network filter does not match")
+
+    disk_paths: set[Path] = set()
+    readonly_paths: set[Path] = set()
+    for disk in devices.findall("disk"):
+        if disk.get("type") != "file" or disk.get("device") != "disk":
+            raise VmError("managed domain contains an unexpected storage device")
+        disk_source = disk.find("source")
+        if (
+            disk_source is None
+            or not disk_source.get("file")
+            or not set(disk_source.attrib).issubset({"file", "index"})
+            or list(disk_source)
+        ):
+            raise VmError("managed domain disk source is not an exact file path")
+        source_path = Path(disk_source.get("file", ""))
+        if not source_path.is_absolute() or source_path.resolve() != source_path:
+            raise VmError("managed domain disk source is not canonical")
+        disk_paths.add(source_path)
+        if disk.find("readonly") is not None:
+            readonly_paths.add(source_path)
+        backing_store = disk.find("backingStore")
+        if source_path == context.overlay:
+            if backing_store is None:
+                overlay_info = _qemu_image_info(context, context.overlay)
+                full_backing = overlay_info.get("full-backing-filename")
+                backing = overlay_info.get("backing-filename")
+                if (
+                    overlay_info.get("format") != "qcow2"
+                    or Path(str(full_backing or backing)).resolve() != context.base_image
+                ):
+                    raise VmError(
+                        "managed overlay backing path does not match the pinned base"
+                    )
+            else:
+                backing_source = backing_store.find("source")
+                if (
+                    backing_source is None
+                    or backing_source.get("file") != str(context.base_image)
+                    or not set(backing_source.attrib).issubset({"file", "index"})
+                    or list(backing_source)
+                ):
+                    raise VmError(
+                        "managed overlay backing path does not match the pinned base"
+                    )
+                next_backing = backing_store.find("backingStore")
+                if next_backing is None or list(next_backing) or next_backing.attrib:
+                    raise VmError("managed overlay has an unexpected backing chain")
+        elif backing_store is not None and (
+            backing_store.find("source") is not None or backing_store.attrib
+        ):
+            raise VmError("managed CONFIG disk unexpectedly has a backing file")
+    if disk_paths != {context.overlay, context.config_disk}:
+        raise VmError("managed domain disk ownership check failed")
+    if readonly_paths != {context.config_disk}:
+        raise VmError("managed CONFIG disk must be the only read-only disk")
+    if not all(_is_within(path, context.instance_directory) for path in disk_paths):
+        raise VmError("managed domain disk escaped its checkout directory")
+
+    nvram_text = root.findtext("./os/nvram")
+    if nvram_text != str(context.nvram):
+        raise VmError("managed domain NVRAM ownership check failed")
+    channel_names = {
+        target.get("name")
+        for target in devices.findall("./channel/target")
+        if target.get("type") == "virtio"
+    }
+    if "org.qemu.guest_agent.0" not in channel_names:
+        raise VmError("managed domain guest-agent channel is missing")
+    return root
+
+
+def _prepare_instance(context: Context, state: dict[str, Any]) -> None:
+    if context.instance_directory.exists() or context.private_instance.exists():
+        raise VmError("managed HAOS VM instance files already exist without valid state")
+    _ensure_directory(
+        context.instance_directory,
+        mode=RUNTIME_DIRECTORY_MODE,
+        gid=context.kvm_gid,
+    )
+    _ensure_directory(context.private_instance, mode=0o700)
+
+    _run(
+        [
+            context.binary("qemu-img"),
+            "create",
+            "-f",
+            "qcow2",
+            "-F",
+            "qcow2",
+            "-b",
+            context.base_image,
+            context.overlay,
+        ]
+    )
+    os.chmod(context.overlay, 0o660)
+    os.chown(context.overlay, -1, context.kvm_gid)
+    overlay_info = _qemu_image_info(context, context.overlay)
+    if overlay_info.get("format") != "qcow2":
+        raise VmError("managed overlay is not QCOW2")
+    full_backing = overlay_info.get("full-backing-filename")
+    backing = overlay_info.get("backing-filename")
+    if Path(str(full_backing or backing)).resolve() != context.base_image:
+        raise VmError("managed overlay does not reference the pinned base image")
+
+    _run(
+        [
+            context.binary("ssh-keygen"),
+            "-q",
+            "-t",
+            "ed25519",
+            "-N",
+            "",
+            "-C",
+            context.domain_name,
+            "-f",
+            context.ssh_key,
+        ]
+    )
+    os.chmod(context.ssh_key, 0o600)
+    os.chmod(context.ssh_public_key, 0o600)
+    _validate_regular_file(context.ssh_key, owners={os.getuid()}, exact_mode=0o600)
+    _validate_regular_file(
+        context.ssh_public_key,
+        owners={os.getuid()},
+        exact_mode=0o600,
+    )
+    _run([context.binary("ssh-keygen"), "-l", "-f", context.ssh_public_key])
+    public_key = context.ssh_public_key.read_text(encoding="ascii").strip()
+    if not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/]+={0,3} [A-Za-z0-9._-]+", public_key):
+        raise VmError("generated HAOS debug public key is invalid")
+
+    context.known_hosts.touch(mode=0o600, exist_ok=False)
+    os.chmod(context.known_hosts, 0o600)
+    with tempfile.TemporaryDirectory(
+        prefix="config-source-", dir=context.instance_directory
+    ) as staging_name:
+        staging = Path(staging_name)
+        os.chmod(staging, 0o700)
+        authorized_keys = staging / "authorized_keys"
+        authorized_keys.write_text(public_key + "\n", encoding="ascii")
+        os.chmod(authorized_keys, 0o600)
+        with context.config_disk.open("xb") as config_handle:
+            config_handle.truncate(CONFIG_DISK_SIZE)
+        _run(
+            [
+                context.binary("mkfs.ext4"),
+                "-q",
+                "-F",
+                "-L",
+                "CONFIG",
+                "-m",
+                "0",
+                "-d",
+                staging,
+                context.config_disk,
+            ]
+        )
+    os.chmod(context.config_disk, 0o440)
+    os.chown(context.config_disk, -1, context.kvm_gid)
+
+    shutil.copyfile(OVMF_VARS_TEMPLATE, context.nvram)
+    os.chmod(context.nvram, 0o660)
+    os.chown(context.nvram, -1, context.kvm_gid)
+
+    _write_json_file(context.state_file, state)
+
+
+def _harden_legacy_instance_directory(context: Context) -> None:
+    if not context.instance_directory.exists() and not context.instance_directory.is_symlink():
+        return
+    _ensure_directory(
+        context.instance_directory,
+        mode=RUNTIME_DIRECTORY_MODE,
+        gid=context.kvm_gid,
+        harden_from_mode=0o770,
+    )
+
+
+def _virt_install(context: Context, state: dict[str, Any]) -> None:
+    arguments: list[str | Path] = [
+        context.binary("virt-install"),
+        "--connect",
+        LIBVIRT_URI,
+        "--name",
+        context.domain_name,
+        "--metadata",
+        f"description={context.description}",
+        "--import",
+        "--memory",
+        str(state["memory_mib"]),
+        "--vcpus",
+        str(state["vcpus"]),
+        "--cpu",
+        "host-passthrough",
+        "--machine",
+        "q35",
+        "--osinfo",
+        "generic",
+        "--controller",
+        "type=scsi,model=virtio-scsi",
+        "--disk",
+        (
+            f"path={context.overlay},format=qcow2,device=disk,bus=scsi,"
+            "cache=none,discard=unmap,detect_zeroes=unmap"
+        ),
+        "--disk",
+        (
+            f"path={context.config_disk},format=raw,device=disk,bus=scsi,"
+            "cache=none,readonly=on"
+        ),
+        "--network",
+        (
+            f"network={LIBVIRT_NETWORK},model=virtio,mac={context.mac_address},"
+            f"filterref.filter={LIBVIRT_FILTER}"
+        ),
+        "--channel",
+        "unix,target.type=virtio,target.name=org.qemu.guest_agent.0",
+        "--graphics",
+        "none",
+        "--video",
+        "none",
+        "--tpm",
+        "none",
+        "--rng",
+        "/dev/urandom",
+        "--boot",
+        (
+            f"loader={OVMF_CODE},loader.readonly=yes,loader.type=pflash,"
+            f"nvram={context.nvram},nvram.template={OVMF_VARS_TEMPLATE}"
+        ),
+        "--noautoconsole",
+        "--wait",
+        "0",
+    ]
+    _run(arguments, timeout=180)
+
+
+def _directory_has_only(path: Path, allowed_names: set[str]) -> None:
+    if not path.exists():
+        return
+    actual = {entry.name for entry in path.iterdir()}
+    unexpected = actual - allowed_names
+    if unexpected:
+        raise VmError(
+            f"managed directory contains unexpected files; preserving it: {path.name}"
+        )
+
+
+def _preflight_instance_files(
+    context: Context,
+    *,
+    allow_missing: bool = False,
+) -> None:
+    if context.instance_directory.exists():
+        _validate_directory(
+            context.instance_directory,
+            owners={os.getuid()},
+            exact_mode=RUNTIME_DIRECTORY_MODE,
+            exact_gid=context.kvm_gid,
+        )
+        _directory_has_only(
+            context.instance_directory,
+            {context.overlay.name, context.config_disk.name, context.nvram.name},
+        )
+    elif not allow_missing:
+        raise VmError("managed runtime instance directory is missing")
+    if context.private_instance.exists():
+        _validate_directory(
+            context.private_instance,
+            owners={os.getuid()},
+            exact_mode=0o700,
+        )
+        _directory_has_only(
+            context.private_instance,
+            {
+                context.ssh_key.name,
+                context.ssh_public_key.name,
+                context.known_hosts.name,
+                context.state_file.name,
+            },
+        )
+    elif not allow_missing:
+        raise VmError("managed private instance directory is missing")
+
+    for path, owners, mode in (
+        (context.overlay, context.runtime_owners, 0o660),
+        (context.config_disk, context.runtime_owners, 0o440),
+        (context.nvram, context.runtime_owners, 0o660),
+        (context.ssh_key, {os.getuid()}, 0o600),
+        (context.ssh_public_key, {os.getuid()}, 0o600),
+        (context.known_hosts, {os.getuid()}, 0o600),
+        (context.state_file, {os.getuid()}, 0o600),
+    ):
+        _validate_regular_file(
+            path,
+            owners=owners,
+            exact_mode=mode,
+            allow_missing=allow_missing,
+        )
+
+
+def _domain_xml_references(
+    root: ET.Element,
+    managed_paths: set[Path],
+) -> bool:
+    # Be conservative across libvirt device types: a managed file appearing as
+    # any absolute XML attribute or element text is a foreign reference.
+    candidates: list[str] = []
+    for element in root.iter():
+        candidates.extend(
+            value.strip()
+            for value in element.attrib.values()
+            if value.strip().startswith("/")
+        )
+        if element.text and element.text.strip().startswith("/"):
+            candidates.append(element.text.strip())
+    canonical_targets = {path.resolve(strict=False) for path in managed_paths}
+    for candidate in candidates:
+        path = Path(candidate)
+        if not path.is_absolute():
+            continue
+        if path in managed_paths or path.resolve(strict=False) in canonical_targets:
+            return True
+    return False
+
+
+def _assert_no_foreign_domain_references(context: Context) -> None:
+    all_domains = _domain_names(context)
+    persistent_domains = _virsh_name_inventory(
+        context.virsh("list", "--all", "--persistent", "--name"),
+        description="persistent libvirt domain",
+    )
+    if not persistent_domains.issubset(all_domains):
+        raise VmError("libvirt domain inventories changed during cleanup preflight")
+    managed_paths = {context.overlay, context.config_disk, context.nvram}
+    for domain_name in sorted(all_domains - {context.domain_name}):
+        queries = [("dumpxml", domain_name)]
+        if domain_name in persistent_domains:
+            queries.append(("dumpxml", domain_name, "--inactive"))
+        for query in queries:
+            result = context.virsh(*query)
+            if len(result.stdout) > 4 * 1024 * 1024:
+                raise VmError("foreign libvirt domain XML is unexpectedly large")
+            try:
+                root = ET.fromstring(result.stdout)
+            except ET.ParseError as error:
+                raise VmError("foreign libvirt domain XML is invalid") from error
+            if _domain_xml_references(root, managed_paths):
+                raise VmError(
+                    "another libvirt domain references a managed HAOS VM file; "
+                    "preserving all files"
+                )
+
+
+def _cleanup_instance_files(
+    context: Context,
+    *,
+    allow_missing: bool = False,
+) -> None:
+    _preflight_instance_files(context, allow_missing=allow_missing)
+    for path in (context.overlay, context.config_disk, context.nvram):
+        _secure_unlink(
+            path,
+            owners=context.runtime_owners,
+            root=context.instance_directory,
+        )
+    for path in (context.ssh_key, context.ssh_public_key, context.known_hosts):
+        _secure_unlink(
+            path,
+            owners={os.getuid()},
+            root=context.private_instance,
+        )
+    _secure_unlink(
+        context.state_file,
+        owners={os.getuid()},
+        root=context.private_instance,
+    )
+    for directory in (context.instance_directory, context.private_instance):
+        with contextlib.suppress(FileNotFoundError):
+            directory.rmdir()
+
+
+def _rollback_new_instance(context: Context, state: dict[str, Any]) -> None:
+    if _domain_exists(context):
+        try:
+            _validate_domain(context, state, require_uuid=False)
+        except VmError:
+            return
+        if _domain_state(context) not in {"shut off", "absent"}:
+            context.virsh("destroy", context.domain_name, check=False)
+        context.virsh("undefine", context.domain_name, "--keep-nvram", check=False)
+        if _domain_exists(context):
+            return
+    with contextlib.suppress(VmError):
+        _assert_no_foreign_domain_references(context)
+        _cleanup_instance_files(context, allow_missing=True)
+
+
+def _up(context: Context, *, memory_mib: int, vcpus: int, acknowledged: bool) -> None:
+    if not acknowledged:
+        raise VmError(
+            "up requires --allow-outbound-network because default NAT is not isolated",
+            EX_USAGE,
+        )
+    if not 2048 <= memory_mib <= 32768:
+        raise VmError("--memory-mib must be between 2048 and 32768", EX_USAGE)
+    if not 2 <= vcpus <= 16:
+        raise VmError("--vcpus must be between 2 and 16", EX_USAGE)
+    _check_host(context, emit=False)
+    context.prepare_directories()
+
+    existing_state = _load_state(context, required=False)
+    if existing_state is not None:
+        _harden_legacy_instance_directory(context)
+    if _domain_exists(context):
+        if existing_state is None:
+            raise VmError("same-name libvirt domain is not owned by this checkout")
+        _validate_domain(context, existing_state)
+        state = _domain_state(context)
+        if state == "shut off":
+            context.virsh("start", context.domain_name)
+            print(f"Started existing managed HAOS VM: {context.domain_name}")
+        else:
+            print(f"Managed HAOS VM is already {state}: {context.domain_name}")
+        return
+    if existing_state is not None:
+        raise VmError("managed state exists without its domain; run destroy to recover")
+
+    _download_image(context)
+    state = _expected_state(context, memory_mib=memory_mib, vcpus=vcpus)
+    try:
+        _prepare_instance(context, state)
+        _virt_install(context, state)
+        uuid = _text(context.virsh("domuuid", context.domain_name))
+        if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", uuid):
+            raise VmError("libvirt returned an invalid domain UUID")
+        state["domain_uuid"] = uuid
+        state["phase"] = "defined"
+        _write_json_file(context.state_file, state)
+        _validate_domain(context, state)
+    except Exception:
+        _rollback_new_instance(context, state)
+        raise
+    print(f"Started HAOS {HAOS_VERSION} VM: {context.domain_name}")
+    print("The guest uses shared NAT and can reach the host, LAN, and Internet.")
+    print("Run tools/development/haos-vm wait to await HAOS readiness.")
+
+
+def _discover_guest_ip(context: Context) -> str | None:
+    network, gateway, range_start, range_end = _validate_managed_network(context)
+
+    def accepted(candidate: str) -> str | None:
+        try:
+            address = ipaddress.IPv4Address(candidate)
+        except ipaddress.AddressValueError:
+            return None
+        if (
+            address not in network
+            or not range_start <= address <= range_end
+            or address == gateway
+            or address in {network.network_address, network.broadcast_address}
+            or address.is_link_local
+            or address.is_loopback
+            or address.is_multicast
+            or address.is_unspecified
+        ):
+            return None
+        return str(address)
+
+    for source in ("agent", "lease"):
+        result = context.virsh(
+            "domifaddr",
+            context.domain_name,
+            "--source",
+            source,
+            "--full",
+            check=False,
+        )
+        if result.returncode != 0:
+            continue
+        for line in _text(result).splitlines():
+            if context.mac_address not in line.lower():
+                continue
+            match = re.search(r"\b((?:\d{1,3}\.){3}\d{1,3})/\d{1,2}\b", line)
+            if match and (address := accepted(match.group(1))):
+                return address
+    lease = context.virsh(
+        "net-dhcp-leases",
+        LIBVIRT_NETWORK,
+        "--mac",
+        context.mac_address,
+        check=False,
+    )
+    if lease.returncode == 0:
+        for line in _text(lease).splitlines():
+            if context.mac_address not in line.lower():
+                continue
+            match = re.search(r"\b((?:\d{1,3}\.){3}\d{1,3})/\d{1,2}\b", line)
+            if match and (address := accepted(match.group(1))):
+                return address
+    return None
+
+
+def _http_reachable(address: str, port: int) -> bool:
+    connection = http.client.HTTPConnection(address, port, timeout=3)
+    try:
+        connection.request("GET", "/", headers={"User-Agent": "antigravity-haos-vm/1"})
+        response = connection.getresponse()
+        response.read(0)
+        return 100 <= response.status < 500
+    except OSError:
+        return False
+    finally:
+        connection.close()
+
+
+def _ssh_base(context: Context, address: str) -> list[str | Path]:
+    _validate_regular_file(context.ssh_key, owners={os.getuid()}, exact_mode=0o600)
+    _validate_regular_file(context.known_hosts, owners={os.getuid()}, exact_mode=0o600)
+    return [
+        context.binary("ssh"),
+        "-F",
+        "/dev/null",
+        "-p",
+        "22222",
+        "-i",
+        context.ssh_key,
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        "IdentityAgent=none",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-o",
+        f"UserKnownHostsFile={context.known_hosts}",
+        "-o",
+        "GlobalKnownHostsFile=/dev/null",
+        "-o",
+        "CheckHostIP=yes",
+        "-o",
+        "ForwardAgent=no",
+        "-o",
+        "ForwardX11=no",
+        "-o",
+        "ClearAllForwardings=yes",
+        "-o",
+        "PermitLocalCommand=no",
+        "-o",
+        "ProxyCommand=none",
+        "-o",
+        "ConnectTimeout=10",
+        f"root@{address}",
+    ]
+
+
+def _ssh_run(
+    context: Context,
+    address: str,
+    remote_arguments: Sequence[str | Path],
+    *,
+    input_bytes: bytes | None = None,
+    timeout: float = 30,
+    check: bool = True,
+) -> subprocess.CompletedProcess[bytes]:
+    return _run(
+        [*_ssh_base(context, address), *remote_arguments],
+        input_bytes=input_bytes,
+        timeout=timeout,
+        check=check,
+    )
+
+
+def _ssh_json_command(
+    context: Context,
+    address: str,
+    remote_arguments: Sequence[str | Path],
+    *,
+    timeout: float = 60,
+    check: bool = True,
+) -> dict[str, Any] | None:
+    result = _ssh_run(
+        context,
+        address,
+        remote_arguments,
+        timeout=timeout,
+        check=check,
+    )
+    if result.returncode != 0 or len(result.stdout) > 1024 * 1024:
+        return None
+    try:
+        value = json.loads(result.stdout)
+    except (UnicodeError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+GUEST_ACTIONS: dict[str, tuple[str, ...]] = {
+    "ha-info": ("ha", "info", "--no-progress", "--raw-json"),
+    "os-info": ("ha", "os", "info", "--no-progress", "--raw-json"),
+    "supervisor-info": (
+        "ha",
+        "supervisor",
+        "info",
+        "--no-progress",
+        "--raw-json",
+    ),
+    "core-info": ("ha", "core", "info", "--no-progress", "--raw-json"),
+    "jobs": ("ha", "jobs", "info", "--no-progress", "--raw-json"),
+}
+
+
+def _guest_json(context: Context, address: str, action: str) -> dict[str, Any] | None:
+    return _ssh_json_command(
+        context,
+        address,
+        GUEST_ACTIONS[action],
+        timeout=20,
+        check=False,
+    )
+
+
+SAFE_GUEST_FIELDS: dict[str, set[str]] = {
+    "ha-info": {
+        "arch",
+        "channel",
+        "docker",
+        "features",
+        "hassos",
+        "homeassistant",
+        "logging",
+        "machine",
+        "operating_system",
+        "state",
+        "supported",
+        "supervisor",
+    },
+    "os-info": {"board", "update_available", "version", "version_latest"},
+    "supervisor-info": {
+        "arch",
+        "channel",
+        "healthy",
+        "state",
+        "supported",
+        "update_available",
+        "version",
+        "version_latest",
+    },
+    "core-info": {
+        "arch",
+        "boot",
+        "machine",
+        "port",
+        "state",
+        "update_available",
+        "version",
+        "version_latest",
+    },
+    "jobs": set(),
+}
+INVALID_FACT = object()
+
+
+def _safe_version(value: Any) -> str | object:
+    if (
+        type(value) is str
+        and len(value) <= 64
+        and SAFE_VERSION_PATTERN.fullmatch(value)
+    ):
+        return value
+    return INVALID_FACT
+
+
+def _safe_guest_fact(action: str, key: str, value: Any) -> Any:
+    if key in {
+        "boot",
+        "healthy",
+        "supported",
+        "update_available",
+    }:
+        return value if type(value) is bool else INVALID_FACT
+    if key == "port":
+        return value if type(value) is int and 1 <= value <= 65535 else INVALID_FACT
+    if key == "arch":
+        return value if type(value) is str and value in SAFE_ARCHITECTURES else INVALID_FACT
+    if key == "channel":
+        return value if type(value) is str and value in SAFE_CHANNELS else INVALID_FACT
+    if key == "logging":
+        return value if type(value) is str and value in SAFE_LOG_LEVELS else INVALID_FACT
+    if key == "machine":
+        return value if value == "qemux86-64" else INVALID_FACT
+    if key == "board":
+        return value if value == "ova" else INVALID_FACT
+    if key == "state":
+        return value if type(value) is str and value in SAFE_HA_STATES else INVALID_FACT
+    if key in {
+        "docker",
+        "hassos",
+        "homeassistant",
+        "supervisor",
+        "version",
+        "version_latest",
+    }:
+        return _safe_version(value)
+    if key == "operating_system" and type(value) is str:
+        prefix = "Home Assistant OS "
+        version = _safe_version(value.removeprefix(prefix))
+        if value.startswith(prefix) and version is not INVALID_FACT:
+            return value
+        return INVALID_FACT
+    if key == "features" and isinstance(value, list) and len(value) <= 64:
+        return sorted(
+            {
+                feature
+                for feature in value
+                if type(feature) is str and feature in SAFE_HA_FEATURES
+            }
+        )
+    return INVALID_FACT
+
+
+def _safe_guest_result(action: str, value: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "result": "ok" if value.get("result") == "ok" else "not_ok"
+    }
+    data = value.get("data")
+    if not isinstance(data, dict):
+        return result
+    if action == "jobs":
+        jobs = data.get("jobs")
+        result["data"] = (
+            {"job_count": len(jobs)}
+            if isinstance(jobs, list) and len(jobs) <= 1024
+            else {}
+        )
+        return result
+    safe_data: dict[str, Any] = {}
+    for key in sorted(SAFE_GUEST_FIELDS[action]):
+        if key not in data:
+            continue
+        safe_value = _safe_guest_fact(action, key, data[key])
+        if safe_value is not INVALID_FACT:
+            safe_data[key] = safe_value
+    result["data"] = safe_data
+    return result
+
+
+def _readiness(context: Context) -> tuple[bool, str | None, dict[str, Any]]:
+    address = _discover_guest_ip(context)
+    details: dict[str, Any] = {
+        "guest_address_assigned": address is not None,
+        "frontend_reachable": False,
+        "debug_ssh_ready": False,
+        "core_running": False,
+    }
+    if address is None:
+        return False, None, details
+    details["frontend_reachable"] = _http_reachable(address, 8123)
+    ha_info = _guest_json(context, address, "ha-info")
+    ha_data = ha_info.get("data") if ha_info else None
+    details["debug_ssh_ready"] = bool(
+        ha_info
+        and ha_info.get("result") == "ok"
+        and isinstance(ha_data, dict)
+    )
+    core_info = _guest_json(context, address, "core-info")
+    core_data = core_info.get("data") if core_info else None
+    details["core_running"] = bool(
+        isinstance(ha_data, dict)
+        and ha_data.get("state") == "running"
+        and core_info
+        and core_info.get("result") == "ok"
+        and isinstance(core_data, dict)
+        and core_data.get("version")
+    )
+    ready = all(
+        details[key]
+        for key in ("frontend_reachable", "debug_ssh_ready", "core_running")
+    )
+    return ready, address, details
+
+
+def _wait(context: Context, *, timeout_seconds: int) -> None:
+    if not 30 <= timeout_seconds <= 7200:
+        raise VmError("--timeout must be between 30 and 7200 seconds", EX_USAGE)
+    state = _load_state(context)
+    if not _domain_exists(context):
+        raise VmError("managed HAOS VM domain is absent")
+    _validate_domain(context, state)
+    if _domain_state(context) == "shut off":
+        raise VmError("managed HAOS VM is stopped")
+    deadline = time.monotonic() + timeout_seconds
+    next_notice = time.monotonic()
+    while True:
+        ready, address, details = _readiness(context)
+        if ready:
+            print(f"HAOS {HAOS_VERSION} is ready at http://{address}:8123")
+            print("Debug SSH and Home Assistant Core readiness checks passed.")
+            return
+        now = time.monotonic()
+        if now >= deadline:
+            raise VmError(
+                "HAOS readiness timed out; the VM remains running for inspection"
+            )
+        if now >= next_notice:
+            completed = ", ".join(key for key, value in details.items() if value)
+            print(f"Waiting for HAOS readiness ({completed or 'booting'})...", flush=True)
+            next_notice = now + 30
+        time.sleep(min(5, max(0.1, deadline - now)))
+
+
+def _status_evidence(context: Context) -> dict[str, Any]:
+    state = _load_state(context, required=False)
+    configured = state is not None
+    domain_state = _domain_state(context) if _domain_exists(context) else "absent"
+    ready = False
+    address: str | None = None
+    readiness: dict[str, Any] = {
+        "guest_address_assigned": False,
+        "frontend_reachable": False,
+        "debug_ssh_ready": False,
+        "core_running": False,
+    }
+    guest_versions: dict[str, Any] = {}
+    if configured and domain_state not in {"absent", "shut off"}:
+        assert state is not None
+        _validate_domain(context, state)
+        ready, address, readiness = _readiness(context)
+        if address:
+            for action, label in (
+                ("os-info", "os"),
+                ("supervisor-info", "supervisor"),
+                ("core-info", "core"),
+            ):
+                value = _guest_json(context, address, action)
+                if value:
+                    guest_versions[label] = _safe_guest_result(action, value)
+    return {
+        "schema": EVIDENCE_SCHEMA,
+        "observed_at_utc": _utc_now(),
+        "environment_kind": "haos_vm",
+        "real_haos_device": False,
+        "release_evidence_eligible": False,
+        "configured": configured,
+        "ready": ready,
+        "checkout_id": context.checkout_id,
+        "domain_name": context.domain_name,
+        "domain_state": domain_state,
+        "haos_asset": {
+            "version": HAOS_VERSION,
+            "compressed_sha256": HAOS_IMAGE_SHA256,
+        },
+        "network": {
+            "kind": "shared_system_nat",
+            "name": LIBVIRT_NETWORK,
+            "isolated": False,
+            "guest_outbound_possible": True,
+            "guest_host_and_lan_access_possible": True,
+        },
+        "guest_address": address,
+        "frontend_url": f"http://{address}:8123" if address else None,
+        "readiness": readiness,
+        "guest_versions": guest_versions,
+    }
+
+
+def _status(context: Context, *, as_json: bool) -> None:
+    evidence = _status_evidence(context)
+    if as_json:
+        print(json.dumps(evidence, indent=2, sort_keys=True))
+        return
+    print(f"Domain: {evidence['domain_name']}")
+    print(f"State: {evidence['domain_state']}")
+    print(f"HAOS asset: {HAOS_VERSION} (pinned and digest-verified)")
+    print("Environment: HAOS_VM; not eligible as real-device release evidence")
+    print("Network: shared system NAT; not isolated")
+    if evidence["frontend_url"]:
+        print(f"Frontend: {evidence['frontend_url']}")
+    print(f"Ready: {'yes' if evidence['ready'] else 'no'}")
+
+
+def _start(context: Context) -> None:
+    state = _load_state(context)
+    context.prepare_directories()
+    _harden_legacy_instance_directory(context)
+    if not _domain_exists(context):
+        raise VmError("managed HAOS VM domain is absent")
+    _validate_managed_network(context)
+    _validate_domain(context, state)
+    current = _domain_state(context)
+    if current == "shut off":
+        context.virsh("start", context.domain_name)
+        print(f"Started managed HAOS VM: {context.domain_name}")
+    else:
+        print(f"Managed HAOS VM is already {current}: {context.domain_name}")
+
+
+def _stop_domain(
+    context: Context,
+    state: dict[str, Any],
+    *,
+    timeout_seconds: int,
+    force: bool,
+) -> None:
+    _validate_stop_timeout(timeout_seconds)
+    _validate_domain(context, state)
+    current = _domain_state(context)
+    if current in {"shut off", "absent"}:
+        return
+    result = context.virsh(
+        "shutdown",
+        context.domain_name,
+        "--mode",
+        "agent",
+        check=False,
+    )
+    if result.returncode != 0:
+        context.virsh(
+            "shutdown",
+            context.domain_name,
+            "--mode",
+            "acpi",
+            check=False,
+        )
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if _domain_state(context) == "shut off":
+            return
+        time.sleep(2)
+    if not force:
+        raise VmError("graceful shutdown timed out; use --force for this disposable VM")
+    _validate_domain(context, state)
+    context.virsh("destroy", context.domain_name)
+    if _domain_state(context) != "shut off":
+        raise VmError("forced shutdown did not stop the managed VM")
+
+
+def _validate_stop_timeout(timeout_seconds: int) -> None:
+    if not 10 <= timeout_seconds <= 900:
+        raise VmError("--timeout must be between 10 and 900 seconds", EX_USAGE)
+
+
+def _stop(context: Context, *, timeout_seconds: int, force: bool) -> None:
+    _validate_stop_timeout(timeout_seconds)
+    state = _load_state(context)
+    context.prepare_directories()
+    _harden_legacy_instance_directory(context)
+    if not _domain_exists(context):
+        raise VmError("managed HAOS VM domain is absent")
+    _stop_domain(context, state, timeout_seconds=timeout_seconds, force=force)
+    print(f"Stopped managed HAOS VM: {context.domain_name}")
+
+
+def _destroy(context: Context, *, timeout_seconds: int, force: bool) -> None:
+    _validate_stop_timeout(timeout_seconds)
+    state = _load_state(context, required=False)
+    if state is None:
+        if _domain_exists(context):
+            raise VmError("same-name libvirt domain is not owned by this checkout")
+        print("No managed HAOS VM exists.")
+        return
+    domain_exists = _domain_exists(context)
+    context.prepare_directories()
+    _harden_legacy_instance_directory(context)
+    allow_missing = state.get("phase") == "prepared" and not domain_exists
+    _preflight_instance_files(context, allow_missing=allow_missing)
+    _assert_no_foreign_domain_references(context)
+    if domain_exists:
+        _validate_domain(context, state)
+        _stop_domain(context, state, timeout_seconds=timeout_seconds, force=force)
+        _validate_domain(context, state)
+        _preflight_instance_files(context)
+        _assert_no_foreign_domain_references(context)
+        context.virsh("undefine", context.domain_name, "--keep-nvram")
+        if _domain_exists(context):
+            raise VmError("libvirt domain still exists; preserving all managed files")
+    _preflight_instance_files(context, allow_missing=allow_missing)
+    _assert_no_foreign_domain_references(context)
+    _cleanup_instance_files(context, allow_missing=allow_missing)
+    print(f"Destroyed only the checkout-owned HAOS VM: {context.domain_name}")
+    print("The pinned base-image cache was preserved for the next run.")
+
+
+def _guest(context: Context, *, action: str) -> None:
+    state = _load_state(context)
+    if not _domain_exists(context):
+        raise VmError("managed HAOS VM domain is absent")
+    _validate_domain(context, state)
+    address = _discover_guest_ip(context)
+    if not address:
+        raise VmError("managed HAOS VM has no discovered IPv4 address")
+    value = _guest_json(context, address, action)
+    if value is None:
+        raise VmError("HAOS debug SSH or requested HA CLI probe is not ready")
+    output = {
+        "schema": EVIDENCE_SCHEMA,
+        "environment_kind": "haos_vm",
+        "real_haos_device": False,
+        "release_evidence_eligible": False,
+        "action": action,
+        "response": _safe_guest_result(action, value),
+    }
+    print(json.dumps(output, indent=2, sort_keys=True))
+
+
+def _source_app_config(
+    context: Context,
+    local_version: str,
+    image_repository: str,
+) -> bytes:
+    config_path = context.repository_root / "antigravity_home_assistant" / "config.yaml"
+    try:
+        source = config_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise VmError("could not read the source App config") from error
+    if len(source.encode("utf-8")) > 256 * 1024:
+        raise VmError("source App config is unexpectedly large")
+    version_pattern = r'(?m)^version:\s*["\']?[^"\'\s]+["\']?\s*$'
+    image_pattern = r'(?m)^image:\s*[^\s]+\s*$'
+    staged, version_count = re.subn(
+        version_pattern,
+        f'version: "{local_version}"',
+        source,
+    )
+    staged, image_count = re.subn(
+        image_pattern,
+        f"image: {image_repository}",
+        staged,
+    )
+    if version_count != 1 or image_count != 1:
+        raise VmError("source App config does not have exact version/image bindings")
+    return staged.encode("utf-8")
+
+
+def _source_app_version(context: Context) -> str:
+    config_path = context.repository_root / "antigravity_home_assistant" / "config.yaml"
+    try:
+        source = config_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise VmError("could not read the source App version") from error
+    matches = re.findall(
+        r'(?m)^version:\s*["\']?([^"\'\s]+)["\']?\s*$',
+        source,
+    )
+    if len(matches) != 1 or not re.fullmatch(
+        r"[0-9A-Za-z][0-9A-Za-z._-]{0,96}", matches[0]
+    ):
+        raise VmError("source App version is invalid")
+    return matches[0]
+
+
+def _docker_field(context: Context, reference: str, template: str) -> str:
+    result = _run(
+        [
+            context.binary("docker"),
+            "image",
+            "inspect",
+            "--format",
+            template,
+            reference,
+        ]
+    )
+    return _text(result)
+
+
+def _build_app_image(context: Context) -> dict[str, str]:
+    git = shutil.which("git")
+    if git is None:
+        raise VmError("git is required to bind the local App image")
+    source_revision = _text(
+        _run([git, "-C", context.repository_root, "rev-parse", "HEAD"])
+    )
+    if not re.fullmatch(r"[0-9a-f]{40}", source_revision):
+        raise VmError("source revision is invalid")
+    temporary_tag = f"{LOCAL_IMAGE_REPOSITORY}:haos-vm-{context.checkout_id}"
+    build_helper = context.repository_root / "tools" / "development" / "build-app"
+    print("Building the exact local amd64 App image...", flush=True)
+    _run(
+        [build_helper, "build", temporary_tag, "linux/amd64"],
+        timeout=3600,
+    )
+    image_id = _docker_field(context, temporary_tag, "{{.Id}}")
+    image_revision = _docker_field(
+        context,
+        temporary_tag,
+        '{{ index .Config.Labels "org.opencontainers.image.revision" }}',
+    )
+    source_rootfs_sha256 = _docker_field(
+        context,
+        temporary_tag,
+        '{{ index .Config.Labels "io.antigravity-ha.source-rootfs-sha256" }}',
+    )
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+        raise VmError("built local App image ID is invalid")
+    if image_revision != source_revision:
+        raise VmError("built local App image revision does not match the checkout")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", source_rootfs_sha256):
+        raise VmError("built local App rootfs digest is invalid")
+
+    source_version = _source_app_version(context)
+    local_version = f"{source_version}-haosvm.{image_id.removeprefix('sha256:')[:12]}"
+    if not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._-]{0,127}", local_version):
+        raise VmError("derived HAOS VM App version is invalid")
+    image_tag = f"{LOCAL_IMAGE_REPOSITORY}:{local_version}"
+    _run(
+        [
+            context.binary("docker"),
+            "image",
+            "tag",
+            temporary_tag,
+            image_tag,
+        ]
+    )
+    if _docker_field(context, image_tag, "{{.Id}}") != image_id:
+        raise VmError("exact local App image tag did not resolve to the built image")
+    return {
+        "slug": LOCAL_APP_SLUG,
+        "container_name": GUEST_APP_CONTAINER,
+        "remote_directory": str(GUEST_LOCAL_APP_DIRECTORY),
+        "remote_marker": str(GUEST_APP_MARKER),
+        "image_id": image_id,
+        "image_tag": image_tag,
+        "source_revision": source_revision,
+        "source_rootfs_sha256": source_rootfs_sha256,
+        "version": local_version,
+        "phase": "built",
+        "staged_at_utc": _utc_now(),
+    }
+
+
+def _reuse_exact_app_image(
+    context: Context,
+    state: dict[str, Any],
+) -> dict[str, str]:
+    stored = state.get("app")
+    if not isinstance(stored, dict):
+        raise VmError("no previously built exact App image is recorded")
+    app = {str(key): str(value) for key, value in stored.items()}
+    git = shutil.which("git")
+    if git is None:
+        raise VmError("git is required to verify the recorded App image")
+    revision = _text(
+        _run([git, "-C", context.repository_root, "rev-parse", "HEAD"])
+    )
+    if revision != app.get("source_revision"):
+        raise VmError("recorded App image belongs to a different source revision")
+    if not app.get("version", "").startswith(f"{_source_app_version(context)}-haosvm."):
+        raise VmError("recorded App image belongs to a different source version")
+
+    manifest_tool = (
+        context.repository_root
+        / ".github"
+        / "scripts"
+        / "source-rootfs-manifest.py"
+    )
+    rootfs = context.repository_root / "antigravity_home_assistant" / "rootfs"
+    with tempfile.TemporaryDirectory(
+        prefix="manifest-check-",
+        dir=context.private_instance,
+    ) as manifest_directory:
+        current_rootfs = _text(
+            _run(
+                [
+                    sys.executable,
+                    manifest_tool,
+                    "create",
+                    "--root",
+                    rootfs,
+                    "--manifest",
+                    Path(manifest_directory) / "source-rootfs-manifest.json",
+                ]
+            )
+        )
+    if current_rootfs != app.get("source_rootfs_sha256"):
+        raise VmError("recorded App image does not match the current source rootfs")
+    if _docker_field(context, app["image_tag"], "{{.Id}}") != app.get("image_id"):
+        raise VmError("recorded exact App image is no longer present on the host")
+    if _docker_field(
+        context,
+        app["image_tag"],
+        '{{ index .Config.Labels "org.opencontainers.image.revision" }}',
+    ) != app.get("source_revision"):
+        raise VmError("recorded App image revision label no longer matches")
+    if _docker_field(
+        context,
+        app["image_tag"],
+        '{{ index .Config.Labels "io.antigravity-ha.source-rootfs-sha256" }}',
+    ) != app.get("source_rootfs_sha256"):
+        raise VmError("recorded App image rootfs label no longer matches")
+    for transient in (
+        "guest_image_tag",
+        "registry_image_id",
+        "registry_manifest_sha256",
+        "verified_at_utc",
+    ):
+        app.pop(transient, None)
+    app["container_name"] = GUEST_APP_CONTAINER
+    app["phase"] = "built"
+    return app
+
+
+def _stream_app_image(
+    context: Context,
+    address: str,
+    *,
+    image_tag: str,
+) -> None:
+    save_process: subprocess.Popen[bytes] | None = None
+    load_process: subprocess.Popen[bytes] | None = None
+    try:
+        save_process = subprocess.Popen(
+            [context.binary("docker"), "image", "save", image_tag],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=_safe_environment(),
+        )
+        if save_process.stdout is None:
+            raise VmError("could not stream the local App image")
+        load_process = subprocess.Popen(
+            [*_ssh_base(context, address), "docker", "image", "load"],
+            stdin=save_process.stdout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=_safe_environment(),
+        )
+        save_process.stdout.close()
+        try:
+            load_stdout, _ = load_process.communicate(timeout=1800)
+        except subprocess.TimeoutExpired as error:
+            load_process.kill()
+            save_process.kill()
+            load_process.communicate()
+            save_process.wait()
+            raise VmError("guest App image load timed out") from error
+        save_returncode = save_process.wait(timeout=30)
+        if (
+            save_returncode != 0
+            or load_process.returncode != 0
+            or len(load_stdout) > 1024 * 1024
+        ):
+            raise VmError("exact local App image could not be loaded into HAOS")
+    except OSError as error:
+        if load_process and load_process.poll() is None:
+            load_process.kill()
+        if save_process and save_process.poll() is None:
+            save_process.kill()
+        raise VmError("could not stream the exact local App image") from error
+
+
+def _guest_image_id(
+    context: Context,
+    address: str,
+    *,
+    kind: str,
+    reference: str,
+) -> str | None:
+    if kind not in {"image", "container"}:
+        raise VmError("unsupported guest Docker inspection", EX_SOFTWARE)
+    template = "--format={{.Id}}" if kind == "image" else "--format={{.Image}}"
+    result = _ssh_run(
+        context,
+        address,
+        ["docker", kind, "inspect", template, reference],
+        timeout=30,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    value = _text(result)
+    return value if re.fullmatch(r"sha256:[0-9a-f]{64}", value) else None
+
+
+def _guest_registry_names(context: Context) -> tuple[str, str]:
+    suffix = context.checkout_id
+    return (
+        f"antigravity-haos-registry-{suffix}",
+        f"antigravity-haos-registry-data-{suffix}",
+    )
+
+
+def _guest_label_filters(context: Context) -> list[str]:
+    return [
+        "--filter",
+        "label=io.antigravity-ha.haos-vm.registry=true",
+        "--filter",
+        f"label=io.antigravity-ha.haos-vm.checkout={context.checkout_identity}",
+    ]
+
+
+def _guest_registry_container_id(
+    context: Context,
+    address: str,
+    container_name: str,
+    *,
+    require_owned: bool,
+) -> str | None:
+    filters = _guest_label_filters(context) if require_owned else []
+    result = _ssh_run(
+        context,
+        address,
+        [
+            "docker",
+            "container",
+            "ls",
+            "--all",
+            "--no-trunc",
+            "--filter",
+            f"name=^/{container_name}$",
+            *filters,
+            "--format={{.ID}}:{{.Names}}",
+        ],
+    )
+    if len(result.stdout) > 64 * 1024:
+        raise VmError("guest registry container inventory is unexpectedly large")
+    lines = [line for line in _text(result).splitlines() if line]
+    if not lines:
+        return None
+    if len(lines) != 1:
+        raise VmError("guest registry container inventory is not exact")
+    match = re.fullmatch(r"([0-9a-f]{64}):([A-Za-z0-9][A-Za-z0-9_.-]{0,127})", lines[0])
+    if match is None or match.group(2) != container_name:
+        raise VmError("guest registry container inventory is not exact")
+    return match.group(1)
+
+
+def _guest_registry_volume_present(
+    context: Context,
+    address: str,
+    volume_name: str,
+    *,
+    require_owned: bool,
+) -> bool:
+    filters = _guest_label_filters(context) if require_owned else []
+    result = _ssh_run(
+        context,
+        address,
+        [
+            "docker",
+            "volume",
+            "ls",
+            "--filter",
+            f"name=^{volume_name}$",
+            *filters,
+            "--format={{.Name}}",
+        ],
+    )
+    if len(result.stdout) > 64 * 1024:
+        raise VmError("guest registry volume inventory is unexpectedly large")
+    lines = [line for line in _text(result).splitlines() if line]
+    if not lines:
+        return False
+    if lines != [volume_name]:
+        raise VmError("guest registry volume inventory is not exact")
+    return True
+
+
+def _cleanup_guest_registry(context: Context, address: str) -> None:
+    container_name, volume_name = _guest_registry_names(context)
+    container_id = _guest_registry_container_id(
+        context,
+        address,
+        container_name,
+        require_owned=False,
+    )
+    owned_container_id = _guest_registry_container_id(
+        context,
+        address,
+        container_name,
+        require_owned=True,
+    )
+    volume_present = _guest_registry_volume_present(
+        context,
+        address,
+        volume_name,
+        require_owned=False,
+    )
+    owned_volume_present = _guest_registry_volume_present(
+        context,
+        address,
+        volume_name,
+        require_owned=True,
+    )
+    if container_id != owned_container_id:
+        raise VmError("guest registry container is not owned by this checkout")
+    if volume_present != owned_volume_present:
+        raise VmError("guest registry volume is not owned by this checkout")
+
+    # Both resources have passed presence and ownership preflight before either
+    # is removed. Container deletion uses its immutable full ID.
+    if container_id is not None:
+        _ssh_run(
+            context,
+            address,
+            ["docker", "container", "rm", "--force", container_id],
+        )
+    if volume_present:
+        if not _guest_registry_volume_present(
+            context,
+            address,
+            volume_name,
+            require_owned=True,
+        ):
+            raise VmError("guest registry volume ownership changed before removal")
+        _ssh_run(context, address, ["docker", "volume", "rm", volume_name])
+
+    if _guest_registry_container_id(
+        context,
+        address,
+        container_name,
+        require_owned=False,
+    ) is not None:
+        raise VmError("guest registry container still exists after removal")
+    if _guest_registry_volume_present(
+        context,
+        address,
+        volume_name,
+        require_owned=False,
+    ):
+        raise VmError("guest registry volume still exists after removal")
+
+
+def _start_guest_registry(
+    context: Context,
+    address: str,
+    *,
+    app: dict[str, str],
+) -> None:
+    _cleanup_guest_registry(context, address)
+    container_name, volume_name = _guest_registry_names(context)
+    labels = [
+        "--label",
+        "io.antigravity-ha.haos-vm.registry=true",
+        "--label",
+        f"io.antigravity-ha.haos-vm.checkout={context.checkout_identity}",
+    ]
+    try:
+        _ssh_run(
+            context,
+            address,
+            [
+                "docker",
+                "image",
+                "pull",
+                "--platform=linux/amd64",
+                REGISTRY_IMAGE,
+            ],
+            timeout=600,
+        )
+        registry_image_id = _guest_image_id(
+            context,
+            address,
+            kind="image",
+            reference=REGISTRY_IMAGE,
+        )
+        if registry_image_id is None:
+            raise VmError("pinned guest registry image could not be verified")
+        _ssh_run(
+            context,
+            address,
+            ["docker", "volume", "create", *labels, volume_name],
+        )
+        _ssh_run(
+            context,
+            address,
+            [
+                "docker",
+                "container",
+                "run",
+                "--detach",
+                "--name",
+                container_name,
+                *labels,
+                "--publish=127.0.0.1:5000:5000",
+                f"--mount=type=volume,source={volume_name},target=/var/lib/registry",
+                REGISTRY_IMAGE,
+            ],
+            timeout=60,
+        )
+        running = _ssh_run(
+            context,
+            address,
+            [
+                "docker",
+                "container",
+                "inspect",
+                "--format={{.State.Running}}",
+                container_name,
+            ],
+        )
+        if _text(running) != "true":
+            raise VmError("checkout-owned guest registry did not start")
+        guest_image_tag = f"{GUEST_REGISTRY_REPOSITORY}:{app['version']}"
+        _ssh_run(
+            context,
+            address,
+            ["docker", "image", "tag", app["image_tag"], guest_image_tag],
+        )
+        time.sleep(1)
+        _ssh_run(
+            context,
+            address,
+            ["docker", "image", "push", guest_image_tag],
+            timeout=900,
+        )
+        if (
+            _guest_image_id(
+                context,
+                address,
+                kind="image",
+                reference=guest_image_tag,
+            )
+            != app["image_id"]
+        ):
+            raise VmError("guest registry tag does not match the exact App image")
+        app["guest_image_tag"] = guest_image_tag
+        app["registry_image_id"] = registry_image_id
+        app["registry_manifest_sha256"] = REGISTRY_IMAGE_MANIFEST_SHA256
+    except Exception:
+        with contextlib.suppress(VmError):
+            _cleanup_guest_registry(context, address)
+        raise
+
+
+def _guest_path_exists_without_symlink(
+    context: Context,
+    address: str,
+    path: Path,
+) -> bool:
+    symlink = _ssh_run(
+        context,
+        address,
+        ["test", "-L", path],
+        check=False,
+    )
+    if symlink.returncode == 0:
+        raise VmError(f"guest managed path is a symbolic link: {path.name}")
+    if symlink.returncode != 1:
+        raise VmError(f"could not inspect guest managed path: {path.name}")
+    exists = _ssh_run(
+        context,
+        address,
+        ["test", "-e", path],
+        check=False,
+    )
+    if exists.returncode not in {0, 1}:
+        raise VmError(f"could not inspect guest managed path: {path.name}")
+    return exists.returncode == 0
+
+
+def _validate_guest_path(
+    context: Context,
+    address: str,
+    path: Path,
+    *,
+    expected_type: str,
+    expected_mode: int,
+) -> None:
+    if expected_type not in {"directory", "regular file"}:
+        raise VmError("unsupported guest path validation", EX_SOFTWARE)
+    result = _ssh_run(
+        context,
+        address,
+        ["stat", "-c", "%F:%u:%a:%h", path],
+    )
+    parts = _text(result).split(":")
+    try:
+        link_count = int(parts[3]) if len(parts) == 4 else -1
+    except ValueError:
+        link_count = -1
+    if (
+        len(parts) != 4
+        or parts[0] != expected_type
+        or parts[1] != "0"
+        or parts[2] != f"{expected_mode:o}"
+        or (expected_type == "regular file" and link_count != 1)
+        or (expected_type == "directory" and link_count < 2)
+    ):
+        raise VmError(f"guest managed path metadata does not match: {path.name}")
+
+
+def _write_guest_file_atomically(
+    context: Context,
+    address: str,
+    destination: Path,
+    payload: bytes,
+) -> None:
+    temporary = destination.with_name(
+        f".{destination.name}.{context.checkout_id}.tmp"
+    )
+    if _guest_path_exists_without_symlink(context, address, temporary):
+        raise VmError(f"guest staging file already exists: {temporary.name}")
+    _ssh_run(
+        context,
+        address,
+        ["tee", temporary],
+        input_bytes=payload,
+    )
+    _ssh_run(context, address, ["chmod", "0600", temporary])
+    _validate_guest_path(
+        context,
+        address,
+        temporary,
+        expected_type="regular file",
+        expected_mode=0o600,
+    )
+    _ssh_run(context, address, ["mv", temporary, destination])
+    _validate_guest_path(
+        context,
+        address,
+        destination,
+        expected_type="regular file",
+        expected_mode=0o600,
+    )
+
+
+def _stage_guest_app_files(
+    context: Context,
+    address: str,
+    *,
+    app: dict[str, str],
+) -> None:
+    directory_exists = _guest_path_exists_without_symlink(
+        context,
+        address,
+        GUEST_LOCAL_APP_DIRECTORY,
+    )
+    if directory_exists:
+        _validate_guest_path(
+            context,
+            address,
+            GUEST_LOCAL_APP_DIRECTORY,
+            expected_type="directory",
+            expected_mode=0o700,
+        )
+        if not _guest_path_exists_without_symlink(
+            context,
+            address,
+            GUEST_APP_MARKER,
+        ):
+            raise VmError("guest local App directory has no checkout owner marker")
+        _validate_guest_path(
+            context,
+            address,
+            GUEST_APP_MARKER,
+            expected_type="regular file",
+            expected_mode=0o600,
+        )
+        marker = _ssh_run(
+            context,
+            address,
+            ["cat", GUEST_APP_MARKER],
+            check=False,
+        )
+        if marker.returncode != 0 or _text(marker) != context.description:
+            raise VmError("guest local App directory is not owned by this checkout")
+    else:
+        _ssh_run(
+            context,
+            address,
+            ["mkdir", "-m", "0700", GUEST_LOCAL_APP_DIRECTORY],
+        )
+        _validate_guest_path(
+            context,
+            address,
+            GUEST_LOCAL_APP_DIRECTORY,
+            expected_type="directory",
+            expected_mode=0o700,
+        )
+
+    if _guest_path_exists_without_symlink(context, address, GUEST_APP_CONFIG):
+        _validate_guest_path(
+            context,
+            address,
+            GUEST_APP_CONFIG,
+            expected_type="regular file",
+            expected_mode=0o600,
+        )
+    _write_guest_file_atomically(
+        context,
+        address,
+        GUEST_APP_MARKER,
+        (context.description + "\n").encode("ascii"),
+    )
+    config = _source_app_config(
+        context,
+        app["version"],
+        GUEST_REGISTRY_REPOSITORY,
+    )
+    _write_guest_file_atomically(
+        context,
+        address,
+        GUEST_APP_CONFIG,
+        config,
+    )
+
+
+def _app_info(context: Context, address: str) -> dict[str, Any] | None:
+    return _ssh_json_command(
+        context,
+        address,
+        ("ha", "apps", "info", LOCAL_APP_SLUG, "--no-progress", "--raw-json"),
+        timeout=60,
+        check=False,
+    )
+
+
+def _installed_app_slugs(context: Context, address: str) -> set[str]:
+    value = _ssh_json_command(
+        context,
+        address,
+        ("ha", "apps", "list", "--no-progress", "--raw-json"),
+        timeout=60,
+        check=False,
+    )
+    if not value or value.get("result") != "ok" or not isinstance(value.get("data"), dict):
+        raise VmError("could not list installed guest Apps")
+    addons = value["data"].get("addons")
+    if not isinstance(addons, list):
+        raise VmError("guest App list response is invalid")
+    return {
+        item["slug"]
+        for item in addons
+        if isinstance(item, dict) and isinstance(item.get("slug"), str)
+    }
+
+
+def _ha_app_action(
+    context: Context,
+    address: str,
+    action: str,
+) -> None:
+    if action not in {"install", "start", "update"}:
+        raise VmError("unsupported managed App action", EX_SOFTWARE)
+    value = _ssh_json_command(
+        context,
+        address,
+        ("ha", "apps", action, LOCAL_APP_SLUG, "--no-progress", "--raw-json"),
+        timeout=900,
+        check=False,
+    )
+    if not value or value.get("result") != "ok":
+        raise VmError(f"guest App {action} did not succeed")
+
+
+def _safe_app_info(value: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "result": "ok" if value.get("result") == "ok" else "not_ok"
+    }
+    data = value.get("data")
+    if not isinstance(data, dict):
+        return result
+    safe_data: dict[str, Any] = {}
+    arch = data.get("arch")
+    if isinstance(arch, list) and len(arch) <= len(SAFE_ARCHITECTURES):
+        safe_data["arch"] = sorted(
+            {
+                item
+                for item in arch
+                if type(item) is str and item in SAFE_ARCHITECTURES
+            }
+        )
+    boot = data.get("boot")
+    if type(boot) is str and boot in {"auto", "manual"}:
+        safe_data["boot"] = boot
+    for key in ("ingress", "installed", "update_available"):
+        item = data.get(key)
+        if type(item) is bool:
+            safe_data[key] = item
+    ingress_port = data.get("ingress_port")
+    if type(ingress_port) is int and 1 <= ingress_port <= 65535:
+        safe_data["ingress_port"] = ingress_port
+    if data.get("slug") == LOCAL_APP_SLUG:
+        safe_data["slug"] = LOCAL_APP_SLUG
+    state = data.get("state")
+    if type(state) is str and state in SAFE_APP_STATES:
+        safe_data["state"] = state
+    for key in ("version", "version_latest"):
+        item = _safe_version(data.get(key))
+        if item is not INVALID_FACT:
+            safe_data[key] = item
+    result["data"] = safe_data
+    return result
+
+
+def _wait_for_app(
+    context: Context,
+    address: str,
+    *,
+    expected_version: str,
+    timeout_seconds: int = 300,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        info = _app_info(context, address)
+        data = info.get("data") if info else None
+        if (
+            info
+            and info.get("result") == "ok"
+            and isinstance(data, dict)
+            and data.get("version") == expected_version
+            and data.get("state") == "started"
+        ):
+            return info
+        if time.monotonic() >= deadline:
+            raise VmError("guest App readiness timed out; raw logs were not collected")
+        time.sleep(5)
+
+
+def _require_ready_guest(
+    context: Context,
+) -> tuple[dict[str, Any], str]:
+    state = _load_state(context)
+    if not _domain_exists(context):
+        raise VmError("managed HAOS VM domain is absent")
+    _validate_domain(context, state)
+    ready, address, _ = _readiness(context)
+    if not ready or address is None:
+        raise VmError("managed HAOS VM is not ready")
+    return state, address
+
+
+def _app_stage(
+    context: Context,
+    *,
+    acknowledged: bool,
+    reuse_exact_image: bool,
+) -> None:
+    if not acknowledged:
+        raise VmError(
+            "app-stage requires --allow-guest-mutation for the disposable HAOS VM",
+            EX_USAGE,
+        )
+    state, address = _require_ready_guest(context)
+    context.binary("docker")
+    app = (
+        _reuse_exact_app_image(context, state)
+        if reuse_exact_image
+        else _build_app_image(context)
+    )
+    print("Streaming only the exact built App image into HAOS...", flush=True)
+    _stream_app_image(context, address, image_tag=app["image_tag"])
+    guest_image_id = _guest_image_id(
+        context,
+        address,
+        kind="image",
+        reference=app["image_tag"],
+    )
+    if guest_image_id != app["image_id"]:
+        raise VmError("guest App image ID does not match the exact host build")
+    print("Publishing the exact image through a pinned loopback-only guest registry...", flush=True)
+    _start_guest_registry(context, address, app=app)
+    try:
+        _stage_guest_app_files(context, address, app=app)
+        app["phase"] = "loaded"
+        state["app"] = app
+        _write_json_file(context.state_file, state)
+        reload_result = _ssh_json_command(
+            context,
+            address,
+            ("ha", "store", "reload", "--no-progress", "--raw-json"),
+            timeout=300,
+            check=False,
+        )
+        if not reload_result or reload_result.get("result") != "ok":
+            raise VmError("guest App store reload did not succeed")
+        installed = _installed_app_slugs(context, address)
+        if LOCAL_APP_SLUG not in installed:
+            _ha_app_action(context, address, "install")
+        else:
+            current = _app_info(context, address)
+            current_data = current.get("data") if current else None
+            if (
+                not isinstance(current_data, dict)
+                or current_data.get("version") != app["version"]
+            ):
+                _ha_app_action(context, address, "update")
+        current = _app_info(context, address)
+        current_data = current.get("data") if current else None
+        if not isinstance(current_data, dict) or current_data.get("state") != "started":
+            _ha_app_action(context, address, "start")
+        info = _wait_for_app(
+            context,
+            address,
+            expected_version=app["version"],
+        )
+        container_id = _guest_image_id(
+            context,
+            address,
+            kind="container",
+            reference=app["container_name"],
+        )
+        if container_id != app["image_id"]:
+            raise VmError("running guest App container does not use the exact loaded image")
+    finally:
+        _cleanup_guest_registry(context, address)
+    app["phase"] = "ready"
+    app["verified_at_utc"] = _utc_now()
+    state["app"] = app
+    _write_json_file(context.state_file, state)
+    output = {
+        "schema": EVIDENCE_SCHEMA,
+        "environment_kind": "haos_vm",
+        "real_haos_device": False,
+        "release_evidence_eligible": False,
+        "image_id": app["image_id"],
+        "source_revision": app["source_revision"],
+        "source_rootfs_sha256": app["source_rootfs_sha256"],
+        "app": _safe_app_info(info),
+    }
+    print(json.dumps(output, indent=2, sort_keys=True))
+
+
+def _app_smoke(context: Context) -> None:
+    state, address = _require_ready_guest(context)
+    app = state.get("app")
+    if not isinstance(app, dict):
+        raise VmError("no checkout-owned App has been staged in this VM")
+    info = _wait_for_app(
+        context,
+        address,
+        expected_version=str(app["version"]),
+        timeout_seconds=60,
+    )
+    guest_image_id = _guest_image_id(
+        context,
+        address,
+        kind="image",
+        reference=str(app["guest_image_tag"]),
+    )
+    container_id = _guest_image_id(
+        context,
+        address,
+        kind="container",
+        reference=GUEST_APP_CONTAINER,
+    )
+    if guest_image_id != app["image_id"] or container_id != app["image_id"]:
+        raise VmError("guest App image/container binding no longer matches the exact build")
+    app["container_name"] = GUEST_APP_CONTAINER
+    app["phase"] = "ready"
+    app["verified_at_utc"] = _utc_now()
+    state["app"] = app
+    _write_json_file(context.state_file, state)
+    output = {
+        "schema": EVIDENCE_SCHEMA,
+        "observed_at_utc": _utc_now(),
+        "environment_kind": "haos_vm",
+        "real_haos_device": False,
+        "release_evidence_eligible": False,
+        "smoke_passed": True,
+        "image_id": app["image_id"],
+        "source_revision": app["source_revision"],
+        "source_rootfs_sha256": app["source_rootfs_sha256"],
+        "app": _safe_app_info(info),
+    }
+    print(json.dumps(output, indent=2, sort_keys=True))
+
+
+def _parser() -> UsageParser:
+    parser = UsageParser(
+        prog="tools/development/haos-vm",
+        description=(
+            "Manage a checkout-owned HAOS VM. The default libvirt NAT is shared, "
+            "not isolated, and permits guest outbound/host/LAN access."
+        ),
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("check", help="validate host prerequisites without mutation")
+    subparsers.add_parser(
+        "image-fetch", help="download and verify the pinned HAOS base image"
+    )
+    up = subparsers.add_parser("up", help="create or start the checkout-owned HAOS VM")
+    up.add_argument(
+        "--allow-outbound-network",
+        action="store_true",
+        help="acknowledge that shared NAT permits guest outbound/host/LAN access",
+    )
+    up.add_argument("--memory-mib", type=int, default=DEFAULT_MEMORY_MIB)
+    up.add_argument("--vcpus", type=int, default=DEFAULT_VCPUS)
+    wait = subparsers.add_parser("wait", help="wait for SSH, Core, and frontend readiness")
+    wait.add_argument("--timeout", type=int, default=DEFAULT_WAIT_SECONDS)
+    status_parser = subparsers.add_parser("status", help="show sanitized VM status")
+    status_parser.add_argument("--json", action="store_true", dest="as_json")
+    subparsers.add_parser("start", help="start an existing managed VM")
+    stop = subparsers.add_parser("stop", help="gracefully stop the managed VM")
+    stop.add_argument("--timeout", type=int, default=DEFAULT_STOP_SECONDS)
+    stop.add_argument("--force", action="store_true")
+    destroy = subparsers.add_parser(
+        "destroy", help="remove the exact managed domain and per-run files"
+    )
+    destroy.add_argument("--timeout", type=int, default=DEFAULT_STOP_SECONDS)
+    destroy.add_argument("--force", action="store_true")
+    guest = subparsers.add_parser("guest", help="run a fixed, sanitized HA CLI probe")
+    guest.add_argument("action", choices=sorted(GUEST_ACTIONS))
+    app_stage = subparsers.add_parser(
+        "app-stage",
+        help="build, load, install, and start the exact local App in HAOS",
+    )
+    app_stage.add_argument(
+        "--allow-guest-mutation",
+        action="store_true",
+        help="acknowledge image load and Supervisor App installation in this VM",
+    )
+    app_stage.add_argument(
+        "--reuse-exact-image",
+        action="store_true",
+        help="retry with the recorded image after revalidating revision and rootfs",
+    )
+    subparsers.add_parser(
+        "app-smoke",
+        help="verify the running App is bound to the exact staged image",
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    os.umask(0o077)
+    parser = _parser()
+    arguments = parser.parse_args(argv)
+    context = Context()
+    with context.locked():
+        if arguments.command == "check":
+            _check_host(context, emit=True)
+        elif arguments.command == "image-fetch":
+            _check_host(context, emit=False)
+            _download_image(context)
+        elif arguments.command == "up":
+            _up(
+                context,
+                memory_mib=arguments.memory_mib,
+                vcpus=arguments.vcpus,
+                acknowledged=arguments.allow_outbound_network,
+            )
+        elif arguments.command == "wait":
+            _wait(context, timeout_seconds=arguments.timeout)
+        elif arguments.command == "status":
+            _status(context, as_json=arguments.as_json)
+        elif arguments.command == "start":
+            _start(context)
+        elif arguments.command == "stop":
+            _stop(
+                context,
+                timeout_seconds=arguments.timeout,
+                force=arguments.force,
+            )
+        elif arguments.command == "destroy":
+            _destroy(
+                context,
+                timeout_seconds=arguments.timeout,
+                force=arguments.force,
+            )
+        elif arguments.command == "guest":
+            _guest(context, action=arguments.action)
+        elif arguments.command == "app-stage":
+            _app_stage(
+                context,
+                acknowledged=arguments.allow_guest_mutation,
+                reuse_exact_image=arguments.reuse_exact_image,
+            )
+        elif arguments.command == "app-smoke":
+            _app_smoke(context)
+        else:
+            parser.error("unknown command")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        print("haos-vm: interrupted; managed resources were preserved", file=sys.stderr)
+        raise SystemExit(130) from None
+    except VmError as error:
+        print(f"haos-vm: {error}", file=sys.stderr)
+        raise SystemExit(error.exit_code) from None

@@ -5,10 +5,10 @@ FROM ${BUILD_FROM}
 ARG DEBIAN_SNAPSHOT=20260812T000000Z
 ARG BUILD_ARCH=amd64
 ARG TARGETARCH
-ARG ANTIGRAVITY_VERSION=1.1.13
-ARG ANTIGRAVITY_BUILD=6057583128215552
-ARG ANTIGRAVITY_AMD64_SHA512=89c6881b6c1999cb8236e7181c2192ae8f372b0413396c0f7bcff83d27ac9c0cc1202795cc0d629ec1ecbf4937d1c294cf4f5e4f9f8e05b1e972e27198313442
-ARG ANTIGRAVITY_ARM64_SHA512=d2f3642873e3283265ebf4d4e2cc8c3652dff5a0b193a33ebfe0dded68521dd02b4c28ed92ff54784f6a6267e95c807b4d8194e8a6d619d4348638ab5c810d44
+ARG ANTIGRAVITY_VERSION=1.1.22
+ARG ANTIGRAVITY_BUILD=5711547746615296
+ARG ANTIGRAVITY_AMD64_SHA512=40225d4b1f009412e905f0a234ba3d51487038d1ad1b8fa19331c84be55610a01f5b0ad9916fb871151cc45456c6bc30cc0b1ea5dab6c0616bc8fb262bcdd7a9
+ARG ANTIGRAVITY_ARM64_SHA512=b37a718330eb5e270e1ca70135bf964a407ba626fbff7537ac58e094ea31bc623e6d216ef197188fe8b5c46e6f57aee64a3b7c9e23fc855cefee43fe434179d3
 ARG NODE_VERSION=22.23.2
 ARG NODE_AMD64_SHA256=d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307
 ARG NODE_ARM64_SHA256=fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8
@@ -52,7 +52,6 @@ RUN sed -i \
       less \
       nano \
       nginx \
-      openssh-server \
       ripgrep \
       sqlite3 \
       tmux \
@@ -142,7 +141,6 @@ RUN sed -i \
       "/tmp/${node_archive}" \
       /tmp/npm-cache \
       /tmp/ttyd \
-    && rm -f /etc/ssh/ssh_host_* \
     && apt-get clean \
     && rm -rf \
       /var/lib/apt/lists/* \
@@ -153,7 +151,7 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 
 # Release-only metadata must stay after the dependency layer so routine App
 # updates can reuse its content-addressed layers on Home Assistant hosts.
-ARG BUILD_VERSION=2.1.3
+ARG BUILD_VERSION=3.0.0
 ARG SOURCE_REVISION=""
 ARG SOURCE_ROOTFS_SHA256=""
 
@@ -220,14 +218,12 @@ RUN manifest=/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
     && find /usr/local/share/antigravity-ha/plugins -type f -exec chmod 0644 {} + \
     && chmod 0755 \
       /etc/s6-overlay/s6-rc.d/antigravity-ha-init/run \
-      /etc/s6-overlay/s6-rc.d/ha-change-broker/run \
+      /etc/s6-overlay/s6-rc.d/antigravity-remote/finish \
+      /etc/s6-overlay/s6-rc.d/antigravity-remote/run \
       /etc/s6-overlay/s6-rc.d/ha-memoryd/run \
       /etc/s6-overlay/s6-rc.d/ha-read-broker/run \
       /etc/s6-overlay/s6-rc.d/ingress/finish \
       /etc/s6-overlay/s6-rc.d/ingress/run \
-      /etc/s6-overlay/s6-rc.d/sshd/finish \
-      /etc/s6-overlay/s6-rc.d/sshd/run \
-      /etc/s6-overlay/s6-rc.d/telegram-bot/run \
       /etc/s6-overlay/s6-rc.d/ttyd/finish \
       /etc/s6-overlay/s6-rc.d/ttyd/run \
       /usr/local/bin/* \
@@ -237,12 +233,10 @@ RUN manifest=/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
       /etc/antigravity/settings.json \
       /etc/profile.d/antigravity-ha.sh \
       /usr/local/lib/antigravity-ha/api-client.sh \
-      /usr/local/lib/antigravity-ha/browser-approval.sh \
       /usr/local/lib/antigravity-ha/config.sh \
       /usr/local/lib/antigravity-ha/environment.sh \
       /usr/local/lib/antigravity-ha/supervisor-credential.sh \
       /usr/local/share/antigravity-ha/AGENTS.md \
-      /usr/local/share/antigravity-ha/antigravity-settings-update.mjs \
       /usr/local/share/antigravity-ha/browser-auth-check.mjs \
       /usr/local/share/antigravity-ha/browser-user-admin.mjs \
       /usr/local/share/antigravity-ha/ha-memory-core.mjs \
@@ -250,14 +244,8 @@ RUN manifest=/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
       /usr/local/share/antigravity-ha/ha-memory-mcp.mjs \
       /usr/local/share/antigravity-ha/ha-memory.mjs \
       /usr/local/share/antigravity-ha/managed-plugin-update.mjs \
-      /usr/local/share/antigravity-ha/onboarding-settings-fingerprint.mjs \
-      /usr/local/share/antigravity-ha/onboarding-transaction.mjs \
-      /usr/local/share/antigravity-ha/ha-change-broker-client.mjs \
-      /usr/local/share/antigravity-ha/ha-change-broker.mjs \
-      /usr/local/share/antigravity-ha/ha-change-proposal-mcp.mjs \
       /usr/local/share/antigravity-ha/ha-feedback.mjs \
       /usr/local/share/antigravity-ha/ha-files-mcp.py \
-      /usr/local/share/antigravity-ha/ha-telegram-pair.mjs \
       /usr/local/share/antigravity-ha/ha-read-broker.mjs \
       /usr/local/share/antigravity-ha/ha-read-client.mjs \
       /usr/local/share/antigravity-ha/ha-read-mcp.mjs \
@@ -268,14 +256,7 @@ RUN manifest=/usr/local/share/antigravity-ha/source-rootfs-manifest.json \
       /usr/local/share/antigravity-ha/source-rootfs-manifest.json \
       /usr/local/share/antigravity-ha/supervisor-credential-fd.mjs \
       /usr/local/share/antigravity-ha/supervisor-options-migrate.mjs \
-      /usr/local/share/antigravity-ha/telegram-action-coordinator.mjs \
-      /usr/local/share/antigravity-ha/telegram-action-executor.mjs \
-      /usr/local/share/antigravity-ha/telegram-action-proposal-mcp.mjs \
-      /usr/local/share/antigravity-ha/telegram-bridge.mjs \
-      /usr/local/share/antigravity-ha/telegram-permission-policy.mjs \
-      /usr/local/share/antigravity-ha/telegram-pairing.mjs \
-      /usr/local/share/antigravity-ha/telegram-state.mjs \
-      /usr/local/share/antigravity-ha/user-files-update.mjs \
+      /usr/local/share/antigravity-ha/v3-factory-reset.mjs \
       /usr/local/share/antigravity-ha/app-version
 
 RUN install -d -m 0700 /data/home /data/antigravity /data/github-cli \
@@ -285,13 +266,8 @@ RUN install -d -m 0700 /data/home /data/antigravity /data/github-cli \
     && [[ "${gh_version_output}" == "gh version ${GH_VERSION} "* ]] \
     && node --check /usr/local/share/antigravity-ha/ha-feedback.mjs \
     && node --check /usr/local/share/antigravity-ha/managed-plugin-update.mjs \
-    && node --check /usr/local/share/antigravity-ha/onboarding-settings-fingerprint.mjs \
-    && node --check /usr/local/share/antigravity-ha/onboarding-transaction.mjs \
     && node --check /usr/local/share/antigravity-ha/supervisor-options-migrate.mjs \
-    && node --check /usr/local/share/antigravity-ha/telegram-action-coordinator.mjs \
-    && node --check /usr/local/share/antigravity-ha/telegram-action-executor.mjs \
-    && node --check /usr/local/share/antigravity-ha/telegram-action-proposal-mcp.mjs \
-    && node --check /usr/local/share/antigravity-ha/telegram-permission-policy.mjs \
+    && node --check /usr/local/share/antigravity-ha/v3-factory-reset.mjs \
     && node /usr/local/share/antigravity-ha/ha-feedback.mjs --help \
       | grep -Fq 'ha-feedback github submit'
 
@@ -300,7 +276,7 @@ LABEL \
   io.hass.type="app" \
   io.hass.arch="${BUILD_ARCH}" \
   org.opencontainers.image.title="Home Assistant App: Antigravity for Home Assistant" \
-  org.opencontainers.image.description="Antigravity CLI, verified feedback reports, Playwright browser, Ingress terminal, and public-key SSH for Home Assistant" \
+  org.opencontainers.image.description="Antigravity Remote, Home Assistant operations, validated memory, browser verification, and Ingress recovery" \
   org.opencontainers.image.revision="${SOURCE_REVISION}" \
   org.opencontainers.image.source="https://github.com/Kanu-Coffee/antigravity-for-home-assistant" \
   io.antigravity-ha.source-rootfs-sha256="${SOURCE_ROOTFS_SHA256}" \

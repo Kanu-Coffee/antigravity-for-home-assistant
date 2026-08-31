@@ -1,7 +1,8 @@
 Antigravity for Home Assistant
 
-This shell can write all of /config and use the Home Assistant Core and
-Supervisor manager APIs. Review changes, run ha-config-check before restart,
-and never paste or commit antigravity auth.json or SUPERVISOR_TOKEN.
-For first-time OAuth/Terms or the 2.1.2 settings-save failure, exit Agy and run
-ha-antigravity-login from this authenticated shell.
+Use Antigravity Remote Control for normal work. To authenticate or recover the
+Remote connection, run ha-antigravity-remote-login in this Ingress shell; the
+background service starts automatically after sign-in.
+
+Review Home Assistant changes and run ha-config-check before a reload or
+restart. Never display or commit Home Assistant or Antigravity credentials.

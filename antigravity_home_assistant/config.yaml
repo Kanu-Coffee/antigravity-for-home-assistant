@@ -1,6 +1,6 @@
 ---
 name: Antigravity for Home Assistant
-version: "2.1.3"
+version: "3.0.0"
 breaking_versions:
   - "2.0.0"
   - "2.0.7"
@@ -9,11 +9,11 @@ breaking_versions:
   - "2.0.12"
   - "2.0.13"
   - "2.1.0"
+  - "3.0.0"
 slug: antigravity_home_assistant
-description: Antigravity CLI with verified feedback, browser, terminal, and SSH for Home Assistant
+description: Antigravity Remote with Home Assistant operations, browser validation, memory, and feedback
 url: https://github.com/Kanu-Coffee/antigravity-for-home-assistant
 stage: experimental
-boot: manual
 init: false
 arch:
   - aarch64
@@ -25,11 +25,6 @@ ingress_port: 7681
 ingress_stream: true
 panel_icon: mdi:rocket-launch
 panel_title: Antigravity
-
-ports:
-  22/tcp: 2224
-ports_description:
-  22/tcp: SSH and Antigravity Remote SSH (public key only)
 
 map:
   - type: homeassistant_config
@@ -47,37 +42,13 @@ hassio_api: true
 hassio_role: manager
 
 options:
-  telegram_enabled: false
-  telegram_bot_token: ""
-  telegram_allowed_user_ids: []
-  telegram_allowed_chat_ids: []
-  authorized_keys: []
-  web_terminal_auto_start_antigravity: false
-  tmux_session_name: antigravity-ha
-  antigravity_tool_permission: request-review
-  antigravity_terminal_sandbox: false
+  remote_control_name: home-assistant
   antigravity_sensitive_data_access: false
-  antigravity_user_files_update_mode: preserve
   home_assistant_browser_auto_auth: true
   log_level: info
 
 schema:
-  telegram_enabled: bool
-  telegram_bot_token: password?
-  telegram_allowed_user_ids:
-    - str
-  telegram_allowed_chat_ids:
-    - str
-  authorized_keys:
-    - str
-  web_terminal_auto_start_antigravity: bool
-  tmux_session_name: "match(^[A-Za-z0-9._-]{1,64}$)"
-  # request-review keeps requester-bound review for mutations. always-proceed
-  # is an explicit autonomous administrator mode. The remaining values are
-  # accepted only so older stored input can be normalized safely on upgrade.
-  antigravity_tool_permission: "list(request-review|proceed-in-sandbox|always-proceed|strict)"
-  antigravity_terminal_sandbox: bool
+  remote_control_name: "match(^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$)"
   antigravity_sensitive_data_access: bool
-  antigravity_user_files_update_mode: "list(preserve|refresh_managed|reset_v2|refresh_agents|refresh_all)"
   home_assistant_browser_auto_auth: bool
   log_level: "list(trace|debug|info|notice|warning|error|fatal)"

@@ -13,63 +13,11 @@ if [[ ${MODE} != restricted && ${MODE} != sensitive-read ]]; then
 fi
 shift
 
-requester_environment=()
-if [[ -v ANTIGRAVITY_HA_CHANNEL || -v HA_TELEGRAM_USER_ID \
-  || -v HA_TELEGRAM_CHAT_ID || -v HA_TELEGRAM_SESSION_GENERATION \
-  || -v HA_TELEGRAM_UPDATE_ID || -v HA_TELEGRAM_RUN_NONCE \
-  || -v HA_ANTIGRAVITY_CONVERSATION_ID \
-  || -v HA_TELEGRAM_ACTION_PROPOSAL_SOCKET ]]; then
-  if [[ "${ANTIGRAVITY_HA_CHANNEL:-}" != telegram \
-    || ! "${HA_TELEGRAM_USER_ID:-}" =~ ^[1-9][0-9]{0,19}$ \
-    || ! "${HA_TELEGRAM_CHAT_ID:-}" =~ ^-?[1-9][0-9]{0,19}$ \
-    || ! "${HA_TELEGRAM_SESSION_GENERATION:-}" =~ ^[1-9][0-9]{0,15}$ \
-    || ! "${HA_TELEGRAM_UPDATE_ID:-}" =~ ^[1-9][0-9]{0,15}$ \
-    || ! "${HA_TELEGRAM_RUN_NONCE:-}" =~ ^[A-Za-z0-9_-]{24,128}$ \
-    || ( -n "${HA_ANTIGRAVITY_CONVERSATION_ID:-}" \
-      && ! "${HA_ANTIGRAVITY_CONVERSATION_ID}" =~ ^[A-Za-z0-9._:-]{1,256}$ ) \
-    || ! "${HA_TELEGRAM_ACTION_PROPOSAL_SOCKET:-}" \
-      =~ ^/run/antigravity-ha/[A-Za-z0-9._-]{1,120}\.sock$ ]]; then
-    printf '%s\n' 'antigravity: invalid Telegram requester binding' >&2
-    exit 78
-  fi
-  requester_environment=(
-    ANTIGRAVITY_HA_CHANNEL=telegram
-    "HA_TELEGRAM_USER_ID=${HA_TELEGRAM_USER_ID}"
-    "HA_TELEGRAM_CHAT_ID=${HA_TELEGRAM_CHAT_ID}"
-    "HA_TELEGRAM_SESSION_GENERATION=${HA_TELEGRAM_SESSION_GENERATION}"
-    "HA_TELEGRAM_UPDATE_ID=${HA_TELEGRAM_UPDATE_ID}"
-    "HA_TELEGRAM_RUN_NONCE=${HA_TELEGRAM_RUN_NONCE}"
-    "HA_ANTIGRAVITY_CONVERSATION_ID=${HA_ANTIGRAVITY_CONVERSATION_ID:-}"
-    "HA_TELEGRAM_ACTION_PROPOSAL_SOCKET=${HA_TELEGRAM_ACTION_PROPOSAL_SOCKET}"
-  )
-fi
-unset ANTIGRAVITY_HA_CHANNEL HA_TELEGRAM_USER_ID HA_TELEGRAM_CHAT_ID \
-  HA_TELEGRAM_SESSION_GENERATION HA_TELEGRAM_UPDATE_ID \
-  HA_TELEGRAM_RUN_NONCE HA_ANTIGRAVITY_CONVERSATION_ID \
-  HA_TELEGRAM_ACTION_PROPOSAL_SOCKET
-
-readonly ACTIVE_MARKER=/run/antigravity-ha/onboarding-active
-readonly ACTIVE_MARKER_TMP=/run/antigravity-ha/onboarding-active.tmp
-readonly ONBOARDING_JOURNAL=/data/antigravity-ha/onboarding/retry-required.json
-readonly RESTART_REQUIRED=/data/antigravity-ha/onboarding/restart-required
-if [[ ! -f ${ACTIVE_MARKER} || -L ${ACTIVE_MARKER} \
-  || $(/usr/bin/stat -Lc '%u:%g:%a:%h:%s' "${ACTIVE_MARKER}") \
-    != 0:0:600:1:0 \
-  || -e ${ACTIVE_MARKER_TMP} || -L ${ACTIVE_MARKER_TMP} \
-  || -e ${ONBOARDING_JOURNAL} || -L ${ONBOARDING_JOURNAL} \
-  || -e ${RESTART_REQUIRED} || -L ${RESTART_REQUIRED} ]]; then
-  printf '%s\n' \
-    'antigravity: onboarding did not close safely; restart the App, then run ha-antigravity-login if OAuth/Terms is incomplete' >&2
-  exit 78
-fi
-
 if [[ ${MODE} == sensitive-read ]]; then
   readonly ACCESS_MARKER=/run/antigravity-ha/sensitive-data-access.enabled
   if [[ ! -f ${ACCESS_MARKER} || -L ${ACCESS_MARKER} \
-    || $(/usr/bin/stat -Lc '%u:%g:%a:%h' "${ACCESS_MARKER}") \
-      != 0:0:400:1 ]]; then
-    printf '%s\n' \
-      'Sensitive Home Assistant reads are disabled or unsafe; enable the App option and restart' >&2
+    || $(/usr/bin/stat -Lc '%u:%g:%a:%h' "${ACCESS_MARKER}") != 0:0:400:1 ]]; then
+    printf '%s\n' 'Sensitive Home Assistant reads are disabled or unsafe' >&2
     exit 78
   fi
 fi
@@ -80,6 +28,5 @@ exec /usr/local/libexec/antigravity-native-env -i \
   LANG=C.UTF-8 \
   LC_ALL=C.UTF-8 \
   PATH=/usr/local/libexec/antigravity-command-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-  TERM=xterm-256color \
-  "${requester_environment[@]}" \
+  TERM="${TERM:-xterm-256color}" \
   /usr/local/libexec/antigravity-real "$@"

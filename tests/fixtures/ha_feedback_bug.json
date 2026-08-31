@@ -51,8 +51,8 @@
     "os_version": "17.0",
     "arch": "amd64",
     "app_options": {
-      "web_terminal_auto_start_antigravity": false,
-      "browser_approval_policy": "safe"
+      "home_assistant_browser_auto_auth": false,
+      "log_level": "info"
     }
   }
 }

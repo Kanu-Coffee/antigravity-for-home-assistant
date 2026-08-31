@@ -136,9 +136,7 @@ def test_memory_runtime_is_packaged_with_node_sqlite(
         )
 
 
-def test_memory_daemon_is_optional_to_terminal_and_ssh(
-    addon_root: Path, rootfs: Path
-) -> None:
+def test_memory_daemon_is_optional_to_remote_and_ingress(rootfs: Path) -> None:
     s6_root = rootfs / "etc/s6-overlay/s6-rc.d"
     user_bundle = s6_root / "user/contents.d"
     memory_service = s6_root / "ha-memoryd"
@@ -178,33 +176,8 @@ def test_memory_daemon_is_optional_to_terminal_and_ssh(
     assert (memory_service / "dependencies.d/antigravity-ha-init").is_file()
     assert (memory_service / "dependencies.d/ha-read-broker").is_file()
 
-    for service in ("ttyd", "sshd"):
+    for service in ("ttyd", "ingress", "antigravity-remote"):
         assert not (s6_root / service / "dependencies.d/ha-memoryd").exists()
-
-    apparmor = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
-    diagnostic_path = "/run/antigravity-ha/.ha-memoryd-stderr.*"
-    main_profile = re.search(
-        r"profile antigravity_home_assistant flags=.*?\{(?P<body>.*?)\n\}",
-        apparmor,
-        re.DOTALL,
-    )
-    memory_profile = re.search(
-        r"profile antigravity_home_assistant-memory flags=.*?\{(?P<body>.*?)\n\}",
-        apparmor,
-        re.DOTALL,
-    )
-    telegram_profiles = re.findall(
-        r"profile antigravity_home_assistant-telegram(?:-worker)? flags=.*?\{(?P<body>.*?)\n\}",
-        apparmor,
-        re.DOTALL,
-    )
-    assert main_profile and f"{diagnostic_path} rwk," in main_profile.group("body")
-    assert memory_profile and f"{diagnostic_path} w," in memory_profile.group("body")
-    assert len(telegram_profiles) == 1
-    assert all(
-        f"deny {diagnostic_path} rwklm," in profile
-        for profile in telegram_profiles
-    )
 
 
 def test_memory_daemon_preserves_one_bounded_json_reason_from_noisy_stderr(
@@ -271,9 +244,7 @@ def test_init_bootstraps_only_the_local_memory_database(rootfs: Path) -> None:
     )
 
     assert re.search(r"install\s+-d\s+-m\s+0700", init_script)
-    install_block = init_script.split("install -d -m 0700", 1)[1].split(
-        "/root/.ssh", 1
-    )[0]
+    install_block = init_script.split("install -d -m 0700", 1)[1]
     assert "antigravity-ha-memory" not in install_block
     assert "/usr/local/bin/ha-memory init" in init_script
     assert "if /usr/local/bin/ha-memory init" in init_script
@@ -340,25 +311,14 @@ def test_memory_mcp_exposes_only_the_structured_protocol(rootfs: Path) -> None:
     assert "optional: true" not in list_case
 
 
-def test_memory_mcp_uses_the_same_surface_for_telegram_and_cli(
-    addon_root: Path,
-    rootfs: Path,
-) -> None:
+def test_memory_mcp_has_one_remote_and_ingress_surface(rootfs: Path) -> None:
     wrapper = (rootfs / "usr/local/bin/ha-memory-mcp").read_text(
         encoding="utf-8"
     )
     mcp_path = rootfs / "usr/local/share/antigravity-ha/ha-memory-mcp.mjs"
     mcp = mcp_path.read_text(encoding="utf-8")
-    apparmor = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
-
-    assert (
-        "unset ANTIGRAVITY_HA_CHANNEL HA_TELEGRAM_USER_ID "
-        "HA_TELEGRAM_CHAT_ID" in wrapper
-    )
-    assert "ANTIGRAVITY_HA_TELEGRAM_READ_ONLY" not in wrapper
-    assert "TELEGRAM_READ_ONLY_TOOLS" not in mcp
-    assert "memory-telegram" not in mcp
-    assert "profile antigravity_home_assistant-memory-telegram" not in apparmor
+    assert "unset ANTIGRAVITY_HA_CHANNEL" in wrapper
+    assert "exec /usr/bin/env -i" in wrapper
 
     requests = "\n".join(
         json.dumps(message)
@@ -442,29 +402,16 @@ def test_default_guidance_defines_verified_memory_workflow(rootfs: Path) -> None
 
     assert "/data/antigravity-ha-memory/memory.sqlite3" in normalized
     assert "ha-memory search" in normalized
-    assert "memory_remember_explicit" in normalized
-    assert "ha-memory remember" in normalized
-    assert re.search(
-        r"candidate.{0,160}verified.{0,160}applied",
-        normalized,
-    )
+    assert "explicit durable facts" in normalized
+    assert "verified candidates" in normalized
 
     assert "memory_begin_change" in normalized
     assert "memory_verify_change" in normalized
-    assert "every persistent home assistant" in normalized
-    assert "when practical" not in normalized
-    assert "never use a weaker exists/name check" in normalized
-    assert "home assistant api" in normalized
+    assert "fresh ha api result" in normalized
     _assert_nearby_terms(
         normalized,
         r"memory_verify_change",
         (r"after|following", r"fresh", r"home assistant api"),
-    )
-
-    _assert_nearby_terms(
-        normalized,
-        r"agents\.md",
-        (r"never", r"entity-specific", r"aliases|preferences|relationships"),
     )
 
     _assert_nearby_terms(
@@ -478,13 +425,7 @@ def test_default_guidance_defines_verified_memory_workflow(rootfs: Path) -> None
         (r"do not|never", r"read|dump|load", r"entire|whole|full"),
     )
 
-    assert "ha-memory rollback" in normalized
-    assert "history" in normalized or "audit" in normalized
-    _assert_nearby_terms(
-        normalized,
-        r"roll back|rollback",
-        (r"do not|never", r"home assistant|snapshot"),
-    )
+    assert "explicit user correction outranks inferred semantic memory" in normalized
 
 
 def test_memory_schema_declares_catalog_workflow_and_audit_tables(
@@ -523,15 +464,12 @@ def test_memory_feature_does_not_expand_app_privileges(
         assert forbidden_key not in addon_config
 
 
-def test_v2_memory_migration_is_identity_and_fail_closed(
+def test_memory_schema_is_stable_and_fail_closed(
     repository_root: Path, rootfs: Path
 ) -> None:
     core = (
         rootfs / "usr/local/share/antigravity-ha/ha-memory-core.mjs"
     ).read_text(encoding="utf-8")
-    migration = (repository_root / "docs/v2/migration-release.md").read_text(
-        encoding="utf-8"
-    )
     smoke = (repository_root / "tests/memory-smoke.sh").read_text(encoding="utf-8")
 
     assert "export const MEMORY_SCHEMA_VERSION = 1" in core
@@ -539,8 +477,6 @@ def test_v2_memory_migration_is_identity_and_fail_closed(
     assert '"unsupported_schema"' in core
     assert "readOnly: true" in core
     assert "PRAGMA quick_check" in core
-    assert "public 1.0.4와 v2.0.0은 모두 application schema `1`" in migration
-    assert "현재 binary는 forward migration을 구현하지 않는다" in migration
     assert "PERSISTED_MCP_RECALL" in smoke
     assert "new MCP process did not recall the MCP-applied fact" in smoke
 

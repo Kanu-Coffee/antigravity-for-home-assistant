@@ -394,49 +394,24 @@ jobs:
       matrix:
         include:
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: apparmor-enforced}
-          - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: browser-approval}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: container}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: feedback}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: managed-auth}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: managed-plugin}
           - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: memory}
-          - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: public-v1}
-          - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: public-v2}
-          - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: telegram-shared-context}
-          - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: update}
-          - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: user-files}
-          - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: browser-approval}
+          - {os: ubuntu-24.04, platform: linux/amd64, ha_arch: amd64, suite: v3-upgrade}
           - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: apparmor-enforced}
           - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: container}
           - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: feedback}
           - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: managed-auth}
           - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: managed-plugin}
           - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: memory}
-          - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: telegram-shared-context}
-          - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: update}
-          - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: user-files}
+          - {os: ubuntu-24.04-arm, platform: linux/arm64, ha_arch: aarch64, suite: v3-upgrade}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
-
-      - name: Build exact public v1 source image for migration rehearsal
-        if: matrix.suite == 'public-v1'
-        run: |
-          set -Eeuo pipefail
-          git fetch --force --depth=1 origin \
-            refs/tags/v1.0.4:refs/tags/v1.0.4
-          v1_revision=$(git rev-parse 'v1.0.4^{commit}')
-          [[ $v1_revision == \
-            aba6805e8bf1f32e68976a67a46536c3ca362af8 ]]
-          v1_source=$(mktemp -d)
-          git archive v1.0.4 | tar --extract --directory "$v1_source"
-          docker build \
-            --platform linux/amd64 \
-            --label "org.opencontainers.image.revision=${v1_revision}" \
-            --tag antigravity-for-home-assistant:public-v1.0.4-local \
-            "$v1_source/antigravity_home_assistant"
 
       - name: Log in to pull private candidate
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
@@ -485,18 +460,12 @@ jobs:
           image=antigravity-for-home-assistant:candidate-test
           case "$SUITE" in
             apparmor-enforced) exec bash tests/apparmor-enforced-smoke.sh "$image" ;;
-            browser-approval) exec bash tests/browser-approval-smoke.sh "$image" ;;
             container) exec bash tests/docker-smoke.sh "$image" ;;
             feedback) exec bash tests/feedback-smoke.sh "$image" ;;
             managed-auth) exec bash tests/managed-auth-smoke.sh "$image" ;;
             managed-plugin) exec bash tests/managed-plugin-update-smoke.sh "$image" ;;
             memory) exec bash tests/memory-smoke.sh "$image" ;;
-            public-v1) exec bash tests/public-v1-upgrade-smoke.sh \
-              antigravity-for-home-assistant:public-v1.0.4-local "$image" ;;
-            public-v2) exec bash tests/public-v2-upgrade-smoke.sh "$image" ;;
-            telegram-shared-context) exec bash tests/telegram-shared-context-smoke.sh "$image" ;;
-            update) exec bash tests/update-smoke.sh "$image" ;;
-            user-files) exec bash tests/user-files-update-smoke.sh "$image" ;;
+            v3-upgrade) exec bash tests/v3-upgrade-smoke.sh "$image" ;;
             *) exit 64 ;;
           esac
 

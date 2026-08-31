@@ -53,8 +53,8 @@
     "os_version": "17.0",
     "arch": "amd64",
     "app_options": {
-      "antigravity_tool_permission": "request-review",
-      "antigravity_user_files_update_mode": "preserve"
+      "antigravity_sensitive_data_access": false,
+      "remote_control_name": "home-assistant"
     }
   }
 }

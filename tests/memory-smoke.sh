@@ -119,24 +119,47 @@ docker volume create "${DATA_VOLUME}" >/dev/null
 docker volume create "${UNSAFE_DATA_VOLUME}" >/dev/null
 docker volume create "${UNSAFE_CONFIG_VOLUME}" >/dev/null
 
-printf '%s' '{"authorized_keys":[],"web_terminal_auto_start_antigravity":false,"tmux_session_name":"memory-path-safety","antigravity_tool_permission":"request-review","antigravity_terminal_sandbox":true,"log_level":"info"}' \
+printf '%s' '{"remote_control_name":"home-assistant","antigravity_sensitive_data_access":false,"home_assistant_browser_auto_auth":true,"log_level":"info"}' \
   | docker run --rm --interactive \
     --platform "$TEST_PLATFORM" \
     --entrypoint /bin/sh \
     --volume "${UNSAFE_DATA_VOLUME}:/data" \
     "${IMAGE}" \
     -ceu 'cat > /data/options.json; mkdir /data/memory-link-target; chmod 0755 /data/memory-link-target; ln -s /data/memory-link-target /data/antigravity-ha-memory'
+if docker run --rm \
+  --platform "$TEST_PLATFORM" \
+  --volume "${UNSAFE_DATA_VOLUME}:/data" \
+  --volume "${UNSAFE_CONFIG_VOLUME}:/config" \
+  --entrypoint /bin/sh \
+  "${IMAGE}" -c 'mkdir -p /run/s6/container_environment; exec /usr/local/bin/antigravity-ha-init' \
+  >/dev/null 2>&1; then
+  fail 'main App init accepted an unsafe memory symlink during the factory reset'
+fi
+[[ $(docker run --rm --platform "$TEST_PLATFORM" --entrypoint stat \
+  --volume "${UNSAFE_DATA_VOLUME}:/data" "${IMAGE}" \
+  -c '%a' /data/memory-link-target) == 755 ]] \
+  || fail 'main App init followed or chmodded an unsafe memory symlink'
+docker run --rm \
+  --platform "$TEST_PLATFORM" \
+  --entrypoint test \
+  --volume "${UNSAFE_DATA_VOLUME}:/data" \
+  "${IMAGE}" ! -e /data/.antigravity-ha-v3-reset-complete.json \
+  || fail 'failed factory reset wrote its completion marker'
+printf '%s\n' \
+  '{"schema":"antigravity-ha-v3-factory-reset/v1","completed":true}' \
+  | docker run --rm --interactive \
+    --platform "$TEST_PLATFORM" \
+    --entrypoint /bin/sh \
+    --volume "${UNSAFE_DATA_VOLUME}:/data" \
+    "${IMAGE}" \
+    -ceu 'umask 077; cat > /data/.antigravity-ha-v3-reset-complete.json'
 docker run --rm \
   --platform "$TEST_PLATFORM" \
   --volume "${UNSAFE_DATA_VOLUME}:/data" \
   --volume "${UNSAFE_CONFIG_VOLUME}:/config" \
   --entrypoint /bin/sh \
   "${IMAGE}" -c 'mkdir -p /run/s6/container_environment; exec /usr/local/bin/antigravity-ha-init' >/dev/null \
-  || fail 'unsafe memory symlink made the main App init fail'
-[[ $(docker run --rm --platform "$TEST_PLATFORM" --entrypoint stat \
-  --volume "${UNSAFE_DATA_VOLUME}:/data" "${IMAGE}" \
-  -c '%a' /data/memory-link-target) == 755 ]] \
-  || fail 'main App init followed or chmodded an unsafe memory symlink'
+  || fail 'unsafe memory symlink made the post-reset main App init fail'
 docker run --rm \
   --platform "$TEST_PLATFORM" \
   --entrypoint /bin/sh \
@@ -149,7 +172,7 @@ docker run --rm \
   --volume "${UNSAFE_CONFIG_VOLUME}:/config" \
   --entrypoint /bin/sh \
   "${IMAGE}" -c 'mkdir -p /run/s6/container_environment; exec /usr/local/bin/antigravity-ha-init' >/dev/null \
-  || fail 'unsafe memory file made the main App init fail'
+  || fail 'unsafe memory file made the post-reset main App init fail'
 
 start_container "${FIRST_CONTAINER}"
 
@@ -161,8 +184,6 @@ docker cp tests/ha_memory_client_test.mjs \
   "${FIRST_CONTAINER}:/tmp/ha_memory_client_test.mjs"
 docker cp tests/ha_memory_test.mjs \
   "${FIRST_CONTAINER}:/tmp/ha_memory_test.mjs"
-docker cp tests/ha_change_broker_installed_test.mjs \
-  "${FIRST_CONTAINER}:/tmp/ha_change_broker_installed_test.mjs"
 run_installed_node_test \
   'Home Assistant WebSocket snapshot completeness tests failed' \
   docker exec \
@@ -248,35 +269,6 @@ RECOVERY_OUTPUT=$(docker exec "${FIRST_CONTAINER}" ha-memory refresh --force) \
 assert_json 'recovered catalog refresh was not successful' \
   '.status == "success" and .sync_id > 0' \
   "${RECOVERY_OUTPUT}"
-
-stop_fixture_broker
-docker exec "${FIRST_CONTAINER}" /bin/sh -ceu '
-  jq '\''
-    .entities += [{
-      entity_id: "input_boolean.installed_guard",
-      name: "Green Installed",
-      aliases: [],
-      device_id: null,
-      area_id: null,
-      platform: "input_boolean",
-      device_class: null,
-      labels: []
-    }]
-    | .states += [{
-      entity_id: "input_boolean.installed_guard",
-      state: "off",
-      attributes: {friendly_name: "Green Installed"},
-      last_changed: "2026-08-11T00:00:00+00:00",
-      last_updated: "2026-08-11T00:00:00+00:00"
-    }]
-  '\'' "$1" > "$1.next"
-  mv "$1.next" "$1"
-' sh "${FIXTURE_PATH}" \
-  || fail 'could not add the installed change-broker postcondition fixture'
-start_fixture_broker
-docker exec "${FIRST_CONTAINER}" \
-  node /tmp/ha_change_broker_installed_test.mjs >/dev/null \
-  || fail 'installed change broker did not cross the real memory begin/verify boundary'
 
 SEARCH_OUTPUT=$(docker exec "${FIRST_CONTAINER}" ha-memory search 'Kitchen Main') \
   || fail 'catalog search failed'

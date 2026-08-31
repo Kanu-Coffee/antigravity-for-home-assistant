@@ -4,1018 +4,234 @@
 
 # Antigravity for Home Assistant 사용 설명서
 
-이 문서는 v2 App을 설치하고 native Google Antigravity, Telegram, Home Assistant
-전용 도구와 안전 기능을 사용하는 방법을 설명합니다.
+이 App은 HAOS 안에서 Google Antigravity Remote daemon을 실행합니다. 평소 작업은
+브라우저의 공식 Remote Control Dashboard에서 하고, Home Assistant Ingress 터미널은
+최초 인증·진단·복구에 사용합니다.
 
 > [!WARNING]
-> 이 App은 `/config` 전체의 쓰기 권한과 Home Assistant Core·Supervisor 관리자급
-> API 권한을 사용합니다. 신뢰하는 관리자만 접근하게 하고, 변경 전 preview와
-> backup을 확인하세요. SSH port를 인터넷에 직접 노출하지 마세요.
+> Antigravity는 `/config`를 읽고 쓸 수 있으며 제한된 Home Assistant 관리자 API를
+> 사용합니다. Remote에 로그인한 Google 계정과 browser session을 관리자
+> credential처럼 보호하세요. 중요한 변경 전에는 Home Assistant backup을 만들고
+> 계획과 diff를 검토하세요.
 
-## 상태와 지원 범위
-
-### 지원 환경
+## 요구사항과 설치
 
 - Supervisor가 있는 Home Assistant OS 또는 Supervised 설치
-- `amd64` 또는 `aarch64` 장치
-- App image와 Google Antigravity OAuth에 필요한 인터넷 연결
-- Antigravity를 사용할 수 있는 Google 계정
+- `amd64` 또는 `aarch64`
+- 인터넷 연결과 Antigravity를 사용할 Google 계정
 
-이 App은 HACS integration이 아니며 현재 `stage: experimental`, `boot: manual`입니다.
-릴리스는
-`ghcr.io/kanu-coffee/antigravity-for-home-assistant:<version>`의 prebuilt image를
-사용하도록 패키징됩니다. 설치 전 릴리스의 multi-arch manifest와 실제 HAOS 검증
-기록을 확인하세요.
+1. **설정 → Apps → App store → Repositories**에서 다음 저장소를 추가합니다.
 
-2.0.12의 실제 HAOS 18.2 amd64 `preserve` 업데이트에서는 Telegram 권한 자동 복구,
-Bot 재연결·전달과 App 재시작/재연결이 통과했고 custom AppArmor attach는
-`docker-default (enforce)`로 실패했습니다. 공개 2.0.13은 custom profile의 S6 runtime
-directory 거부로 exit 111, 2.0.14는 resolved Bashio 실행 거부로 init exit 126을
-기록했습니다. 이를 보완한 공개 2.0.15는 App service graph와 Ingress HTTP/WebSocket을
-시작했지만 primary profile에 PTY multiplexor 접근이 없어 ttyd의 `pty_spawn`이
-EACCES로 실패했습니다. 같은 시작에서 `refresh_managed`는 malformed
-`permissions.ask`를 Telegram 안전 정규화보다 먼저 거부해 bridge가
-`permission_boundary_blocked`에 머물렀습니다. 따라서 2.0.15 실제 amd64 HAOS 수용은
-`FAIL`입니다. 2.0.16은 이 두 결함을 복구해 App, Ingress, Web terminal과 Telegram Bot
-API 연결까지 기동했지만 `agy`와 `antigravity --version`이 SIGSEGV/status 139로 즉시
-종료되고 Telegram worker도 같은 native crash로 실패했습니다. exact public 2.0.16
-image/custom AppArmor 재현의 kernel audit는 `interactive-runtime-restricted`에서
-`/usr/local/libexec/antigravity-real`의 `file_mmap` permission `m` 거부를 확인했고,
-`interactive-runtime-sensitive-read`에도 동일한 `r`-only rule이 있었습니다.
-2.0.17은 native mmap 결함을 고쳤고 2.0.18은 그 다음 managed proposal module·binding
-결함을 교정했습니다. 실제 공개 2.0.18 amd64에서 App 기동,
-`antigravity --version` status 0, Telegram transport와 도구 없는 대화는
-`PASS`했습니다. 그러나 Web `agy`/`antigravity` 대화형 입출력은 실패했고 현재 kernel
-audit는 interactive profile이 `/dev/pts/0` inherited/open `rw`를 거부한 사실을
-기록했습니다. 첫 managed Telegram tool 요청은 terminal error였으며, 그 뒤 3~7번
-시험은 failed conversation을 재사용했으므로 각 기능의 독립 PASS/FAIL 증거가 아닙니다.
-승인된 쓰기는 `NOT RUN`이고 공개 2.0.18 전체 수용은 `FAIL`입니다.
+   ```text
+   https://github.com/Kanu-Coffee/antigravity-for-home-assistant
+   ```
 
-2.1.0은 supported operational scope를 `/config`, `/share`, `/media`, credential이 아닌
-persistent HOME, 임시 작업공간, 일반 system command, installed MCP, Core/Supervisor
-manager API와 bounded Host/Supervisor log projection으로 넓히고 explicit blacklist를
-적용합니다. raw log는 제공하지 않고 exact App token과 알려진 credential-shaped
-line/block을 제거하지만 임의의 unkeyed application text까지 완전히 판별한다고 주장하지
-않습니다. `request-review`는 기본 검토 모드이고, 명시적 `always-proceed`는 blacklist
-밖의 일반 작업을 자율 관리자 권한으로 실행합니다. `strict`와
-`proceed-in-sandbox`는 `request-review`로 정규화됩니다. secret/.storage/OAuth/token/
-policy/proc/Recorder-write/raw-host 경계는 항상 막으며 `full_access`, Docker socket,
-host-root/PID mount는 추가하지 않습니다. 자동 회귀는 HAOS 증거가 아니므로 2.1.0
-amd64/aarch64 실기기 수용은 배포 시점 `NOT RUN`, 전체 v2 수용은 `PARTIAL`입니다.
+2. **Antigravity for Home Assistant**를 설치하고 시작합니다.
+3. **OPEN WEB UI**를 엽니다. 이 Ingress 터미널은 Home Assistant 인증 뒤에만
+   접근할 수 있습니다.
+4. 다음 helper를 실행합니다.
 
-공개 2.1.2의 실제 HAOS amd64에서는 인증된 Web TUI가 Terms/data-use 화면의
-Done·Enter와 Ctrl+C를 정상 처리했지만, native local save가
-`settings.json.<uuid>.tmp`에서 final `settings.json`으로 atomic rename하지 못했습니다.
-`agy-settings` hash는 전후 동일했습니다. 이는 terminal input 문제가 아니라 보호된
-final-settings 교체 실패라는 실제 증거이며, 별도 remote Terms 요청의 성공 여부는
-증명하지 않습니다. 2.1.3은 consumer Google OAuth/Terms 전용 수동 controller와
-격리된 `/run` staging HOME을 추가합니다. production HOME, `/config`, command, MCP,
-proposal과 자동 browser helper를 onboarding native에서 차단하고, 완료된 consumer
-marker·OAuth·정상 또는 의도한 Ctrl+C 종료를 함께 확인한 뒤 telemetry-compatible
-settings, bounded opaque OAuth credential file과 exact onboarding boolean만 no-secret
-journal에 바인딩된 순서로 crash-consistent commit합니다. 각 destination 교체만 개별적으로
-atomic하며 중단된 prefix는 격리 후 재시도됩니다.
-2.1.3의 실제 HAOS install/update, enforced onboarding AppArmor, OAuth/Terms persistence,
-정상 Web/Telegram 회귀와 aarch64 수용은 `NOT RUN`이며 전체 v2는 `PARTIAL`입니다.
+   ```bash
+   ha-antigravity-remote-login
+   ```
 
-native `read_file`/`write_file`은 symlink alias 우회를 막기 위해 두 모드에서 전역
-deny합니다. ordinary file은 confined `ha_files`의 `ha_files_list`,
-`ha_files_read_text`, `ha_files_write_text`만 사용합니다. 허용 root는 `/config`, `/share`,
-`/media`, 일반 `/data/home`, `/tmp`, `/var/tmp`이며 UTF-8 1 MiB·목록 200개 상한,
-no-symlink·single-link regular-file 검사, same-directory atomic write와 선택적
-`expected_sha256` 검사를 적용합니다.
+5. helper가 표시한 HTTPS URL을 신뢰하는 browser에서 열고, 같은 Google 계정으로
+   로그인한 뒤 표시된 code를 터미널에 붙여 넣습니다. 인증 파일이나 code를 로그,
+   screenshot 또는 issue에 남기지 마세요.
+6. 성공하면 실행 중인 service가 인증을 감지해 Remote를 자동으로 시작합니다. App을
+   재시작할 필요가 없습니다.
+7. [Remote Control Dashboard](https://antigravity.google.com/)에 같은 계정으로
+   로그인하고 기본 instance `home-assistant`를 선택합니다.
 
-### 실행 표면
+Remote는 작업 시작, 진행 확인, plan·artifact 검토, 사용자 입력과 승인을 지원합니다.
+모바일 browser에서는 dashboard를 홈 화면에 설치하고 Antigravity가 제공하는 알림을
+사용할 수도 있습니다. 자세한 upstream 동작은
+[공식 Remote Control 문서](https://antigravity.google/docs/remote-control/)를
+확인하세요.
 
-| 표면 | 용도 | 변경 경계 |
+인증이 없거나 만료되어도 App 전체가 실패하지 않습니다. Remote는 대기하고 Ingress는
+계속 열리므로 helper를 다시 실행할 수 있습니다. HAOS 재부팅 뒤 App과 Remote daemon은
+자동으로 다시 시작됩니다.
+
+## 설정
+
+3.0은 다음 네 개의 공개 option만 제공합니다.
+
+| Option | 기본값 | 의미 |
 | --- | --- | --- |
-| Ingress Web terminal | 대화형 Antigravity와 로컬 관리 | native permission + AppArmor |
-| 공개키 SSH | 신뢰하는 관리자의 원격 shell | native permission + AppArmor |
-| Telegram Bot | 관리자급 Antigravity 주 채널 | native permission + AppArmor + 승인 broker |
-
-Ingress, SSH와 Telegram은 같은 `/config` 프로젝트, `/data/home`, OAuth, 전역·
-workspace plugin/agent/rule/MCP와 권한 정책을 사용합니다. Telegram transport는
-Web terminal의 shell이나 tmux 입력을 중계하지 않지만 별도 격리 identity는 아닙니다.
-
-## 설치
-
-### App 저장소 추가
-
-[![Home Assistant에 App 저장소 추가](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FKanu-Coffee%2Fantigravity-for-home-assistant)
-
-버튼을 사용할 수 없다면 다음 URL을 **설정 → Apps → App store →
-Repositories**에 추가합니다.
-
-```text
-https://github.com/Kanu-Coffee/antigravity-for-home-assistant
-```
-
-App을 선택하고 설치합니다. 공개 릴리스는 HA 장치에서 소스를 빌드하지 않고
-아키텍처에 맞는 GHCR image를 받습니다. App이 목록에 없거나 image pull이 실패하면
-해당 version의 `linux/amd64` 또는 `linux/arm64` manifest가 실제로 게시되었는지
-먼저 확인하세요.
-
-### 최초 시작
-
-1. 기본 설정으로 App을 시작합니다.
-2. 로그에서 init, 별도 AppArmor 실행 프로필, read broker, memory와 Web terminal 시작
-   결과를 확인합니다. token이나 내부 응답 본문을 공유하지 마세요.
-3. **OPEN WEB UI**를 엽니다. shell은 `/config`에서 시작합니다.
-4. 최초 사용이면 아래 로그인 절차를 끝내고 helper를 닫은 뒤 `agy`를 실행합니다.
-   그 다음 읽기 전용 요청으로 연결을 먼저 시험합니다.
-
-```text
-현재 Home Assistant 구조와 최근 Core 오류를 읽기 전용으로 요약해 줘.
-파일, registry, 기기 상태는 아직 변경하지 마.
-```
-
-## Native Antigravity 로그인
-
-### Google OAuth
-
-Web terminal 또는 공개키 SSH의 controlling TTY에서 처음 한 번 실행합니다. 실행 전에
-다른 `agy` session과 Telegram 작업이 없는지 확인합니다.
-
-```bash
-ha-antigravity-login
-```
-
-personal/consumer Google 흐름을 선택하고 Google Cloud project/enterprise onboarding은
-선택하지 마세요. 보호된 session에서는 자동 browser helper를 의도적으로 실행하지
-않습니다. CLI가 표시한 공식 HTTPS URL을 브라우저에서 열고, 반환된 authorization
-code를 controlling TTY에 붙여 넣은 뒤 Terms/data-use 화면까지 완료합니다. 정상 agent
-화면이 나타나면 prompt를 입력하지 말고 Ctrl+C를 눌러 helper를 닫습니다. helper가
-완전히 종료되기 전에는 다른 `agy`나 Telegram 요청을 시작하지 마세요.
-
-Web UI에서는 OAuth URL과 붙여 넣은 code가 reconnect 가능한 scrollback에 남지 않도록
-helper 종료 시 **현재 Web pane의 전체 history를 지웁니다**. pane/socket을 동일한 것으로
-재검증하지 못하거나 지우기에 실패하면 helper는 성공으로 끝나지 않습니다. 브라우저
-history, clipboard, screenshot과 SSH client 자체 scrollback은 App 경계 밖이므로 사용자가
-별도로 지워야 합니다. SSH의 terminal saved scrollback 삭제는 best-effort입니다.
-
-helper는 최대 15분 실행됩니다. timeout, unexpected exit 또는 incomplete 안내가
-나오면 정상 session을 시작하지 말고 App을 재시작한 다음 처음부터 다시 실행합니다.
-완료 메시지는 local validation/sync 결과일 뿐 remote Terms 수락을 단정하지 않습니다.
-다음 실행에서 Terms가 다시 나타나면 helper를 다시 실행하세요. helper가 정상 종료된
-뒤 새 session을 시작합니다.
-
-```bash
-agy
-```
-
-`antigravity`와 `ha-antigravity`도 같은 native CLI wrapper입니다. 2.1.3 login helper는
-native를 root-owned `/run` staging HOME에서 실행한 뒤, 성공한 consumer 흐름의
-telemetry-compatible settings, bounded opaque OAuth credential file과 exact onboarding marker만 검증해
-shared HOME에 no-secret journal이 보호하는 순서로 crash-consistent commit합니다. 각 destination
-교체만 개별적으로 atomic하고 중단된 prefix는 격리됩니다. normal Web/Telegram session의 final-settings
-write/link/lock deny는 유지됩니다. OAuth 자료는 `/data/home/.gemini/**` 아래 CLI가
-관리하며 App 재시작과 일반 update 뒤에도 보존됩니다. 해당 디렉터리, authorization
-header 또는 credential 내용을 출력하거나 Git·Telegram·지원 이슈에 복사하지 마세요.
-
-### Data-use telemetry 사후 opt-out
-
-Terms 화면에서 허용한 telemetry는 나중에 끌 수 있습니다. `settings.json`을 editor,
-native file tool 또는 shell redirection으로 직접 바꾸지 말고 authenticated Web/SSH
-terminal에서 fresh digest에 묶인 mediator만 사용하세요.
-
-```bash
-digest="$(agy-settings sha256)"
-jq -nc --arg digest "${digest}" \
-  '{expected_sha256:$digest,patch:{enableTelemetry:false}}' \
-  | agy-settings patch
-```
-
-`false`는 opt-out으로 명시 저장됩니다. 2.1.3 mediator는 privacy-strengthening
-false-only이며 opt-in 또는 re-enable을 제공하지 않습니다. 재활성화에는 별도의
-authenticated consent flow가 필요합니다. 각 opt-out마다 새 digest를 얻어야 하며 이
-mediator는 normal native session에 broad final-settings write 권한을 주지 않습니다.
-
-### Native 경로와 plugin
-
-v2는 Antigravity 1.1.13의 native JSON/plugin 경로를 사용합니다.
-
-| 역할 | 경로 |
-| --- | --- |
-| CLI settings | `/data/home/.gemini/antigravity-cli/settings.json` |
-| global MCP settings | `/data/home/.gemini/config/mcp_config.json` |
-| App 관리 HA plugin | `/data/home/.gemini/config/plugins/home-assistant/` |
-| workspace MCP | `/config/.agents/mcp_config.json` |
-| Web/SSH/Telegram 공유 HOME | `/data/home/` |
-
-App은 기존의 알 수 없는 사용자 JSON key와 사용자 plugin을 보존하고 자신이 소유한
-key만 merge합니다. 프로젝트의 `/config/AGENTS.md`를 HA preset으로 자동 생성하거나
-덮어쓰지 않습니다. HA용 기본 규칙, skills와 MCP는 image-managed
-`home-assistant` plugin에 있습니다. Telegram에서 실행한 Antigravity도 이
-global/workspace customization을 상속하고 사용자 요청에 따라 수정할 수 있습니다.
-
-## App 설정
-
-### 권장 시작 설정
-
-```yaml
-telegram_enabled: false
-telegram_bot_token: ""
-telegram_allowed_user_ids: []
-telegram_allowed_chat_ids: []
-authorized_keys: []
-web_terminal_auto_start_antigravity: false
-tmux_session_name: antigravity-ha
-antigravity_tool_permission: request-review
-antigravity_terminal_sandbox: false
-antigravity_sensitive_data_access: false
-antigravity_user_files_update_mode: preserve
-home_assistant_browser_auto_auth: true
-log_level: info
-```
-
-### 옵션 참조
-
-| 옵션 | 기본값 | 허용값·의미 |
-| --- | --- | --- |
-| `telegram_enabled` | `false` | Telegram bridge 시작 여부 |
-| `telegram_bot_token` | `""` | BotFather secret token. 로그·이슈에 노출 금지 |
-| `telegram_allowed_user_ids` | `[]` | 허용할 numeric user ID 문자열 목록 |
-| `telegram_allowed_chat_ids` | `[]` | 허용할 numeric chat ID 문자열 목록 |
-| `authorized_keys` | `[]` | SSH root 로그인을 허용할 OpenSSH 공개키 한 줄 목록 |
-| `web_terminal_auto_start_antigravity` | `false` | 새 tmux session에서 `agy`를 한 번 자동 시작 |
-| `tmux_session_name` | `antigravity-ha` | `[A-Za-z0-9._-]`로 된 1~64자 session 이름 |
-| `antigravity_tool_permission` | `request-review` | `request-review`는 URL·managed read와 `ha_files` list/read 허용, `ha_files` write·mutation 검토; 명시적 `always-proceed`는 blacklist 밖 command/URL/installed MCP의 자율 관리자 mode. native raw file은 두 mode 모두 deny; `strict`/`proceed-in-sandbox`는 legacy upgrade 입력이며 정규화 |
-| `antigravity_terminal_sandbox` | `false` | deprecated/no-op compatibility 입력. 어느 값도 native sandbox를 켜지 않으며 `false`로 정규화 |
-| `antigravity_sensitive_data_access` | `false` | AppArmor를 유지한 채 Web/SSH/Telegram runtime의 Recorder DB 진단 read-only 허용 여부 |
-| `antigravity_user_files_update_mode` | `preserve` | `preserve`, `refresh_managed`, `reset_v2`; 폐기 예정 migration-only `refresh_agents`, `refresh_all` |
-| `home_assistant_browser_auto_auth` | `true` | local-only read-only browser identity 자동 관리 |
-| `log_level` | `info` | `trace`, `debug`, `info`, `notice`, `warning`, `error`, `fatal` |
-
-App의 Network 설정 `22/tcp` host port 기본값은 `2224`입니다. JSON option이 아니며
-SSH를 사용하지 않으면 port를 비활성화할 수 있습니다.
-
-Telegram은 별도 mode를 사용하지 않고 `antigravity_tool_permission`과
-`antigravity_sensitive_data_access`를 Web/SSH와 동일하게 따릅니다. 1.1.13 native
-`--sandbox`는 비특권 HAOS App에서 namespace 생성이 거부되므로 2.0.9의 세 채널은
-이를 사용하지 않습니다. 대신 model이 실행한 command와 stdio tool은 discrete `Px`
-transition으로 `antigravity_home_assistant-command` AppArmor 프로필에 들어가며, host
-권한을 추가하지 않습니다. `antigravity_terminal_sandbox`는 deprecated/no-op 입력으로
-어느 값이든 `false`로 정규화되고 native sandbox argv override도 거부됩니다.
-2.1.0 기본 effective native policy는 `request-review`입니다. URL read, managed
-read/validate/memory/proposal과 `ha_files` list/read를 허용하고 `ha_files` write·command·
-URL execute·mutation tool은 native review 또는 Telegram proposal을 요구합니다. 명시적
-`always-proceed`는 mandatory blacklist 밖의 command/URL/installed MCP를 자율 실행합니다.
-native `read_file`/`write_file`은 이 모드에서도 deny되고 file 작업은 `ha_files`를
-거칩니다. `strict`와
-`proceed-in-sandbox`만 legacy upgrade 입력이며 `request-review`로 정규화됩니다.
-2.0.12부터 Telegram이 켜지면
-root-owned single-link regular·256 KiB 이하·parse 가능한 settings를 시작 transaction으로
-backup합니다. 현재 2.1.3은 App 관리 보안 field, 선택 mode의 sparse native shape와
-known permission bucket을 exact policy로 정규화하고 retired `enableTerminalSandbox`를
-제거합니다. unknown custom allow/ask/deny는 제거하지만 이 App 관리 permission 경계 밖의
-top-level 설정, global MCP/plugin/OAuth와 `/config`는 보존하고 기존 mode는 0600으로
-강화합니다.
-2.0.16부터 지원되는 안전한 settings의 기존 permission bucket이 배열이 아니어도 세
-managed bucket을 먼저 canonical policy로 교체한 뒤 typed merge를 검증합니다.
-symlink/hardlink/non-root owner, 크기 초과나 parse 불가능한 JSON은 수정하지 않고 gate가
-`permission_boundary_blocked`를 한 번 기록한 뒤 Bot API 연결과 재시작 loop 없이
-대기합니다. 관리자가 `reset_v2` 또는 안전한 파일 복구를 적용하고 App을 재시작해야
-합니다. `secrets.yaml`, `.storage`, OAuth/cloud credential, App runtime token과 소유
-permission/MCP policy, SSH/private key, credential-bearing `/proc`, Recorder write와 raw
-backup/SSL/다른 App config는 두 모드에서 exact deny입니다.
-
-`request-review`의 Playwright 자동 허용은 upstream `readOnly: true`인
-`browser_console_messages`, `browser_network_requests`, `browser_snapshot`,
-`browser_take_screenshot` 네 도구로 제한됩니다. `browser_navigate`,
-`browser_navigate_back`, `browser_tabs`, `browser_hover`, `browser_wait_for`,
-`browser_resize`, `browser_close` 등 mutation-capable 도구는 typed approval adapter가
-구현되기 전까지 Telegram에서 fail closed합니다. 명시적 `always-proceed`에서는 current
-authenticated user request 범위의 installed Playwright navigation/interaction을 허용하지만
-mandatory credential·file blacklist는 유지합니다.
-
-Telegram의 HA 변경은 `ha_change_propose`, terminal/script/command choice/finite question은
-`telegram_action_propose`로 먼저 등록해야 합니다. 두 MCP는 실행하지 않고 exact
-digest와 public preview만 bridge에 넘깁니다. direct tool부터 호출해 발생한 native
-permission denial은 승인이 아니며 같은 tool을 resume할 수 없습니다. bridge는 한 번
-같은 conversation에 proposal-first 재계획을 요청할 수 있지만 unsupported side effect는
-우회하지 않고 fail closed합니다.
-
-### 설정 변경 후
-
-App 옵션을 바꿨다면 저장한 뒤 App을 재시작합니다. native settings, plugin, MCP 또는
-전역 권한 profile을 바꿨다면 Web/SSH의 기존 Antigravity process를 끝내고 새로
-시작합니다.
-Telegram binding은 재시작 뒤에도 유지되며 사용자가 `/new`를 보낼 때만 회전합니다.
-민감정보 옵션의 profile attach가 실패하면 넓은 권한으로 fallback하지
-않고 해당 Antigravity 실행이 실패해야 합니다.
-
-## 접속 방법
-
-### Web terminal
-
-**OPEN WEB UI**는 Home Assistant Ingress 인증 뒤의 ttyd/tmux terminal입니다.
-기본값에서는 Bash가 열리고 `agy`를 직접 실행합니다. tmux는 브라우저 재접속을 위한
-대화형 terminal 전용입니다. 여러 탭은 같은 session을 공유할 수 있으므로 신뢰하는
-관리자만 열어 두세요.
-
-### SSH
-
-SSH는 선택 사항이며 공개키만 허용합니다.
-
-1. client에서 Ed25519 key pair를 만듭니다.
-2. 공개키 한 줄만 `authorized_keys`에 추가합니다. 개인키를 App 설정에 넣지 마세요.
-3. App을 재시작하고 Network의 host port를 확인합니다.
-4. 내부망 또는 VPN에서 접속합니다.
-
-```bash
-ssh -p 2224 root@homeassistant.local
-```
-
-password와 keyboard-interactive login은 차단됩니다. TCP `2224`를 공유기에 직접
-port-forward하지 말고 신뢰하는 VPN 또는 mesh VPN을 사용하세요.
-
-## Telegram
-
-> [!CAUTION]
-> Telegram은 CLI와 동등한 관리자 주 채널입니다. 허용된 사용자는 `/config`, OAuth와
-> 사용자가 만든 전역·workspace plugin/agent/rule/MCP를 사용하고 일반 customization을
-> 수정할 수 있습니다. raw settings 직접 write는 예외이며 검증된 top-level scalar UI
-> 설정만 `agy-settings patch`로 매개 수정합니다. 알 수 없는 non-null key와
-> object/array 값은 거부되며, 알 수 없는 top-level key의 `null`은 기존 값을 지우는
-> 복구 용도로만 허용됩니다. bot
-> token, 허용 chat과 Telegram 계정을 HA 관리자 credential처럼
-> 보호하세요. 실제 HAOS OAuth/AppArmor/Bot API 통합 E2E는 아직 `NOT RUN`입니다.
-
-지원 scalar key는 `altScreenMode`, `clearScrollbackOnResize`, `colorScheme`,
-`disableSlashCommands`, `enableTelemetry`, `modelProvider`, `showFeedbackSurvey`,
-`showTips`입니다. `enableTelemetry`는 privacy-strengthening opt-out인 `false`만
-허용하며 위의 digest-bound mediator를 사용합니다.
-
-Web UI 또는 SSH에서 `ha-antigravity-login`으로 한 번 로그인합니다. Telegram도 같은
-`/data/home` identity를 사용하므로 별도 `ha-telegram-login`은 없습니다.
-
-Bot pairing은 이 관리자 환경에 접근할 Telegram user/chat을 인증합니다. `/start`,
-`/help`, `/status`, `/new`, `/cancel`은 AI를 실행하지 않고 bridge가 직접 처리하는
-local control command이며, 자연어 text만 같은 Antigravity 환경으로 갑니다.
-
-### Bot 생성
-
-1. Telegram의 [@BotFather](https://t.me/botfather)에서 `/newbot`을 실행합니다.
-2. 발급된 HTTP API token을 `telegram_bot_token`에 저장합니다.
-3. 아래 인증 방식 하나를 준비한 뒤 `telegram_enabled: true`로 설정하고 App을
-   재시작합니다.
-
-Bot token은 password처럼 다룹니다. screenshot, shell history, 로그 또는 지원
-payload에 포함하지 마세요.
-
-### 사용자 인증
-
-#### 정적 user·chat 교집합
-
-`telegram_allowed_user_ids`와 `telegram_allowed_chat_ids`를 모두 설정합니다.
-bridge는 sender user ID와 현재 chat ID가 각 목록에 함께 있을 때만 요청을
-처리합니다. user 목록 또는 chat 목록만으로는 인증되지 않습니다. ID는 JSON/YAML
-number가 아니라 따옴표로 감싼 문자열로 저장하는 것을 권장합니다.
-
-#### 로컬 일회용 pairing
-
-정적 ID를 모르면 App의 Web terminal 또는 SSH에서 만료형 token을 만듭니다.
-
-```bash
-ha-telegram-pair create --ttl 5m
-```
-
-token 만료 전에 bot 대화에서 `/start TOKEN`을 전송합니다. 발급은 local-only이고,
-원문 token은 한 번만 표시되며 소비 후 재사용할 수 없습니다. TTL은 초(`30s`) 또는
-분(`5m`) 단위이고 최대 10분입니다.
-
-```bash
-ha-telegram-pair list
-ha-telegram-pair revoke AUTHORIZATION_ID
-```
-
-`list` 결과와 authorization ID도 필요한 범위에서만 다루세요. v2에는 로그가
-자동 생성하는 deep link, 6자리 PIN 또는 Telegram `/unpair` 명령이 없습니다.
-
-Telegram을 먼저 활성화했더라도 bridge는 Bot API에 연결하지 않고
-`waiting_for_authorization` 상태로 조용히 대기합니다. 같은 App 터미널에서 pairing을
-생성하면 App 재시작 없이 이를 감지해 연결합니다. 정적 목록을 나중에 바꾼 경우에는
-App 옵션 적용을 위해 재시작합니다.
-
-### 권한과 변경 정책
-
-Telegram 전용 `read_only`/`confirm_changes`/`autonomous` mode는 2.0.7에서 제거됐습니다.
-Web/SSH와 같은 native `antigravity_tool_permission`, 민감정보 설정과 AppArmor command
-경계를 사용합니다. native nested sandbox는 사용하지 않습니다. 2.0.6 이하에서 저장된
-`telegram_access_mode`는 권한으로 사용하지 않는 ignored migration input입니다.
-2.0.11 관리형 runtime은 Telegram side effect를 두 typed proposal 경로로 나눕니다.
-모든 HA service/config 변경은 `ha_change_propose`, terminal command·bounded inline
-script·명령 선택지·유한 질문은 `telegram_action_propose`로 먼저 등록합니다. proposal
-MCP 자체에는 실행 credential이나 최종 실행 socket이 없으며 exact payload digest와
-public preview만 등록합니다. bridge가 requester·chat·session generation·update·
-conversation·TTL을 검증해 durable 실행/선택/취소 카드를 보냅니다. 승인 뒤 HA broker
-또는 credential-free executor가 card 생성 전에 검증된 action 하나만 실행합니다.
-
-Antigravity 1.1.13 `--print --output-format stream-json`에는 native permission prompt를
-외부 channel로 내보내고 승인 뒤 중단 지점에서 재개하는 protocol이 없습니다. 따라서
-Telegram 버튼은 거부된 native tool turn을 resume하지 않으며 App은 임의의 미래/user
-plugin MCP를 투명하게 intercept한다고 주장하지 않습니다. native permission denial을
-감지하면 bridge는 같은 conversation에 proposal MCP를 쓰도록 최대 한 번 재계획을
-요청하지만, 거부된 tool 자체를 승인하거나 반복 실행하지 않습니다. 두 proposal이
-표현하지 못하는 Telegram side effect는 direct tool로 fallback하지 않고 fail
-closed합니다.
-
-인증된 Web/SSH의 interactive 작업은 native review와 AppArmor 아래 direct tool을 쓸
-수 있고 Telegram 카드로 자동 변환되지 않습니다. 이는 같은 HOME·OAuth identity를
-사용하지만 승인 transport가 다르다는 뜻입니다. shared OAuth가 이미 인증되어 있으면
-지원되는 일상 작업은 Telegram만으로 끝낼 수 있지만 최초 OAuth는 controlling TTY가
-필요하므로 미인증 설치는 Web/SSH에서 `ha-antigravity-login`을 한 번 실행해야 합니다.
-
-### 명령과 세션
-
-| 명령 | 동작 |
-| --- | --- |
-| `/start` | 인증 상태와 기본 안내 |
-| `/help` | 사용 가능한 명령과 현재 global permission |
-| `/status` | bridge와 현재 session 상태 |
-| `/retry` | 전달 여부가 불명확한 현재 session 응답을 명시적으로 재전송 |
-| `/new` | 해당 user·chat의 새 대화 시작 |
-| `/cancel` | 현재 queue 작업 취소 요청 |
-
-한 user·chat의 요청은 순서대로 처리되고 bounded queue, timeout과 응답 크기 제한을
-적용합니다. 첫 요청은 실행 전에 conversation ID를 영속 결합하며, 이후 대화와
-승인은 같은 session을 재사용합니다. 오직 `/new`만 새 session을 생성합니다.
-Antigravity 결과는 Telegram 전송 전에 암호화된 영속 outbox에 기록되고 API가 전달을
-확인한 뒤 제거됩니다. 429처럼 미전송이 명확한 오류만 bounded backoff로 재시도하고,
-전달 여부가 모호하면 `/retry` 전까지 격리합니다. `/cancel`은 이미 외부에서 완료된 작업을 되돌리는 rollback 명령이
-아닙니다.
-
-승인/선택/거절 callback의 Telegram ACK와 기본 인증 검사는 즉시 처리하지만 승인된
-broker/executor 실행은 같은 requester queue에서 session-serialized됩니다. 실행 직전에 requester·chat·
-현재 session generation·conversation·proposal digest를 다시 검증합니다.
-`/new`, `/cancel`, 재시작, 만료 또는 중복 callback은 기존 승인을 실행시키지 않으며,
-broker의 durable idempotency record 때문에 동일 변경은 정확히 한 번만 접수됩니다.
-
-### 승인 보안
-
-Telegram model process는 raw Supervisor token이나 최종 실행 socket을 받지 않고 typed
-proposal만 만듭니다. bridge는 coordinator/broker에서 proposal을 다시 조회한 뒤
-preview를 보여 줍니다. 확인은 proposal ID, 같은 conversation·user·chat, update/run
-nonce, preview/source digest와 짧은 TTL에 묶입니다. 승인 callback과 sealed result는 원
-conversation의 새 turn으로 이어집니다. action은 durable state에 commit된 뒤에만
-executor로 전달합니다. commit 뒤 완료를 확정할 수 없으면 `in_doubt`로 저장하고 다시
-spawn하지 않습니다. preview나 precondition이 바뀌거나 확인이 만료되면 새 proposal이
-필요합니다.
-
-proposal MCP의 coordinator 등록 자체는 crash-durable하지 않습니다. 등록 성공 뒤
-bridge가 encrypted approval state와 card/outbox를 봉인하기 전에 종료되면 사용자가
-원래 요청을 다시 보내 새 proposal을 만들어야 합니다. durable approval이라는 표현은
-봉인 이후 decision/result와 broker가 이미 접수한 실행에만 적용됩니다.
-
-#### 멀티 선택 승인 카드
-
-2.0.10의 `multi_choice_service_call`은 운전 모드, 밝기 preset 또는 모호한 entity처럼
-한 번에 정확히 하나만 골라야 하는 작업을 위한 broker operation입니다. proposal에는
-1~31개의 고유한 `choice_id`와 표시 label, 그리고 각각의 사전 검증된 Home Assistant
-service call이 들어갑니다. 모든 선택지는 같은 live `/api/services` snapshot과 기존
-`service_call`의 entity·`service_data`·precondition·verification·크기 제한을
-통과해야 카드가 생성됩니다.
-
-Telegram은 취소를 더해 최대 32개 버튼을 행당 최대 4개, 최대 8행으로 표시합니다.
-새 카드의 선택/취소 callback은 `v3c`/`v3d`이고 기존 binary 실행/취소 카드의
-`v2a`/`v2d`도 계속 처리합니다. callback에는 HA domain, service, entity 또는
-`service_data`가 들어가지 않습니다. bridge가 암호화해 저장한 짧은 opaque token을
-원래 `choice_id`로 해석하고, 선택을 durable state에 먼저 기록한 다음 requester·chat·
-session generation·conversation·preview digest·choice·capability·idempotency를
-broker와 함께 검증해 정확히 한 선택지만 실행합니다.
-
-conversation binding, choice token mapping과 선택 결과는 bridge 재시작 뒤에도
-보존됩니다. 다만 아직 실행이 접수되지 않은 proposal 본문은 change broker의
-process memory에만 있으므로 broker가 계속 살아 있는 bridge-only 재시작에서만 기존
-카드를 다시 검증할 수 있습니다. App 전체 또는 broker 재시작으로 proposal이
-사라지면 이전 카드는 fail closed하고 새 요청이 필요합니다. broker가 이미 접수한
-실행은 durable idempotency/status에서 완료 결과 또는 `in_doubt`를 회수하며 같은
-service call을 다시 보내지 않습니다.
-
-2.0.11 `multi_choice_terminal`은 같은 1~31개+취소 grid에서 각각 완성된 command 또는
-inline script 중 하나를 선택합니다. `question`은 부작용 없는 label 선택을 같은
-conversation에 돌려줍니다. action 카드 callback은 binary `v4a`/`v4d`, choice
-`v4c`이며 command, script, cwd나 parameter 대신 encrypted state의 짧은 opaque
-token만 담습니다. 실행기는 승인된 exact source digest, canonical cwd와 bounded
-timeout만 받고 별도 AppArmor command profile에서 실행하며 Supervisor token, bot
-token, native OAuth를 받지 않습니다. `/cancel`은 pending/approved action을 취소하지만
-committed action을 rollback하지 않습니다. TTL cleanup은 untouched pending card만
-만료하고 approved/answered/committed/terminal decision은 callback ACK 전까지 보존합니다.
-shell-visible background/daemon pattern은 spawn 직전에 best-effort로 거부하지만 opaque
-interpreter의 double-fork를 cgroup 수준으로 봉쇄하지 않으므로 daemon 작업은 지원하지
-않으며, 완료 여부가 불명확하면 `in_doubt`로 기록하고 재실행하지 않습니다.
-
-이 경로는 HA·terminal·script·question용 관리형 protocol입니다. 임의 plugin MCP의
-새 side effect를 자동으로 카드화하는 범용 native hook은 아니며, 지원하지 않는 호출은
-fail closed합니다. 실제 HAOS AppArmor enforce, native OAuth, live Bot API 카드/callback,
-실제 service/config/command E2E는 릴리스 증거가 생기기 전까지 `NOT RUN`입니다.
-
-broker preview는 token/secret/password/auth/key/PIN/code/credential 계열 값을 가린
-bounded 요약을 표시하지만 raw payload digest에 승인을 묶습니다. `service_call`은 live
-`GET /api/services`에서 모든 Home Assistant domain/service를 검증하며 optional 단일
-entity 또는 최대 100개 entity 배열과 bounded plain-JSON `service_data`를 지원합니다.
-broker `service_call`은 모두 고위험으로 분류되어 승인이 필요합니다. 단일 entity와 명시된
-`expected_state`만 fresh state 검증을 지원하고, 그 밖에는 REST API 접수 완료까지만
-정확히 보고합니다.
-
-`config_patch`는 `secrets.yaml`, `.storage`와 기타 민감 hidden 경로를 제외한 `/config`
-내 일반 YAML을 지원합니다. expected SHA, atomic backup/write와 `ha-config-check`를
-수행하고 검사 실패 시 exact backup을 복원한 뒤 다시 검사합니다. activation을 생략하면
-`restart_required`로 보고하며 `input_boolean`, `automation`, `script`, `scene`의 명시적
-reload activation만 지원합니다. broker `config_patch`도 모두 고위험 승인 대상입니다.
-
-## Home Assistant 기능
-
-### Helper와 read MCP
-
-| 도구 | 용도 |
-| --- | --- |
-| `ha-config-check` | Home Assistant configuration 검사 |
-| `ha-core-logs` | Core 로그의 bounded 조회 |
-| `ha-addon-logs ADDON_SLUG` | 지정 App 로그 조회 |
-| `ha-api` | Core API helper |
-| `supervisor-api` | Supervisor API helper |
-| `ha-memory status` | memory schema·freshness·degraded 상태 확인 |
-| `ha-feedback` | 비밀을 제외한 bug/feature report 후보 준비 |
-
-Antigravity plugin의 `ha_read_config`, `ha_read_state`, `ha_read_states`,
-`ha_read_services`, `ha_read_system_info`, `ha_read_registry`,
-`ha_read_history`, `ha_read_traces`, `ha_read_core_logs`, `ha_read_app_logs`는
-고정 endpoint를 project하고 크기를 제한합니다. `ha_validate_config`는 reload 없이
-configuration을 검사하고 `ha_verify_state`는 exact entity의 fresh API 결과를 기대
-state·하한 timestamp와 비교합니다. raw Supervisor token은 model에 전달되지
-않습니다. trace 도구는 raw config, action/result, trigger와 context를 반환하지
-않습니다.
-API helper는 관리자 표면이므로 진단 결과만으로 service call이나 수정을 실행하지
-마세요.
+| `remote_control_name` | `home-assistant` | Remote Dashboard에 표시할 instance 이름 |
+| `antigravity_sensitive_data_access` | `false` | Recorder DB를 읽기 전용 진단 profile에서만 읽도록 허용 |
+| `home_assistant_browser_auto_auth` | `true` | App 전용 local read-only dashboard identity 관리 |
+| `log_level` | `info` | App service 로그 수준 |
+
+`remote_control_name`은 영문 소문자·숫자·`-`로 이루어진 1–63자 이름을 사용하고,
+첫 글자와 마지막 글자는 영문 소문자 또는 숫자로 지정하세요. option을 바꾼 뒤 App을
+재시작합니다.
+
+`antigravity_sensitive_data_access`는 일반 권한을 높이거나 Recorder 쓰기를 허용하지
+않습니다. 문제 진단에 꼭 필요할 때만 잠시 켜고, 결과에 개인 정보가 포함될 수 있다고
+가정하세요.
+
+## 작업 공간과 도구
+
+기본 workspace는 `/config`입니다. `/share`와 `/media`도 App 안에서 접근할 수
+있습니다. Antigravity에는 Home Assistant용 image-managed plugin이 제공되며 다음
+기능을 포함합니다.
+
+- 현재 state, service, registry, trace와 제한된 로그·시스템 정보 읽기
+- `ha-config-check`와 검증 helper
+- 일반 프로젝트 파일의 bounded read/write
+- dashboard browser 검사
+- 검증형 memory
+- `/ha-feedback` 보고서 준비
+
+먼저 읽기와 계획만 요청하고, 변경 전에 diff와 검증 방법을 확인하는 사용법을
+권장합니다. 예시는 [프롬프트 예시](../docs/examples.ko.md)를 참고하세요.
 
 ### Dashboard browser
 
-`playwright` MCP는 container-local
-`http://127.0.0.1:8099/`의 현재 dashboard를 관찰합니다. Telegram 자동 허용은
-upstream `readOnly: true`인 console messages, network requests, snapshot, screenshot
-네 도구뿐입니다. navigate/back, tabs, hover, wait, resize와 close는 mutation-capable로
-분류되어 typed approval adapter가 생기기 전까지 fail closed하므로 Telegram이 직접
-desktop/mobile viewport나 페이지를 전환한다고 가정하지 마세요.
+`home_assistant_browser_auto_auth: true`이면 App은 browser 전용 local read-only
+Home Assistant identity를 만들거나 재사용합니다. 이 identity는 일반 사용자 계정이나
+Remote Google 계정을 대신하지 않습니다.
 
-`home_assistant_browser_auto_auth: true`이면 App은 local-only, non-admin,
-`system-read-only` 단일 group 사용자를 만들거나 재사용합니다.
-`ha-browser-auth-status`로 상태를 확인할 수 있습니다. 옵션을 끄면 다음 browser
-session부터 일반 login 화면이 나타나며 managed identity는 자동 삭제되지 않습니다.
-완전한 제거는 사용자가 명시적으로 `ha-browser-auth-remove`를 실행할 때만 합니다.
+```bash
+ha-browser-auth-status
+ha-browser-auth-remove
+```
 
-읽기 전용 identity도 custom integration의 permission 결함까지 막는 절대 경계는
-아닙니다. dashboard 검증은 관찰용으로 사용하고 Core TLS 오류를 우회하지 마세요.
+option을 끄면 다음 browser session부터 일반 Home Assistant login 화면이 나타납니다.
+기존 managed identity를 삭제하려면 `ha-browser-auth-remove`를 실행합니다. screenshot,
+console, network와 화면 안의 entity 상태는 민감할 수 있으므로 공개 보고서에 그대로
+첨부하지 마세요.
 
 ### 검증형 memory
 
-memory는 `/data/antigravity-ha-memory/memory.sqlite3`에 저장됩니다. 전체 DB를
-prompt로 읽지 않고 현재 질문과 정확한 subject에 맞는 bounded 결과만 검색합니다.
-사용자가 직접 말한 하나의 명확한 지속 사실은 explicit memory로 저장할 수 있고,
-그 밖의 학습은 candidate → verified → applied 절차를 거칩니다.
+memory는 `/data/antigravity-ha-memory/memory.sqlite3`에 저장됩니다. 현재 state와
+로그를 자동으로 장기 기억하지 않습니다. 사용자가 명시한 별칭·용도·선호 또는 근거로
+검증된 Home Assistant 구조만 후보 → 검증 → 적용 흐름으로 보존합니다.
 
-현재·과거 state value, timestamp, raw conversation, automation 원문, credential과
-unsupported inference는 보존하지 않습니다. `empty`, `degraded`, `stale`은 검증된
-no-result와 다릅니다. `ha-memory status`, bounded `search`, `history`, `conflicts`로
-상태와 이력을 점검하세요. memory rollback은 semantic event만 보상하며 HA 설정이나
-기기 상태를 되돌리지 않습니다.
+```bash
+ha-memory status
+ha-memory search 'kitchen'
+```
 
-### 설정 변경
+`empty`, `stale`, `degraded`는 서로 다른 상태입니다. 문제가 있으면 먼저 status를
+확인하고 App log와 같은 시각의 Core 상태를 함께 조사하세요.
 
-대화형 Antigravity에서 HA 설정을 바꿀 때도 다음 순서를 지킵니다.
+### Feedback
 
-1. 민감 deny 경로 밖의 대상과 expected SHA를 확인합니다.
-2. 최소 YAML patch와 secret-redacted preview를 만듭니다.
-3. 승인 뒤 atomic backup/write를 수행하고 `ha-config-check`를 실행합니다.
-4. 검사가 실패하면 exact backup을 복원하고 다시 검사합니다.
-5. 지원되는 명시적 reload를 실행하거나 `restart_required`로 정확히 보고합니다.
-6. 의미 검증을 지원하는 작업만 fresh HA API 결과를 성공 조건에 포함합니다.
+앱 문제나 기능 요청은 Remote task 또는 Ingress에서 `/ha-feedback`을 사용합니다.
+최초 요청은 읽기 전용 조사와 공개 가능한 보고서 작성만 승인하며, 외부 제출까지
+승인하지 않습니다.
 
-`.storage` 직접 편집과 Recorder DB 수리는 정상 작업 흐름이 아닙니다. 진단 결과만으로
-restart, update, remove, restore 또는 service call이 승인되지 않습니다.
+```text
+/ha-feedback bug 재현되는 증상과 영향을 한두 문장으로 설명
+/ha-feedback feature 필요한 동작과 사용 사례를 한두 문장으로 설명
+```
 
-## AppArmor와 민감정보
+생성된 보고서에서 개인 정보와 credential이 제거되었는지 직접 확인하세요. 보안 문제로
+판정되면 공개 검색과 제출을 중단하고
+[비공개 취약점 신고](https://github.com/Kanu-Coffee/antigravity-for-home-assistant/security/advisories/new)를
+사용합니다.
 
-### 항상 enforce
+## 권한과 보안
 
-Supervisor는 AppArmor를 기본 활성화합니다. metadata의 중복 기본값은 생략하지만
-App 디렉터리의 custom `apparmor.txt`가 기본 profile을 대체합니다. 사용자 option,
-Telegram 명령, migration mode로 AppArmor를 끌 수 없고 HA 보호 모드 해제를 설치
-조건으로 요구하지 않습니다. profile attach가 실패하면 넓은 권한으로 fallback하지
-않아야 합니다.
+Antigravity native fine-grained permissions가 작업 승인 UI의 단일 기준입니다. 규칙은
+`deny > ask > allow` 순서로 적용됩니다. `ask` 작업은 Remote에서 사용자 결정을
+기다리며, App은 별도의 채널별 승인 protocol을 만들지 않습니다. native permission은
+[공식 permissions 문서](https://antigravity.google/docs/cli/permissions/)에서
+검토할 수 있습니다.
 
-2.0.12 amd64 현장 보고에서 `docker-default (enforce)`가 확인된 것은 custom policy
-PASS가 아니라 attach `FAIL`입니다. 공개 2.0.13에서는 custom policy 활성화 뒤 S6가
-필요한 `/run/s6`·`/run/service` 디렉터리 자체를 만들 수 없어 다음 기동이 exit 111로
-실패했습니다. 공개 2.0.14는 이 지점을 통과했지만 symlink가 해석된
-`/usr/lib/bashio/bashio` 실행을 허용하지 않아 init이 exit 126으로 실패했고,
-`/command/with-contenv`가 해석되는 S6 package target도 init profile에 exact execute가
-필요했습니다. 2.0.15는 후속 trace에서 확인된 S6/execline·Bash, 계정/nginx 상태,
-Telegram pause, SSH accounting/OOM, Chromium child와 feedback subtree도 각각 필요한
-profile과 exact 경로에만 허용했지만 primary profile의 `/dev/ptmx` 접근을 빠뜨려 실제
-HAOS Web terminal의 PTY 생성이 EACCES로 실패했습니다. 2.0.16은 그 profile에 exact
-`/dev/ptmx rw`를 추가해 terminal과 Telegram transport를 시작했지만 두 interactive
-runtime profile의 exact native-binary rule에는 executable `mmap` 권한이 없었습니다.
-그 결과 실제 HAOS의 `antigravity-real`이 SIGSEGV/status 139로 종료됐고 kernel audit는
-`file_mmap` permission `m` 거부를 기록했습니다. 2.0.17은 두 rule의 `r`을 `rm`으로
-바꾸고 trace-derived bootstrap nsswitch/passwd identity와 runtime
-`/usr/share/ca-certificates/**` TLS trust-store exact read만 두 transition chain에
-추가합니다. 실제 2.0.17의 다음 경계에서는 `change-proposal-client`가 image-owned
-`supervisor-credential-fd.mjs`를 읽지 못해 managed MCP가 실패했습니다. 2.0.18은 이
-client에 해당 exact module read만 추가하며 directory-wide grant는 추가하지 않습니다.
-두 interactive launcher의 다섯 requester/run binding 보존도 완전한 묶음에만 적용되고
-일부 binding은 거부됩니다. 새로운 broad `/etc/**`·`/usr/share/**` rule이나 native-tool
-권한은 추가하지 않고, runtime의 기존 `/etc/** r`와 필수 system-library mapping 및
-proc/settings/credential deny는 유지합니다. 2.1.0은 이 과거 exact-allow 설계를 일반
-운영 surface에는 적용하지 않습니다. supported mount/API 안의 ordinary
-path·command·MCP·bounded log projection은 broad AppArmor operational grant로 취급하고
-credential/storage/policy/process-integrity 경계만 명시적으로 blacklist합니다. native
-raw file tool은 계속 deny하며 ordinary file은 `ha_files`를 거칩니다. raw log는 제공하지
-않고 known redaction이 arbitrary unkeyed text까지 완전 판별한다고 주장하지 않습니다.
-이것은 raw HAOS host
-접근이 아닙니다. Supervisor가 mount하지 않은 host root, 다른 App config, Docker socket과
-host PID는 계속 사용할 수 없습니다.
+AppArmor는 native 승인과 별개의 최종 OS 경계입니다. 다음은 설정으로 해제할 수
+없습니다.
 
-업데이트 뒤 App terminal과 관련 service 실행 경로의
-`/proc/self/attr/current` 및 Supervisor 상태에서 `antigravity_home_assistant` named
-profile이 enforce인지 확인하고, `s6-mkdir` 오류와 예상하지 않은 `DENIED`를 검토하세요.
-문제를 우회하려고 보호 mode나 AppArmor를 끄지 마세요.
+- Home Assistant `secrets.yaml`, `.storage`, backup·SSL과 credential 경로 보호
+- Google OAuth, App runtime token, browser token과 private key의 모델 접근 차단
+- Recorder DB와 Home Assistant database 쓰기 차단
+- Docker socket, host root/PID namespace와 보호 mode 해제 금지
+- symlink·hardlink·범위 밖 경로를 이용한 broker 우회 차단
 
-### 민감정보 옵션
+Supervisor token은 root 소유 runtime 경로에 있고 scoped helper만 사용합니다. 일반
+Antigravity model process, browser와 memory process에는 token을 전달하지 않습니다.
+API helper는 필요한 결과만 크기 제한·redaction 후 반환합니다.
 
-`antigravity_sensitive_data_access`는 AppArmor on/off switch가 아니라 Ingress/SSH/Telegram에서
-시작한 Antigravity가 사용할 **별도 top-level 실행 프로필(discrete `Px`
-transition)** 선택입니다.
+Remote daemon은 App 내부 `127.0.0.1`의 `4400–4499` 중 빈 port 하나에 bind합니다.
+Home Assistant에 외부 Remote port를 publish하지 않습니다. Ingress 역시 Home Assistant
+인증 뒤의 복구 surface이며 일반 외부 제어 채널이 아닙니다.
 
-| 경로 종류 | `false` 기본값 | `true` |
-| --- | --- | --- |
-| `/config/secrets.yaml` | read/write 거부 | read/write 거부 |
-| `/config/.storage/**` | read/write 거부 | read/write 거부 |
-| Recorder DB와 sidecar | read/write 거부 | 진단 read-only, write 거부 |
+## 3.0.0 전환
 
-`true`에서도 secrets와 storage의 직접 접근, 그리고 Recorder rename, truncate,
-delete, lock, DB repair와 전체 dump를 허용하지 않습니다. 읽은 진단값을 output,
-memory, screenshot, proposal 또는 artifact에 복사하면 안 됩니다. 우선 supported
-API와 secret key 이름만 사용하세요.
+3.0.0은 의도적인 breaking upgrade입니다. 첫 시작 때 고정된 App 소유 경로를
+**backup 없이 한 번** 초기화합니다.
 
-### 계속 차단되는 항목
+삭제 대상은 정확히 다음과 같습니다.
 
-옵션 값과 관계없이 browser, memory, broker와 일반 shell에는 민감 read 권한이
-추가되지 않습니다. Web/SSH/Telegram Antigravity는 이 옵션을 함께 적용받습니다.
-SSH private/host key, App·browser·bot token, backup, `/config/ssl` private material,
-표준 cloud-auth 경로와 broker capability는 각 소유 process 외에는 계속 거부됩니다.
-전역 plugin/MCP에는 inline secret을 넣지 말고 credential-aware wrapper나 보호된 환경
-참조를 사용하세요.
+```text
+/data/home
+/data/antigravity
+/data/antigravity-ha
+/data/antigravity-ha-memory
+/data/browser-auth
+/data/github-cli
+/data/ssh
+/data/tmux
+```
 
-Web/SSH/Telegram Antigravity는 `/data/home`과 `/config`를 의도적으로 공유합니다.
-따라서 AppArmor는 정상 OAuth·사용자 설정 접근과 Telegram prompt/tool이 유도한
-동일 접근을 구분하지 못합니다. 이는 격리 실패가 아니라 관리자 주 채널이라는 제품
-경계이며, exact user/chat 인증, native permission, spawned executable의 AppArmor
-command 전환, output redaction과 broker가 추가 방어층입니다. Telegram은 기본 OFF이며
-primary OAuth backend의 실제 경로와 same-process built-in read 비유출은 실제 HAOS에서
-아직 검증되지 않았습니다. 실제 HAOS OAuth/AppArmor gate와 알려진
-잔여 위험을 확인하세요.
+다음은 삭제하지 않습니다.
 
-## 업데이트, migration과 rollback
+- `/config`, `/share`, `/media`
+- `/data/options.json` 파일 자체
+- Home Assistant Core data와 다른 App data
 
-### 업데이트 전
+Supervisor option은 새 네 개의 기본값으로 정규화되어 폐기된 option을 제거합니다.
+Supervisor 요청을 일시적으로 사용할 수 없으면 runtime은 네 기본값만 사용하고 다음
+시작에서 option 정규화를 다시 시도합니다. data 초기화가 끝나면 marker를 원자적으로
+기록하며, 중단되면 다음 시작에서 같은 고정
+대상을 안전하게 다시 처리합니다. 대상이 symlink이거나 예상 ownership과 다르면 App은
+삭제하지 않고 시작을 중단합니다.
 
-1. Home Assistant 전체 backup을 만들고 복원 가능성을 확인합니다.
-2. 현재 동작 App version과 가능하면 immutable image digest를 기록합니다.
-3. `/config`의 Git 상태와 미커밋 변경을 확인합니다.
-4. OAuth, Web UI/SSH, memory, browser와 Telegram 인증 상태를 비밀 없이 기록합니다.
-5. 릴리스의 amd64/aarch64, AppArmor enforce, migration 검증표를 확인합니다.
+초기화 뒤에는 `ha-antigravity-remote-login`을 다시 실행해야 합니다. GitHub 연결,
+managed browser identity, local memory와 Antigravity customization도 빈 상태에서 다시
+만듭니다. `/config`의 automation, dashboard와 사용자 파일은 유지되지만, 그래도
+업그레이드 전에 Home Assistant backup을 권장합니다.
 
-### Migration mode
-
-| mode | 보존·변경 범위 |
-| --- | --- |
-| `preserve` | OAuth·사용자 settings/MCP/plugin 보존; 단, Telegram enabled이면 안전한 settings의 App 관리 보안 field와 선택 mode의 known permission bucket을 exact policy로 자동 정규화; App 소유 HA plugin은 version당 canonical 보안 갱신 |
-| `refresh_managed` | 위 보존·plugin 갱신에 더해 소유권이 기록된 settings key·permission rule을 root-only backup 후 merge |
-| `reset_v2` | 명시적 복구 mode. 안전하게 parse 가능한 settings를 backup하고 ownership state와 무관하게 managed field와 선택 mode의 known permission bucket을 image exact default로 교체 |
-
-세 mode 모두 `/config`, native OAuth, SSH key, browser identity, memory DB와 사용자
-소유 plugin/MCP를 초기화 대상으로 삼지 않습니다. `reset_v2`는 `permissions` 밖의
-사용자 top-level settings와 기존 global MCP도 보존하지만 managed field와 선택 mode에
-존재하는 known permission bucket은 exact default로 되돌립니다. `request-review`는
-`allow`/`deny`/`ask`를 기록하고, `always-proceed`는 `allow`/`deny`만 기록해 empty `ask`를
-생략합니다. 기존 ownership state가 없거나 모호해도 명시 선택을 복구 권한으로
-사용하며, unsafe regular file이나 parse 불가능한 JSON은 계속 fail closed합니다.
-`reset_v2`를 선택한 동안은 같은
-version에서도 매 시작 drift를 복구하므로 정상화 뒤 `preserve`로 돌려놓으세요.
-mode와 관계없이 App 소유
-`home-assistant` plugin은 안전한 ownership marker가 있으면 App version당 한 번
-image의 canonical copy로 갱신됩니다. 새 설치는 현재 version marker를 기록하고,
-같은 이름의 marker 없는 기존 plugin은 사용자 소유 충돌로 보고 덮어쓰지 않은 채
-시작을 중단합니다. 그 밖의 교체 파일은 먼저
-`/data/antigravity-ha/backups/native-files/` 아래 root-only backup에 보존됩니다.
-global `mcp_config.json`은 없을 때 빈 `mcpServers` 기본본만 생성하며 기존 파일은
-모든 mode에서 byte-preserve합니다. HA MCP·rules·skills는 App plugin 내부에
-있습니다. `refresh_managed`는 App version별 transaction 상태로 재실행을 제한합니다.
-Telegram-enabled permission reconciliation도 같은 journal/backup transaction을 사용하고
-같은 설정으로 재시작하면 추가 backup 없이 idempotent하게 끝납니다.
-
-저장소 개발자가 source image를 만들 때는 `tools/development/build-app`을 사용합니다.
-이 helper는 checkout hash로 분리한 project-owned Buildx builder/cache만 종료 시
-제거하고 global Docker prune을 하지 않으며, checkout-owned 미참조 local image는 최신
-두 개를 보존합니다. reusable release build는 stable `antigravity-home-assistant` GHA
-cache scope를 사용합니다. HAOS의 Supervisor image lifecycle에는 적용되지 않습니다.
-
-### HAOS image와 저장공간
-
-이 App은 `config.yaml`의 generic `image:`로 GHCR prebuilt multi-arch container를
-배포합니다. Home Assistant의 [App publishing
-guide](https://developers.home-assistant.io/docs/apps/publishing/)가 권장하는 방식이며,
-HAOS 장치는 App source나 BuildKit cache를 만들지 않고 최종 container를 받습니다.
-성공한 update 뒤 구버전 App image 정리는 Supervisor가 담당합니다. 다른 App이 같은
-image ID/layer를 참조하면 마지막 사용자가 교체될 때까지 유지되므로 image 목록의 여러
-tag를 곧바로 중복 실사용량으로 계산하지 마세요.
-
-이 App은 Docker socket, `docker_api`, `full_access`를 요청하지 않으며 이를 용량 정리
-목적으로 추가하지 않습니다. update/start 때 `docker image prune`, `docker builder
-prune` 또는 `POST /supervisor/repair`를 자동 실행하지도 않습니다. 공식
-[`/supervisor/repair`](https://developers.home-assistant.io/docs/api/supervisor/endpoints/#supervisorrepair)는
-stale container/image뿐 아니라 build cache, volume, network와 Supervisor 구성요소까지
-복구하는 광범위한 관리자 작업입니다. failed/aborted pull, cleanup 오류 또는 overlay
-장애가 로그와 용량 증거로 확인된 경우에만 별도 명시 승인을 받아 사용하세요.
-
-용량 증가가 의심되면 Telegram에서 `ha_read_storage_usage`를 먼저 사용합니다. 이
-read-only 도구는 공식
-[`GET /host/disks/default/usage`](https://developers.home-assistant.io/docs/api/supervisor/endpoints/#get-hostdisksdiskusage)의
-고정 endpoint에서 allowlisted 수치만 반환하므로 system, App data/config와 backup 증가를
-나눠 볼 수 있습니다. 이어서 `ha_read_app_logs`와 Supervisor 로그에서 update cleanup
-오류를 확인하되 token이나 option body를 복사하지 마세요. Docker image별 상세 breakdown은
-이 endpoint가 제공하지 않습니다. 실제 HAOS update 전후 image/용량 관찰은 아직
-`NOT RUN`이며, 이 문서는 현장 누적을 자동으로 재현·수정했다고 주장하지 않습니다.
-
-App은 복구·갱신·config transaction이 성공 또는 unchanged로 끝난 뒤에만 backup을
-정리합니다. `/data/antigravity-ha/backups/plugin-*`의 managed-plugin transaction,
-`backups/native-files/refresh-*`의 native user-files refresh와
-`change-broker/backups/*`의 config patch는 각각 소유 manifest와 root-owned/
-no-symlink 완료 tree가 검증된 항목 중 최신 총 두 개를 보존합니다. 더 오래된 eligible
-항목은 atomic quarantine 후 삭제합니다. active journal/result backup, manifest 없는
-항목과 unsafe/symlink tree는 자동 삭제하지 않습니다.
-
-`/data/antigravity-ha-memory/memory.sqlite3`는 단순 cache가 아니라 catalog provenance와
-검증 history입니다. 15분 refresh가 만든 미참조 `success`/`failed` 종료 행은 최신 64개로
-제한하지만, current catalog, revision, change record, metadata 또는 audit가 참조하는
-sync는 계속 보존합니다. refresh 중 비정상 종료로 남은 `running` 행은 lease/PID로 live
-작업과 안전하게 구분할 수 없어 자동 삭제하지 않습니다. 이 예외나 실제 semantic history
-증가를 host image cache로 오인하지 마세요.
-
-### v1 migration 주의
-
-- v1의 managed-file refresh 값은 보수적으로 `refresh_managed`로 매핑되며
-  `reset_v2`로 자동 승격되지 않습니다. v2 schema는 Supervisor가 업그레이드된
-  container를 시작할 수 있도록 이 두 폐기 예정 값만 migration input으로
-  수용합니다. user-file과 managed-plugin bootstrap이 성공하면 App은 고정된
-  Supervisor self-options endpoint에 현재 option 전체를 보내되 이 key만
-  `refresh_managed`로 바꿉니다. 요청을 사용할 수 없으면 legacy 값을 유지하고
-  다음 App 시작에서 재시도합니다.
-  Telegram-enabled permission reconciliation은 별도 startup boundary 예외이며 선택한
-  mode를 바꾸지 않습니다.
-- 이전 provider credential이나 App 전용 token을 native 인증으로 import하지
-  않습니다. Google OAuth를 다시 완료해야 할 수 있습니다.
-- 이전 비-native 설정과 guidance 파일은 보존될 수 있지만 Antigravity 1.1.13의
-  native settings/plugin으로 로드된다고 가정하면 안 됩니다.
-- 공개 v1의 managed-file journal이 남아 있으면 v2는 검증된 기존 backup에서
-  미완료 `config.toml`/`AGENTS.md` 교체를 먼저 복구합니다. 복구 자료가 손상되거나
-  모호하면 native 파일을 쓰지 않고 시작을 중단합니다.
-- legacy Telegram pairing/session은 신뢰하지 않습니다. 두 정적 목록 또는 새 로컬
-  pairing으로 다시 인증합니다. 기존 authorization/pairing 파일은 v2가 재사용하지
-  않고 `/data/antigravity-ha/quarantine/v1-telegram/`에 root-only로 격리합니다.
-
-### Rollback
-
-자동 HAOS rollback은 보장하지 않습니다. 문제 발생 시 다음 순서로 복구합니다.
-
-1. Telegram과 mutation 작업을 중지하고 pending 승인을 폐기합니다.
-2. App을 중지하고 비밀 없이 migration status와 로그를 확인합니다.
-3. update mode를 `preserve`로 설정합니다.
-4. Supervisor가 제공하는 이전 immutable version/image가 있으면 재설치합니다.
-5. 필요한 경우에만 검증된 transaction backup에서 App 관리 파일을 범위 제한해
-   복원합니다.
-6. schema가 달라진 memory는 해당 version의 backup과 호환성을 먼저 확인합니다.
-7. Ingress/SSH, OAuth, read API, memory와 browser smoke 후 Telegram을 마지막에
-   다시 켭니다.
-
-`/config` 삭제, DB 복원 또는 Home Assistant backup restore는 현재 사용자의
-명시적 확인 없이 수행하지 마세요.
-
-특히 2.0.12를 무조건적인 마지막 정상·무손실 fallback으로 취급하면 안 됩니다. public
-2.0.12 image/tag는 존재하지만 custom 23-profile policy attach가 `FAIL`했고 실제 현장
-성공은 amd64 `docker-default`에 한정되며 aarch64는 `NOT RUN`입니다. Supervisor 직접
-downgrade는 지원되지 않습니다. exact 2.0.12 시점 App backup을 복원하면 App `/data`가
-교체되어 backup 이후의 OAuth·memory·approval/outbox·identity가 사라집니다. 그 backup이
-없으면 App을 제거하거나 Docker 상태를 수동 조작하지 마세요. current `/data`를 보존한
-채 custom attachment를 의도적으로 되돌리는 higher-version compatibility patch는 보안
-저하를 명시해야 하며 현재는 감사된 contingency일 뿐 `NOT RUN`입니다.
+3.0 이전으로의 downgrade는 자동·무손실 복구가 아닙니다. 필요하면 해당 버전에서 만든
+Home Assistant App backup을 복원하고, 서로 다른 버전의 runtime data를 섞지 마세요.
 
 ## 문제 해결
 
-### App 설치 또는 시작 실패
+### Remote instance가 보이지 않음
 
-- 장치가 `amd64` 또는 `aarch64`인지 확인합니다.
-- release tag, `config.yaml` version과 GHCR manifest가 일치하는지 확인합니다.
-- App/Supervisor 로그에서 init과 service별 오류를 찾되 token이나 response body를
-  공유하지 않습니다.
-- AppArmor profile attach 실패를 보호 모드 해제로 우회하지 않습니다.
-- 공개 2.0.15에서 Ingress HTTP 200·WebSocket 101 뒤 `pty_spawn: 13`과 ttyd 재시작이
-  반복되면 reconnect만으로 복구되지 않습니다. 2.0.16 이상으로 업데이트하고 실제
-  terminal 입력과 재접속을 다시 확인합니다.
-- 공개 2.0.16에서 Web terminal은 연결되지만 `agy` 또는 `antigravity --version`이
-  `Segmentation fault`와 status 139로 끝나고 Telegram 요청도 즉시 `worker_failed`이면
-  session reset이나 reconnect 문제로 분류하지 마세요. 2.0.17 이상으로 업데이트한 뒤
-  먼저 `antigravity --version` status 0, 실제 대화와 Telegram worker를 차례로
-  확인합니다. AppArmor나 protection mode를 끄는 방식으로 우회하지 않습니다.
+1. App이 실행 중이고 인터넷에 연결되는지 확인합니다.
+2. Dashboard와 helper에 같은 Google 계정을 사용했는지 확인합니다.
+3. Ingress에서 `ha-antigravity-remote-login`을 다시 실행합니다.
+4. 성공 뒤 App log에서 secret이 아닌 상태 메시지만 확인합니다.
+5. `remote_control_name`이 유효하고 다른 instance와 구분되는지 확인합니다.
 
-### OAuth 실패
+일시적인 network 단절 중에도 host process가 살아 있으면 실행 중인 작업은 계속될 수
+있습니다. 연결이 복구되면 Dashboard가 다시 연결을 시도합니다.
 
-- Web terminal 또는 SSH가 controlling TTY인지 확인합니다.
-- Web/SSH/Telegram 공유 identity는 `ha-antigravity-login`을 실행해 CLI가 제시하는
-  Google 흐름을 따릅니다.
-- 존재하지 않는 login/status subcommand나 임의 API key 환경변수를 사용하지
-  않습니다.
-- OAuth 디렉터리를 출력하거나 수동 편집하지 않습니다.
+### Ingress가 열리지 않음
 
-### Telegram 응답 없음
-
-- `telegram_enabled`, bot token 형식과 App 재시작 여부를 확인합니다.
-- 공개 2.1.0에서 Web `agy`가
-  `settings.json.<uuid>.tmp`를 `settings.json`으로 atomic rename하지 못하고 default
-  fallback을 제시하면 cross-device `EXDEV`로 분류하지 마세요. 두 경로는 같은
-  `/data/home/.gemini/antigravity-cli` 디렉터리입니다. Antigravity 1.1.13이
-  `request-review` mode에서 non-canonical top-level `toolPermission`과
-  `enableTerminalSandbox`를 첫 TUI 실행에서 제거하려 했지만, 최종 settings 교체가
-  의도된 AppArmor deny에 막힌 2.1.0 호환성 회귀입니다. 2.1.1의 native shape에서
-  `request-review`는 top-level `toolPermission`을 생략하고 `always-proceed`는 exact
-  `"toolPermission":"always-proceed"`를 유지하며, 두 mode 모두
-  `enableTerminalSandbox`를 생략합니다. known permission bucket은 native order로
-  직렬화하고 `always-proceed`에서는 empty `ask`를 생략하며 App option의 기대 mode와
-  대조합니다. AppArmor를 완화하거나 copy/unlink fallback을 추가하지 않습니다.
-- Telegram token과 user/chat allowlist는 `/data/options.json`에서 읽습니다. Bridge는
-  Home Assistant Core `telegram_bot` 통합이 아니라 별도 S6 서비스이고 관리형 proposal
-  MCP 이름은 `telegram_action`입니다. Core Telegram service 또는 이름이 `telegram`인
-  MCP가 없다는 사실만으로 Bridge가 비활성이라고 판정하지 마세요.
-  `permission_boundary_ready`, `connected`, `request_accepted`, `session_ready`,
-  `request_failed`의 제한된 Bridge event를 순서대로 확인해 transport와 native worker
-  실패를 구분합니다.
-- `waiting_for_authorization`이면 재시작을 반복하지 말고 두 정적 목록을 모두
-  설정하거나 local pairing을 완료합니다. Telegram을 쓰지 않으면
-  `telegram_enabled: false`로 저장합니다.
-- 정적 방식이면 user와 chat 두 목록의 교집합인지 확인합니다.
-- pairing 방식이면 TTL, 한 번 소비 여부와 `ha-telegram-pair list`를 확인합니다.
-- `connect_retry`이면 bridge는 종료되지 않고 제한된 backoff로 Telegram 연결을
-  재시도합니다. `transport_code`가 있으면 DNS, 경로 또는 TLS 문제를 구분하는
-  안전한 코드이며 token이나 원문 오류는 기록되지 않습니다. `ETIMEDOUT`이 반복되는
-  고지연 dual-stack 환경을 위해 App은 주소별 연결 시도를 1.5초까지 허용하며 IPv6를
-  강제로 끄지는 않습니다.
-- `connect_blocked`이면 Bot token 또는 요청 정책을 확인하고 App 옵션을 고친 뒤
-  다시 시작합니다. 같은 4xx 요청은 자동 반복하지 않습니다.
-- `permission_boundary_blocked`이면 symlink/hardlink/non-root owner, 256 KiB 초과,
-  parse 불가능 또는 canonical 보안 경계를 만족하지 않는 native settings 때문에 자동
-  정규화를 적용하지 못한 것입니다. 공개 2.0.15의 `refresh_managed`에서 parse 가능한
-  settings의 malformed permission bucket 때문에 발생했다면 2.0.16 이상으로
-  업데이트합니다. bridge는 Bot API에 접속하지
-  않았고 S6 재시작 loop 없이 살아서 대기합니다. broad allow를 추가하지 말고
-  `reset_v2` 또는 다른 안전한 settings 복구를 적용한 뒤 App을 재시작합니다.
-- `request_failed`의 `reason_class=authentication_required`이면 Bot pairing을
-  반복하지 말고 신뢰하는 App 웹 터미널 또는 SSH에서 `ha-antigravity-login`을
-  실행합니다.
-- `request_failed`가 native termination signal을 포함하면 그 제한된 signal class로
-  CLI crash와 일반 exit를 구분합니다. stderr, prompt, OAuth 또는 token 원문을 공유하지
-  마세요. 2.0.16의 SIGSEGV는 `/new`나 pairing 재설정으로 복구되지 않습니다.
-- 공개 2.0.17에서 도구 없는 대화는 되지만 managed MCP 또는 승인카드 요청이 실패하면
-  장문·Bot API·pairing 문제로 분류하지 마세요. exact AppArmor module read와 launcher
-  run binding을 고친 2.0.18 이상으로 업데이트한 뒤 단일 read MCP, 승인카드 생성,
-  승인된 bounded 쓰기를 순서대로 다시 검증합니다.
-- 공개 2.0.18에서 Web 명령이 status 0인데 대화형 입출력이 멈추거나 첫 managed tool이
-  실패한 뒤 긴 요청들이 모두 같은 validation 오류를 내면 각 도구 실패로 확대하지
-  마세요. 2.1.0 이상으로 업데이트하고 `/new` 뒤 no-tool→단일 read→승인카드→승인된
-  bounded write를 각각 새 결과로 검사하세요. 2.1.0은 실패한 native conversation을
-  다음 요청 전에 격리합니다.
-- `reason_class=headless_read_denied`가 2.0.x의 정상 질문에서 반복되면 좁은 과거
-  allowlist 회귀일 수 있습니다. 2.1.0 이상으로 업데이트하세요. 2.1.0에서도 protected
-  secret·policy 경로의 deny는 의도된 것이므로 우회하지 마세요.
-- `reason_class=headless_permission_denied`가 proposal-first 재계획 뒤에도 반복되면
-  `request-review`에서 지원되는 HA 또는 terminal/script/question proposal로 요청을
-  바꾸거나 interactive Web/SSH에서 검토합니다. 자율 실행이 제품 요구인 관리자는
-  위험을 검토한 뒤 App option에서 `always-proceed`를 명시적으로 선택할 수 있지만
-  mandatory blacklist는 계속 적용됩니다.
-- 공개 2.1.1에서 `/status`가 `always-proceed`인데 ordinary `run_command` turn이
-  `headless_permission_denied`로 분류되고 같은 요청이 proposal 검증 실패로 끝나도
-  directory/AppArmor failure 또는 native policy denial로 단정하지 마세요. 당시
-  classifier는 tool/layer를 기록하지 않고 generic permission 문구도 일치시켰습니다.
-  공개 2.1.1 이미지의 격리 재현에서 straight ASCII quote 명령은 성공했고 curly
-  Unicode quote도 권한 거부 없이 실행됐지만 `‘TERMINAL-DIR-OKn’`처럼 출력만
-  훼손됐습니다. 이는 HAOS 증거가 아니며 반복 실행 대신 2.1.2의 bounded reason을
-  확인해야 합니다. 2.1.2는 proposal이 없는 `request-review`의 exact native command
-  denial만 최대 한 번 재계획하고 exact single same-run proposal은 기존 receipt 검증을
-  계속합니다. `always-proceed` denial은 approval card 없이
-  `unexpected_permission_denied` policy mismatch로 fail closed합니다. Native file
-  denial은 `headless_read_denied`로 분리해 managed
-  `ha_files` 사용을 안내하고, 일반 shell/AppArmor `Permission denied`는 승인 거부로
-  오인하지 않습니다.
-- `/status`는 Telegram transport, 결합된 conversation과 최근 공유 AI runtime/outbox 결과를
-  구분해 표시합니다. help와 status가 정상이어도 공유 native OAuth가 완료됐다는
-  뜻은 아닙니다.
-- `/start`, `/help`, `/status` 또는 bridge의 오류 안내가 Telegram에 도착하고
-  `telegram_api_errors_total`이 증가하지 않았다면 outbound Bot API network는 정상입니다.
-  `session_bound` 뒤 `request_failed`가 발생하고 `delivery_queued`가 없다면 전송 문제가
-  아니라 Antigravity terminal result 검증 단계의 실패이며 `/retry`할 outbox도 없습니다.
-- 이 경우 `reason_class`와 `/status`의 최근 runtime을 확인합니다.
-  `terminal_missing`, `terminal_status_failed`, `terminal_response_invalid`,
-  `conversation_mismatch`, `stream_contract_failed`, `proposal_result_invalid`는 prompt,
-  raw model output 또는 stderr를 남기지 않는 제한된 terminal 진단입니다.
-- 2.0.11은 exact `ha_change_propose` 또는 `telegram_action_propose` receipt의 필수
-  `Arguments`/`ServerName`/`ToolName`과
-  함께 최대 1,024 UTF-8 byte의 NUL·비공백 control-character가 없는
-  `toolAction`/`toolSummary` 문자열 metadata를 허용합니다. 다른 parameter key나
-  잘못된 metadata는
-  `proposal_result_invalid`입니다.
-- 정확히 하나의 완료된 유효 proposal receipt 뒤 terminal text만 비어 있으면 2.0.11은
-  고정된 안전 문구를 사용해 승인 카드를 queue합니다. proposal이 없는 빈 응답,
-  non-string 또는 32 KiB 초과 응답은 `terminal_response_invalid`로 계속 거부합니다.
-- native CLI log, OAuth URL, token, prompt 원문을 지원 자료로 올리지 말고 공유 HOME의
-  credential 경로를 추정하거나 수동 편집하지 않습니다.
-- `--dangerously-skip-permissions`로 mandatory blacklist를 우회하지 않습니다.
-- 변경 preview가 달라졌거나 만료되었다면 새 요청으로 다시 승인합니다.
+- App 상태와 Ingress URL을 Home Assistant에서 다시 확인합니다.
+- App log의 첫 failure를 확인합니다. 초기화 대상 안전성 검사 실패라면 경로를 임의로
+  삭제하지 말고 공개 가능한 진단 보고서를 만드세요.
+- 보호 mode를 끄거나 host 경로를 추가 mount하는 방식으로 우회하지 마세요.
 
 ### Browser 또는 memory 문제
 
-- login 화면이면 `ha-browser-auth-status`를 확인합니다. `disabled`는 옵션을 끈
-  의도된 상태일 수 있습니다.
-- browser option을 바꾼 뒤 App과 browser session을 새로 시작합니다.
-- `ha-memory status`에서 `empty`, `degraded`, `stale`을 구분합니다.
-- memory refresh 경고의 괄호 안 reason은 원문이 아닌 제한된 진단 코드입니다.
-  기존 catalog를 삭제하지 말고 `ha-memory refresh --force` 결과와 같은 시각의
-  Core 로그로 원인을 좁힙니다.
-- browser 또는 memory 장애가 발생해도 recovery용 Web UI/SSH까지 임의로
-  초기화하지 않습니다.
+- `ha-browser-auth-status`와 `ha-memory status`로 `disabled`, `empty`, `stale`,
+  `degraded`를 구분합니다.
+- 관련 option을 바꿨다면 App을 재시작하고 새 browser session으로 확인합니다.
+- 실제 HAOS 결과와 container fixture 결과를 구분해 보고합니다.
 
-### 설정 변경 실패
+## 업데이트와 지원
 
-- `ha-config-check` 결과와 scoped diff를 확인합니다.
-- 검사가 실패한 상태에서 Core를 reload/restart하지 않습니다.
-- broker의 precondition mismatch, expired capability 또는 `in_doubt`를 성공으로
-  간주하지 않습니다. fresh state를 읽고 사람이 결과를 판단합니다.
+릴리스 notes에서 breaking version, reset, architecture와 HAOS evidence를 확인한 뒤
+업데이트하세요. source test, container smoke와 emulated architecture는 실제 HAOS
+증거가 아닙니다. 수행하지 않은 실제 장치 검증은 `NOT RUN`, 일부만 수행한 검증은
+`PARTIAL`로 기록합니다.
 
-## 검증 상태와 알려진 제한
-
-2026-08-21 저장소 기준으로 정적·component test는 native CLI wrapper, read/change
-broker, universal action proposal/coordinator/executor, Telegram binding/replay, memory,
-browser 계약, migration, AppArmor policy parse와 kernel-enforced startup smoke를
-대상으로 합니다. 이 smoke는 실제 profile을 exact image에 attach해 cold start,
-fresh-container restart, S6 init과 안전한 canary 내용으로 준비한
-`/config/secrets.yaml`의 read denial을 확인하지만 자동 Linux container 증거입니다.
-실제 option file은 이 deny 검사에 사용하지 않습니다. 다음은 generic 개발 환경의
-성공만으로 `VERIFIED`라고 표시할 수 없습니다.
-
-- 실제 HAOS amd64의 clean install과 aarch64의 install·start·update
-- 양쪽 아키텍처의 native Antigravity OAuth와 plugin discovery
-- 2.1.2에서 별도 custom AppArmor 실행 프로필이 enforce 상태로 attach되고 S6,
-  native `--version`/대화, Web terminal PTY·reconnect, broad operational read/write,
-  managed read MCP, raw-unavailable bounded Host/Supervisor log projection과 known
-  credential redaction, Telegram 승인카드·자율 관리자 모드와
-  승인된 bounded 쓰기가 최초 기동·stop/start·restart를 완료하는지
-- 공개 GHCR generic manifest와 per-arch digest의 실제 pull
-- 실제 dashboard, live Telegram card/callback/command/HA action, migration 세 mode와
-  rollback E2E
-
-따라서 App은 experimental 상태를 유지합니다. 각 release의 CI, Builder, GHCR
-manifest와 HAOS acceptance 기록에서 해당 항목이 통과했는지 확인하세요. 문서의
-계획이나 unit test를 실제 장치 검증으로 해석하지 마세요.
-
-현재 좁은 현장 증거는 2.0.12 amd64 Telegram reconcile/reconnect와 App
-restart/reconnect `PASS`, 같은 image의 custom AppArmor attach `FAIL`, 공개 2.0.13의
-S6 runtime startup `FAIL`, 공개 2.0.14의 resolved Bashio execute startup `FAIL`, 공개
-2.0.15의 Web terminal PTY EACCES와 Telegram `refresh_managed` ordering `FAIL`, 공개
-2.0.16의 native `file_mmap` denial·SIGSEGV/status 139 `FAIL`, 공개 2.0.17의 managed
-MCP·Telegram 승인 제안 `FAIL`과 승인된 쓰기 `NOT RUN`, 공개 2.0.18 amd64의
-startup/native version/no-tool chat `PASS`이지만 Web PTY I/O와 첫 managed tool
-`FAIL`, 후속 3~7은 failed-conversation 재사용으로 독립 판정 불가, 승인된 쓰기
-`NOT RUN`입니다. 공개 2.1.0 amd64의 첫 Web TUI settings canonicalization은
-same-directory rename failure와 default fallback으로 `FAIL`했고 Telegram 호출도 사용자
-응답을 반환하지 않았지만, bounded Bridge event가 없어 transport와 worker failure는
-구분하지 못했습니다. 공개 2.1.1 amd64의 후속 Telegram 시험은 transport, exact
-no-tool, managed state read와 confined file listing을 `PASS`했지만 explicit
-`always-proceed` direct command와 mode-unaware proposal fallback은 `FAIL`했습니다.
-2.1.1 telemetry는 tool/layer를 식별하지 않아 shell의 `/config` 접근이나 AppArmor
-command profile 도달 여부를 판정할 수 없으므로 두 항목은 `NOT RUN`입니다. 공개
-2.1.1 이미지의 격리 straight-quote 명령 성공과 curly-quote 출력 훼손은 자동 재현일
-뿐 HAOS 증거가 아닙니다. 2.1.2와 모든 aarch64 실기기 수용도 `NOT RUN`입니다. aarch64 면제는
-PASS가 아니며 전체 v2 수용은 `PARTIAL`입니다. 이 결과를 전체
-HA-001~HA-008 또는 AA-001 PASS로 확대하지 않습니다.
-
-## 지원 보고서
-
-문제 보고 전에 App version, 아키텍처, 재현 절차, 기대/실제 결과와 수행한 검사를
-정리합니다. `ha-feedback`으로 비밀이 제거된 report 후보를 만들 수 있지만 최종
-payload를 직접 검토하세요. OAuth, Supervisor/bot/browser token, `secrets.yaml`,
-`.storage`, private key, 내부 URL과 원문 로그 전체를 GitHub issue에 올리지 마세요.
-
-- [저장소 README](../README.md)
-- [v2 문서 색인](../docs/v2/README.md)
-- [보안 계약](../docs/v2/security.md)
-- [Telegram 계약](../docs/v2/telegram-spec.md)
-- [Migration·release 계약](../docs/v2/migration-release.md)
+지원 절차는 [SUPPORT.md](../SUPPORT.md), 공개 변경 내역은
+[CHANGELOG.md](CHANGELOG.md), 개발 계약은
+[docs/development](../docs/development/README.md)을 참고하세요.

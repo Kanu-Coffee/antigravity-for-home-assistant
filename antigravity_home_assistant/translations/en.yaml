@@ -1,77 +1,22 @@
 ---
 configuration:
-  telegram_enabled:
-    name: Enable Telegram Bot Bridge
-    description: Enable Telegram Messenger integration to chat with Antigravity AI Agent remotely.
-  telegram_bot_token:
-    name: Telegram Bot Token
-    description: "Telegram Bot Token issued by @BotFather."
-  telegram_allowed_user_ids:
-    name: Allowed Telegram user IDs
-    description: Telegram user IDs for static authorization. Static authorization requires both the user and chat allowlists to match; an empty list is blocked unless a valid local pairing authorization exists.
-  telegram_allowed_chat_ids:
-    name: Allowed Telegram chat IDs
-    description: Telegram chat IDs for static authorization. Static authorization requires both the chat and user allowlists to match; an empty list is blocked unless a valid local pairing authorization exists.
-  authorized_keys:
-    name: Authorized SSH keys
-    description: OpenSSH public keys allowed to sign in as root. Password login is always disabled.
-  web_terminal_auto_start_antigravity:
-    name: Start Antigravity in the web terminal
-    description: Run Antigravity once when a new tmux session is created, then return to a normal shell.
-  tmux_session_name:
-    name: tmux session name
-    description: Shared session used to restore the terminal after a browser reconnect.
-  antigravity_tool_permission:
-    name: Antigravity tool permission
-    description: >-
-      Native Antigravity toolPermission shared by Web, SSH, and Telegram.
-      request-review is the default: URL reads, managed reads, and ha_files
-      list/read are allowed; ha_files writes, commands, URL execution, and
-      mutation tools require review or a Telegram approval proposal. Explicit
-      always-proceed enables autonomous-administrator commands, URLs, and
-      installed MCPs outside the mandatory secret and policy blacklist. Native
-      read_file/write_file remain denied in both modes; ordinary files use only
-      the confined ha_files tools. strict and proceed-in-sandbox are upgrade-input compatibility
-      values and normalize to request-review.
-  antigravity_terminal_sandbox:
-    name: Antigravity terminal sandbox (deprecated)
-    description: Legacy option for the native sandbox, which is incompatible with a non-privileged HAOS App. Version 2.0.9 normalizes either value to false and always uses the AppArmor command boundary.
+  remote_control_name:
+    name: Remote Control instance name
+    description: Lowercase name shown for this HAOS App in the Antigravity Remote Control dashboard.
   antigravity_sensitive_data_access:
     name: Allow diagnostic reads of sensitive HA data
     description: >-
       Keep disabled to block Antigravity from secrets.yaml, .storage, and the
-      Recorder database. When enabled, Web, SSH, and Telegram Antigravity may
-      read only the Recorder database for diagnostics. Reads and writes of
-      secrets.yaml and .storage, plus Recorder writes, remain blocked. Browser,
-      memory, App tokens, SSH keys, backups, SSL, and cloud
-      credentials remain isolated. Restart the App after changing this option.
-  antigravity_user_files_update_mode:
-    name: Antigravity user-file update mode
-    description: >-
-      preserve keeps existing user files, but enabling Telegram automatically
-      reconciles five App-managed security keys and the three permission buckets
-      of safe settings to the exact startup policy while preserving settings
-      outside those security keys, global MCP, plugins, and OAuth.
-      refresh_managed updates only
-      image-managed rules, plugins, and MCP defaults. Explicit reset_v2 backs
-      up safe settings as root and replaces managed keys plus all three
-      permission buckets with exact image defaults regardless of ownership
-      state. It preserves user top-level settings outside permissions, global
-      MCP, plugins, OAuth, Home Assistant configuration, SSH keys, and validated
-      memory, and repairs drift on every startup until returned to preserve.
-      Deprecated refresh_agents and refresh_all values are accepted only to
-      start a v1 upgrade and are normalized to refresh_managed through
-      Supervisor; do not select them for new configuration.
+      Recorder database. When enabled, Antigravity may read only the Recorder
+      database for diagnostics. Secrets, credentials, policy files, and all
+      writes to protected data remain blocked. Restart the App after changing
+      this option.
   home_assistant_browser_auto_auth:
     name: Headless browser automatic authentication
     description: >-
       Automatically create or reuse a dedicated local-only, read-only Home
-      Assistant identity for the internal headless browser. Restart the App
-      after changing this option. Disabling it shows the normal login page on
-      the next browser session; the managed identity is preserved until you
-      explicitly remove it.
+      Assistant identity for browser validation. Restart the App after changing
+      this option.
   log_level:
-    name: Web terminal log level
-    description: Enables detailed ttyd logs for trace or debug. Secrets and authorization headers are never logged.
-network:
-  22/tcp: Public-key SSH and Antigravity Remote SSH port. Change or disable the host mapping here.
+    name: App log level
+    description: Enables detailed service logs for trace or debug. Secrets and authorization headers are never logged.

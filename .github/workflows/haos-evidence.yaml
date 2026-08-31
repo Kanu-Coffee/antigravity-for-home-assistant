@@ -17,14 +17,8 @@ name: HAOS evidence
         required: true
         type: choice
         options:
-          - apparmor_enforce
-          - haos_aarch64_install_persistence
-          - haos_amd64_local_migration
-          - local_migration_rollback
-          - migration_modes
-          - shared_runtime_persistence
-          - native_updater_canary
-          - telegram_session_delivery
+          - haos_aarch64_acceptance
+          - haos_amd64_acceptance
       report_json:
         description: Candidate-bound sanitized v1 JSON completed from haos-report-templates/<gate>.json; unchanged NOT_RUN template is rejected
         required: true

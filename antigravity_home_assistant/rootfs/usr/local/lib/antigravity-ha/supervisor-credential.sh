@@ -3,7 +3,7 @@
 # Validate and load the Supervisor credential only inside a dedicated Home
 # Assistant helper. Long-running brokers use the descriptor validators below
 # and never place the raw credential in their process environment.
-# Interactive shells, Antigravity, Telegram, nginx and Chromium must never
+# Interactive shells, Antigravity, Remote Control, nginx and Chromium must never
 # inherit it. AppArmor provides the enforcement boundary in HAOS; these checks
 # also fail closed on unsafe runtime files in ordinary container tests.
 antigravity_ha_validate_supervisor_credential_file() {

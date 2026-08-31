@@ -84,7 +84,6 @@ def test_read_broker_s6_and_plugin_contract(rootfs: Path) -> None:
     assert (service / "type").read_text(encoding="utf-8").strip() == "longrun"
     assert (service / "dependencies.d/antigravity-ha-init").is_file()
     assert (s6_root / "user/contents.d/ha-read-broker").is_file()
-    assert (s6_root / "telegram-bot/dependencies.d/ha-read-broker").is_file()
     assert (s6_root / "ha-memoryd/dependencies.d/ha-read-broker").is_file()
     assert "exec /usr/local/bin/ha-read-broker" in (
         service / "run"
@@ -106,32 +105,32 @@ def test_apparmor_separates_read_worker_client_and_token_broker(
 ) -> None:
     profile = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
     main, bootstrap_tail = profile.split(
-        "profile antigravity_home_assistant-broker-bootstrap", maxsplit=1
+        "profile antigravity_home_assistant-read-broker-bootstrap", maxsplit=1
     )
-    bootstrap, read_broker_tail = bootstrap_tail.split(
-        "profile antigravity_home_assistant-change-broker", maxsplit=1
-    )[0], profile.split(
+    bootstrap = bootstrap_tail.split(
+        "profile antigravity_home_assistant-read-broker", maxsplit=1
+    )[0]
+    read_broker_tail = profile.split(
         "profile antigravity_home_assistant-read-broker", maxsplit=1
     )[1]
     read_broker, read_client_tail = read_broker_tail.split(
         "profile antigravity_home_assistant-read-client", maxsplit=1
     )
     read_client = read_client_tail.split(
-        "profile antigravity_home_assistant-playwright-bootstrap", maxsplit=1
+        "profile antigravity_home_assistant-file-client", maxsplit=1
     )[0]
     restricted = profile.split(
-        "profile antigravity_home_assistant-interactive-restricted", maxsplit=1
-    )[1].split(
-        "profile antigravity_home_assistant-interactive-sensitive-read", maxsplit=1
-    )[0]
+        "profile antigravity_home_assistant-interactive-runtime-restricted",
+        maxsplit=1,
+    )[1].split("\n  profile ", maxsplit=1)[0]
     sensitive = profile.split(
-        "profile antigravity_home_assistant-interactive-sensitive-read", maxsplit=1
-    )[1].split(
-        "profile antigravity_home_assistant-init", maxsplit=1
-    )[0]
+        "profile antigravity_home_assistant-interactive-runtime-sensitive-read",
+        maxsplit=1,
+    )[1].split("\n  profile ", maxsplit=1)[0]
 
-    assert "/usr/local/bin/{ha-change-broker,ha-read-broker} Px -> " \
-        "antigravity_home_assistant-broker-bootstrap," in main
+    assert "/usr/local/bin/ha-read-broker Px -> " \
+        "antigravity_home_assistant-read-broker-bootstrap," in main
+    assert "ha-change-broker" not in profile
     for interactive in (restricted, sensitive):
         assert "/usr/local/bin/ha-read-mcp Px -> " \
             "antigravity_home_assistant-read-client," in interactive
@@ -208,7 +207,7 @@ def test_read_broker_source_is_fixed_get_only_and_bounded(rootfs: Path) -> None:
     assert "STORAGE_USAGE_CATEGORY_IDS" in source
 
 
-def test_production_transport_ownership_is_explicit_and_privileged_flows_stay_separate(
+def test_read_transport_ownership_is_explicit_and_privileged_flows_stay_separate(
     rootfs: Path,
 ) -> None:
     share_root = rootfs / "usr/local/share/antigravity-ha"
@@ -239,18 +238,13 @@ def test_production_transport_ownership_is_explicit_and_privileged_flows_stay_se
     assert "process.env.SUPERVISOR_TOKEN" not in read_broker
 
     read_wrapper = (bin_root / "ha-read-broker").read_text(encoding="utf-8")
-    change_wrapper = (bin_root / "ha-change-broker").read_text(encoding="utf-8")
     browser_setup = (bin_root / "ha-browser-auth-setup").read_text(
         encoding="utf-8"
     )
-    for broker_wrapper in (read_wrapper, change_wrapper):
-        assert "antigravity_ha_load_supervisor_credential" not in broker_wrapper
-        assert "antigravity_ha_open_supervisor_credential_pipe" in broker_wrapper
-        assert "ANTIGRAVITY_HA_SUPERVISOR_FD" in broker_wrapper
+    assert "antigravity_ha_load_supervisor_credential" not in read_wrapper
+    assert "antigravity_ha_open_supervisor_credential_pipe" in read_wrapper
+    assert "ANTIGRAVITY_HA_SUPERVISOR_FD" in read_wrapper
     assert "antigravity_ha_load_supervisor_credential" in browser_setup
     assert "/run/antigravity-ha/ha-read.sock" in (
         share_root / "ha-read-client.mjs"
-    ).read_text(encoding="utf-8")
-    assert "/run/antigravity-ha/change-broker.sock" in (
-        share_root / "ha-change-broker.mjs"
     ).read_text(encoding="utf-8")

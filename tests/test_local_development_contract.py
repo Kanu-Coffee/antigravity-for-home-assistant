@@ -23,6 +23,7 @@ DEVELOPMENT_FILES = {
     "tools/development/setup",
     "tools/development/ha-memory-mcp",
     "tools/development/ha-feedback",
+    "tools/development/haos-vm",
     "tools/development/memory-mcp-probe.mjs",
     ".agents/skills/ha-feedback-development/SKILL.md",
     "docs/local-development.md",
@@ -55,6 +56,7 @@ def test_host_development_assets_are_complete_and_executable(
         "tools/development/build-app",
         "tools/development/ha-memory-mcp",
         "tools/development/ha-feedback",
+        "tools/development/haos-vm",
     ):
         mode = (repository_root / relative_path).stat().st_mode
         assert mode & stat.S_IXUSR, f"{relative_path} is not executable"
@@ -87,13 +89,13 @@ def test_host_and_runtime_guidance_are_explicitly_separated(
 
     for fragment in (
         "runs inside a live Home Assistant App",
-        "Treat the remaining access as production administrator access",
         "/data/antigravity-ha-memory/memory.sqlite3",
         "/usr/local/bin/ha-feedback",
-        "call `memory_search`",
-        "SUPERVISOR_TOKEN",
+        "bounded `memory_search`",
     ):
         assert fragment in runtime
+    assert "production administrator access" in runtime
+    assert "supervisor credentials" in " ".join(runtime.split()).lower()
     assert "tools/development" not in runtime
     assert "host development" not in runtime.lower()
     assert "AGENTS.override.md" not in ignore
@@ -221,8 +223,7 @@ def test_development_memory_wrapper_is_digest_pinned_and_hardened(
     assert re.search(r"(?:^|\s)(?:-i|--interactive)(?:\s|$)", memory)
     assert "/usr/local/bin/ha-memory-mcp" in memory
     assert "ANTIGRAVITY_HA_MEMORY_READ_ONLY=1" in memory
-    assert "HA_TELEGRAM_USER_ID=1" in memory
-    assert "HA_TELEGRAM_CHAT_ID=1" in memory
+    assert "HA_TELEGRAM_" not in memory
     assert "type=volume" in memory and "volume-nocopy" in memory
     for forbidden in (
         "--privileged",
@@ -433,8 +434,7 @@ def test_memory_wrapper_test_hook_preserves_the_sandbox(
     assert any(PINNED_IMAGE.fullmatch(argument) for argument in arguments)
     assert "/usr/local/bin/ha-memory-mcp" in joined
     assert "ANTIGRAVITY_HA_MEMORY_READ_ONLY" in joined
-    assert "HA_TELEGRAM_USER_ID" in joined
-    assert "HA_TELEGRAM_CHAT_ID" in joined
+    assert "HA_TELEGRAM_" not in joined
     assert "/var/run/docker.sock" not in joined
     assert "/config" not in joined
 
