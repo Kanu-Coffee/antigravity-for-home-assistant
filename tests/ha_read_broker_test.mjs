@@ -351,7 +351,6 @@ test("broker exposes only bounded projected GET reads", async () => {
 
 test("log reads fail closed for structured credentials and multiline private material", async () => {
   const syntheticGithubToken = `gh${"p"}_${"a".repeat(36)}`;
-  const syntheticTelegramToken = `123456789:${"A".repeat(35)}`;
   const syntheticAwsAccessKey = `AK${"IA"}${"A".repeat(16)}`;
   const syntheticGoogleKey = `AI${"za"}${"a".repeat(35)}`;
   const syntheticSlackToken = `xo${"xb"}-1234567890-${"a".repeat(16)}`;
@@ -383,7 +382,6 @@ test("log reads fail closed for structured credentials and multiline private mat
     "HEADER_SECRET_CANARY",
     "PREFIXED_HEADER_CANARY",
     "Basic dTpw",
-    syntheticTelegramToken,
     syntheticGithubToken,
     syntheticAwsAccessKey,
     syntheticGoogleKey,
@@ -447,7 +445,6 @@ test("log reads fail closed for structured credentials and multiline private mat
     "X-Api-Token HEADER_SECRET_CANARY",
     "2026-08-19T00:00:00Z INFO X-Api-Token PREFIXED_HEADER_CANARY",
     "transport Basic dTpw",
-    `telegram=${syntheticTelegramToken}`,
     `github=${syntheticGithubToken}`,
     `aws=${syntheticAwsAccessKey}`,
     `google=${syntheticGoogleKey}`,

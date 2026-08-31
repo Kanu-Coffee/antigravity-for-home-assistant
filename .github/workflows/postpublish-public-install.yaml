@@ -5,7 +5,7 @@ name: Post-publish public install acceptance
   workflow_dispatch:
     inputs:
       version:
-        description: Published numeric v2 release version; dispatch this workflow at its tag
+        description: Published numeric v3 release version; dispatch this workflow at its tag
         required: true
         type: string
       report_json:
@@ -29,7 +29,7 @@ jobs:
       actions: read
       contents: write
     steps:
-      - name: Authorize maintainer dispatch at the numeric v2 tag
+      - name: Authorize maintainer dispatch at the numeric v3 tag
         env:
           DISPATCH_ACTOR: ${{ github.actor }}
           EVENT_NAME: ${{ github.event_name }}
@@ -39,7 +39,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           [[ $EVENT_NAME == workflow_dispatch ]]
-          [[ $RELEASE_VERSION =~ ^2\.[0-9]+\.[0-9]+$ ]]
+          [[ $RELEASE_VERSION =~ ^3\.[0-9]+\.[0-9]+$ ]]
           [[ $GITHUB_REF == "refs/tags/${RELEASE_VERSION}" ]] || {
             echo "public-install acceptance must be dispatched at the exact numeric release tag" >&2
             exit 1
@@ -68,18 +68,34 @@ jobs:
           persist-credentials: false
           ref: refs/tags/${{ inputs.version }}
 
-      - name: Resolve tag-bound final evidence and published GitHub Release
+      - name: Resolve the Candidate-bound annotated tag and GitHub Release
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           set -Eeuo pipefail
-          python3 --version >/dev/null
-          bash .github/scripts/parse-release-tag.sh "$RELEASE_VERSION"
+          [[ $(git cat-file -t "refs/tags/${RELEASE_VERSION}") == tag ]]
           source_sha=$(git rev-list --max-count=1 "refs/tags/${RELEASE_VERSION}")
           [[ $source_sha == "$GITHUB_SHA" ]] || {
             echo "workflow ref does not resolve to the annotated tag source" >&2
+            exit 1
+          }
+          tag_message=$(git for-each-ref --format='%(contents)' \
+            "refs/tags/${RELEASE_VERSION}")
+          candidate_run_id=$(sed -n \
+            's/^Candidate-Run-ID: \([1-9][0-9]*\)$/\1/p' \
+            <<< "$tag_message")
+          candidate_run_attempt=$(sed -n \
+            's/^Candidate-Run-Attempt: \([1-9][0-9]*\)$/\1/p' \
+            <<< "$tag_message")
+          [[ $candidate_run_id =~ ^[1-9][0-9]*$ ]]
+          [[ $candidate_run_attempt =~ ^[1-9][0-9]*$ ]]
+          expected_message=$(printf \
+            'Antigravity for Home Assistant %s\n\nCandidate-Run-ID: %s\nCandidate-Run-Attempt: %s\n' \
+            "$RELEASE_VERSION" "$candidate_run_id" "$candidate_run_attempt")
+          [[ $tag_message == "$expected_message" ]] || {
+            echo "annotated tag message is not the exact Candidate binding" >&2
             exit 1
           }
           gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_VERSION}" \
@@ -94,96 +110,95 @@ jobs:
               and (.published_at | test(
                 "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
               ))
-              and ([.assets[] | select(.name == "release-evidence.json")] | length == 1)
             ' published-release.json >/dev/null
-          printf 'published_at_utc=%s\n' \
-            "$(jq --raw-output .published_at published-release.json)" \
-            >> "$GITHUB_OUTPUT"
+          {
+            printf 'candidate_run_attempt=%s\n' "$candidate_run_attempt"
+            printf 'candidate_run_id=%s\n' "$candidate_run_id"
+            printf 'published_at_utc=%s\n' \
+              "$(jq --raw-output .published_at published-release.json)"
+            printf 'source_sha=%s\n' "$source_sha"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Verify finalizer run and immutable artifact from tag trailers
+      - name: Resolve the exact successful Candidate artifact
+        id: candidate
         env:
-          EVIDENCE_ARTIFACT: ${{ steps.release.outputs.evidence_artifact }}
-          EVIDENCE_DIGEST: ${{ steps.release.outputs.evidence_digest }}
-          EVIDENCE_RUN_ATTEMPT: ${{ steps.release.outputs.evidence_run_attempt }}
-          EVIDENCE_RUN_ID: ${{ steps.release.outputs.evidence_run_id }}
+          CANDIDATE_RUN_ATTEMPT: ${{ steps.release.outputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ steps.release.outputs.candidate_run_id }}
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
         run: |
           set -Eeuo pipefail
-          gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${EVIDENCE_RUN_ID}" \
-            > evidence-run.json
+          gh api \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${CANDIDATE_RUN_ID}/attempts/${CANDIDATE_RUN_ATTEMPT}" \
+            > candidate-run.json
           jq --exit-status \
             --arg source_sha "$SOURCE_SHA" \
-            --argjson attempt "$EVIDENCE_RUN_ATTEMPT" '
+            --argjson attempt "$CANDIDATE_RUN_ATTEMPT" '
               .path == ".github/workflows/candidate.yaml"
               and .event == "workflow_dispatch"
               and .status == "completed"
               and .conclusion == "success"
               and .run_attempt == $attempt
               and .head_sha == $source_sha
-            ' evidence-run.json >/dev/null
+              and .head_branch == "main"
+            ' candidate-run.json >/dev/null
+          artifact_name="release-candidate-${SOURCE_SHA}-${CANDIDATE_RUN_ID}-${CANDIDATE_RUN_ATTEMPT}"
           gh api \
-            "/repos/${GITHUB_REPOSITORY}/actions/runs/${EVIDENCE_RUN_ID}/artifacts?name=${EVIDENCE_ARTIFACT}" \
-            > evidence-artifacts.json
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${CANDIDATE_RUN_ID}/artifacts?name=${artifact_name}" \
+            > candidate-artifacts.json
           jq --exit-status \
-            --arg artifact "$EVIDENCE_ARTIFACT" \
-            --arg digest "$EVIDENCE_DIGEST" '
+            --arg artifact "$artifact_name" '
               .total_count == 1
               and (.artifacts | length == 1)
               and .artifacts[0].name == $artifact
               and .artifacts[0].expired == false
-              and .artifacts[0].digest == $digest
-            ' evidence-artifacts.json >/dev/null
+              and (.artifacts[0].digest | test("^sha256:[0-9a-f]{64}$"))
+            ' candidate-artifacts.json >/dev/null
+          {
+            printf 'artifact_id=%s\n' \
+              "$(jq --raw-output .artifacts[0].id candidate-artifacts.json)"
+            printf 'artifact_name=%s\n' "$artifact_name"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Download exact tag-bound final release evidence
+      - name: Download the exact tag-bound Candidate
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
-          name: ${{ steps.release.outputs.evidence_artifact }}
-          path: release-evidence
+          artifact-ids: ${{ steps.candidate.outputs.artifact_id }}
+          digest-mismatch: error
+          path: candidate-evidence
           github-token: ${{ github.token }}
-          run-id: ${{ steps.release.outputs.evidence_run_id }}
+          run-id: ${{ steps.release.outputs.candidate_run_id }}
 
-      - name: Compare the GitHub Release evidence asset with the finalizer artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ inputs.version }}
-        run: |
-          set -Eeuo pipefail
-          mkdir release-asset
-          gh release download "$RELEASE_VERSION" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern release-evidence.json \
-            --dir release-asset
-          cmp --silent \
-            release-evidence/release-evidence.json \
-            release-asset/release-evidence.json || {
-              echo "GitHub Release evidence differs from tag-bound finalizer artifact" >&2
-              exit 1
-            }
-
-      - name: Validate complete tag-bound final release contract
+      - name: Validate the complete tag-bound Candidate contract
         id: contract
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           set -Eeuo pipefail
-          python3 .github/scripts/release_contract.py release \
-            --evidence release-evidence/release-evidence.json \
-            --haos-gates-dir release-evidence/haos-gates \
+          python3 .github/scripts/release_contract.py candidate-verify \
+            --candidate candidate-evidence/candidate.json \
             --version "$RELEASE_VERSION" \
             --source-sha "${{ steps.release.outputs.source_sha }}" \
-            --candidate-run-id "${{ steps.release.outputs.candidate_run_id }}" \
-            --candidate-run-attempt "${{ steps.release.outputs.candidate_run_attempt }}" \
-            --evidence-run-id "${{ steps.release.outputs.evidence_run_id }}" \
-            --evidence-run-attempt "${{ steps.release.outputs.evidence_run_attempt }}" \
+            --run-id "${{ steps.release.outputs.candidate_run_id }}" \
+            --run-attempt "${{ steps.release.outputs.candidate_run_attempt }}" \
             --github-output "$GITHUB_OUTPUT"
+          index_result=$(python3 .github/scripts/release_contract.py index \
+            --manifest candidate-evidence/candidate-index.json \
+            --expected-arch amd64 \
+            --expected-arch aarch64 \
+            --expected-digest \
+              "$(jq --raw-output .images.generic.digest candidate-evidence/candidate.json)")
+          [[ $(jq --raw-output .amd64 <<< "$index_result") == \
+            $(jq --raw-output .images.amd64.runtime_digest candidate-evidence/candidate.json) ]]
+          [[ $(jq --raw-output .aarch64 <<< "$index_result") == \
+            $(jq --raw-output .images.aarch64.runtime_digest candidate-evidence/candidate.json) ]]
 
       - name: Set up Docker Buildx for anonymous public verification
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
         with:
           version: v0.32.1
 
-      - name: Verify both published GHCR v2 platforms anonymously
+      - name: Verify both published GHCR v3 platforms anonymously
         env:
           AMD64_DIGEST: ${{ steps.contract.outputs.amd64_digest }}
           ARM64_DIGEST: ${{ steps.contract.outputs.arm64_digest }}
@@ -221,7 +236,7 @@ jobs:
           jq --raw-output '.inputs.report_json' "$GITHUB_EVENT_PATH" \
             > submitted-public-install-report.json
           python3 .github/scripts/release_contract.py public-install-report \
-            --release-evidence release-evidence/release-evidence.json \
+            --candidate candidate-evidence/candidate.json \
             --report submitted-public-install-report.json \
             --version "$RELEASE_VERSION" \
             --source-sha "$SOURCE_SHA" \

@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 
 
-TELEGRAM_READ_ONLY_AUTO_APPROVE_BROWSER_TOOLS = {
+READ_ONLY_BROWSER_TOOLS = {
     "browser_console_messages",
     "browser_network_requests",
     "browser_snapshot",
@@ -12,7 +12,7 @@ TELEGRAM_READ_ONLY_AUTO_APPROVE_BROWSER_TOOLS = {
 
 PROXY_ALLOWED_NON_INTERACTIVE_TOOLS = {
     "browser_close",
-    *TELEGRAM_READ_ONLY_AUTO_APPROVE_BROWSER_TOOLS,
+    *READ_ONLY_BROWSER_TOOLS,
     "browser_hover",
     "browser_navigate",
     "browser_navigate_back",
@@ -141,35 +141,17 @@ def test_antigravity_plugin_registers_restricted_playwright_mcp(
     assert allowlist_match
     proxy_tools = set(re.findall(r'"(browser_[a-z_]+)"', allowlist_match.group(1)))
     assert ALLOWED_BROWSER_TOOLS == proxy_tools
-    assert "TELEGRAM_SAFE_TOOLS" not in proxy
-    assert TELEGRAM_READ_ONLY_AUTO_APPROVE_BROWSER_TOOLS.isdisjoint(
-        INTERACTIVE_BROWSER_TOOLS
-    )
+    assert READ_ONLY_BROWSER_TOOLS.isdisjoint(INTERACTIVE_BROWSER_TOOLS)
 
 
 def test_playwright_approval_policy_uses_native_settings_permissions(
     rootfs: Path,
 ) -> None:
-    updater = (
-        rootfs / "usr/local/share/antigravity-ha/user-files-update.mjs"
-    ).read_text(encoding="utf-8")
     wrapper = (rootfs / "usr/local/bin/antigravity").read_text(encoding="utf-8")
-    init_script = (rootfs / "usr/local/bin/antigravity-ha-init").read_text(
+    settings = (rootfs / "etc/antigravity/settings.json").read_text(
         encoding="utf-8"
     )
-    policy_validator = (
-        rootfs / "usr/local/lib/antigravity-ha/browser-approval.sh"
-    ).read_text(encoding="utf-8")
 
-    assert "canonicalTelegramPermissionRules" in updater
-    assert 'canonicalTelegramPermissionRules("request-review")' in updater
-    assert 'canonicalTelegramPermissionRules("always-proceed")' in updater
-    assert "Legacy browser_approval_policy was retired" in updater
-    assert (
-        "value.permissions = "
-        "canonicalTelegramPermissionRules(options.toolPermission);"
-    ) in updater
-    assert "browser-approval.sh" not in wrapper
     assert "mcp_servers.playwright" not in wrapper
     assert " -c " not in wrapper
     assert "-dangerously-skip-permissions" in wrapper
@@ -178,10 +160,8 @@ def test_playwright_approval_policy_uses_native_settings_permissions(
     assert "-no-sandbox | -no-sandbox=*" in wrapper
     assert "--no-sandbox | --no-sandbox=*" in wrapper
     assert "native sandbox overrides are disabled" in wrapper
-    assert "mcp_servers.playwright" not in policy_validator
-    assert "antigravity_HA_BROWSER_APPROVAL_ARGS" not in policy_validator
-    assert "Configured headless browser approval policy" in init_script
-    assert "Invalid headless browser approval policy" in init_script
+    assert '"permissions"' not in settings
+    assert "toolPermission" not in settings
 
 
 def test_playwright_wrapper_uses_only_the_image_managed_stdio_server(
@@ -203,9 +183,6 @@ def test_playwright_wrapper_uses_only_the_image_managed_stdio_server(
     assert "PLAYWRIGHT_PROXY" not in wrapper
     assert 'if (( $# != 0 )); then' in wrapper
     assert "ANTIGRAVITY_HA_CHANNEL" in wrapper
-    assert "HA_TELEGRAM_USER_ID" in wrapper
-    assert "HA_TELEGRAM_CHAT_ID" in wrapper
-    assert "ANTIGRAVITY_HA_TELEGRAM_READ_ONLY" not in wrapper
     assert "exec /usr/local/libexec/ha-playwright-runtime" in wrapper
     assert 'readonly NODE_BINARY=/usr/bin/node' in wrapper
     assert "NODE_OPTIONS" in wrapper
@@ -229,7 +206,6 @@ def test_playwright_wrapper_uses_only_the_image_managed_stdio_server(
     assert "/usr/local/share/antigravity-ha/playwright-mcp-proxy.mjs" in runtime
     assert "SUPERVISOR_TOKEN" in runtime
     assert "exec /usr/bin/env -i" in runtime
-    assert "ANTIGRAVITY_HA_TELEGRAM_READ_ONLY" not in runtime
 
     proxy = (
         rootfs / "usr/local/share/antigravity-ha/playwright-mcp-proxy.mjs"
@@ -251,40 +227,10 @@ def test_playwright_wrapper_uses_only_the_image_managed_stdio_server(
     assert 'Object.prototype.hasOwnProperty.call(toolArgs, "filename")' in proxy
     assert "enabledTools.has(toolName)" in proxy
     assert ".filter((tool) => enabledTools.has(tool.name))" in proxy
-    assert "TELEGRAM_SAFE_TOOLS" not in proxy
-    assert "playwright-bootstrap-telegram" not in proxy
-    assert "TELEGRAM_CANONICAL_ORIGIN" not in proxy
-    assert "startTelegramNetworkProxy" not in proxy
     assert "HOME_ASSISTANT_NAVIGATION_GUIDANCE" in proxy
     assert "http://127.0.0.1:8099/" in proxy
     assert ".map(addImageManagedGuidance)" in proxy
 
-    assert not (
-        rootfs
-        / "usr/local/share/antigravity-ha/playwright-telegram-init-page.ts"
-    ).exists()
-
-
-def test_telegram_playwright_uses_the_interactive_profiles(
-    addon_root: Path,
-) -> None:
-    apparmor = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
-    telegram = apparmor.split(
-        "profile antigravity_home_assistant-telegram flags=", maxsplit=1
-    )[1].split(
-        "profile antigravity_home_assistant-change-proposal-client", maxsplit=1
-    )[0]
-
-    assert (
-        "/usr/local/libexec/antigravity-interactive-restricted Px -> "
-        "antigravity_home_assistant-interactive-restricted,"
-    ) in telegram
-    assert (
-        "/usr/local/libexec/antigravity-interactive-sensitive-read Px -> "
-        "antigravity_home_assistant-interactive-sensitive-read,"
-    ) in telegram
-    assert "playwright-bootstrap-telegram" not in apparmor
-    assert "browser-telegram" not in apparmor
 
 
 def test_playwright_runtime_is_headless_isolated_and_ephemeral(
@@ -368,17 +314,11 @@ def test_browser_auth_refresh_is_private_fail_closed_and_called_at_init(
         encoding="utf-8"
     )
 
-    assert (
-        "LEGACY_PLAYWRIGHT_SECRETS=${RUNTIME_DIR}/playwright-secrets.env"
-        in init_script
-    )
     assert "HA_BROWSER_AUTH_STATUS=${RUNTIME_DIR}/browser-auth-status.json" in init_script
     assert 'install -d -m 0700' in init_script
     assert "PLAYWRIGHT_HOME=${RUNTIME_DIR}/playwright-home" in init_script
     assert "PLAYWRIGHT_OUTPUT=${RUNTIME_DIR}/playwright-output" in init_script
     assert 'rm -rf -- "${PLAYWRIGHT_HOME}" "${PLAYWRIGHT_OUTPUT}"' in init_script
-    assert 'rm -f "${LEGACY_PLAYWRIGHT_SECRETS}"' in init_script
-    assert "playwright_secrets_tmp" not in init_script
     assert 'printf \'HA_BROWSER_TOKEN=%s\\n\'' not in init_script
     assert "unset NODE_OPTIONS NODE_PATH" in init_script
     assert 'for variable in "${!PLAYWRIGHT_MCP_@}"' in init_script
@@ -389,15 +329,14 @@ def test_browser_auth_refresh_is_private_fail_closed_and_called_at_init(
     )
     assert "home_assistant_browser_token" not in init_script
     assert 'HA_BROWSER_TOKEN="${browser_token}"' not in init_script
-    assert "Automatic managed browser authentication could not be configured" in (
-        init_script
-    )
-    assert "any managed identity is preserved" in init_script
+    assert "Browser automatic authentication is not ready" in init_script
     assert "system-read-only" in (
         rootfs / "usr/local/share/antigravity-ha/browser-auth-check.mjs"
     ).read_text(encoding="utf-8")
-    assert 'chmod 0600 "${ha_render_upstream_tmp}"' in init_script
-    assert 'mv -f "${ha_render_upstream_tmp}" "${HA_RENDER_UPSTREAM}"' in init_script
+    assert 'chmod 0600 "${upstream_tmp}"' in init_script
+    assert 'mv -f "${upstream_tmp}" "${HA_RENDER_UPSTREAM}"' in init_script
+    assert "'$ha_frontend_upstream'" in init_script
+    assert "'\\$ha_frontend_upstream'" not in init_script
 
     assert "RUNTIME_TOKEN=${RUNTIME_DIR}/home-assistant-browser.token" in refresh
     assert "RUNTIME_STATUS=${RUNTIME_DIR}/browser-auth-status.json" in refresh
@@ -445,23 +384,17 @@ def test_browser_auth_refresh_is_private_fail_closed_and_called_at_init(
     assert '"${AUTH_CHECK}" "${browser_token}"' not in refresh
 
 
-def test_browser_auth_refresh_prefers_manual_override_without_fallback(
+def test_browser_auth_refresh_accepts_only_managed_identity(
     rootfs: Path,
 ) -> None:
     refresh = (rootfs / "usr/local/bin/ha-browser-auth-refresh").read_text(
         encoding="utf-8"
     )
 
-    manual_read = (
-        "browser_token=$(antigravity_ha_config_string "
-        "home_assistant_browser_token '')"
-    )
-    managed_branch = 'if [[ -z "${browser_token}" ]]; then'
     validation = 'if ! HA_BROWSER_TOKEN="${browser_token}"'
-    assert manual_read in refresh
-    assert "source_name=manual" in refresh
-    assert managed_branch in refresh
-    assert "source_name=managed" in refresh
+    assert "home_assistant_browser_token" not in refresh
+    assert "source_name=manual" not in refresh
+    assert "source_name=managed" not in refresh
     assert '-L "${MANAGED_TOKEN}"' in refresh
     assert '-L "${MANAGED_STATE}"' in refresh
     assert '! -f "${MANAGED_TOKEN}"' in refresh
@@ -482,9 +415,12 @@ def test_browser_auth_refresh_prefers_manual_override_without_fallback(
         in refresh
     )
     assert "write_status rejected managed_state_user_mismatch" in refresh
+    assert '--arg source managed' in refresh
     assert "select(.status == \"ready\") | . + {source: $source}" in refresh
-    assert refresh.index(manual_read) < refresh.index(managed_branch)
-    assert refresh.index(managed_branch) < refresh.index(validation)
+    assert refresh.index("cleanup_managed_temps") < refresh.index(
+        '-L "${MANAGED_TOKEN}"'
+    )
+    assert refresh.index('-L "${MANAGED_TOKEN}"') < refresh.index(validation)
 
 
 def test_browser_network_diagnostic_is_read_only_and_rejects_ip_trust(
@@ -562,85 +498,21 @@ def test_real_playwright_mcp_smoke_is_part_of_container_validation(
     )
     assert "tests/playwright_mcp_smoke.mjs" in docker_smoke
     assert "tests/ha_browser_gateway_fixture.mjs" in docker_smoke
+    assert "tests/v3-upgrade-smoke.sh" in docker_smoke
     assert "/usr/local/bin/ha-playwright-mcp" in docker_smoke
     assert "plugin validate" in docker_smoke
     assert "mcpServers.playwright.command" in docker_smoke
     assert "PLAYWRIGHT_MCP_SMOKE_URL=http://127.0.0.1:8099/" in docker_smoke
     assert "PLAYWRIGHT_MCP_SMOKE_EXPECT_SOURCE_IP" in docker_smoke
     assert "PLAYWRIGHT_MCP_SMOKE_POLICY_ONLY=1" in docker_smoke
-    assert "Telegram Playwright MCP shared policy smoke failed" in docker_smoke
     assert "home-assistant-internal-desktop.png" in docker_smoke
     assert "home-assistant-internal-mobile.png" in docker_smoke
-    assert "PLAYWRIGHT_MCP_SMOKE_EXPECT_UNAUTHENTICATED=1" in docker_smoke
-    assert '--env HA_BROWSER_TOKEN="${BROWSER_TOKEN}"' in docker_smoke
     assert "--probe-websocket ws://127.0.0.1:8099/api/websocket" in docker_smoke
     assert "Home Assistant browser gateway was reachable outside app loopback" in docker_smoke
-    assert "/run/antigravity-ha/playwright-home/init-sentinel" in docker_smoke
-    assert "/run/antigravity-ha/playwright-output/init-sentinel" in docker_smoke
     assert '"home_assistant_browser_token"' not in docker_smoke
+    assert 'Antigravity Remote Control is waiting for ha-antigravity-remote-login.' in (
+        docker_smoke
+    )
     assert '.source == "managed"' in docker_smoke
     assert "/data/browser-auth/managed-user.json" in docker_smoke
     assert "/data/browser-auth/managed-token" in docker_smoke
-
-    approval_smoke = (
-        repository_root / "tests/browser-approval-smoke.sh"
-    ).read_text(encoding="utf-8")
-    ci = (repository_root / ".github/workflows/ci.yaml").read_text(
-        encoding="utf-8"
-    )
-    assert approval_smoke.startswith("#!/usr/bin/env bash\nset -Eeuo pipefail\n")
-    assert "antigravity-user-files-update" in approval_smoke
-    assert (
-        "for control in native-session.lock user-files-update.lock "
-        "onboarding-active; do" in approval_smoke
-    )
-    assert "/data/home/.gemini/antigravity-cli/settings.json" in approval_smoke
-    assert 'mcp(playwright/${tool})' in approval_smoke
-    assert "settings.permissions" in approval_smoke
-    assert "tests/fake-antigravity-real.sh" in approval_smoke
-    assert "-dangerously-skip-permissions=true" in approval_smoke
-    assert "browser-approval-smoke.sh" in ci
-
-
-def test_local_update_persistence_smoke_is_wired_into_ci(
-    repository_root: Path,
-) -> None:
-    update_smoke_path = repository_root / "tests/update-smoke.sh"
-    update_smoke = update_smoke_path.read_text(encoding="utf-8")
-    ci = (repository_root / ".github/workflows/ci.yaml").read_text(
-        encoding="utf-8"
-    )
-
-    assert update_smoke.startswith("#!/usr/bin/env bash\nset -Eeuo pipefail\n")
-    assert "ghcr.io/kanu-coffee/antigravity-for-home-assistant:0.5.0" not in update_smoke
-    assert 'antigravity_user_files_update_mode: "preserve"' in update_smoke
-    assert "existing v1 installation" in update_smoke
-    assert "<<'SEED'" in update_smoke
-    assert "docker run --rm --interactive" in update_smoke
-    assert "seeded App options were not persisted to the update data volume" in (
-        update_smoke
-    )
-    assert 'test -s /data/options.json' in update_smoke
-    assert "type == \"object\"" in update_smoke
-    assert '"${DATA_VOLUME}:/data"' in update_smoke
-    assert '"${CONFIG_VOLUME}:/config"' in update_smoke
-    assert "/data/antigravity/config.toml" in update_smoke
-    assert "/data/antigravity/auth.json" in update_smoke
-    assert "/data/antigravity/AGENTS.md" in update_smoke
-    assert "/data/ssh/ssh_host_ed25519_key.pub" in update_smoke
-    assert "hashes_before" in update_smoke
-    assert "host_key_before" in update_smoke
-    assert "/data/home/.gemini/antigravity-cli/settings.json" in update_smoke
-    assert "/data/home/.gemini/config/mcp_config.json" in update_smoke
-    assert "/data/antigravity-ha-memory/memory.sqlite3" in update_smoke
-    assert "PRAGMA quick_check;" in update_smoke
-    assert "/data/home/.gemini/config/plugins/home-assistant/plugin.json" in update_smoke
-
-    assert "amd64-independent-smokes:" in ci
-    assert "- container" in ci
-    assert "- update" in ci
-    assert ci.index("- container") < ci.index("- update")
-    assert "exec bash tests/docker-smoke.sh" in ci
-    assert "exec bash tests/update-smoke.sh" in ci
-    assert "ghcr.io/kanu-coffee/antigravity-for-home-assistant:0.5.0" not in ci
-    assert "antigravity-for-home-assistant:test" in ci

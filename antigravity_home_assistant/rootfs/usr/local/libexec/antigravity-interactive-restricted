@@ -6,71 +6,12 @@ unset PYTHONHOME PYTHONINSPECT PYTHONPATH PYTHONSTARTUP
 unset GCONV_PATH GETCONF_DIR HOSTALIASES LOCALDOMAIN LOCPATH MALLOC_TRACE
 unset NLSPATH RES_OPTIONS TMPDIR TZDIR
 
-requester_environment=()
-if [[ -v ANTIGRAVITY_HA_CHANNEL || -v HA_TELEGRAM_USER_ID \
-  || -v HA_TELEGRAM_CHAT_ID || -v HA_TELEGRAM_SESSION_GENERATION \
-  || -v HA_TELEGRAM_UPDATE_ID || -v HA_TELEGRAM_RUN_NONCE \
-  || -v HA_ANTIGRAVITY_CONVERSATION_ID \
-  || -v HA_TELEGRAM_ACTION_PROPOSAL_SOCKET ]]; then
-  if [[ "${ANTIGRAVITY_HA_CHANNEL:-}" != telegram \
-    || ! "${HA_TELEGRAM_USER_ID:-}" =~ ^[1-9][0-9]{0,19}$ \
-    || ! "${HA_TELEGRAM_CHAT_ID:-}" =~ ^-?[1-9][0-9]{0,19}$ \
-    || ! "${HA_TELEGRAM_SESSION_GENERATION:-}" =~ ^[1-9][0-9]{0,15}$ \
-    || ! "${HA_TELEGRAM_UPDATE_ID:-}" =~ ^[1-9][0-9]{0,15}$ \
-    || ! "${HA_TELEGRAM_RUN_NONCE:-}" =~ ^[A-Za-z0-9_-]{24,128}$ \
-    || ( -n "${HA_ANTIGRAVITY_CONVERSATION_ID:-}" \
-      && ! "${HA_ANTIGRAVITY_CONVERSATION_ID}" =~ ^[A-Za-z0-9._:-]{1,256}$ ) \
-    || ! "${HA_TELEGRAM_ACTION_PROPOSAL_SOCKET:-}" \
-      =~ ^/run/antigravity-ha/[A-Za-z0-9._-]{1,120}\.sock$ ]]; then
-    printf 'antigravity: invalid Telegram requester binding\n' >&2
-    exit 78
-  fi
-  requester_environment=(
-    ANTIGRAVITY_HA_CHANNEL=telegram
-    "HA_TELEGRAM_USER_ID=${HA_TELEGRAM_USER_ID}"
-    "HA_TELEGRAM_CHAT_ID=${HA_TELEGRAM_CHAT_ID}"
-    "HA_TELEGRAM_SESSION_GENERATION=${HA_TELEGRAM_SESSION_GENERATION}"
-    "HA_TELEGRAM_UPDATE_ID=${HA_TELEGRAM_UPDATE_ID}"
-    "HA_TELEGRAM_RUN_NONCE=${HA_TELEGRAM_RUN_NONCE}"
-    "HA_ANTIGRAVITY_CONVERSATION_ID=${HA_ANTIGRAVITY_CONVERSATION_ID:-}"
-    "HA_TELEGRAM_ACTION_PROPOSAL_SOCKET=${HA_TELEGRAM_ACTION_PROPOSAL_SOCKET}"
-  )
-fi
-unset ANTIGRAVITY_HA_CHANNEL HA_TELEGRAM_USER_ID HA_TELEGRAM_CHAT_ID \
-  HA_TELEGRAM_SESSION_GENERATION HA_TELEGRAM_UPDATE_ID \
-  HA_TELEGRAM_RUN_NONCE HA_ANTIGRAVITY_CONVERSATION_ID \
-  HA_TELEGRAM_ACTION_PROPOSAL_SOCKET
-
-readonly SESSION_LOCK=/run/antigravity-ha/native-session.lock
-if [[ ! -f ${SESSION_LOCK} || -L ${SESSION_LOCK} ]]; then
-  printf '%s\n' 'antigravity: native-session lock is unavailable or unsafe' >&2
-  exit 78
-fi
-session_lock_metadata=$(/usr/bin/stat -Lc '%u:%g:%a:%h:%s:%d:%i' "${SESSION_LOCK}")
-if [[ ! ${session_lock_metadata} =~ ^0:0:600:1:0:[0-9]+:[0-9]+$ ]]; then
-  printf '%s\n' 'antigravity: native-session lock is unsafe' >&2
-  exit 78
-fi
-if [[ $(/usr/bin/stat -Lc '%u:%g:%a:%h:%s:%d:%i' "${SESSION_LOCK}") \
-    != "${session_lock_metadata}" ]]; then
-  printf '%s\n' 'antigravity: native-session lock is unsafe' >&2
-  exit 78
-fi
-unset session_lock_metadata
-
-# flock retains the shared lock in a trusted holder while --close prevents the
-# native process and every model-controlled child from inheriting its fd.
-exec /usr/bin/env --ignore-signal=INT --ignore-signal=QUIT \
-  /usr/bin/flock \
-  --shared --nonblock --close --conflict-exit-code 75 \
-  "${SESSION_LOCK}" \
-  /usr/bin/env --default-signal=INT --default-signal=QUIT -i \
+exec /usr/bin/env --default-signal=INT --default-signal=QUIT -i \
   AGY_CLI_DISABLE_AUTO_UPDATE=true \
   HOME=/data/home \
   LANG=C.UTF-8 \
   LC_ALL=C.UTF-8 \
   PATH=/usr/local/libexec/antigravity-command-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-  TERM=xterm-256color \
-  "${requester_environment[@]}" \
+  TERM="${TERM:-xterm-256color}" \
   /usr/bin/setpriv --pdeathsig KILL \
   /usr/local/libexec/antigravity-native-session-guard restricted "$@"

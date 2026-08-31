@@ -2,27 +2,12 @@ import re
 from pathlib import Path
 
 
-def test_browser_user_create_reads_password_without_process_arguments(
+def test_manual_browser_user_commands_are_removed(
     rootfs: Path,
 ) -> None:
-    wrapper = (rootfs / "usr/local/bin/ha-browser-user-create").read_text(
-        encoding="utf-8"
-    )
-
-    assert wrapper.splitlines()[:3] == [
-        "#!/bin/bash -p",
-        "set -Eeuo pipefail",
-        "unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN",
-    ]
-    assert "Usage: ha-browser-user-create <display-name> <username>" in wrapper
-    assert wrapper.count("read -r -s") == 2
-    assert "< /dev/tty" in wrapper
-    assert "HA_BROWSER_USER_PASSWORD_STDIN" in wrapper
-    assert "printf '%s' \"${password}\" | node" in wrapper
-    assert 'node "${HELPER}" create "$1" "$2"' in wrapper
-    assert "SUPERVISOR_TOKEN=" not in wrapper
-    assert "home_assistant_browser_token" in wrapper
-    assert "ha-browser-user-remove-password" in wrapper
+    bin_root = rootfs / "usr/local/bin"
+    assert not (bin_root / "ha-browser-user-create").exists()
+    assert not (bin_root / "ha-browser-user-remove-password").exists()
 
 
 def test_browser_user_helper_uses_supported_read_only_auth_commands(
@@ -42,55 +27,27 @@ def test_browser_user_helper_uses_supported_read_only_auth_commands(
     assert 'session.request("config/auth/delete", { user_id: user.id })' in helper
     assert 'session.request("config/auth_provider/homeassistant/delete"' in helper
     assert 'session.request("config/auth/list")' in helper
-    assert '"/run/antigravity-ha/browser-auth-status.json"' in helper
-    assert '"/run/antigravity-ha/home-assistant-browser.token"' in helper
-    assert 'status?.status !== "ready"' in helper
-    assert "status?.user?.id !== expectedUserId" in helper
     assert "user?.is_owner === false" in helper
     assert 'user.group_ids[0] === READ_ONLY_GROUP' in helper
     assert 'credential?.type === "homeassistant"' in helper
 
-    manual_create = helper.split("async function createUser", 1)[1].split(
-        "async function readReadyStatus", 1
-    )[0]
-    manual_remove = helper.split("async function removePassword", 1)[1].split(
-        "const supervisorToken", 1
-    )[0]
-    assert "process.stdin" in manual_create
-    assert "process.argv" not in manual_create
-    assert manual_remove.count(
-        'browserSession.request("auth/current_user")'
-    ) == 2
-    assert 'operation === "create" && args.length === 2' in helper
-    assert 'operation === "remove-password" && args.length === 1' in helper
+    assert "async function createUser" not in helper
+    assert "async function removePassword" not in helper
+    assert "process.stdin" not in helper
+    assert 'operation === "create"' not in helper
+    assert 'operation === "remove-password"' not in helper
+    assert 'operation === "auto-setup" && args.length === 0' in helper
+    assert 'operation === "auto-remove" && args.length === 0' in helper
 
     assert "configuration.yaml" not in helper
     assert ".storage" not in helper
     assert "auth_providers" not in helper
     assert "trusted_networks" not in helper
     assert "trusted_proxies" not in helper
-    assert "process.argv" not in helper.split("const password =", 1)[1].split(
-        "const result =", 1
-    )[0]
-
-
-def test_password_removal_requires_ready_status_and_explicit_user_id(
-    rootfs: Path,
-) -> None:
-    wrapper = (
-        rootfs / "usr/local/bin/ha-browser-user-remove-password"
-    ).read_text(encoding="utf-8")
-
-    assert wrapper.splitlines()[:3] == [
-        "#!/bin/bash -p",
-        "set -Eeuo pipefail",
-        "unset BASH_ENV ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN",
-    ]
-    assert "Usage: ha-browser-user-remove-password <user-id>" in wrapper
-    assert 'node "${HELPER}" remove-password "$1"' in wrapper
-    assert "ha-browser-auth-status" in wrapper
-    assert "SUPERVISOR_TOKEN=" not in wrapper
-    assert "HA_BROWSER_TOKEN=" not in wrapper
+    managed_setup = helper.split("async function setupManagedBrowserAuth", 1)[
+        1
+    ].split("async function removeManagedBrowserAuth", 1)[0]
+    assert "process.argv" not in managed_setup
 
 
 def test_managed_browser_auth_commands_are_argument_free_and_refresh_runtime(
@@ -131,11 +88,7 @@ def test_managed_browser_auth_commands_are_argument_free_and_refresh_runtime(
     assert "/usr/local/bin/ha-browser-auth-refresh --quiet" in setup
     assert "antigravity_ha_config_bool home_assistant_browser_auto_auth true" in setup
     assert "Enable the home_assistant_browser_auto_auth App option" in setup
-    assert "home_assistant_browser_token" in setup
-    assert 'if [[ -n "${manual_token}" ]]; then' in setup
-    assert "clear it before enabling managed authentication" in setup
-    assert 'printf \'%s\' "${manual_token}"' not in setup
-    assert 'echo "${manual_token}"' not in setup
+    assert "home_assistant_browser_token" not in setup
     assert "antigravity_ha_config_bool home_assistant_browser_auto_auth true" in remove
     assert "Disable home_assistant_browser_auto_auth" in remove
     assert remove.index("Disable home_assistant_browser_auto_auth") < remove.index(
@@ -174,12 +127,9 @@ def test_managed_browser_auth_commands_are_argument_free_and_refresh_runtime(
     ]
     assert "Usage: ha-browser-auth-ensure [--quiet]" in ensure
     assert "antigravity_ha_config_bool home_assistant_browser_auto_auth true" in ensure
-    assert "antigravity_ha_config_string home_assistant_browser_token ''" in ensure
+    assert "home_assistant_browser_token" not in ensure
     assert "/usr/local/bin/ha-browser-auth-refresh" in ensure
     assert "/usr/local/bin/ha-browser-auth-setup" in ensure
-    assert ensure.index("home_assistant_browser_token") < ensure.index(
-        "/usr/local/bin/ha-browser-auth-setup"
-    )
 
 
 def test_managed_browser_auth_storage_is_private_and_atomic(rootfs: Path) -> None:

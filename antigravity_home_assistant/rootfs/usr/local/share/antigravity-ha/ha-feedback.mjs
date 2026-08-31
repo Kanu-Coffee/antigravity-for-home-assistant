@@ -25,12 +25,10 @@ const CHECK_STATUSES = new Set([
   "NOT_RUN",
 ]);
 const SAFE_OPTION_KEYS = new Set([
-  "web_terminal_auto_start_antigravity",
-  "antigravity_tool_permission",
-  "antigravity_terminal_sandbox",
-  "browser_approval_policy",
-  "antigravity_user_files_update_mode",
+  "remote_control_name",
+  "antigravity_sensitive_data_access",
   "home_assistant_browser_auto_auth",
+  "log_level",
 ]);
 const COMMON_DRAFT_KEYS = new Set([
   "affected_feature",
@@ -661,7 +659,7 @@ function safeReadSmallFile(filePath, maxBytes = 4096) {
 }
 
 function readSafeOptions() {
-  // The init service writes only the six allowlisted, non-secret values here.
+  // The init service writes only the four allowlisted, non-secret values here.
   // The collector never opens the original App options file.
   try {
     fs.lstatSync(SAFE_OPTIONS_PATH);

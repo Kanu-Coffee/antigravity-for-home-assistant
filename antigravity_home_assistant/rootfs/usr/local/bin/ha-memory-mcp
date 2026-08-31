@@ -15,7 +15,7 @@ case "${ANTIGRAVITY_HA_MEMORY_READ_ONLY:-0}" in
     ;;
 esac
 
-unset ANTIGRAVITY_HA_CHANNEL HA_TELEGRAM_USER_ID HA_TELEGRAM_CHAT_ID
+unset ANTIGRAVITY_HA_CHANNEL
 exec /usr/bin/env -i \
   HOME=/tmp \
   LANG=C.UTF-8 \

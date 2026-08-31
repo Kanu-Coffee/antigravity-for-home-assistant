@@ -1,0 +1,383 @@
+#!/bin/bash -p
+set -Eeuo pipefail
+
+unset BASH_ENV CDPATH ENV NODE_OPTIONS NODE_PATH SUPERVISOR_TOKEN
+unset GLIBC_TUNABLES LD_AUDIT LD_DEBUG LD_LIBRARY_PATH LD_PRELOAD
+unset PYTHONHOME PYTHONINSPECT PYTHONPATH PYTHONSTARTUP
+unset GCONV_PATH GETCONF_DIR HOSTALIASES LOCALDOMAIN LOCPATH MALLOC_TRACE
+unset NLSPATH RES_OPTIONS TMPDIR TZDIR
+umask 077
+IFS=$' \t\n'
+
+readonly DATA_HOME=/data/home
+readonly GEMINI_HOME=${DATA_HOME}/.gemini
+readonly REMOTE_TOKEN=${GEMINI_HOME}/jetski-standalone-oauth-token
+readonly OPTIONS_SNAPSHOT=/run/antigravity-ha/ha-feedback-options.json
+readonly DEFAULT_REMOTE_NAME=home-assistant
+readonly MIN_REMOTE_PORT=4400
+readonly MAX_REMOTE_PORT=4499
+readonly MAX_TOKEN_BYTES=1048576
+readonly SAFE_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+readonly SAFE_TERM=xterm-256color
+
+# Do not resolve any utility through the authenticated caller's shell state.
+# The final native launch is independently reduced again with `env -i`.
+PATH=${SAFE_PATH}
+LANG=C.UTF-8
+LC_ALL=C.UTF-8
+export PATH LANG LC_ALL
+
+fail() {
+  printf 'Antigravity Remote Control: %s\n' "$1" >&2
+  exit "${2:-78}"
+}
+
+validate_shared_home() {
+  local metadata
+
+  if [[ -L ${DATA_HOME} || ! -d ${DATA_HOME} ]]; then
+    fail 'shared home is unavailable or unsafe'
+  fi
+  metadata=$(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a' -- "${DATA_HOME}" \
+    2>/dev/null) \
+    || fail 'shared home metadata is unavailable'
+  if [[ ! ${metadata} =~ ^4[0-9a-fA-F]{3}:[0-9]+:[0-9]+:0:0:700$ ]] \
+    || [[ $(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a' -- "${DATA_HOME}" \
+        2>/dev/null) != "${metadata}" ]]; then
+    fail 'shared home metadata is unsafe or unstable'
+  fi
+
+  if [[ -e ${GEMINI_HOME} || -L ${GEMINI_HOME} ]]; then
+    if [[ -L ${GEMINI_HOME} || ! -d ${GEMINI_HOME} ]]; then
+      fail 'credential directory is unsafe'
+    fi
+    metadata=$(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a' -- "${GEMINI_HOME}" \
+      2>/dev/null) \
+      || fail 'credential directory metadata is unavailable'
+    if [[ ! ${metadata} =~ ^4[0-9a-fA-F]{3}:[0-9]+:[0-9]+:0:0:700$ ]] \
+      || [[ $(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a' -- "${GEMINI_HOME}" \
+          2>/dev/null) != "${metadata}" ]]; then
+      fail 'credential directory metadata is unsafe or unstable'
+    fi
+  fi
+}
+
+# Return only an allowlisted state. The token is opaque and is never read,
+# parsed, copied, hashed, or printed by this App layer.
+remote_token_state() {
+  local device group inode links metadata mode owner raw_mode size
+
+  if [[ ! -e ${REMOTE_TOKEN} && ! -L ${REMOTE_TOKEN} ]]; then
+    printf 'absent\n'
+    return 0
+  fi
+  if [[ -L ${REMOTE_TOKEN} || ! -f ${REMOTE_TOKEN} ]]; then
+    printf 'unsafe\n'
+    return 0
+  fi
+  metadata=$(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a:%h:%s:%Y:%Z' \
+    -- "${REMOTE_TOKEN}" 2>/dev/null) || {
+      printf 'unsafe\n'
+      return 0
+    }
+  IFS=: read -r raw_mode device inode owner group mode links size _ \
+    <<< "${metadata}"
+  if [[ ! ${raw_mode} =~ ^8[0-9a-fA-F]{3}$ \
+    || ${owner} != 0 || ${group} != 0 || ${mode} != 600 \
+    || ${links} != 1 || ! ${device} =~ ^[0-9]+$ \
+    || ! ${inode} =~ ^[0-9]+$ || ! ${size} =~ ^[0-9]+$ ]] \
+    || (( size > MAX_TOKEN_BYTES )); then
+    printf 'unsafe\n'
+    return 0
+  fi
+  if [[ $(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a:%h:%s:%Y:%Z' \
+      -- "${REMOTE_TOKEN}" 2>/dev/null) != "${metadata}" ]]; then
+    printf 'unsafe\n'
+    return 0
+  fi
+  # The official CLI may briefly create the private destination before its
+  # opaque payload is complete. This state contains no usable credential and
+  # is safe to wait on; every other metadata mismatch remains fail-closed.
+  if (( size < 2 )); then
+    printf 'pending\n'
+    return 0
+  fi
+  printf 'ready\n'
+}
+
+# A native atomic replacement can change metadata between the two stat calls
+# above. Require a second independent unsafe observation before rejecting it;
+# this tolerates a bounded write/rename window without ever accepting an unsafe
+# inode as authenticated.
+stable_remote_token_state() {
+  local state
+
+  state=$(remote_token_state)
+  if [[ ${state} == unsafe ]]; then
+    /bin/sleep 1
+    state=$(remote_token_state)
+  fi
+  printf '%s\n' "${state}"
+}
+
+remote_name() {
+  local name snapshot_device snapshot_group snapshot_inode snapshot_links
+  local snapshot_metadata snapshot_mode snapshot_owner snapshot_raw_mode
+  local snapshot_size
+
+  name=${DEFAULT_REMOTE_NAME}
+  if [[ -e ${OPTIONS_SNAPSHOT} || -L ${OPTIONS_SNAPSHOT} ]]; then
+    if [[ -L ${OPTIONS_SNAPSHOT} || ! -f ${OPTIONS_SNAPSHOT} ]]; then
+      fail 'allowlisted option snapshot is unsafe'
+    fi
+    snapshot_metadata=$(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a:%h:%s:%Y:%Z' \
+      -- "${OPTIONS_SNAPSHOT}" 2>/dev/null) \
+      || fail 'allowlisted option snapshot metadata is unavailable'
+    IFS=: read -r snapshot_raw_mode snapshot_device snapshot_inode \
+      snapshot_owner snapshot_group snapshot_mode snapshot_links snapshot_size _ \
+      <<< "${snapshot_metadata}"
+    if [[ ! ${snapshot_raw_mode} =~ ^8[0-9a-fA-F]{3}$ \
+      || ${snapshot_owner} != 0 || ${snapshot_group} != 0 \
+      || ${snapshot_mode} != 600 || ${snapshot_links} != 1 \
+      || ! ${snapshot_device} =~ ^[0-9]+$ \
+      || ! ${snapshot_inode} =~ ^[0-9]+$ \
+      || ! ${snapshot_size} =~ ^[0-9]+$ ]] \
+      || (( snapshot_size < 2 || snapshot_size > 65536 )); then
+      fail 'allowlisted option snapshot metadata is unsafe'
+    fi
+    name=$(/usr/bin/jq --exit-status --raw-output '
+      if has("remote_control_name") then .remote_control_name
+      else "home-assistant"
+      end
+      | select(type == "string")
+    ' "${OPTIONS_SNAPSHOT}" 2>/dev/null) \
+      || fail 'remote_control_name is invalid'
+    if [[ $(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a:%h:%s:%Y:%Z' \
+        -- "${OPTIONS_SNAPSHOT}" 2>/dev/null) != "${snapshot_metadata}" ]]; then
+      fail 'allowlisted option snapshot changed while it was read'
+    fi
+  fi
+
+  # This deliberately follows the conservative naming form recommended by the
+  # official daemon installer and prevents control characters in service logs.
+  if [[ ! ${name} =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+    fail 'remote_control_name must use 1-63 lowercase letters, numbers, or hyphens'
+  fi
+  printf '%s\n' "${name}"
+}
+
+find_free_remote_port() {
+  local port
+
+  for ((port = MIN_REMOTE_PORT; port <= MAX_REMOTE_PORT; port += 1)); do
+    if ! (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then
+      printf '%s\n' "${port}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+terminate_remote_cli() {
+  local attempt pid=$1
+
+  [[ ${pid} =~ ^[1-9][0-9]*$ ]] || return 0
+  /bin/kill -TERM "${pid}" 2>/dev/null || return 0
+  for ((attempt = 0; attempt < 5; attempt += 1)); do
+    /bin/kill -0 "${pid}" 2>/dev/null || return 0
+    /bin/sleep 1
+  done
+  /bin/kill -KILL "${pid}" 2>/dev/null || true
+}
+
+launch_remote() {
+  local mode=$1 name port token_state
+  if [[ ${mode} != service && ${mode} != login ]]; then
+    fail 'invalid Remote Control launch mode' 64
+  fi
+  validate_shared_home
+  name=$(remote_name)
+  port=$(find_free_remote_port) \
+    || fail 'no free loopback port is available in 4400-4499' 75
+
+  cd /config || fail 'Home Assistant configuration workspace is unavailable'
+  # Revalidate the complete credential path after argument preparation and as
+  # close as possible to the native exec. The CLI still opens its documented
+  # token path itself, so AppArmor and the private root-owned parent directory
+  # remain the final anti-replacement boundary.
+  validate_shared_home
+  token_state=$(stable_remote_token_state)
+  if [[ ${mode} == service ]]; then
+    [[ ${token_state} == ready ]] \
+      || fail 'OAuth token changed before Remote Control could start'
+    exec /usr/bin/env --default-signal=INT --default-signal=QUIT -i \
+      AGY_CLI_DISABLE_AUTO_UPDATE=true \
+      AGY_CLI_HIDE_LOGO=true \
+      ANTIGRAVITY_HA_OPTIONS_FILE=${OPTIONS_SNAPSHOT} \
+      HOME=${DATA_HOME} \
+      LANG=C.UTF-8 \
+      LC_ALL=C.UTF-8 \
+      PATH=${SAFE_PATH} \
+      TERM=${SAFE_TERM} \
+      /usr/local/bin/agy \
+      --remote-control \
+      --hub-port "${port}" \
+      --remote-control-name "${name}" \
+      < /dev/null \
+      > /dev/null \
+      2>&1
+  fi
+
+  [[ ${token_state} == absent || ${token_state} == pending ]] \
+    || fail 'OAuth token changed before interactive authentication could start'
+  /usr/bin/env --default-signal=INT --default-signal=QUIT -i \
+    AGY_CLI_DISABLE_AUTO_UPDATE=true \
+    AGY_CLI_HIDE_LOGO=true \
+    ANTIGRAVITY_HA_OPTIONS_FILE=${OPTIONS_SNAPSHOT} \
+    HOME=${DATA_HOME} \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=${SAFE_PATH} \
+    TERM=${SAFE_TERM} \
+    /usr/local/bin/agy \
+    --remote-control \
+    --hub-port "${port}" \
+    --remote-control-name "${name}" \
+    < /dev/tty \
+    > /dev/tty \
+    2> /dev/tty &
+  remote_cli_pid=$!
+}
+
+service_main() {
+  local announced=false token_state
+
+  validate_shared_home
+  while true; do
+    token_state=$(stable_remote_token_state)
+    case ${token_state} in
+      ready)
+        launch_remote service
+        ;;
+      absent | pending)
+        if [[ ${announced} == false ]]; then
+          printf '%s\n' \
+            'Antigravity Remote Control is waiting for ha-antigravity-remote-login.' >&2
+          announced=true
+        fi
+        ;;
+      unsafe)
+        fail 'OAuth token metadata is unsafe; refusing to start'
+        ;;
+      *)
+        fail 'OAuth token state is invalid'
+        ;;
+    esac
+    /bin/sleep 2
+  done
+}
+
+login_main() {
+  local remote_cli_pid='' watcher_pid='' cli_status=0 watcher_status=0
+  local token_state
+
+  if [[ ! -t 0 || ! -t 1 || ! -t 2 || ! -c /dev/tty ]]; then
+    fail 'login requires an authenticated interactive terminal' 64
+  fi
+  validate_shared_home
+  token_state=$(stable_remote_token_state)
+  case ${token_state} in
+    ready)
+      printf '%s\n' \
+        'Antigravity Remote Control is already authenticated and starts automatically.'
+      return 0
+      ;;
+    absent | pending) ;;
+    unsafe)
+      fail 'OAuth token metadata is unsafe; refusing to overwrite it'
+      ;;
+    *)
+      fail 'OAuth token state is invalid'
+      ;;
+  esac
+
+  printf '%s\n' \
+    'Open the Antigravity sign-in URL shown below and complete Google authentication.' \
+    'The Remote Control service will start automatically when authentication succeeds.'
+
+  launch_remote login
+  (
+    while /bin/kill -0 "${remote_cli_pid}" 2>/dev/null; do
+      case $(stable_remote_token_state) in
+        ready)
+          /bin/sleep 2
+          terminate_remote_cli "${remote_cli_pid}"
+          exit 0
+          ;;
+        unsafe)
+          terminate_remote_cli "${remote_cli_pid}"
+          exit 78
+          ;;
+        absent | pending) ;;
+        *)
+          terminate_remote_cli "${remote_cli_pid}"
+          exit 78
+          ;;
+      esac
+      /bin/sleep 1
+    done
+  ) &
+  watcher_pid=$!
+
+  cleanup_login() {
+    if [[ -n ${remote_cli_pid} ]]; then
+      terminate_remote_cli "${remote_cli_pid}"
+      wait "${remote_cli_pid}" 2>/dev/null || true
+    fi
+    if [[ -n ${watcher_pid} ]]; then
+      /bin/kill -TERM "${watcher_pid}" 2>/dev/null || true
+      wait "${watcher_pid}" 2>/dev/null || true
+    fi
+  }
+  trap cleanup_login EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  set +e
+  wait "${remote_cli_pid}"
+  cli_status=$?
+  wait "${watcher_pid}" 2>/dev/null
+  watcher_status=$?
+  set -e
+  remote_cli_pid=''
+  watcher_pid=''
+  trap - EXIT HUP INT TERM
+
+  token_state=$(stable_remote_token_state)
+  if [[ ${token_state} == ready ]]; then
+    printf '\033[3J\033[2J\033[H'
+    printf '%s\n' \
+      'Antigravity Remote Control authentication completed.' \
+      'The background service is starting automatically; no App restart is required.'
+    return 0
+  fi
+  if [[ ${token_state} == unsafe || ${watcher_status} -eq 78 ]]; then
+    fail 'authentication produced unsafe OAuth token metadata'
+  fi
+  fail "authentication did not complete (Antigravity exited with status ${cli_status})" 76
+}
+
+case ${1:-} in
+  '')
+    (( $# == 0 )) || fail 'invalid arguments' 64
+    service_main
+    ;;
+  --login)
+    (( $# == 1 )) || fail 'invalid arguments' 64
+    login_main
+    ;;
+  *)
+    fail 'invalid arguments' 64
+    ;;
+esac

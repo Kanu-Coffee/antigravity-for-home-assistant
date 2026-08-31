@@ -1,6 +1,0 @@
-#!/command/with-contenv bashio
-# shellcheck shell=bash
-set -Eeuo pipefail
-
-bashio::log.info 'Starting the isolated Home Assistant change broker'
-exec /usr/local/bin/ha-change-broker

@@ -1,0 +1,16 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+set -Eeuo pipefail
+
+# Remote Control never needs the Supervisor credential. The launcher builds a
+# clean environment before starting the native CLI as an additional boundary.
+unset SUPERVISOR_TOKEN
+
+bashio::log.info 'Starting Antigravity Remote Control service'
+exec /usr/bin/env --default-signal=INT --default-signal=QUIT -i \
+  HOME=/data/home \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  TERM=xterm-256color \
+  /usr/local/libexec/ha-antigravity-remote-runtime

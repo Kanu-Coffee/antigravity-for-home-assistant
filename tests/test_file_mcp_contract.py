@@ -135,8 +135,7 @@ def test_file_mcp_has_a_dedicated_resolved_target_apparmor_boundary(
         "deny /backup/** rwklm,",
         "deny /ssl/** rwklm,",
         "deny /addon_configs/** rwklm,",
-        "deny /etc/ssh/ssh_host_* rwklm,",
-        "deny /etc/ssl/private/** rwklm,",
+            "deny /etc/ssl/private/** rwklm,",
         "deny /etc/antigravity/** rwklm,",
     ):
         assert denied in file_client

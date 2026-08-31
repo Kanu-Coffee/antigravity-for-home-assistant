@@ -190,13 +190,13 @@ def test_mock_success_returns_pretty_json(api_harness: tuple[str, Path, Path]) -
 def test_supervisor_self_options_are_recursively_redacted(
     api_harness: tuple[str, Path, Path]
 ) -> None:
-    synthetic_bot_token = "synthetic-telegram-bot-token-should-never-print"
+    synthetic_access_token = "synthetic-access-token-should-never-print"
     synthetic_password = "synthetic-password-should-never-print"
     body = (
         '{"result":"ok","data":{"options":'
-        f'{{"telegram_bot_token":"{synthetic_bot_token}",'
+        f'{{"access_token":"{synthetic_access_token}",'
         f'"nested":{{"password":"{synthetic_password}"}},'
-        '"telegram_enabled":true}}}'
+        '"remote_control_name":"home-assistant"}}}'
     )
     result = run_api(
         api_harness,
@@ -208,7 +208,7 @@ def test_supervisor_self_options_are_recursively_redacted(
     )
 
     assert result.returncode == 0
-    assert synthetic_bot_token not in result.stdout + result.stderr
+    assert synthetic_access_token not in result.stdout + result.stderr
     assert synthetic_password not in result.stdout + result.stderr
     assert result.stdout.count("[REDACTED]") >= 1
     assert '"data": "[REDACTED]"' in result.stdout
@@ -467,7 +467,6 @@ def test_unkeyed_common_credential_shapes_are_redacted(
     api_harness: tuple[str, Path, Path]
 ) -> None:
     synthetic_github_token = "".join(("gh", "p_", "a" * 30))
-    synthetic_telegram_token = "".join(("123456789:", "A" * 36))
     synthetic_aws_access_key = "".join(("AK", "IA", "A" * 16))
     synthetic_google_key = "".join(("AI", "za", "a" * 35))
     synthetic_slack_token = "".join(("xo", "xb-1234567890-", "a" * 16))
@@ -477,7 +476,6 @@ def test_unkeyed_common_credential_shapes_are_redacted(
         "Basic dXNlcjpwYXNzd29yZA==",
         "Basic mode Basic dTpw",
         "https://user:password@example.invalid/path",
-        synthetic_telegram_token,
         synthetic_github_token,
         synthetic_aws_access_key,
         synthetic_google_key,
@@ -671,7 +669,6 @@ def test_api_transport_ignores_caller_routing_environment(rootfs: Path) -> None:
     client = (
         rootfs / "usr/local/lib/antigravity-ha/api-client.sh"
     ).read_text(encoding="utf-8")
-    sshd = (rootfs / "etc/ssh/sshd_config").read_text(encoding="utf-8")
 
     assert 'HA_URL="${HA_URL:-' not in environment
     assert 'SUPERVISOR_URL="${SUPERVISOR_URL:-' not in environment
@@ -680,11 +677,6 @@ def test_api_transport_ignores_caller_routing_environment(rootfs: Path) -> None:
     assert "--disable" in client
     assert "--noproxy '*'" in client
     assert "--proto '=http'" in client
-    permit_environment = next(
-        line for line in sshd.splitlines() if line.startswith("PermitUserEnvironment ")
-    )
-    assert "HA_URL" not in permit_environment
-    assert "SUPERVISOR_URL" not in permit_environment
 
 
 def test_log_helpers_use_only_the_token_isolated_sanitized_broker(rootfs: Path) -> None:

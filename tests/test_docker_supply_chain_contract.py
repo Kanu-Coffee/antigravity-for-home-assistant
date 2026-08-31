@@ -68,15 +68,6 @@ def test_dependency_build_and_image_smoke_reject_package_manager_caches() -> Non
     )
 
 
-def test_dependency_build_and_image_smoke_remove_build_time_ssh_host_keys() -> None:
-    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-    docker_smoke = (ROOT / "tests/docker-smoke.sh").read_text(encoding="utf-8")
-
-    assert "rm -f /etc/ssh/ssh_host_*" in dockerfile
-    assert "/etc/ssh/ssh_host_*" in docker_smoke
-    assert "candidate image retained build-time SSH host keys" in docker_smoke
-
-
 def test_base_and_debian_packages_use_a_signed_fixed_snapshot() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     build_from = argument(dockerfile, "BUILD_FROM")

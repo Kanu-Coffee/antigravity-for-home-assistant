@@ -133,19 +133,15 @@ def test_feedback_native_skill_metadata_and_routing(rootfs: Path) -> None:
     runtime_guidance = (
         rootfs / "usr/local/share/antigravity-ha/AGENTS.md"
     ).read_text(encoding="utf-8")
-    feedback_guidance = runtime_guidance.split("## Feedback validation", 1)[1].split(
+    feedback_guidance = runtime_guidance.split("## Feedback", 1)[1].split(
         "## Validated Home Assistant memory", 1
     )[0]
     normalized_guidance = " ".join(feedback_guidance.lower().split())
     for required in (
         "/ha-feedback",
-        "bug",
-        "feature",
         "observational",
         "security issues",
-        "candidate issues",
-        "exact final payload",
-        "current-turn confirmation",
+        "explicit confirmation",
     ):
         assert required in normalized_guidance
 
@@ -190,12 +186,12 @@ def test_feedback_helper_is_pinned_and_image_managed(
     repository_root: Path,
     rootfs: Path,
 ) -> None:
-    assert addon_config["version"] == "2.1.3"
+    assert addon_config["version"] == "3.0.0"
     assert "/feedback/" in (repository_root / ".gitignore").read_text(
         encoding="utf-8"
     )
     dockerfile = (addon_root / "Dockerfile").read_text(encoding="utf-8")
-    assert "ARG BUILD_VERSION=2.1.3" in dockerfile
+    assert "ARG BUILD_VERSION=3.0.0" in dockerfile
     assert "ARG GH_VERSION=2.93.0" in dockerfile
     assert (
         "ARG GH_AMD64_SHA256="

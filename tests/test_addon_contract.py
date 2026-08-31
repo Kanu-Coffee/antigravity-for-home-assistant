@@ -10,10 +10,8 @@ import yaml
 
 EXPECTED_APPARMOR_PROFILES = {
     "antigravity_home_assistant",
-    "antigravity_home_assistant-broker-bootstrap",
+    "antigravity_home_assistant-read-broker-bootstrap",
     "antigravity_home_assistant-browser",
-    "antigravity_home_assistant-change-broker",
-    "antigravity_home_assistant-change-proposal-client",
     "antigravity_home_assistant-command",
     "antigravity_home_assistant-file-client",
     "antigravity_home_assistant-ha-helper",
@@ -23,19 +21,14 @@ EXPECTED_APPARMOR_PROFILES = {
     "antigravity_home_assistant-interactive-runtime-sensitive-read",
     "antigravity_home_assistant-interactive-sensitive-read",
     "antigravity_home_assistant-memory",
-    "antigravity_home_assistant-onboarding",
-    "antigravity_home_assistant-onboarding-runtime",
     "antigravity_home_assistant-playwright-bootstrap",
     "antigravity_home_assistant-read-broker",
     "antigravity_home_assistant-read-client",
-    "antigravity_home_assistant-settings-update",
+    "antigravity_home_assistant-remote",
     "antigravity_home_assistant-shell",
-    "antigravity_home_assistant-sshd",
-    "antigravity_home_assistant-telegram",
-    "antigravity_home_assistant-telegram-action-executor",
-    "antigravity_home_assistant-telegram-action-proposal-client",
-    "antigravity_home_assistant-telegram-admin",
 }
+
+REMOTE_TOKEN = "/data/home/.gemini/jetski-standalone-oauth-token"
 
 
 def _apparmor_profile(source: str, name: str) -> str:
@@ -100,14 +93,18 @@ def test_release_is_multi_arch_with_generic_registry_image(
         "2.0.12",
         "2.0.13",
         "2.1.0",
+        "3.0.0",
     ]
 
 
-def test_registry_release_workflow_is_tag_gated(repository_root: Path) -> None:
+def test_registry_release_workflow_has_one_main_publication_path(
+    repository_root: Path,
+) -> None:
     workflow_root = repository_root / ".github" / "workflows"
     builder_path = workflow_root / "builder.yaml"
     build_app_path = workflow_root / "build-app.yaml"
     candidate_path = workflow_root / "candidate.yaml"
+    main_release_path = workflow_root / "main-release.yaml"
 
     with builder_path.open(encoding="utf-8") as stream:
         builder = yaml.safe_load(stream)
@@ -115,26 +112,24 @@ def test_registry_release_workflow_is_tag_gated(repository_root: Path) -> None:
         build_app = yaml.safe_load(stream)
     with candidate_path.open(encoding="utf-8") as stream:
         candidate = yaml.safe_load(stream)
-    assert builder["on"]["push"] == {
-        "tags": ["[0-9]*.[0-9]*.[0-9]*"]
-    }
-    assert "branches" not in builder["on"]["push"]
+    with main_release_path.open(encoding="utf-8") as stream:
+        main_release = yaml.safe_load(stream)
+    assert set(builder["on"]) == {"pull_request"}
+    assert set(builder["jobs"]) == {"validate", "pull-request-build"}
 
     builder_text = builder_path.read_text(encoding="utf-8")
     build_app_text = build_app_path.read_text(encoding="utf-8")
     candidate_text = candidate_path.read_text(encoding="utf-8")
-    tag_parser_text = (
-        repository_root / ".github/scripts/parse-release-tag.sh"
-    ).read_text(encoding="utf-8")
-    assert "RELEASE_TAG: ${{ github.ref_name }}" in builder_text
-    assert "APP_IMAGE: ${{ fromJSON(steps.info.outputs.image) }}" in builder_text
-    assert "Release tag and App version differ" in builder_text
-    assert "parse-release-tag.sh" in builder_text
-    assert "Release tag must be annotated" in tag_parser_text
-    assert "Candidate-Run-ID" in tag_parser_text
-    assert "Release-Evidence-SHA256" in tag_parser_text
-    assert "secrets: inherit" not in builder_text
-    assert "packages: write" in builder_text
+    main_release_text = main_release_path.read_text(encoding="utf-8")
+    assert "[[ $APP_VERSION =~ ^3\\.[0-9]+\\.[0-9]+$ ]]" in builder_text
+    for retired_publication_step in (
+        "parse-release-tag.sh",
+        "release-oci.sh",
+        "ensure-github-release.sh",
+        "cosign sign",
+        "packages: write",
+    ):
+        assert retired_publication_step not in builder_text
     assert builder["jobs"]["pull-request-build"]["permissions"] == {
         "contents": "read",
         "packages": "read",
@@ -152,12 +147,7 @@ def test_registry_release_workflow_is_tag_gated(repository_root: Path) -> None:
     assert build_app["jobs"]["build"]["steps"][2]["with"]["push"] == (
         "${{ inputs.candidate }}"
     )
-    assert "anonymous-candidate-preflight.sh" in builder_text
-    assert "release-oci.sh ensure-tag" in builder_text
-    assert "Carbon-copy numeric tags without rebuilding" in builder_text
     assert "aarch64-antigravity-for-home-assistant" in build_app_text
-    assert "quality-gate" not in builder_text
-    assert "publish: true" not in builder_text
     assert "github.repository == 'Kanu-Coffee/antigravity-for-home-assistant'" in (
         build_app_text
     )
@@ -176,22 +166,15 @@ def test_registry_release_workflow_is_tag_gated(repository_root: Path) -> None:
     assert "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610" in (
         build_app_text
     )
-    assert "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8" in (
-        builder_text
-    )
-    assert "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6" in (
-        builder_text
-    )
-    assert "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6" in (
-        builder_text
-    )
-    assert "cosign sign --yes" in builder_text
-    assert "cosign verify" in builder_text
-    assert "--certificate-github-workflow-sha" in builder_text
-    assert "--predicate-type https://spdx.dev/Document/v2.3" in builder_text
-    assert "ensure-github-release.sh" in builder_text
     assert "candidate-${{ github.sha }}-${{ github.run_id }}" in candidate_text
     assert "verify-manual-evidence.sh" in candidate_text
+    assert set(main_release["on"]) == {"workflow_dispatch"}
+    assert set(main_release["jobs"]) == {"publish"}
+    assert "[[ $RELEASE_VERSION =~ ^3\\.[0-9]+\\.[0-9]+$ ]]" in (
+        main_release_text
+    )
+    assert "release-oci.sh ensure-tag" in main_release_text
+    assert "Candidate-Run-ID" in main_release_text
 
 
 def test_home_assistant_brand_assets(addon_root: Path) -> None:
@@ -235,7 +218,7 @@ def test_ingress_and_network_contract(addon_config: dict) -> None:
     assert addon_config["ingress_stream"] is True
     assert addon_config["ingress_port"] == 7681
     assert addon_config.get("panel_admin", True) is True
-    assert addon_config["ports"] == {"22/tcp": 2224}
+    assert "ports" not in addon_config
     assert "ssh_port" not in addon_config["options"]
     assert "ssh_port" not in addon_config["schema"]
 
@@ -276,1605 +259,241 @@ def test_supervisor_detects_one_primary_apparmor_profile(
     addon_root: Path,
 ) -> None:
     source = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
-
-    # Supervisor 2026.07.5 uses this exact start-of-line shape while choosing
-    # the one profile name it rewrites to the installed App slug. AppArmor's
-    # parser still treats the deliberately indented declarations below as
-    # independent top-level profiles, not local child profiles.
-    supervisor_profiles = [
-        match.group(1)
-        for line in source.splitlines()
-        if (match := re.match(r"^profile ([^ ]+).*$", line))
-    ]
     declarations = re.findall(
         r"(?m)^([ \t]*)profile\s+(antigravity_home_assistant[^\s{]*)",
         source,
     )
+    primary = [name for indentation, name in declarations if not indentation]
 
-    assert supervisor_profiles == ["antigravity_home_assistant"]
+    assert primary == ["antigravity_home_assistant"]
     assert {name for _, name in declarations} == EXPECTED_APPARMOR_PROFILES
     assert {
         name for indentation, name in declarations if indentation
     } == EXPECTED_APPARMOR_PROFILES - {"antigravity_home_assistant"}
 
 
-def test_apparmor_directed_transitions_resolve_to_loaded_top_level_profiles(
+def test_apparmor_transitions_resolve_and_policy_compiles(
     addon_root: Path,
 ) -> None:
     profile_path = addon_root / "apparmor.txt"
     source = profile_path.read_text(encoding="utf-8")
-    loaded_profiles = set(
+    targets = set(
         re.findall(
-            r"(?m)^[ \t]*profile\s+"
-            r"(antigravity_home_assistant[^\s{]*)",
+            r"(?m)^\s+\S.*?\s+r?Px\s+->\s+"
+            r"(antigravity_home_assistant[^\s,]+),\s*$",
             source,
         )
     )
-    directed_transitions = re.findall(
-        r"(?m)^\s+\S.*?\s+(r?Px)\s+->\s+"
-        r"(antigravity_home_assistant[^\s,]+),\s*$",
-        source,
-    )
-    transition_modes = re.findall(
-        r"(?m)^\s+\S.*?\s+(r?(?:P|C)x)"
-        r"(?:\s+->\s+[^\s,]+)?,\s*$",
-        source,
-    )
 
-    assert loaded_profiles == EXPECTED_APPARMOR_PROFILES
-    # The two operational native profiles intentionally add broad command
-    # transitions. The dedicated onboarding controller adds exactly the shell
-    # entry and native-runtime transitions while all normal paths stay intact.
-    assert (
-        "Px",
-        "antigravity_home_assistant-onboarding",
-    ) in directed_transitions
-    assert (
-        "Px",
-        "antigravity_home_assistant-onboarding-runtime",
-    ) in directed_transitions
-    assert len(directed_transitions) == 110
-    assert transition_modes.count("Px") == 108
-    assert transition_modes.count("rPx") == 3
-    assert len(transition_modes) == 111
+    assert targets <= EXPECTED_APPARMOR_PROFILES
     assert re.search(r"\b(?:c|C)x\b", source) is None
-    assert {target for _, target in directed_transitions} <= loaded_profiles
+    assert "  file," not in source
+    assert "  capability," not in source
+    assert "ptrace," not in source
+    assert "complain" not in source
 
     parser = shutil.which("apparmor_parser")
     if parser is None:
         return
-
     names = subprocess.run(
         [parser, "--skip-kernel-load", "--skip-cache", "--names", str(profile_path)],
         check=True,
         capture_output=True,
         text=True,
     ).stdout.splitlines()
-    assert set(names) == loaded_profiles
-
-    parser_help = subprocess.run(
-        [parser, "--help"],
+    assert set(names) == EXPECTED_APPARMOR_PROFILES
+    subprocess.run(
+        [parser, "--skip-kernel-load", "--skip-cache", str(profile_path)],
         check=True,
         capture_output=True,
         text=True,
     )
-    compile_command = [parser, "--skip-kernel-load", "--skip-cache"]
-    if "--zstd-compress-level" in parser_help.stdout + parser_help.stderr:
-        compile_command.append("--zstd-compress-level=none")
-    compile_command.extend(["--stdout", str(profile_path)])
-    compiled = subprocess.run(
-        compile_command,
-        check=True,
-        capture_output=True,
-    ).stdout
-    compiled_strings = {
-        match.group().decode("ascii")
-        for match in re.finditer(rb"[\x20-\x7e]{4,}", compiled)
-    }
-    assert loaded_profiles <= compiled_strings
-    assert not {
-        value
-        for value in compiled_strings
-        if "//antigravity_home_assistant" in value
-    }
 
 
-def test_apparmor_covers_pinned_s6_overlay_3_2_2_runtime_lifecycle(
-    addon_root: Path,
-) -> None:
-    profile_path = addon_root / "apparmor.txt"
-    source = profile_path.read_text(encoding="utf-8")
-    main_profile = _apparmor_profile(source, "antigravity_home_assistant")
-    secondary_profiles = source.split(
-        "profile antigravity_home_assistant-interactive-restricted", maxsplit=1
-    )[1]
-    dockerfile = (addon_root / "Dockerfile").read_text(encoding="utf-8")
-
-    # This immutable Home Assistant base was inspected to contain
-    # s6-overlay 3.2.2.0.  A base refresh must revalidate its /run lifecycle
-    # before updating this binding or the policy below.
-    assert (
-        "ARG BUILD_FROM=ghcr.io/home-assistant/base-debian:bookworm@sha256:"
-        "8c7a9e207425e79b6b2ed1628a2b6727fa6e518d9fdddcbe3b1ac20440e70492"
-    ) in dockerfile
-
-    expected_runtime_rules = {
-        "/run/{s6,s6-rc*,service}/ rw,",
-        "/run/{s6,s6-rc*,service}/** rwkix,",
-        "/run/s6-rc* rw,",
-        "/run/s6-linux-init-container-results/ rw,",
-        "/run/s6-linux-init-container-results/** rwk,",
-    }
-    for rule in expected_runtime_rules:
-        assert rule in main_profile
-        assert source.count(rule) == 1
-        assert rule not in secondary_profiles
-
-    # AppArmor's /** glob requires at least one descendant.  The exact
-    # directory rules are therefore security-significant: without them,
-    # s6-mkdir fails before PID 1 can establish the service tree.
-    assert "/run/{s6,s6-rc*,service}/** rwix," not in main_profile
-    assert "/run/**" not in main_profile
-    assert "/run/{,**}" not in main_profile
-
-    parser = shutil.which("apparmor_parser")
-    if parser is None:
-        return
-
-    parsed = subprocess.run(
-        [
-            parser,
-            "--skip-kernel-load",
-            "--skip-cache",
-            "--dump=rule-exprs",
-            str(profile_path),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    parser_rules = parsed.stdout + parsed.stderr
-    # Pin the parser expansion that caused the 2.0.13 regression: /** starts
-    # with a non-slash descendant, while the separate trailing-slash rule
-    # covers mkdir of the directory itself.
-    assert (
-        "aare: /run/{s6,s6-rc*,service}/   ->   "
-        "/run/(s6|s6-rc[^/\\x00]*|service)/"
-    ) in parser_rules
-    assert (
-        "aare: /run/{s6,s6-rc*,service}/**   ->   "
-        "/run/(s6|s6-rc[^/\\x00]*|service)/[^/\\x00][^\\x00]*"
-    ) in parser_rules
-
-
-def test_apparmor_allows_only_resolved_cold_start_executable_targets(
-    addon_root: Path,
-) -> None:
-    profile_path = addon_root / "apparmor.txt"
-    source = profile_path.read_text(encoding="utf-8")
-    dockerfile = (addon_root / "Dockerfile").read_text(encoding="utf-8")
-    rootfs = addon_root / "rootfs"
-
-    # These are the resolved executable targets observed in the immutable Home
-    # Assistant base below. A base refresh must re-resolve every link before
-    # changing the digest because AppArmor mediates the final target path.
-    assert (
-        "ARG BUILD_FROM=ghcr.io/home-assistant/base-debian:bookworm@sha256:"
-        "8c7a9e207425e79b6b2ed1628a2b6727fa6e518d9fdddcbe3b1ac20440e70492"
-    ) in dockerfile
-    resolved_image_links = {
-        "/bin/bash": "/usr/bin/bash",
-        "/command/execlineb": (
-            "/package/admin/execline-2.9.8.1/command/execline"
-        ),
-        "/command/s6-envdir": (
-            "/package/admin/s6-2.14.0.1/command/s6-envdir"
-        ),
-        "/command/s6-pause": (
-            "/package/admin/s6-portable-utils-2.3.1.1/command/"
-            "s6-portable-utils"
-        ),
-        "/command/with-contenv": (
-            "/package/admin/s6-overlay-3.2.2.0/command/with-contenv"
-        ),
-        "/usr/bin/bashio": "/usr/lib/bashio/bashio",
-    }
-    service_entry = rootfs / "etc/s6-overlay/s6-rc.d/antigravity-ha-init/run"
-    init_entry = rootfs / "usr/local/bin/antigravity-ha-init"
-    assert service_entry.read_text(encoding="utf-8").splitlines()[0] == (
-        "#!/command/with-contenv bashio"
-    )
-    assert init_entry.read_text(encoding="utf-8").splitlines()[0] == (
-        "#!/command/with-contenv bashio"
-    )
-    assert (
-        "exec /command/s6-pause"
-        in (
-            rootfs / "usr/local/libexec/ha-telegram-runtime"
-        ).read_text(encoding="utf-8")
-    )
-    assert re.search(r"^\s+tmux \\$", dockerfile, flags=re.MULTILINE)
-
-    profiles = {
-        name: _apparmor_profile(source, name)
-        for name in EXPECTED_APPARMOR_PROFILES
-    }
-    rules_by_profile = {
-        name: {line.strip() for line in profile.splitlines()}
-        for name, profile in profiles.items()
-    }
-    narrow_bash_profiles = {
-        "antigravity_home_assistant-broker-bootstrap",
-        "antigravity_home_assistant-change-proposal-client",
-        "antigravity_home_assistant-file-client",
-        "antigravity_home_assistant-interactive-restricted",
-        "antigravity_home_assistant-interactive-sensitive-read",
-            "antigravity_home_assistant-memory",
-            "antigravity_home_assistant-onboarding",
-            "antigravity_home_assistant-read-broker",
-        "antigravity_home_assistant-read-client",
-        "antigravity_home_assistant-settings-update",
-        "antigravity_home_assistant-sshd",
-        "antigravity_home_assistant-telegram-action-executor",
-        "antigravity_home_assistant-telegram-action-proposal-client",
-        "antigravity_home_assistant-telegram-admin",
-    }
-    expected_profiles_by_rule = {
-        f"{resolved_image_links['/bin/bash']} rix,": narrow_bash_profiles,
-        f"{resolved_image_links['/usr/bin/bashio']} rix,": {
-            "antigravity_home_assistant",
-            "antigravity_home_assistant-init",
-        },
-        f"{resolved_image_links['/command/execlineb']} rix,": {
-            "antigravity_home_assistant-init",
-        },
-        f"{resolved_image_links['/command/s6-envdir']} rix,": {
-            "antigravity_home_assistant-init",
-        },
-        f"{resolved_image_links['/command/s6-pause']} rix,": {
-            "antigravity_home_assistant-telegram",
-        },
-        f"{resolved_image_links['/command/with-contenv']} rix,": {
-            "antigravity_home_assistant-init",
-        },
-        "/usr/lib/{x86_64,aarch64}-linux-gnu/utempter/utempter rix,": {
-            "antigravity_home_assistant-shell",
-        },
-    }
-    for rule, expected_profiles in expected_profiles_by_rule.items():
-        actual_profiles = {
-            name for name, rules in rules_by_profile.items() if rule in rules
-        }
-        assert actual_profiles == expected_profiles
-        assert source.count(f"  {rule}\n") == len(expected_profiles)
-
-    # The init runtime re-enters the with-contenv chain after its Px
-    # transition. Keep the inherited s6 environment read-only and flat: the
-    # directory must be listable and each environment file readable, but init
-    # must not gain write access to the S6 runtime tree.
-    for rule in (
-        "/run/s6/container_environment/ r,",
-        "/run/s6/container_environment/* r,",
-    ):
-        actual_profiles = {
-            name for name, rules in rules_by_profile.items() if rule in rules
-        }
-        assert actual_profiles == {"antigravity_home_assistant-init"}
-        assert source.count(f"  {rule}\n") == 1
-    assert "/run/s6/container_environment/** r," not in source
-    assert "/run/s6/container_environment/ rw," not in source
-    assert "/run/s6/container_environment/* rw," not in source
-
-    # GNU find snapshots the inherited S6 oneshot cwd even when every search
-    # root is absolute. Permit only the randomly suffixed runner directory,
-    # without granting reads across the generated S6 service tree.
-    oneshot_cwd_rule = (
-        "/run/s6-rc:s6-rc-init:*/servicedirs/s6rc-oneshot-runner/ r,"
-    )
-    actual_profiles = {
-        name
-        for name, rules in rules_by_profile.items()
-        if oneshot_cwd_rule in rules
-    }
-    assert actual_profiles == {"antigravity_home_assistant-init"}
-    assert source.count(f"  {oneshot_cwd_rule}\n") == 1
-    for broad_oneshot_read in (
-        "/run/s6-rc:s6-rc-init:*/ r,",
-        "/run/s6-rc:s6-rc-init:*/** r,",
-        "/run/s6-rc:s6-rc-init:*/servicedirs/ r,",
-        "/run/s6-rc:s6-rc-init:*/servicedirs/** r,",
-    ):
-        assert broad_oneshot_read not in source
-
-    # Keep each new secondary-profile exception tied to the resolved files.
-    # The primary profile's pre-existing /package/** runtime grant is recorded
-    # explicitly; this correction must not copy it into a secondary profile or
-    # introduce another broad library/package rule.
-    assert "/package/** rix," in rules_by_profile[
-        "antigravity_home_assistant"
-    ]
-    for name, rules in rules_by_profile.items():
-        if name != "antigravity_home_assistant":
-            assert "/package/** rix," not in rules
-    assert "/usr/lib/** rix," not in source
-    assert "/usr/lib/bashio/** rix," not in source
-    assert "/package/admin/** rix," not in source
-    assert "/package/admin/s6-overlay-*/** rix," not in source
-    assert "/package/admin/execline-*/** rix," not in source
-    assert "/package/admin/s6-*/** rix," not in source
-
-    parser = shutil.which("apparmor_parser")
-    if parser is None:
-        return
-
-    parsed = subprocess.run(
-        [
-            parser,
-            "--skip-kernel-load",
-            "--skip-cache",
-            "--dump=rule-exprs",
-            str(profile_path),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    parser_rules = parsed.stdout + parsed.stderr
-    assert parser_rules.count(
-        "aare: /usr/lib/bashio/bashio   ->   /usr/lib/bashio/bashio"
-    ) == 2
-    assert parser_rules.count(
-        "aare: /package/admin/s6-overlay-3.2.2.0/command/with-contenv"
-        "   ->   /package/admin/s6-overlay-3\\.2\\.2\\.0/command/with-contenv"
-    ) == 1
-    # One init read rule plus the four operational and two onboarding deny
-    # rules compile this path.
-    assert parser_rules.count(
-        "aare: /run/s6/container_environment/   ->   "
-        "/run/s6/container_environment/"
-    ) == 7
-    assert parser_rules.count(
-        "aare: /run/s6/container_environment/*   ->   "
-        "/run/s6/container_environment/[^/\\x00][^/\\x00]*"
-    ) == 1
-    assert parser_rules.count(
-        "aare: /run/s6-rc:s6-rc-init:*/servicedirs/"
-        "s6rc-oneshot-runner/   ->   /run/s6-rc:s6-rc-init:"
-        "[^/\\x00]*/servicedirs/s6rc-oneshot-runner/"
-    ) == 1
-
-
-def test_apparmor_limits_cold_start_mutations_to_traced_init_paths(
-    addon_root: Path,
-) -> None:
+def test_apparmor_v3_remote_and_service_graph(addon_root: Path) -> None:
     source = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
-    rootfs = addon_root / "rootfs"
-    init_source = (
-        rootfs / "usr/local/bin/antigravity-ha-init"
-    ).read_text(encoding="utf-8")
-    profiles = {
-        name: _apparmor_profile(source, name)
-        for name in EXPECTED_APPARMOR_PROFILES
-    }
-    rules_by_profile = {
-        name: {line.strip() for line in profile.splitlines()}
-        for name, profile in profiles.items()
-    }
-
-    for command in (
-        "passwd -d root",
-        "usermod -s /usr/local/libexec/ha-ssh-session root",
-        "nginx -t -c /etc/nginx/nginx.conf",
-    ):
-        assert command in init_source
-
-    expected_profiles_by_rule = {
-        "deny capability fsetid,": {"antigravity_home_assistant-init"},
-        "capability fsetid,": {"antigravity_home_assistant-file-client"},
-        "/etc/.pwd.lock rwk,": {"antigravity_home_assistant-init"},
-        "/etc/{passwd,shadow}{,+,-,.lock,.[0-9]*} rwkl,": {
-            "antigravity_home_assistant-init"
-        },
-        "/run/nginx.pid rwk,": {
-            "antigravity_home_assistant",
-            "antigravity_home_assistant-init",
-        },
-        "/var/lib/nginx/ rw,": {
-            "antigravity_home_assistant",
-            "antigravity_home_assistant-init",
-        },
-        "/var/lib/nginx/{body,proxy,fastcgi,uwsgi,scgi}/ rwk,": {
-            "antigravity_home_assistant-init"
-        },
-        "/dev/stderr rw,": {
-            "antigravity_home_assistant",
-            "antigravity_home_assistant-init",
-        },
-        "/dev/stdout rw,": {
-            "antigravity_home_assistant",
-            "antigravity_home_assistant-init",
-        },
-    }
-    for rule, expected_profiles in expected_profiles_by_rule.items():
-        actual_profiles = {
-            name for name, rules in rules_by_profile.items() if rule in rules
-        }
-        assert actual_profiles == expected_profiles
-        assert source.count(f"  {rule}\n") == len(expected_profiles)
-
-    # Bash probes /dev/tty even in noninteractive mode. Keep those probes
-    # denied without audit noise instead of granting daemon profiles a TTY.
-    expected_tty_deny_profiles = {
-        "antigravity_home_assistant-broker-bootstrap",
-        "antigravity_home_assistant-browser",
-        "antigravity_home_assistant-change-broker",
-        "antigravity_home_assistant-file-client",
-        "antigravity_home_assistant-ha-helper",
-        "antigravity_home_assistant-memory",
-        "antigravity_home_assistant-playwright-bootstrap",
-        "antigravity_home_assistant-read-broker",
-        "antigravity_home_assistant-read-client",
-        "antigravity_home_assistant-settings-update",
-        "antigravity_home_assistant-telegram-action-executor",
-        "antigravity_home_assistant-telegram-action-proposal-client",
-        "antigravity_home_assistant-telegram-admin",
-    }
-    actual_tty_deny_profiles = {
-        name
-        for name, rules in rules_by_profile.items()
-        if "deny /dev/tty rw," in rules
-    }
-    assert actual_tty_deny_profiles == expected_tty_deny_profiles
-    for name in expected_tty_deny_profiles:
-        assert "/dev/tty rw," not in rules_by_profile[name]
-
-    init_profile = profiles["antigravity_home_assistant-init"]
-    for broad_write in (
-        "/etc/** rw,",
-        "/etc/** rwk,",
-        "/etc/** rwkl,",
-        "/var/** rw,",
-        "/var/** rwk,",
-    ):
-        assert broad_write not in init_profile
-
-
-def test_apparmor_limits_feature_runtime_paths_to_exact_profiles(
-    addon_root: Path,
-) -> None:
-    source = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
-    profiles = {
-        name: _apparmor_profile(source, name)
-        for name in EXPECTED_APPARMOR_PROFILES
-    }
-    rules_by_profile = {
-        name: {line.strip() for line in profile.splitlines()}
-        for name, profile in profiles.items()
-    }
-    expected_profiles_by_rule = {
-        "owner @{PROC}@{pid}/oom_score_adj rw,": {
-            "antigravity_home_assistant-sshd"
-        },
-        "/usr/lib/chromium/chrome_crashpad_handler rix,": {
-            "antigravity_home_assistant-browser"
-        },
-        "/usr/lib/chromium/chromium rix,": {
-            "antigravity_home_assistant-browser"
-        },
-        "/usr/local/bin/ha-playwright-mcp r,": {
-            "antigravity_home_assistant-playwright-bootstrap"
-        },
-        "/usr/local/libexec/ha-playwright-runtime r,": {
-            "antigravity_home_assistant-browser"
-        },
-        "/usr/local/share/fonts/ r,": {
-            "antigravity_home_assistant-browser"
-        },
-        "/usr/local/share/fonts/** r,": {
-            "antigravity_home_assistant-browser"
-        },
-        "/usr/share/fontconfig/ r,": {
-            "antigravity_home_assistant-browser"
-        },
-        "/usr/share/fontconfig/** r,": {
-            "antigravity_home_assistant-browser"
-        },
-        "/usr/share/fonts/ r,": {
-            "antigravity_home_assistant-browser"
-        },
-        "/usr/share/fonts/** r,": {
-            "antigravity_home_assistant-browser"
-        },
-        "/usr/share/glib-2.0/schemas/gschemas.compiled r,": {
-            "antigravity_home_assistant-browser"
-        },
-        "/usr/share/ca-certificates/ r,": {
-            "antigravity_home_assistant-interactive-runtime-restricted",
-            "antigravity_home_assistant-interactive-runtime-sensitive-read",
-            "antigravity_home_assistant-onboarding-runtime",
-        },
-        "/usr/share/ca-certificates/** r,": {
-            "antigravity_home_assistant-interactive-runtime-restricted",
-            "antigravity_home_assistant-interactive-runtime-sensitive-read",
-            "antigravity_home_assistant-onboarding-runtime",
-        },
-        "/usr/share/mime/mime.cache r,": {
-            "antigravity_home_assistant-browser"
-        },
-        "/var/cache/fontconfig/ rw,": {
-            "antigravity_home_assistant-browser"
-        },
-        "/var/cache/fontconfig/* rwkl,": {
-            "antigravity_home_assistant-browser"
-        },
-        "/var/tmp/ r,": {
-            "antigravity_home_assistant-browser"
-        },
-        "/dev/ r,": {
-            "antigravity_home_assistant",
-            "antigravity_home_assistant-browser",
-            "antigravity_home_assistant-command",
-            "antigravity_home_assistant-file-client",
-            "antigravity_home_assistant-init",
-            "antigravity_home_assistant-interactive-runtime-restricted",
-            "antigravity_home_assistant-interactive-runtime-sensitive-read",
-            "antigravity_home_assistant-onboarding",
-            "antigravity_home_assistant-onboarding-runtime",
-            "antigravity_home_assistant-settings-update",
-            "antigravity_home_assistant-shell",
-            "antigravity_home_assistant-sshd",
-        },
-        "/dev/pts/ r,": {
-            "antigravity_home_assistant",
-            "antigravity_home_assistant-browser",
-            "antigravity_home_assistant-change-proposal-client",
-            "antigravity_home_assistant-command",
-            "antigravity_home_assistant-file-client",
-            "antigravity_home_assistant-ha-helper",
-            "antigravity_home_assistant-interactive-restricted",
-            "antigravity_home_assistant-interactive-runtime-restricted",
-            "antigravity_home_assistant-interactive-runtime-sensitive-read",
-            "antigravity_home_assistant-interactive-sensitive-read",
-            "antigravity_home_assistant-memory",
-            "antigravity_home_assistant-onboarding",
-            "antigravity_home_assistant-onboarding-runtime",
-            "antigravity_home_assistant-playwright-bootstrap",
-            "antigravity_home_assistant-read-client",
-            "antigravity_home_assistant-settings-update",
-            "antigravity_home_assistant-shell",
-            "antigravity_home_assistant-sshd",
-            "antigravity_home_assistant-telegram-action-proposal-client",
-            "antigravity_home_assistant-telegram-admin",
-        },
-        "/dev/ptmx rw,": {
-            "antigravity_home_assistant",
-            "antigravity_home_assistant-shell",
-            "antigravity_home_assistant-sshd",
-        },
-        "/root/.bashrc r,": {
-            "antigravity_home_assistant-shell"
-        },
-        "/run/utmp rwk,": {
-            "antigravity_home_assistant-shell",
-            "antigravity_home_assistant-sshd",
-        },
-        "/var/log/wtmp rwk,": {
-            "antigravity_home_assistant-shell",
-            "antigravity_home_assistant-sshd",
-        },
-        "/config/antigravity-workspace/ rw,": {
-            "antigravity_home_assistant-ha-helper"
-        },
-        "/config/antigravity-workspace/feedback/ rw,": {
-            "antigravity_home_assistant-ha-helper"
-        },
-        "/config/antigravity-workspace/feedback/** rwkl,": {
-            "antigravity_home_assistant-ha-helper"
-        },
-        "deny /usr/local/libexec/antigravity-real x,": {
-            "antigravity_home_assistant-ha-helper"
-        },
-    }
-    for rule, expected_profiles in expected_profiles_by_rule.items():
-        actual_profiles = {
-            name for name, rules in rules_by_profile.items() if rule in rules
-        }
-        assert actual_profiles == expected_profiles
-        assert source.count(f"  {rule}\n") == len(expected_profiles)
-
-    sshd_profile = profiles["antigravity_home_assistant-sshd"]
-    helper_profile = profiles["antigravity_home_assistant-ha-helper"]
-    browser_profile = profiles["antigravity_home_assistant-browser"]
-    for native_runtime in (
-        "antigravity_home_assistant-interactive-runtime-restricted",
-        "antigravity_home_assistant-interactive-runtime-sensitive-read",
-    ):
-        assert "/usr/share/** r," not in profiles[native_runtime]
-    assert "/proc/self/oom_score_adj rw," not in source
-    assert "/proc/** rw," not in sshd_profile
-    assert "/config/** r," in helper_profile
-    assert "/config/** rwkl," not in helper_profile
-    assert "/usr/local/libexec/antigravity-real rix," not in helper_profile
-    assert "/usr/local/libexec/antigravity-real Px" not in helper_profile
-    for shadowing_deny in (
-        "deny /config/ rwklm,",
-        "deny /config/** rwklm,",
-        "deny /config/ rwklmx,",
-        "deny /config/** rwklmx,",
-    ):
-        assert shadowing_deny not in helper_profile
-    assert "/usr/lib/chromium/** rix," not in source
-    assert "/usr/local/bin/** r," not in profiles[
-        "antigravity_home_assistant-playwright-bootstrap"
-    ]
-    assert "/usr/local/libexec/** r," not in browser_profile
-    assert "/usr/share/** r," not in browser_profile
-    assert "/var/cache/** rwkl," not in source
-    assert "/var/cache/fontconfig/** rwkl," not in source
-    for operational_profile in (
-        "antigravity_home_assistant-interactive-runtime-restricted",
-        "antigravity_home_assistant-interactive-runtime-sensitive-read",
-    ):
-        assert "/var/tmp/** rwkl," in profiles[operational_profile]
-    assert "/var/tmp/** rwklix," in profiles[
-        "antigravity_home_assistant-command"
-    ]
-    assert "/var/tmp/** rwklix," in profiles["antigravity_home_assistant-shell"]
-    assert "/var/log/** rwk," not in source
-    assert "/dev/** r," not in source
-    assert "/dev/pts/** r," not in source
-    assert "/dev/pts/** rw," not in browser_profile
-    assert "/root/** r," not in source
-
-
-def test_apparmor_uses_resolved_owner_proc_paths_for_runtime_self_access(
-    addon_root: Path,
-) -> None:
-    source = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
-    profiles = {
-        name: _apparmor_profile(source, name)
-        for name in EXPECTED_APPARMOR_PROFILES
-    }
-    rules_by_profile = {
-        name: {line.strip() for line in profile.splitlines()}
-        for name, profile in profiles.items()
-    }
-    broker_bootstrap = profiles[
-        "antigravity_home_assistant-broker-bootstrap"
-    ]
-    owner_fd_directory = "owner @{PROC}@{pid}/fd/ r,"
-    owner_fd_descriptors = (
-        "owner @{PROC}@{pid}/fd/"
-        "{[1-9],[1-9][0-9],[1-9][0-9][0-9],"
-        "[1-9][0-9][0-9][0-9]} r,"
+    main = _apparmor_profile(source, "antigravity_home_assistant")
+    remote = _apparmor_profile(
+        source, "antigravity_home_assistant-remote"
+    )
+    shell = _apparmor_profile(source, "antigravity_home_assistant-shell")
+    broker = _apparmor_profile(
+        source, "antigravity_home_assistant-read-broker-bootstrap"
     )
 
-    # AppArmor mediates the numeric path after /proc/self is resolved. Limit
-    # the bootstrap exception to owner-owned descriptor entries accepted by
-    # supervisor-credential.sh (1..9999), without opening another proc tree.
-    assert {
-        name for name, rules in rules_by_profile.items()
-        if owner_fd_directory in rules
-    } == {"antigravity_home_assistant-broker-bootstrap"}
-    assert {
-        name for name, rules in rules_by_profile.items()
-        if owner_fd_descriptors in rules
-    } == {"antigravity_home_assistant-broker-bootstrap"}
-    assert "/proc/self/" not in broker_bootstrap
-    assert "/proc/** r," not in broker_bootstrap
-    assert "/proc/** rw," not in broker_bootstrap
-    assert "owner @{PROC}@{pid}/fd/** r," not in source
-    assert "owner @{PROC}@{pid}/fd/* r," not in source
-
-    # Explicit denies take precedence over allows, so the generic fd denies
-    # remain everywhere except the profile that must consume the inherited
-    # Supervisor credential descriptor.
-    for shadowing_deny in (
-        "deny @{PROC}@{pid}/fd/ r,",
-        "deny @{PROC}@{pid}/fd/** rwklm,",
-    ):
-        assert shadowing_deny not in broker_bootstrap
-        assert shadowing_deny in profiles["antigravity_home_assistant"]
-        assert shadowing_deny in profiles[
-            "antigravity_home_assistant-change-broker"
-        ]
-        assert shadowing_deny in profiles[
-            "antigravity_home_assistant-read-broker"
-        ]
-    for long_running_broker in (
-        "antigravity_home_assistant-change-broker",
-        "antigravity_home_assistant-read-broker",
-    ):
-        assert owner_fd_directory not in profiles[long_running_broker]
-        assert owner_fd_descriptors not in profiles[long_running_broker]
-    for runtime, target in (
-        ("ha-change-broker-runtime", "antigravity_home_assistant-change-broker"),
-        ("ha-read-broker-runtime", "antigravity_home_assistant-read-broker"),
-    ):
-        transition = f"/usr/local/libexec/{runtime} Px -> {target},"
-        assert transition in broker_bootstrap
-        assert source.count(f"  {transition}\n") == 1
-
-
-def test_custom_apparmor_profile_protects_home_assistant_secrets(
-    addon_root: Path,
-) -> None:
-    profile_path = addon_root / "apparmor.txt"
-    profile = profile_path.read_text(encoding="utf-8")
-    main_profile = _apparmor_profile(profile, "antigravity_home_assistant")
-    restricted_profile = _apparmor_profile(
-        profile,
-        "antigravity_home_assistant-interactive-runtime-restricted",
-    )
-    sensitive_profile = _apparmor_profile(
-        profile,
-        "antigravity_home_assistant-interactive-runtime-sensitive-read",
-    )
-    command_profile = _apparmor_profile(
-        profile, "antigravity_home_assistant-command"
-    )
-    settings_profile = _apparmor_profile(
-        profile, "antigravity_home_assistant-settings-update"
-    )
-    restricted_bootstrap = _apparmor_profile(
-        profile, "antigravity_home_assistant-interactive-restricted"
-    )
-    sensitive_bootstrap = _apparmor_profile(
-        profile, "antigravity_home_assistant-interactive-sensitive-read"
-    )
-    remaining_profiles = profile.split(
-        "profile antigravity_home_assistant-init", maxsplit=1
-    )[1]
-    sshd_profile = remaining_profiles.split(
-        "profile antigravity_home_assistant-sshd", maxsplit=1
-    )[1].split("profile antigravity_home_assistant-ha-helper", maxsplit=1)[0]
-    helper_profile = remaining_profiles.split(
-        "profile antigravity_home_assistant-ha-helper", maxsplit=1
-    )[1].split("profile antigravity_home_assistant-telegram-admin", maxsplit=1)[0]
-    telegram_admin_profile = remaining_profiles.split(
-        "profile antigravity_home_assistant-telegram-admin", maxsplit=1
-    )[1].split(
-        "profile antigravity_home_assistant-telegram flags", maxsplit=1
-    )[0]
-    telegram_profile = _apparmor_profile(
-        profile, "antigravity_home_assistant-telegram"
-    )
-    proposal_client_profile = _apparmor_profile(
-        profile, "antigravity_home_assistant-change-proposal-client"
-    )
-    change_broker_profile = remaining_profiles.split(
-        "profile antigravity_home_assistant-change-broker", maxsplit=1
-    )[1].split(
-        "profile antigravity_home_assistant-playwright-bootstrap", maxsplit=1
-    )[0]
-    browser_profile = remaining_profiles.split(
-        "profile antigravity_home_assistant-browser", maxsplit=1
-    )[1]
-    playwright_bootstrap_profile = remaining_profiles.split(
-        "profile antigravity_home_assistant-playwright-bootstrap", maxsplit=1
-    )[1].split(
-        "profile antigravity_home_assistant-browser", maxsplit=1
-    )[0]
-    broker_bootstrap_profile = _apparmor_profile(
-        profile, "antigravity_home_assistant-broker-bootstrap"
-    )
-    shell_profile = _apparmor_profile(
-        profile, "antigravity_home_assistant-shell"
-    )
-    init_profile = _apparmor_profile(
-        profile, "antigravity_home_assistant-init"
-    )
-
-    assert "profile antigravity_home_assistant" in profile
-    assert "complain" not in profile
-    assert "  file," not in profile
-    assert "  capability," not in profile
-    assert "ptrace," not in profile
-    assert "/config/** rwklix," in main_profile
-    assert "/run/{s6,s6-rc*,service}/ rw," in main_profile
-    assert "/run/{s6,s6-rc*,service}/** rwkix," in main_profile
-    assert "/run/antigravity-ha/** rwk," not in main_profile
-    helper_transition = next(
-        line
-        for line in main_profile.splitlines()
-        if "Px -> antigravity_home_assistant-ha-helper" in line
-    )
-    assert "ha-api" in helper_transition
-    assert "supervisor-api" in helper_transition
     assert (
-        "/usr/local/bin/ha-playwright-mcp Px -> "
-        "antigravity_home_assistant-playwright-bootstrap,"
-    ) in main_profile
+        "/etc/s6-overlay/s6-rc.d/"
+        "{antigravity-ha-init,antigravity-remote,ha-memoryd,"
+        "ha-read-broker,ingress,ttyd}/run rix,"
+    ) in main
     assert (
-        "/usr/local/bin/{ha-change-broker,ha-read-broker} Px -> "
-        "antigravity_home_assistant-broker-bootstrap,"
-    ) in main_profile
+        "/etc/s6-overlay/s6-rc.d/"
+        "{antigravity-remote,ingress,ttyd}/finish rix,"
+    ) in main
     assert (
-        "/usr/local/libexec/ha-interactive-shell Px -> "
-        "antigravity_home_assistant-shell,"
-    ) in main_profile
-    assert (
-        "/usr/local/libexec/ha-init-runtime Px -> "
-        "antigravity_home_assistant-init,"
-    ) in main_profile
-    assert (
-        "/usr/local/bin/web-terminal-entrypoint Px -> "
-        "antigravity_home_assistant-shell,"
-    ) in init_profile
-    assert (
-        "/usr/local/bin/web-terminal-entrypoint Px -> "
-        "antigravity_home_assistant-shell,"
-    ) in main_profile
-    assert (
-        "/usr/local/libexec/ha-sshd-runtime rPx,"
-    ) in main_profile
-    assert (
-        "profile antigravity_home_assistant-sshd "
-        "/usr/local/libexec/ha-sshd-runtime"
-    ) in profile
-    assert (
-        "/usr/local/libexec/ha-telegram-runtime Px -> "
-        "antigravity_home_assistant-telegram,"
-    ) in main_profile
-    assert (
-        "/usr/local/bin/ha-telegram-pair Px -> "
-        "antigravity_home_assistant-telegram-admin,"
-    ) in main_profile
+        "/usr/local/libexec/ha-antigravity-remote-runtime Px -> "
+        "antigravity_home_assistant-remote,"
+    ) in main
+    remote_login_transition = (
+        "/usr/local/bin/ha-antigravity-remote-login Px -> "
+        "antigravity_home_assistant-remote,"
+    )
+    assert remote_login_transition in main
+    assert remote_login_transition in shell
     assert (
         "/usr/local/libexec/antigravity-interactive-restricted Px -> "
         "antigravity_home_assistant-interactive-restricted,"
-    ) in main_profile
+    ) in remote
     assert (
         "/usr/local/libexec/antigravity-interactive-sensitive-read Px -> "
         "antigravity_home_assistant-interactive-sensitive-read,"
-    ) in main_profile
+    ) in remote
+    assert "/usr/local/libexec/ha-antigravity-remote-runtime rix," in remote
+    assert "/usr/bin/{env,flock,install,jq,kill,sleep,stat} rix," in remote
+    assert "/usr/local/bin/ha-read-broker rix," in broker
     assert (
-        "/usr/local/libexec/antigravity-real Px -> "
-        "antigravity_home_assistant-interactive-runtime-restricted,"
-    ) in restricted_bootstrap
-    assert (
-        "/usr/local/libexec/antigravity-real Px -> "
-        "antigravity_home_assistant-interactive-runtime-sensitive-read,"
-    ) in sensitive_bootstrap
-    for bootstrap_profile in (restricted_bootstrap, sensitive_bootstrap):
-        assert "/usr/bin/{env,flock,setpriv,stat} rix," in bootstrap_profile
-        assert (
-            "/usr/local/libexec/antigravity-native-session-guard rix,"
-            in bootstrap_profile
-        )
-    for bootstrap_profile in (restricted_bootstrap, sensitive_bootstrap):
-        assert "/etc/ld.so.cache r," in bootstrap_profile
-        assert "/etc/nsswitch.conf r," in bootstrap_profile
-        assert "/etc/passwd r," in bootstrap_profile
-        assert "/etc/** r," not in bootstrap_profile
-    assert profile.count("  /etc/nsswitch.conf r,\n") == 2
-    assert profile.count("  /etc/passwd r,\n") == 2
-    for runtime_profile in (restricted_profile, sensitive_profile):
-        assert "/bin/** Px -> antigravity_home_assistant-command," in runtime_profile
-        assert "/usr/bin/** Px -> antigravity_home_assistant-command," in runtime_profile
-        assert "/usr/local/libexec/antigravity-native-env r," in runtime_profile
-        assert "/usr/local/libexec/antigravity-real rm," in runtime_profile
-        assert "/usr/local/libexec/antigravity-real r," not in runtime_profile
-        assert "/usr/local/libexec/antigravity-real rix," not in runtime_profile
-        assert (
-            "deny /data/home/.gemini/antigravity-cli/settings.json wkl,"
-            in runtime_profile
-        )
-        assert "deny /data/home/.gemini/config/mcp_config.json wkl," in (
-            runtime_profile
-        )
-    onboarding_runtime = _apparmor_profile(
-        profile, "antigravity_home_assistant-onboarding-runtime"
-    )
-    assert "/usr/local/libexec/antigravity-real rm," in onboarding_runtime
-    assert profile.count("  /usr/local/libexec/antigravity-real rm,\n") == 3
-    for credential_profile in (
-        main_profile,
-        restricted_profile,
-        sensitive_profile,
-        command_profile,
-        shell_profile,
+        "/usr/local/libexec/ha-read-broker-runtime Px -> "
+        "antigravity_home_assistant-read-broker,"
+    ) in broker
+
+    for retired in (
+        "profile antigravity_home_assistant-telegram",
+        "profile antigravity_home_assistant-sshd",
+        "profile antigravity_home_assistant-change",
+        "profile antigravity_home_assistant-onboarding",
+        "profile antigravity_home_assistant-settings-update",
+        "ha-change-broker",
+        "ha-change-proposal",
+        "ha-telegram",
+        "ha-sshd",
+        "telegram-action",
+        "antigravity-user-files-update",
+        "ha-browser-user-create",
+        "ha-browser-user-remove-password",
+        "native-session.lock",
+        "user-files-update.lock",
+        "profile antigravity_home_assistant-broker-bootstrap",
     ):
-        for credential_directory in (
-            ".aws",
-            ".azure",
-            ".config/gcloud",
-            ".kube",
-        ):
-            assert (
-                f"deny /data/home/{credential_directory}/ rwklm,"
-                in credential_profile
-            )
-            assert (
-                f"deny /data/home/{credential_directory}/** rwklm,"
-                in credential_profile
-            )
-        for credential_file in (
-            ".docker/config.json{,.*}",
-            ".netrc",
-            ".npmrc",
-        ):
-            assert (
-                f"deny /data/home/{credential_file} rwklm,"
-                in credential_profile
-            )
-    assert "deny /run/antigravity-ha/supervisor.token rwklm," in (
-        main_profile
-    )
-    assert "/run/antigravity-ha/supervisor.token r," in helper_profile
-    assert "/run/antigravity-ha/supervisor.token rw," not in helper_profile
-    assert "deny /run/antigravity-ha/supervisor.token wklm," in (
-        helper_profile
-    )
-    for broad_runtime_write in (
-        "/run/antigravity-ha/** w,",
-        "/run/antigravity-ha/** rw,",
-        "/run/antigravity-ha/** rwk,",
-        "/run/antigravity-ha/** rwkl,",
-    ):
-        assert broad_runtime_write not in helper_profile
-    assert "deny /data/options.json rwklm," in helper_profile
-    assert "/run/antigravity-ha/ha-feedback-options.json r," in helper_profile
-    assert "deny /data/options.json rwklm," in playwright_bootstrap_profile
-    assert "/run/antigravity-ha/ha-feedback-options.json r," in (
-        playwright_bootstrap_profile
-    )
-    assert "/usr/local/bin/antigravity rix," in telegram_profile
-    assert (
-        "/usr/local/libexec/antigravity-interactive-restricted Px -> "
-        "antigravity_home_assistant-interactive-restricted,"
-    ) in telegram_profile
-    assert (
-        "/usr/local/libexec/antigravity-interactive-sensitive-read Px -> "
-        "antigravity_home_assistant-interactive-sensitive-read,"
-    ) in telegram_profile
-    assert "/run/antigravity-ha/change-broker.sock rw," in telegram_profile
-    assert "deny /run/antigravity-ha/change-proposal.sock rwklm," in (
-        telegram_profile
-    )
-    assert "/config/** r," not in telegram_profile
-    assert "/config/** rw" not in telegram_profile
-    assert "deny /run/antigravity-ha/supervisor.token rwklm," in (
-        telegram_profile
-    )
-    assert "/data/antigravity-ha/telegram/** rwkl," in telegram_admin_profile
-    assert "/run/antigravity-ha/telegram-pairing.lock rwk," in (
-        telegram_admin_profile
-    )
-    assert "deny /data/options.json rwklm," in telegram_admin_profile
-    assert "deny /run/antigravity-ha/supervisor.token rwklm," in (
-        telegram_admin_profile
-    )
-    assert "deny /config/** rwklm," in telegram_admin_profile
-    assert "network" not in telegram_admin_profile
-    assert (
-        "/usr/local/bin/ha-telegram-pair Px -> "
-        "antigravity_home_assistant-telegram-admin,"
-    ) in shell_profile
-    assert (
-        "tmux-session-shell,web-terminal-entrypoint} rix,"
-    ) in shell_profile
-    assert "ha-telegram-login" not in profile
-    assert "ha-telegram-worker" not in profile
-    assert "deny /data/antigravity-ha/telegram/** rwklm," in main_profile
-    assert "deny /data/antigravity-ha/change-broker/** rwklm," in main_profile
-    for readable_ssh_material in (
-        "/data/ssh/authorized_keys",
-        "/data/ssh/ssh_host_ed25519_key",
-        "/data/ssh/ssh_host_rsa_key",
-    ):
-        assert f"{readable_ssh_material} r," in sshd_profile
-    assert "deny /data/ssh/ wklmx," in sshd_profile
-    assert "deny /data/ssh/** wklmx," in sshd_profile
-    assert (
-        "/usr/local/libexec/ha-ssh-session rPx -> "
-        "antigravity_home_assistant-shell,"
-    ) in sshd_profile
-    assert (
-        "/usr/lib/openssh/sftp-server rPx -> "
-        "antigravity_home_assistant-shell,"
-        in sshd_profile
-    )
-    assert "deny /config/ rwklmx," in sshd_profile
-    assert "deny /config/** rwklmx," in sshd_profile
-    assert "/run/antigravity-ha/change-proposal.sock rw," in (
-        proposal_client_profile
-    )
-    assert "/usr/local/share/antigravity-ha/** r," in proposal_client_profile
-    assert "/usr/local/share/** r," not in proposal_client_profile
-    assert "Px -> antigravity_home_assistant-ha-helper" not in (
-        proposal_client_profile
-    )
-    assert "/run/antigravity-ha/supervisor.token r," not in (
-        proposal_client_profile
-    )
-    assert "deny /run/antigravity-ha/supervisor.token rwklm," in (
-        proposal_client_profile
-    )
-    assert "deny /config/ rwklm," in proposal_client_profile
-    assert "deny /config/** rwklm," in proposal_client_profile
-    assert "deny /data/home/** rwklm," in proposal_client_profile
-    assert "deny @{PROC}@{pid}/fd/** rwklm," in proposal_client_profile
-    assert "deny /run/antigravity-ha/change-broker.sock rwklm," in (
-        proposal_client_profile
-    )
-    assert "deny /data/options.json rwklm," in proposal_client_profile
-    assert (
-        "/usr/local/bin/ha-change-proposal-mcp Px -> "
-        "antigravity_home_assistant-change-proposal-client,"
-    ) in restricted_profile
-    assert (
-        "/usr/local/bin/ha-change-proposal-mcp Px -> "
-        "antigravity_home_assistant-change-proposal-client,"
-    ) in sensitive_profile
-    for removed_profile in (
-        "profile antigravity_home_assistant-telegram-login",
-        "profile antigravity_home_assistant-telegram-worker",
-        "profile antigravity_home_assistant-memory-telegram",
-        "profile antigravity_home_assistant-playwright-bootstrap-telegram",
-        "profile antigravity_home_assistant-browser-telegram",
-    ):
-        assert removed_profile not in profile
-    assert "/run/antigravity-ha/supervisor.token r," in broker_bootstrap_profile
-    assert (
-        "/usr/local/libexec/ha-change-broker-runtime Px -> "
-        "antigravity_home_assistant-change-broker,"
-    ) in broker_bootstrap_profile
-    assert "deny /run/antigravity-ha/supervisor.token rwklm," in (
-        change_broker_profile
-    )
-    assert "/config/{,**/}*.yaml rwkl," in change_broker_profile
-    assert "/config/{,**/}*.yml rwkl," in change_broker_profile
-    assert "/run/antigravity-ha/home-assistant-browser.token r," in (
-        browser_profile
-    )
-    assert "deny /run/antigravity-ha/supervisor.token rwklm," in (
-        browser_profile
-    )
-    recorder_glob = "/config/{,**/}*.{db,sqlite,sqlite3}{,.*,-*,~}"
-    for sensitive_path in (
-        "/config/secrets.yaml",
-        "/config/.storage/**",
-        recorder_glob,
-        "/config/.ssh/**",
-        "/config/ssl/**",
-        "/config/backups/**",
-    ):
-        assert f"deny {sensitive_path} rwklm," in main_profile
+        assert retired not in source
 
-    always_blocked_paths = (
-        "/config/secrets.yaml",
-        "/config/secrets.yaml.*",
-        "/config/.storage/",
-        "/config/.storage/**",
-    )
-    for sensitive_path in always_blocked_paths:
-        assert f"deny {sensitive_path} rwklmx," in restricted_profile
-        assert f"deny {sensitive_path} rwklmx," in sensitive_profile
-        assert f"{sensitive_path} r," not in sensitive_profile
-    assert f"deny {recorder_glob} wklmx," in sensitive_profile
-    for recorder_blocked_profile in (
-        restricted_profile,
-        command_profile,
-        shell_profile,
-    ):
-        assert f"deny {recorder_glob} rwklmx," in recorder_blocked_profile
-
-    # One recursive AppArmor rule covers the default Recorder name, configured
-    # nested SQLite locations, runtime journals, and adjacent recovery copies.
-    recorder_path_contract = re.compile(
-        r"^/config/(?:.*/)?[^/]+\.(?:db|sqlite|sqlite3)"
-        r"(?:[.-][^/]+|~)?$"
-    )
-    for recorder_candidate in (
-        "/config/home-assistant_v2.db",
-        "/config/home-assistant_v2.db-wal",
-        "/config/home-assistant_v2.db-shm",
-        "/config/home-assistant_v2.db-journal",
-        "/config/storage/recorder.sqlite3",
-        "/config/storage/recorder.sqlite3.backup",
-        "/config/nested/custom.sqlite-old",
-        "/config/nested/custom.db~",
-    ):
-        assert recorder_path_contract.fullmatch(recorder_candidate)
-    for ordinary_project_file in (
-        "/config/configuration.yaml",
-        "/config/dashboard.json",
-        "/config/nested/database.txt",
-    ):
-        assert recorder_path_contract.fullmatch(ordinary_project_file) is None
-    assert "home-assistant_v2.db" not in profile
-
-    always_denied_paths = (
-        "/data/antigravity/**",
-        "/data/browser-auth/**",
-        "/data/github-cli/**",
-        "/data/ssh/**",
-        "/data/home/.ssh/**",
-        "/run/antigravity-ha/supervisor.token",
-        "/run/antigravity-ha/home-assistant-browser.token",
-        "/config/.cloud/**",
-        "/config/.ssh/**",
-        "/config/ssl/**",
-        "/config/backups/**",
-    )
-    for sensitive_path in always_denied_paths:
-        assert f"deny {sensitive_path} rwklm" in restricted_profile
-        assert f"deny {sensitive_path} rwklm" in sensitive_profile
-
-    assert "deny /data/home/.gemini/** rwklm," in main_profile
-    assert "/data/home/** rwkl," in restricted_profile
-    assert "/data/home/** rwkl," in sensitive_profile
-    assert "/data/home/[^.]** rwklix," in command_profile
-    assert "/data/home/[^.]** rwklix," in shell_profile
-    for child_profile in (command_profile, shell_profile):
-        assert "deny /data/home/.gemini/antigravity-cli/oauth* rwklm," in (
-            child_profile
-        )
-        assert "deny /data/home/.gemini/antigravity-cli/cli.log rwklm," in (
-            child_profile
-        )
-        assert "deny /data/home/.gemini/antigravity-cli/log/** rwklm," in (
-            child_profile
-        )
-        assert (
-            "deny /data/home/.gemini/antigravity-cli/auth.json rwklm,"
-            in child_profile
-        )
-        assert (
-            "deny /data/home/.gemini/antigravity-cli/*credential* rwklm,"
-            in child_profile
-        )
-    assert "/data/home/.gemini/GEMINI.md r," in command_profile
-    assert "/data/home/.bash_history rwkl," in shell_profile
-    assert "/data/home/.bash_history rwkl," not in command_profile
-    assert (
-        "deny /data/home/.gemini/antigravity-cli/settings.json rwklm,"
-        in command_profile
-    )
-    assert "deny /run/antigravity-ha/supervisor.token rwklm," in command_profile
-    assert "deny /config/secrets.yaml rwklmx," in command_profile
-    assert (
-        "/usr/local/bin/agy-settings Px -> "
-        "antigravity_home_assistant-settings-update,"
-    ) in command_profile
-    assert (
-        "/data/home/.gemini/antigravity-cli/settings.json rwk,"
-        in settings_profile
-    )
-    assert (
-        "/usr/local/share/antigravity-ha/telegram-permission-policy.mjs r,"
-        in settings_profile
-    )
-    assert "/data/home/**" not in settings_profile
-    assert "deny /data/home/.gemini/antigravity-cli/oauth* rwklm," in settings_profile
-    assert "deny /data/options.json rwklm," in settings_profile
-    proc_denies = (
-        "deny @{PROC}@{pid}/{cmdline,environ,mem} rwklm,",
-        "deny @{PROC}@{pid}/fd/ r,",
-        "deny @{PROC}@{pid}/fd/** rwklm,",
-        "deny @{PROC}@{pid}/root r,",
-        "deny @{PROC}@{pid}/root/** rwklm,",
-        "deny @{PROC}@{pid}/map_files/ r,",
-        "deny @{PROC}@{pid}/map_files/** rwklm,",
-        "deny @{PROC}[0-9]*/task/[0-9]*/{cmdline,environ,mem} rwklm,",
-        "deny @{PROC}[0-9]*/task/[0-9]*/fd/** rwklm,",
-        "deny @{PROC}[0-9]*/task/[0-9]*/root/** rwklm,",
-        "deny @{PROC}[0-9]*/task/[0-9]*/map_files/** rwklm,",
-        "deny @{PROC}thread-self/{cmdline,environ,mem} rwklm,",
-        "deny @{PROC}thread-self/fd/** rwklm,",
-        "deny @{PROC}thread-self/root/** rwklm,",
-        "deny @{PROC}thread-self/map_files/** rwklm,",
-    )
-    helper_profile_exact = _apparmor_profile(
-        profile, "antigravity_home_assistant-ha-helper"
-    )
-    isolated_profiles = [
-        main_profile,
-        restricted_profile,
-        sensitive_profile,
-        command_profile,
-        settings_profile,
-        init_profile,
-        helper_profile_exact,
-        change_broker_profile,
-        _apparmor_profile(profile, "antigravity_home_assistant-read-broker"),
-        shell_profile,
-    ]
-    isolated_profiles.extend(
-        _apparmor_profile(profile, name)
-        for name in (
-                "antigravity_home_assistant-telegram-admin",
-                "antigravity_home_assistant-telegram",
-                "antigravity_home_assistant-change-proposal-client",
-                "antigravity_home_assistant-read-client",
-                "antigravity_home_assistant-memory",
-                "antigravity_home_assistant-playwright-bootstrap",
-                "antigravity_home_assistant-browser",
-            )
-    )
-    for isolated_profile in isolated_profiles:
-        for deny_rule in proc_denies:
-            assert deny_rule in isolated_profile
-
-
-def test_apparmor_operational_profiles_use_a_fail_closed_path_blacklist(
-    addon_root: Path,
-) -> None:
-    source = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
-    operational_names = (
-        "antigravity_home_assistant-interactive-runtime-restricted",
-        "antigravity_home_assistant-interactive-runtime-sensitive-read",
-        "antigravity_home_assistant-command",
-        "antigravity_home_assistant-shell",
-    )
-    operational = {
-        name: _apparmor_profile(source, name) for name in operational_names
-    }
-
-    for name, profile in operational.items():
-        assert "  / r," in profile
-        for mount_path in ("config", "share", "media"):
-            assert f"/{mount_path}/ rw," in profile
-        assert "/data/home/ rw," in profile
-        assert "/tmp/ rw," in profile
-        assert "/var/tmp/ rw," in profile
-        for journal_path in ("/var/log/journal", "/run/log/journal"):
-            assert f"deny {journal_path}/ rwklmx," in profile
-            assert f"deny {journal_path}/** rwklmx," in profile
-
-        for deny_rule in (
-            "deny /data/options.json rwklm,",
-            "deny /data/antigravity-ha/** rwklm,",
-            "deny /data/antigravity-ha-memory/** rwklm,",
-            "deny /run/antigravity-ha/supervisor.token rwklm,",
-            "deny /run/antigravity-ha/home-assistant-browser.token rwklm,",
-            "deny /run/s6/container_environment/** rwklmx,",
-            "deny /config/secrets.yaml rwklmx,",
-            "deny /config/secrets.yaml.* rwklmx,",
-            "deny /config/.storage/** rwklmx,",
-            "deny /backup/** rwklmx,",
-            "deny /ssl/** rwklmx,",
-            "deny /addon_configs/** rwklmx,",
-            "deny /usr/local/bin/** wkl,",
-            "deny /usr/local/libexec/** wkl,",
-            "deny /usr/local/share/antigravity-ha/** wkl,",
-            "deny /etc/antigravity/** wkl,",
-            "deny /etc/s6-overlay/** wkl,",
-            "deny @{PROC}@{pid}/{cmdline,environ,mem} rwklm,",
-            "deny @{PROC}@{pid}/fd/** rwklm,",
-            "deny @{PROC}@{pid}/root/** rwklm,",
-            "deny @{PROC}@{pid}/map_files/** rwklm,",
-            "deny @{PROC}[0-9]*/task/[0-9]*/{cmdline,environ,mem} rwklm,",
-            "deny @{PROC}[0-9]*/task/[0-9]*/fd/** rwklm,",
-            "deny @{PROC}[0-9]*/task/[0-9]*/root/** rwklm,",
-            "deny @{PROC}[0-9]*/task/[0-9]*/map_files/** rwklm,",
-            "deny @{PROC}thread-self/{cmdline,environ,mem} rwklm,",
-            "deny @{PROC}thread-self/fd/** rwklm,",
-            "deny @{PROC}thread-self/root/** rwklm,",
-            "deny @{PROC}thread-self/map_files/** rwklm,",
-        ):
-            assert deny_rule in profile, f"{name} omitted {deny_rule}"
-
-        assert "  mount," not in profile
-        assert "  umount," not in profile
-        assert "  pivot_root," not in profile
-        assert "  ptrace," not in profile
-        assert "  capability," not in profile
-        assert "capability sys_admin," not in profile
-        assert "capability sys_ptrace," not in profile
-        assert "capability dac_read_search," not in profile
-
-    for runtime_name in operational_names[:2]:
-        profile = operational[runtime_name]
-        assert "  /** rm," in profile
-        for path in ("config", "data/home", "share", "media", "tmp", "var/tmp"):
-            assert (
-                f"/{path}/** Px -> antigravity_home_assistant-command,"
-                in profile
-            )
-        assert "deny /data/home/.gemini/antigravity-cli/settings.json wkl," in (
-            profile
-        )
-        assert "deny /data/home/.gemini/config/mcp_config.json wkl," in profile
-        assert "deny /data/home/.gemini/GEMINI.md wkl," in profile
-
-    for child_name in operational_names[2:]:
-        profile = operational[child_name]
-        assert "  /** rm," not in profile
-        assert "/usr/** rm," in profile
-        assert "/var/** rm," in profile
-        assert "/data/home/[^.]** rwklix," in profile
-        assert "/data/home/.gemini/GEMINI.md r," in profile
-        assert "/data/home/.gemini/config/** rwklix," in profile
-        assert "/data/home/.gemini/antigravity-cli/agents/** rwklix," in profile
-        assert "/data/home/.gemini/antigravity-cli/plugins/** rwklix," in profile
-        assert "/data/home/.gemini/antigravity-cli/skills/** rwklix," in profile
-        assert "deny /data/home/.gemini/antigravity-cli/oauth* rwklm," in profile
-        assert "deny /data/home/.gemini/config/mcp_config.json rwklm," in profile
-
-    recorder = "/config/{,**/}*.{db,sqlite,sqlite3}{,.*,-*,~}"
-    assert f"deny {recorder} wklmx," in operational[operational_names[1]]
-    for blocked_name in (
-        operational_names[0],
-        operational_names[2],
-        operational_names[3],
-    ):
-        assert f"deny {recorder} rwklmx," in operational[blocked_name]
-
-    for bootstrap_name in (
-        "antigravity_home_assistant-interactive-restricted",
-        "antigravity_home_assistant-interactive-sensitive-read",
-    ):
-        bootstrap = _apparmor_profile(source, bootstrap_name)
-        assert "/dev/pts/ r," in bootstrap
-        assert "/dev/pts/** rw," in bootstrap
-        assert "/dev/ptmx" not in bootstrap
-
-    for helper_name in (
-        "antigravity_home_assistant-settings-update",
-        "antigravity_home_assistant-ha-helper",
-        "antigravity_home_assistant-telegram-admin",
-        "antigravity_home_assistant-telegram-action-proposal-client",
-        "antigravity_home_assistant-change-proposal-client",
-        "antigravity_home_assistant-read-client",
-        "antigravity_home_assistant-memory",
-        "antigravity_home_assistant-playwright-bootstrap",
-    ):
-        helper = _apparmor_profile(source, helper_name)
-        assert "/dev/pts/ r," in helper
-        assert "/dev/pts/** rw," in helper
-        assert "/dev/ptmx" not in helper
-
-    for client_name in (
-        "antigravity_home_assistant-telegram-action-proposal-client",
-        "antigravity_home_assistant-change-proposal-client",
-        "antigravity_home_assistant-read-client",
-        "antigravity_home_assistant-memory",
-    ):
-        client = _apparmor_profile(source, client_name)
-        assert "/usr/local/share/antigravity-ha/** r," in client
-        assert "/usr/local/share/** r," not in client
-
-    log_transition = (
-        "/usr/local/bin/{ha-addon-logs,ha-core-logs} Px -> "
-        "antigravity_home_assistant-read-client,"
-    )
-    for entry_name in ("antigravity_home_assistant", *operational_names):
-        assert log_transition in _apparmor_profile(source, entry_name)
-    helper = _apparmor_profile(source, "antigravity_home_assistant-ha-helper")
-    assert "ha-addon-logs" not in helper
-    assert "ha-core-logs" not in helper
-    read_client = _apparmor_profile(
-        source, "antigravity_home_assistant-read-client"
-    )
-    assert "/usr/local/bin/{ha-addon-logs,ha-core-logs} rix," in read_client
-    assert "/usr/local/share/antigravity-ha/ha-read-log-cli.mjs r," in read_client
-
-
-def test_universal_telegram_approval_has_one_way_apparmor_boundaries(
-    addon_root: Path,
-) -> None:
-    source = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
-    restricted = _apparmor_profile(
-        source, "antigravity_home_assistant-interactive-runtime-restricted"
-    )
-    sensitive = _apparmor_profile(
-        source, "antigravity_home_assistant-interactive-runtime-sensitive-read"
-    )
-    command = _apparmor_profile(source, "antigravity_home_assistant-command")
-    telegram = _apparmor_profile(
-        source, "antigravity_home_assistant-telegram"
-    )
-    proposal = _apparmor_profile(
-        source, "antigravity_home_assistant-telegram-action-proposal-client"
-    )
-    executor = _apparmor_profile(
-        source, "antigravity_home_assistant-telegram-action-executor"
-    )
     init = _apparmor_profile(source, "antigravity_home_assistant-init")
-
-    proposal_transition = (
-        "/usr/local/bin/telegram-action-proposal-mcp Px -> "
-        "antigravity_home_assistant-telegram-action-proposal-client,"
-    )
-    for native_runtime in (restricted, sensitive):
-        assert proposal_transition in native_runtime
-        assert "deny /run/antigravity-ha/telegram-action-proposal.sock rwklm," in (
-            native_runtime
-        )
-    assert source.count(proposal_transition) == 2
-
-    # A model-controlled shell descendant cannot re-enter the universal-action
-    # proposal client. Only the native MCP server process may cross that
-    # boundary.
-    assert proposal_transition not in command
-    assert "telegram-action-proposal-mcp Px" not in command
-    assert "deny /run/antigravity-ha/telegram-action-proposal.sock rwklm," in (
-        command
-    )
-
-    executor_transition = (
-        "/usr/local/bin/telegram-action-executor Px -> "
-        "antigravity_home_assistant-telegram-action-executor,"
-    )
-    assert executor_transition in telegram
-    assert source.count(executor_transition) == 1
-    assert "/run/antigravity-ha/telegram-action-proposal.sock rwk," in telegram
-    for settings_path in (
-        "/data/home/ r,",
-        "/data/home/.gemini/ r,",
-        "/data/home/.gemini/antigravity-cli/ r,",
-        "/data/home/.gemini/antigravity-cli/settings.json r,",
+    for retired_init_rule in (
+        "capability fsetid,",
+        "capability setgid,",
+        "capability setuid,",
+        "/etc/.pwd.lock",
+        "/etc/{passwd,shadow}",
+        "root unlock",
     ):
-        assert settings_path in telegram
-    assert "deny /data/home/** wklm," in telegram
-    assert "/data/home/** r" not in telegram
-    assert "/run/antigravity-ha/telegram-action-proposal.sock rw," in proposal
-    assert "network unix stream," in proposal
-    assert "network," not in proposal
-    assert "deny /data/** rwklm," in proposal
-    assert "deny /config/** rwklm," in proposal
-
-    for credential_path in (
-        "/run/antigravity-ha/supervisor.token",
-        "/run/antigravity-ha/home-assistant-browser.token",
-        "/etc/shadow",
-        "/etc/gshadow",
-        "/etc/ssh/ssh_host_*",
-        "/etc/ssl/private/**",
-        "/root/.ssh/**",
-    ):
-        assert f"deny {credential_path} rwklm," in proposal
-
-    assert "  network" not in executor
-    assert (
-        "/usr/local/libexec/antigravity-command-bin/bash Px -> "
-        "antigravity_home_assistant-command,"
-    ) in executor
-    assert "deny /run/antigravity-ha/** rwklm," in executor
-    assert "deny /data/home/.gemini/antigravity-cli/settings.json rwklm," in (
-        executor
-    )
-    assert "deny /data/home/.gemini/config/mcp_config.json rwklm," in executor
-    assert "deny /config/.storage/ rwklm," in executor
-    assert "deny /config/.storage/** rwklm," in executor
-    assert "deny /config/{.ssh,ssl,backups,.cloud}/ rwklm," in executor
-    assert "deny /config/{.ssh,ssl,backups,.cloud}/** rwklm," in executor
-    for credential_path in (
-        "/data/home/.docker/config.json{,.*}",
-        "/data/home/.netrc",
-        "/data/home/.npmrc",
-        "/etc/shadow",
-        "/etc/gshadow",
-        "/etc/ssh/ssh_host_*",
-        "/etc/ssl/private/**",
-        "/root/.ssh/**",
-    ):
-        assert f"deny {credential_path} rwklm," in executor
-
-    # Init has a deliberately broad transient /run grant, so the private
-    # approval socket needs an explicit exception there as well.
-    assert "/run/antigravity-ha/** rwk," in init
-    assert "deny /run/antigravity-ha/telegram-action-proposal.sock rwklm," in init
+        assert retired_init_rule not in init
 
 
-def test_apparmor_bash_transition_targets_reject_startup_injection(
+def test_apparmor_remote_token_is_native_runtime_only(
     addon_root: Path,
-    rootfs: Path,
 ) -> None:
-    profile = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
-    patterns = re.findall(
-        r"^\s+(/\S+)\s+\S*[pPcC]x\s+->", profile, re.MULTILINE
+    source = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
+    allow_rule = f"{REMOTE_TOKEN} rwkl,"
+    deny_rule = f"deny {REMOTE_TOKEN} rwklm,"
+    native_profiles = {
+        "antigravity_home_assistant-interactive-runtime-restricted",
+        "antigravity_home_assistant-interactive-runtime-sensitive-read",
+    }
+    # Init is the sole lifecycle exception because the one-time v3 factory
+    # reset must be able to unlink a pre-existing token with /data/home.
+    denied_profiles = EXPECTED_APPARMOR_PROFILES - native_profiles - {
+        "antigravity_home_assistant-init"
+    }
+
+    for name in native_profiles:
+        profile = _apparmor_profile(source, name)
+        assert allow_rule in profile
+        assert f"deny {REMOTE_TOKEN} x," in profile
+        assert deny_rule not in profile
+    for name in denied_profiles:
+        profile = _apparmor_profile(source, name)
+        assert deny_rule in profile
+        assert f"\n  {allow_rule}" not in profile
+
+    init = _apparmor_profile(source, "antigravity_home_assistant-init")
+    assert REMOTE_TOKEN not in init
+    assert source.count(f"\n  {allow_rule}") == len(native_profiles)
+    assert source.count(deny_rule) == len(denied_profiles)
+
+
+def test_apparmor_preserves_runtime_secret_boundaries(
+    addon_root: Path,
+) -> None:
+    source = (addon_root / "apparmor.txt").read_text(encoding="utf-8")
+    operational_profiles = {
+        "antigravity_home_assistant-command",
+        "antigravity_home_assistant-interactive-runtime-restricted",
+        "antigravity_home_assistant-interactive-runtime-sensitive-read",
+        "antigravity_home_assistant-shell",
+    }
+    for name in operational_profiles:
+        profile = _apparmor_profile(source, name)
+        assert "deny /config/secrets.yaml rwklmx," in profile
+        assert "deny /config/.storage/** rwklmx," in profile
+        assert "deny /run/antigravity-ha/supervisor.token rwklm," in profile
+        assert (
+            "deny /run/antigravity-ha/home-assistant-browser.token rwklm,"
+            in profile
+        )
+
+    main = _apparmor_profile(source, "antigravity_home_assistant")
+    assert "/run/{s6,s6-rc*,service}/ rw," in main
+    assert "/run/{s6,s6-rc*,service}/** rwkix," in main
+    assert "/run/**" not in main
+    assert "deny /config/secrets.yaml rwklm," in main
+    assert "deny /config/.storage/** rwklm," in main
+
+    read_broker = _apparmor_profile(
+        source, "antigravity_home_assistant-read-broker"
     )
-    patterns.extend(
-        re.findall(r"^\s+(/\S+)\s+\S*[pP]x,\s*$", profile, re.MULTILINE)
-    )
-    expanded_paths: set[str] = set()
-
-    for pattern in patterns:
-        match = re.search(r"\{([^{}]+)\}", pattern)
-        if match is None:
-            expanded_paths.add(pattern)
-            continue
-        for item in match.group(1).split(","):
-            expanded_paths.add(
-                f"{pattern[:match.start()]}{item}{pattern[match.end():]}"
-            )
-
-    checked: set[str] = set()
-    for absolute_path in expanded_paths:
-        # Generic model-spawned binaries intentionally cross into the command
-        # child profile. They are image/runtime globs, not local startup
-        # wrappers whose shell prologue can be inspected here.
-        if any(character in absolute_path for character in ("*", "?", "[")):
-            continue
-        source_path = rootfs / absolute_path.removeprefix("/")
-        if not source_path.is_file():
-            # These binaries are installed or downloaded and verified at image
-            # build time rather than stored in rootfs.
-            assert absolute_path in {
-                "/usr/lib/openssh/sftp-server",
-                "/usr/local/libexec/antigravity-real",
-            }
-            continue
-        source = source_path.read_text(encoding="utf-8")
-        if not source.startswith("#!"):
-            continue
-        lines = source.splitlines()
-        expected_unset = "unset BASH_ENV ENV NODE_OPTIONS NODE_PATH"
-        if absolute_path != "/usr/local/libexec/ha-init-runtime":
-            expected_unset += " SUPERVISOR_TOKEN"
-        assert lines[:3] == [
-            "#!/bin/bash -p",
-            "set -Eeuo pipefail",
-            expected_unset,
-        ], absolute_path
-        checked.add(absolute_path)
-
-    assert {
-        "/usr/local/libexec/ha-init-runtime",
-        "/usr/local/libexec/ha-sshd-runtime",
-        "/usr/local/libexec/ha-ssh-session",
-        "/usr/local/libexec/ha-interactive-shell",
-        "/usr/local/libexec/ha-telegram-runtime",
-        "/usr/local/libexec/ha-change-broker-runtime",
-        "/usr/local/libexec/ha-read-broker-runtime",
-        "/usr/local/libexec/antigravity-interactive-restricted",
-        "/usr/local/libexec/antigravity-interactive-sensitive-read",
-        "/usr/local/bin/ha-change-broker",
-        "/usr/local/bin/ha-api",
-        "/usr/local/bin/supervisor-api",
-        "/usr/local/bin/ha-playwright-mcp",
-        "/usr/local/libexec/ha-playwright-runtime",
-    } <= checked
+    assert "/run/antigravity-ha/ha-read.sock rwk," in read_broker
+    assert "deny /data/** rwklm," in read_broker
+    assert "deny /config/** rwklm," in read_broker
 
 
 def test_security_sensitive_defaults(addon_config: dict) -> None:
-    assert addon_config["options"]["authorized_keys"] == []
-    assert addon_config["options"]["web_terminal_auto_start_antigravity"] is False
-    assert addon_config["options"]["telegram_enabled"] is False
-    assert addon_config["options"]["telegram_allowed_user_ids"] == []
-    assert addon_config["options"]["telegram_allowed_chat_ids"] == []
-    assert "telegram_access_mode" not in addon_config["options"]
-    assert "telegram_access_mode" not in addon_config["schema"]
-    assert addon_config["options"]["antigravity_tool_permission"] == (
-        "request-review"
-    )
-    assert addon_config["schema"]["antigravity_tool_permission"] == (
-        "list(request-review|proceed-in-sandbox|always-proceed|strict)"
-    )
-    assert addon_config["options"]["antigravity_terminal_sandbox"] is False
-    assert addon_config["schema"]["antigravity_terminal_sandbox"] == "bool"
+    assert set(addon_config["options"]) == {
+        "remote_control_name",
+        "antigravity_sensitive_data_access",
+        "home_assistant_browser_auto_auth",
+        "log_level",
+    }
+    assert addon_config["options"]["remote_control_name"] == "home-assistant"
     assert addon_config["options"]["antigravity_sensitive_data_access"] is False
     assert addon_config["schema"]["antigravity_sensitive_data_access"] == "bool"
-    assert addon_config["options"]["antigravity_user_files_update_mode"] == (
-        "preserve"
-    )
-    assert addon_config["schema"]["antigravity_user_files_update_mode"] == (
-        "list(preserve|refresh_managed|reset_v2|refresh_agents|refresh_all)"
-    )
     assert addon_config["options"]["home_assistant_browser_auto_auth"] is True
     assert addon_config["schema"]["home_assistant_browser_auto_auth"] == "bool"
-    assert "home_assistant_browser_token" not in addon_config["options"]
-    for removed_codex_option in (
+    assert addon_config["options"]["log_level"] == "info"
+    for removed_option in (
+        "authorized_keys",
+        "web_terminal_auto_start_antigravity",
+        "telegram_enabled",
+        "telegram_allowed_user_ids",
+        "telegram_allowed_chat_ids",
+        "telegram_access_mode",
+        "antigravity_tool_permission",
+        "antigravity_terminal_sandbox",
+        "antigravity_user_files_update_mode",
         "antigravity_token",
         "antigravity_approval_policy",
         "antigravity_sandbox_mode",
         "browser_approval_policy",
         "home_assistant_browser_token",
     ):
-        assert removed_codex_option not in addon_config["options"]
-        assert removed_codex_option not in addon_config["schema"]
+        assert removed_option not in addon_config["options"]
+        assert removed_option not in addon_config["schema"]
 
 
-def test_new_v2_options_are_translated(addon_root: Path) -> None:
+def test_v3_options_are_translated(addon_root: Path) -> None:
     expected_options = {
-        "telegram_allowed_user_ids",
-        "antigravity_tool_permission",
-        "antigravity_terminal_sandbox",
+        "remote_control_name",
         "antigravity_sensitive_data_access",
-        "antigravity_user_files_update_mode",
+        "home_assistant_browser_auto_auth",
+        "log_level",
     }
     for locale in ("en", "ko"):
         with (addon_root / f"translations/{locale}.yaml").open(

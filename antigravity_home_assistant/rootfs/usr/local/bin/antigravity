@@ -1,32 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Keep one stable launcher for Ingress, SSH, scripts, and the `agy` alias. The
+# Keep one stable launcher for Ingress, Remote Control, scripts, and the `agy` alias. The
 # real Antigravity CLI reads its native JSON settings and plugin registry from
 # HOME; do not translate App options into Codex-style `-c` overrides here.
 # shellcheck source=/dev/null
 . /usr/local/lib/antigravity-ha/environment.sh
 # shellcheck source=/dev/null
 . /usr/local/lib/antigravity-ha/config.sh
-
-# Telegram is a transport for the same trusted Antigravity runtime, not a
-# separate identity or policy domain.  Preserve its requester binding only when
-# the bridge supplies the complete, validated channel tuple; the confined
-# launchers below repeat this check before crossing their clean env boundary.
-telegram_binding_present=false
-if [[ -v ANTIGRAVITY_HA_CHANNEL || -v HA_TELEGRAM_USER_ID \
-  || -v HA_TELEGRAM_CHAT_ID ]]; then
-  telegram_binding_present=true
-fi
-if [[ "${telegram_binding_present}" == true ]]; then
-  if [[ "${ANTIGRAVITY_HA_CHANNEL:-}" != telegram \
-    || ! "${HA_TELEGRAM_USER_ID:-}" =~ ^[1-9][0-9]{0,19}$ \
-    || ! "${HA_TELEGRAM_CHAT_ID:-}" =~ ^-?[1-9][0-9]{0,19}$ ]]; then
-    echo 'antigravity: invalid Telegram requester binding' >&2
-    exit 78
-  fi
-fi
-unset telegram_binding_present
 
 for argument in "$@"; do
   case "${argument}" in
@@ -53,10 +34,10 @@ if [[ -e "${ANTIGRAVITY_HA_OPTIONS_FILE}" ]]; then
   fi
 fi
 if [[ "${sensitive_data_access}" == true ]]; then
-  antigravity_HA_LAUNCHER=/usr/local/libexec/antigravity-interactive-sensitive-read
+  ANTIGRAVITY_HA_LAUNCHER=/usr/local/libexec/antigravity-interactive-sensitive-read
 else
-  antigravity_HA_LAUNCHER=/usr/local/libexec/antigravity-interactive-restricted
+  ANTIGRAVITY_HA_LAUNCHER=/usr/local/libexec/antigravity-interactive-restricted
 fi
 unset sensitive_data_access
 
-exec "${antigravity_HA_LAUNCHER}" "$@"
+exec "${ANTIGRAVITY_HA_LAUNCHER}" "$@"

@@ -21,6 +21,11 @@ CONFIG_VOLUME="${TEST_ID}-config"
 WORK_DIR=$(mktemp -d)
 SUPERVISOR_TOKEN=managed-auth-smoke-supervisor-token-do-not-use
 TOKEN_PREFIX=managedAuthSmokeSecretPrefix
+PINNED_ANTIGRAVITY_VERSION=$(sed -n \
+  's/^ARG ANTIGRAVITY_VERSION=//p' antigravity_home_assistant/Dockerfile)
+readonly PINNED_ANTIGRAVITY_VERSION
+[[ ${PINNED_ANTIGRAVITY_VERSION} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || { printf 'managed auth smoke: Dockerfile Antigravity version pin is invalid\n' >&2; exit 1; }
 
 # Git Bash rewrites Linux container paths before invoking native Windows programs.
 if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then
@@ -81,7 +86,8 @@ start_app() {
     --volume "${DATA_VOLUME}:/data" \
     --volume "${CONFIG_VOLUME}:/config" \
     "${IMAGE}" >/dev/null
-  wait_for_log "${APP_CONTAINER}" 'antigravity runtime ready:'
+  wait_for_log "${APP_CONTAINER}" \
+    "Antigravity ${PINNED_ANTIGRAVITY_VERSION} runtime ready"
 }
 
 fixture_state() {
@@ -120,7 +126,11 @@ write_options() {
       --entrypoint /bin/sh \
       --volume "${DATA_VOLUME}:/data" \
       "${IMAGE}" \
-      -c 'umask 077; cat > /data/options.json'
+      -c 'umask 077
+        cat > /data/options.json
+        printf "%s\n" \
+          "{\"schema\":\"antigravity-ha-v3-options-reset/v1\",\"completed\":true}" \
+          > /data/.antigravity-ha-v3-options-complete.json'
 }
 
 set_auto_auth() {
@@ -171,10 +181,9 @@ docker start "${FIXTURE_CONTAINER}" >/dev/null
 wait_for_log "${FIXTURE_CONTAINER}" \
   'Home Assistant browser auto-setup fixture ready'
 
-# A missing new option must use the manifest default (true) for both fresh
-# installs and upgrades whose existing options.json predates the option.
+# Exercise the settled 3.0 option surface with automatic authentication enabled.
 write_options \
-  '{"authorized_keys":[],"web_terminal_auto_start_antigravity":false,"tmux_session_name":"antigravity-ha-auto-auth","antigravity_tool_permission":"request-review","antigravity_terminal_sandbox":true,"log_level":"info"}'
+  '{"remote_control_name":"home-assistant","antigravity_sensitive_data_access":false,"home_assistant_browser_auto_auth":true,"log_level":"info"}'
 start_app
 docker exec "${APP_CONTAINER}" ha-browser-auth-status \
   | docker exec --interactive "${APP_CONTAINER}" jq --exit-status \
@@ -264,7 +273,7 @@ docker volume rm -f "${DATA_VOLUME}" "${CONFIG_VOLUME}" >/dev/null
 docker volume create "${DATA_VOLUME}" >/dev/null
 docker volume create "${CONFIG_VOLUME}" >/dev/null
 write_options \
-  '{"authorized_keys":[],"web_terminal_auto_start_antigravity":false,"tmux_session_name":"antigravity-ha-managed-auth","antigravity_tool_permission":"request-review","antigravity_terminal_sandbox":true,"home_assistant_browser_auto_auth":false,"log_level":"info"}'
+  '{"remote_control_name":"home-assistant","antigravity_sensitive_data_access":false,"home_assistant_browser_auto_auth":false,"log_level":"info"}'
 start_app
 docker exec "${APP_CONTAINER}" ha-browser-auth-status \
   | docker exec --interactive "${APP_CONTAINER}" jq --exit-status \
