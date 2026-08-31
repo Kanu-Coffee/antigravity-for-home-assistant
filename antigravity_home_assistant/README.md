@@ -39,10 +39,12 @@ HAOS 안에서 Google Antigravity Remote daemon을 실행하는 Home Assistant A
    ha-antigravity-remote-login
    ```
 
-3. 표시된 URL과 code로 Google 인증을 완료합니다. 서비스가 인증을 감지해 Remote를
-   자동으로 시작하므로 App 재시작은 필요하지 않습니다.
+3. 표시된 URL과 code로 Google 인증을 완료하고 helper의 완료 메시지를 기다립니다.
+   서비스가 인증용 프로세스를 완전히 종료한 뒤 Remote를 자동으로 시작하므로 App
+   재시작은 필요하지 않습니다.
 4. [Antigravity Remote Control Dashboard](https://antigravity.google.com/)에 같은
-   계정으로 로그인하고 `home-assistant` instance를 선택합니다.
+   계정으로 로그인하고 `home-assistant` instance와 `/config`의 새/default project를
+   선택합니다.
 
 인증이 없으면 Remote만 대기하고 Ingress는 계속 사용할 수 있습니다. 이름을 바꾸려면
 `remote_control_name`을 설정한 뒤 App을 재시작하세요.

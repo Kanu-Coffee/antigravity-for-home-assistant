@@ -38,10 +38,12 @@ terminal for initial authentication, diagnostics, and recovery.
 5. Open the printed HTTPS URL in a trusted browser, sign in with the intended
    Google Account, and paste the displayed code into the terminal. Never put
    the code or authentication files in logs, screenshots, or issues.
-6. After success, the running service detects authentication and starts Remote
-   automatically; no App restart is required.
+6. Wait for the helper's authentication-complete message. The running service
+   starts Remote automatically after the login process has fully exited; no
+   App restart is required.
 7. Sign in to the [Remote Control Dashboard](https://antigravity.google.com/)
-   with the same account and select the default `home-assistant` instance.
+   with the same account, then select the default `home-assistant` instance and
+   a new/default project rooted at `/config`.
 
 Remote supports starting work, monitoring progress, reviewing plans and
 artifacts, and providing user input or approval. On mobile, you can optionally
@@ -202,6 +204,27 @@ App backup made by the target version if needed; do not combine runtime data
 from different versions.
 
 ## Troubleshooting
+
+### The first conversation fails with `file does not exist`
+
+The one-time 3.0 reset also removes App-owned Antigravity project files. If the
+Remote Dashboard keeps sending a project selection from before the reset, the
+first conversation can fail with HTTP 500 `file does not exist`.
+
+1. Do not delete the OAuth token or `/data`; close the failed conversation.
+2. If this follows first authentication, restart the App once and wait 5–10
+   seconds for the instance to come online. This separates the login instance
+   from the persistent instance, but it does not clear the saved project choice.
+3. Explicitly select the intended instance and a newly created valid project,
+   or start a new conversation outside the old project. Do not resume the old
+   project or failed conversation.
+4. A normal refresh preserves the selection in browser local storage. If the
+   UI cannot switch to a valid project, reset the Remote Dashboard's stored
+   site data, then start again in a new project rooted at `/config`.
+
+Memory refresh warnings in the App log and the
+`home_assistant_browser_auto_auth` option are unrelated to this Remote project
+error. Do not inspect or share authentication files, codes, or token contents.
 
 ### Remote instance is missing
 
