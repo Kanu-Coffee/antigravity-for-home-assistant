@@ -10,6 +10,26 @@ unverified scope.
 Fixtures, containers, and emulation cannot satisfy real-HAOS acceptance.
 Unperformed device checks are `NOT RUN`; incomplete coverage is `PARTIAL`.
 
+## Recorded operational evidence
+
+A user-provided, read-only self-check of one production App `3.0.0` instance at
+`2026-08-31T23:22:00Z` reported all seven observed categories as `PASS`:
+
+1. Remote connection;
+2. `/config` workspace access;
+3. managed Home Assistant read, validation, and file tools;
+4. Ingress response and managed browser configuration;
+5. persistent memory configuration;
+6. no dependency on the retired Telegram or SSH channels; and
+7. sensitive-path denial and the expected permission boundary.
+
+This is valid operational evidence for exactly that reported instance and time.
+The report does not state CPU architecture, immutable image digest, Git revision,
+or HAOS, Core, and Supervisor versions. It also predates 3.0.2 and does not prove
+every tool invocation, reboot persistence, or long-duration stability. Therefore
+it does not satisfy an architecture-specific 3.0.2 release gate; those results
+remain `NOT RUN` until separately recorded against the immutable release image.
+
 ## Source and component coverage
 
 ### Remote lifecycle

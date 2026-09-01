@@ -7,7 +7,7 @@ name: Main release
       version:
         description: Numeric App version already present on main
         required: true
-        default: "3.0.1"
+        default: "3.0.2"
         type: string
       candidate_run_id:
         description: Successful Candidate build run ID
@@ -203,7 +203,9 @@ jobs:
               "$RUN_ID" "$RUN_ATTEMPT"
             printf -- '- Multi-arch OCI digest: `%s`\n' \
               "$(jq --raw-output .images.generic.digest "$candidate")"
-            printf -- '- 3.0.1 hardening: interactive authentication now fully exits before the persistent Remote service starts; stale pre-reset Dashboard projects must be replaced with a valid `/config` project or cleared site data.\n'
+            printf -- '- 3.0.2 maintenance: obsolete pre-3 documentation and unreferenced historical captures were removed; the essential 2.1.3-to-3.0 reset boundary remains documented and tested.\n'
+            printf -- '- Operational evidence: a user-provided read-only self-check on one 3.0.0 production device reported all seven Remote, workspace, managed-tool, browser, memory, legacy-channel-removal, and sensitive-path checks as `PASS`. Architecture and immutable image digest were not supplied, so this is not 3.0.2 release-qualified HAOS acceptance.\n'
+            printf -- '- Remote hardening: interactive authentication fully exits before the persistent Remote service starts; stale pre-reset Dashboard projects must be replaced with a valid `/config` project or cleared site data.\n'
             printf -- '- Breaking upgrade: the first 3.0 start permanently deletes the documented App-owned 2.x runtime data without creating a backup.\n'
             printf -- '- Preserved boundary: `/config`, `/share`, `/media`, and Supervisor-owned `/data/options.json` are not reset.\n'
             printf -- '- Remote Control replaces the Telegram bridge and SSH service. Run `ha-antigravity-remote-login` once; the S6 service starts automatically after authentication.\n'

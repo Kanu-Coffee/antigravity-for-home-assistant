@@ -106,6 +106,11 @@ the [English user guide](antigravity_home_assistant/DOCS.en.md). A
 
 This project is `experimental`. Source, container, and emulated-architecture
 checks are not real HAOS evidence; unperformed device results remain `NOT RUN`.
+A user-provided read-only self-check on one 3.0.0 production device reported all
+seven Remote, `/config`, managed-tool, browser, memory, legacy-channel-removal,
+and sensitive-path-isolation categories as `PASS`. Because the architecture and
+image digest were not supplied, it is not architecture-qualified 3.0.2 release
+acceptance evidence.
 Read the [support policy](SUPPORT.md) before opening an issue.
 
 This is an unofficial community project and is not affiliated with or endorsed

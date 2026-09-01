@@ -19,10 +19,11 @@ reference documents in that directory.
 
 Version 3.0 uses official Antigravity Remote as its external control surface;
 Ingress is reserved for authentication and recovery. The 2.x design corpus has
-been retired. Historical behavior remains available through Git history and the
-changelog, not as implementation guidance.
+been retired. Historical behavior remains available through Git history, tags,
+and published releases, not as implementation guidance.
 
 ## Historical material
 
-Files under [archive](archive/README.md) are preserved only for provenance.
-They are not current product, security, test, or release instructions.
+Pre-3 plans, channel-specific operations guides, and unreferenced UI captures
+were removed in 3.0.2. Use Git history, version tags, and published releases when
+provenance is required; only the active documents above define current behavior.

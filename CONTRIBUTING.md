@@ -48,7 +48,7 @@ sudo apparmor_parser --skip-kernel-load --skip-cache \
 ```
 
 Consult [CI](.github/workflows/ci.yaml) for the current complete job set. Do not
-copy stale commands from archived documents.
+copy stale commands from historical tags or commits.
 
 For an amd64 image and smoke test:
 

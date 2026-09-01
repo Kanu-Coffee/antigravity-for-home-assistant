@@ -60,4 +60,6 @@ log_level: info
 [English guide](DOCS.en.md)도 제공합니다.
 
 이 프로젝트는 `experimental`입니다. 자동 test는 실제 HAOS 동작의 대체 증거가
-아니며, 수행하지 않은 실기 검증은 `NOT RUN`입니다.
+아니며, 수행하지 않은 실기 검증은 `NOT RUN`입니다. 사용자가 제공한 3.0.0 실운영
+읽기 전용 자기점검 7개 항목은 모두 `PASS`였지만 architecture와 image digest가 없어
+3.0.2의 architecture별 승인 증거로 확대하지 않습니다.
