@@ -219,8 +219,8 @@
     {
       "mode": "0755",
       "path": "/usr/local/bin/antigravity-ha-init",
-      "sha256": "sha256:7ffe6d9d5ced8c0aadd56726c3e8e2842c5804f2dca4d563159ca4295647664a",
-      "size": 13348
+      "sha256": "sha256:ba0ace248928e3508bf10471de2e81d3d5f11991e9fbc5bbcdce48b59e557809",
+      "size": 13457
     },
     {
       "mode": "0755",
@@ -237,8 +237,8 @@
     {
       "mode": "0755",
       "path": "/usr/local/bin/ha-antigravity-remote-login",
-      "sha256": "sha256:61cc146a186cc5a62c2da5d2b6882e3055c69c8d2e8f3ae71d827703eea439eb",
-      "size": 2290
+      "sha256": "sha256:d5ef4b01e9ecfa388cf1ab5da7315643c67fedee9e01f742c573b91b2423df8a",
+      "size": 859
     },
     {
       "mode": "0755",
@@ -411,8 +411,8 @@
     {
       "mode": "0755",
       "path": "/usr/local/libexec/ha-antigravity-remote-runtime",
-      "sha256": "sha256:24e0cdc00de684cad50fac2d24da58c8b9f5c4abf19d34032b0f293d001d6ad7",
-      "size": 12185
+      "sha256": "sha256:f9ca062a19d8c73ee3116f41268ee0e38551be3ee11e9b4676d823b6d5df004d",
+      "size": 16447
     },
     {
       "mode": "0755",
@@ -608,5 +608,5 @@
     }
   ],
   "schema": "antigravity-ha-source-rootfs/v1",
-  "source_rootfs_sha256": "sha256:a004596aced7f0c2d1aae04ca8619570135619350fd5bc3542549ae1901176f4"
+  "source_rootfs_sha256": "sha256:715f7e519a74cc554239cda325a0716250582986e805f452b41319a2a9940b1a"
 }

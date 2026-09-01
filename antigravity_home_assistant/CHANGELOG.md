@@ -2,7 +2,19 @@
 
 All notable changes to this App are documented in this file.
 
-## [3.0.0] - Unreleased
+## [3.0.1] - 2026-09-01
+
+### Fixed
+
+- Serialize the interactive Remote login process with authenticated background
+  startup so both Antigravity processes never share the same persistent state
+  concurrently. Keep the persistent Remote name on the background service only.
+- Document recovery from a stale Remote Dashboard project selection after the
+  one-time 3.0 reset. A deleted project ID can make the first conversation fail
+  with HTTP 500 `file does not exist`; selecting a new `/config` project or
+  clearing the Dashboard site data restores conversation creation.
+
+## [3.0.0] - 2026-09-01
 
 ### Changed
 

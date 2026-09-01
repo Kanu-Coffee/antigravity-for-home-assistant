@@ -18,6 +18,7 @@ readonly TMUX_DATA=/data/tmux
 readonly PLAYWRIGHT_HOME=${RUNTIME_DIR}/playwright-home
 readonly PLAYWRIGHT_OUTPUT=${RUNTIME_DIR}/playwright-output
 readonly OPTIONS_SNAPSHOT=${RUNTIME_DIR}/ha-feedback-options.json
+readonly REMOTE_LOGIN_LOCK=${RUNTIME_DIR}/remote-login.lock
 readonly SENSITIVE_DATA_ACCESS_MARKER=${RUNTIME_DIR}/sensitive-data-access.enabled
 readonly HA_RENDER_UPSTREAM=${RUNTIME_DIR}/home-assistant-render-upstream.conf
 readonly HA_BROWSER_AUTH_STATUS=${RUNTIME_DIR}/browser-auth-status.json
@@ -54,6 +55,7 @@ install -d -m 0700 \
   "${TMUX_DATA}" \
   "${PLAYWRIGHT_HOME}" \
   "${PLAYWRIGHT_OUTPUT}"
+install -m 0600 /dev/null "${REMOTE_LOGIN_LOCK}"
 
 for persistent_directory in \
   "${DATA_HOME}" \

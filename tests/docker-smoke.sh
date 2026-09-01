@@ -100,6 +100,8 @@ docker image inspect "${IMAGE}" >/dev/null 2>&1 \
 # browser fixtures are not mistaken for 2.x state.
 tests/v3-upgrade-smoke.sh "${IMAGE}" \
   || fail '3.0 one-time upgrade reset smoke failed'
+tests/remote-login-serialization-smoke.sh "${IMAGE}" \
+  || fail 'Remote login/service serialization smoke failed'
 
 docker run --rm --platform "${TEST_PLATFORM}" \
   --entrypoint /bin/bash "${IMAGE}" -ceu '

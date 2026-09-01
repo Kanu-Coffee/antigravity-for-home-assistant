@@ -1,0 +1,53 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+readonly RUNTIME_DIR=/run/antigravity-ha
+readonly LOGIN_MARKER=${RUNTIME_DIR}/fake-remote-login-active
+readonly LOGIN_NAME_MARKER=${RUNTIME_DIR}/fake-remote-login-name-argument
+readonly SERVICE_MARKER=${RUNTIME_DIR}/fake-remote-service-started
+readonly SERVICE_NAME_MARKER=${RUNTIME_DIR}/fake-remote-service-name-valid
+readonly OVERLAP_MARKER=${RUNTIME_DIR}/fake-remote-overlap-detected
+readonly TOKEN=/data/home/.gemini/jetski-standalone-oauth-token
+remote_name=''
+
+while (( $# > 0 )); do
+  if [[ $1 == --remote-control-name && $# -ge 2 ]]; then
+    remote_name=$2
+    shift 2
+  else
+    shift
+  fi
+done
+
+if [[ -t 0 ]]; then
+  cleanup() {
+    rm -f -- "${LOGIN_MARKER}"
+  }
+  delayed_exit() {
+    sleep 3
+    exit 0
+  }
+  trap cleanup EXIT
+  trap delayed_exit HUP INT TERM
+  if [[ -n ${remote_name} ]]; then
+    install -m 0600 /dev/null "${LOGIN_NAME_MARKER}"
+  fi
+  install -m 0600 /dev/null "${LOGIN_MARKER}"
+  install -d -m 0700 /data/home/.gemini
+  printf '{}\n' > "${TOKEN}"
+  chmod 0600 "${TOKEN}"
+  while true; do
+    sleep 1
+  done
+fi
+
+if [[ -e ${LOGIN_MARKER} ]]; then
+  install -m 0600 /dev/null "${OVERLAP_MARKER}"
+fi
+if [[ ${remote_name} == home-assistant ]]; then
+  install -m 0600 /dev/null "${SERVICE_NAME_MARKER}"
+fi
+install -m 0600 /dev/null "${SERVICE_MARKER}"
+while true; do
+  sleep 1
+done

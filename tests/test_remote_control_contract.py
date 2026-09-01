@@ -7,6 +7,8 @@ from pathlib import Path
 S6_REMOTE = Path("etc/s6-overlay/s6-rc.d/antigravity-remote")
 RUNTIME = Path("usr/local/libexec/ha-antigravity-remote-runtime")
 LOGIN = Path("usr/local/bin/ha-antigravity-remote-login")
+SERIALIZATION_SMOKE = Path("tests/remote-login-serialization-smoke.sh")
+SERIALIZATION_FIXTURE = Path("tests/fixtures/fake-remote-control-agy")
 
 
 def test_remote_control_s6_service_contract(rootfs: Path) -> None:
@@ -41,6 +43,7 @@ def test_remote_runtime_uses_official_headless_contract(rootfs: Path) -> None:
     ) in runtime
     assert "remote_control_name" in runtime
     assert "readonly DEFAULT_REMOTE_NAME=home-assistant" in runtime
+    assert runtime.count('--remote-control-name "${name}"') == 1
     assert "AGY_CLI_DISABLE_AUTO_UPDATE=true" in runtime
     assert "< /dev/null" in runtime
     assert "readonly SAFE_TERM=xterm-256color" in runtime
@@ -84,11 +87,11 @@ def test_remote_login_is_interactive_serialized_and_auto_starting(rootfs: Path) 
     runtime = (rootfs / RUNTIME).read_text(encoding="utf-8")
 
     assert "Usage: ha-antigravity-remote-login" in helper
-    assert "--exclusive" in helper
-    assert "--nonblock" in helper
-    assert "--close" in helper
-    assert "set -o noclobber" in helper
-    assert "'%f:%d:%i:%u:%g:%a:%h:%s'" in helper
+    assert "--exclusive" in runtime
+    assert "--nonblock" in runtime
+    assert "--close" not in helper
+    assert "set -o noclobber" in runtime
+    assert "'%f:%d:%i:%u:%g:%a:%h:%s'" in runtime
     assert "/usr/local/libexec/ha-antigravity-remote-runtime --login" in helper
     assert "login requires an authenticated interactive terminal" in runtime
     assert "! -t 0 || ! -t 1 || ! -t 2" in runtime
@@ -96,10 +99,33 @@ def test_remote_login_is_interactive_serialized_and_auto_starting(rootfs: Path) 
     assert "2> /dev/tty" in runtime
     assert "while /bin/kill -0" in runtime
     assert "terminate_remote_cli()" in runtime
+    assert "acquire_login_lock" in runtime
+    assert 'readonly LOGIN_LOCK_FD=9' in runtime
+    assert "9>&-" in runtime
     assert "attempt < 5" in runtime
     assert '/bin/kill -KILL "${pid}"' in runtime
     assert "The background service is starting automatically" in runtime
     assert "no App restart is required" in runtime
+
+
+def test_remote_service_waits_until_interactive_login_has_fully_exited(
+    rootfs: Path,
+) -> None:
+    runtime = (rootfs / RUNTIME).read_text(encoding="utf-8")
+    service = runtime.split("service_main()", 1)[1].split("login_main()", 1)[0]
+
+    assert "readonly LOGIN_LOCK=${RUNTIME_DIR}/remote-login.lock" in runtime
+    assert "remote_login_state()" in runtime
+    assert "exec {lock_fd}<>\"${LOGIN_LOCK}\"" in runtime
+    assert "--exclusive --nonblock --conflict-exit-code 75" in runtime
+    assert "state=active" in runtime
+    assert "state=idle" in runtime
+    assert "login_state=$(remote_login_state)" in service
+    assert "ready:active)" in service
+    assert "ready:idle | ready:absent)" in service
+    assert service.index("login_state=$(remote_login_state)") < service.index(
+        "launch_remote service"
+    )
 
 
 def test_remote_launches_with_clean_environment_and_no_cli_log_output(
@@ -161,6 +187,8 @@ def test_remote_options_and_packaging_integration(
     )
     assert 'test("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")' in init_script
     assert 'chmod 0600 "${options_tmp}"' in init_script
+    assert "readonly REMOTE_LOGIN_LOCK=${RUNTIME_DIR}/remote-login.lock" in init_script
+    assert 'install -m 0600 /dev/null "${REMOTE_LOGIN_LOCK}"' in init_script
 
     dockerfile = (addon_root / "Dockerfile").read_text(encoding="utf-8")
     assert "/etc/s6-overlay/s6-rc.d/antigravity-remote/run" in dockerfile
@@ -181,3 +209,21 @@ def test_remote_shell_entrypoints_are_executable_and_parse(rootfs: Path) -> None
         if os.name != "nt":
             assert path.stat().st_mode & stat.S_IXUSR, path
         subprocess.run(["bash", "-n", str(path)], check=True)
+
+
+def test_remote_login_serialization_smoke_contract(repository_root: Path) -> None:
+    smoke_path = repository_root / SERIALIZATION_SMOKE
+    fixture_path = repository_root / SERIALIZATION_FIXTURE
+    smoke = smoke_path.read_text(encoding="utf-8")
+
+    assert smoke_path.stat().st_mode & stat.S_IXUSR
+    assert fixture_path.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(smoke_path)], check=True)
+    subprocess.run(["bash", "-n", str(fixture_path)], check=True)
+    assert "/usr/local/bin/ha-antigravity-remote-login" in smoke
+    assert "fake-remote-overlap-detected" in smoke
+    assert "fake-remote-service-started" in smoke
+    docker_smoke = (repository_root / "tests/docker-smoke.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "tests/remote-login-serialization-smoke.sh" in docker_smoke

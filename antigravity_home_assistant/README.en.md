@@ -41,11 +41,13 @@ Ingress terminal for first-time authentication and recovery.
    ha-antigravity-remote-login
    ```
 
-3. Complete Google authentication with the printed URL and code. The service
-   detects it and starts Remote automatically; no App restart is required.
+3. Complete Google authentication with the printed URL and code, then wait for
+   the helper's completion message. The service starts Remote automatically
+   after the login process has fully exited; no App restart is required.
 4. Sign in to the
    [Antigravity Remote Control Dashboard](https://antigravity.google.com/) with
-   the same account and select the `home-assistant` instance.
+   the same account, then select the `home-assistant` instance and a new/default
+   project rooted at `/config`.
 
 Without authentication, only Remote waits; Ingress remains available. To rename
 the instance, set `remote_control_name` and restart the App.

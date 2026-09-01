@@ -12,7 +12,10 @@ IFS=$' \t\n'
 readonly DATA_HOME=/data/home
 readonly GEMINI_HOME=${DATA_HOME}/.gemini
 readonly REMOTE_TOKEN=${GEMINI_HOME}/jetski-standalone-oauth-token
-readonly OPTIONS_SNAPSHOT=/run/antigravity-ha/ha-feedback-options.json
+readonly RUNTIME_DIR=/run/antigravity-ha
+readonly LOGIN_LOCK=${RUNTIME_DIR}/remote-login.lock
+readonly LOGIN_LOCK_FD=9
+readonly OPTIONS_SNAPSHOT=${RUNTIME_DIR}/ha-feedback-options.json
 readonly DEFAULT_REMOTE_NAME=home-assistant
 readonly MIN_REMOTE_PORT=4400
 readonly MAX_REMOTE_PORT=4499
@@ -117,6 +120,115 @@ stable_remote_token_state() {
     /bin/sleep 1
     state=$(remote_token_state)
   fi
+  printf '%s\n' "${state}"
+}
+
+validate_runtime_dir() {
+  local metadata
+
+  metadata=$(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a' -- "${RUNTIME_DIR}" \
+    2>/dev/null) || fail 'Remote Control runtime directory is unavailable'
+  if [[ -L ${RUNTIME_DIR} || ! -d ${RUNTIME_DIR} \
+    || ! ${metadata} =~ ^4[0-9a-fA-F]{3}:[0-9]+:[0-9]+:0:0:700$ ]] \
+    || [[ $(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a' -- "${RUNTIME_DIR}" \
+        2>/dev/null) != "${metadata}" ]]; then
+    fail 'Remote Control runtime directory is unsafe or unstable'
+  fi
+}
+
+acquire_login_lock() {
+  local lock_metadata status
+
+  validate_runtime_dir
+  if [[ -L ${LOGIN_LOCK} || ( -e ${LOGIN_LOCK} && ! -f ${LOGIN_LOCK} ) ]]; then
+    fail 'Remote Control login lock is unsafe'
+  fi
+  if [[ ! -e ${LOGIN_LOCK} ]]; then
+    # Concurrent first use must converge on one inode without truncating or
+    # replacing the other login process's lock file.
+    (set -o noclobber; : > "${LOGIN_LOCK}") 2>/dev/null || true
+  fi
+  lock_metadata=$(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a:%h:%s' \
+    -- "${LOGIN_LOCK}" 2>/dev/null) \
+    || fail 'Remote Control login lock metadata is unavailable'
+  if [[ ! ${lock_metadata} =~ ^8[0-9a-fA-F]{3}:[0-9]+:[0-9]+:0:0:600:1:0$ ]] \
+    || [[ $(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a:%h:%s' \
+        -- "${LOGIN_LOCK}" 2>/dev/null) != "${lock_metadata}" ]]; then
+    fail 'Remote Control login lock metadata is unsafe'
+  fi
+
+  exec 9<>"${LOGIN_LOCK}" \
+    || fail 'Remote Control login lock could not be opened'
+  if [[ $(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a:%h:%s' \
+        -- "${LOGIN_LOCK}" 2>/dev/null) != "${lock_metadata}" ]]; then
+    fail 'Remote Control login lock changed while it was opened'
+  fi
+  if /usr/bin/flock --exclusive --nonblock --conflict-exit-code 75 \
+      "${LOGIN_LOCK_FD}"; then
+    return 0
+  fi
+  status=$?
+  if (( status == 75 )); then
+    fail 'another Remote Control login is already running' 75
+  fi
+  fail 'Remote Control login lock could not be acquired'
+}
+
+# The interactive login runtime holds this lock until its Remote CLI has been
+# terminated and reaped. Do not start the persistent daemon merely because the
+# token appeared: both CLIs would otherwise overlap while sharing HOME,
+# project, and conversation state. The official daemon installer likewise
+# finishes interactive login before it starts the background service.
+remote_login_state() {
+  local lock_fd lock_metadata status state
+
+  if [[ ! -e ${LOGIN_LOCK} && ! -L ${LOGIN_LOCK} ]]; then
+    printf 'absent\n'
+    return 0
+  fi
+  if [[ -L ${LOGIN_LOCK} || ! -f ${LOGIN_LOCK} ]]; then
+    printf 'unsafe\n'
+    return 0
+  fi
+  lock_metadata=$(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a:%h:%s' \
+    -- "${LOGIN_LOCK}" 2>/dev/null) || {
+      printf 'unsafe\n'
+      return 0
+    }
+  if [[ ! ${lock_metadata} =~ ^8[0-9a-fA-F]{3}:[0-9]+:[0-9]+:0:0:600:1:0$ ]] \
+    || [[ $(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a:%h:%s' \
+        -- "${LOGIN_LOCK}" 2>/dev/null) != "${lock_metadata}" ]]; then
+    printf 'unsafe\n'
+    return 0
+  fi
+
+  exec {lock_fd}<>"${LOGIN_LOCK}" || {
+    printf 'unsafe\n'
+    return 0
+  }
+  if [[ $(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a:%h:%s' \
+        -- "${LOGIN_LOCK}" 2>/dev/null) != "${lock_metadata}" ]]; then
+    exec {lock_fd}>&-
+    printf 'unsafe\n'
+    return 0
+  fi
+
+  if /usr/bin/flock --exclusive --nonblock --conflict-exit-code 75 \
+      "${lock_fd}"; then
+    if /usr/bin/flock --unlock "${lock_fd}"; then
+      state=idle
+    else
+      state=unsafe
+    fi
+  else
+    status=$?
+    if (( status == 75 )); then
+      state=active
+    else
+      state=unsafe
+    fi
+  fi
+  exec {lock_fd}>&-
   printf '%s\n' "${state}"
 }
 
@@ -242,7 +354,7 @@ launch_remote() {
     /usr/local/bin/agy \
     --remote-control \
     --hub-port "${port}" \
-    --remote-control-name "${name}" \
+    9>&- \
     < /dev/tty \
     > /dev/tty \
     2> /dev/tty &
@@ -250,27 +362,39 @@ launch_remote() {
 }
 
 service_main() {
-  local announced=false token_state
+  local announced=false login_state token_state
 
   validate_shared_home
   while true; do
     token_state=$(stable_remote_token_state)
-    case ${token_state} in
-      ready)
+    login_state=$(remote_login_state)
+    case "${token_state}:${login_state}" in
+      ready:idle | ready:absent)
         launch_remote service
         ;;
-      absent | pending)
+      ready:active)
+        if [[ ${announced} == false ]]; then
+          printf '%s\n' \
+            'Antigravity Remote Control is waiting for interactive authentication to finish.' >&2
+          announced=true
+        fi
+        ;;
+      absent:absent | absent:idle | absent:active \
+        | pending:absent | pending:idle | pending:active)
         if [[ ${announced} == false ]]; then
           printf '%s\n' \
             'Antigravity Remote Control is waiting for ha-antigravity-remote-login.' >&2
           announced=true
         fi
         ;;
-      unsafe)
+      unsafe:*)
         fail 'OAuth token metadata is unsafe; refusing to start'
         ;;
+      *:unsafe)
+        fail 'Remote Control login lock metadata is unsafe; refusing to start'
+        ;;
       *)
-        fail 'OAuth token state is invalid'
+        fail 'Remote Control authentication state is invalid'
         ;;
     esac
     /bin/sleep 2
@@ -284,6 +408,7 @@ login_main() {
   if [[ ! -t 0 || ! -t 1 || ! -t 2 || ! -c /dev/tty ]]; then
     fail 'login requires an authenticated interactive terminal' 64
   fi
+  acquire_login_lock
   validate_shared_home
   token_state=$(stable_remote_token_state)
   case ${token_state} in
@@ -305,8 +430,24 @@ login_main() {
     'Open the Antigravity sign-in URL shown below and complete Google authentication.' \
     'The Remote Control service will start automatically when authentication succeeds.'
 
+  cleanup_login() {
+    if [[ -n ${remote_cli_pid} ]]; then
+      terminate_remote_cli "${remote_cli_pid}"
+      wait "${remote_cli_pid}" 2>/dev/null || true
+    fi
+    if [[ -n ${watcher_pid} ]]; then
+      /bin/kill -TERM "${watcher_pid}" 2>/dev/null || true
+      wait "${watcher_pid}" 2>/dev/null || true
+    fi
+  }
+  trap cleanup_login EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
   launch_remote login
   (
+    exec 9>&-
     while /bin/kill -0 "${remote_cli_pid}" 2>/dev/null; do
       case $(stable_remote_token_state) in
         ready)
@@ -328,21 +469,6 @@ login_main() {
     done
   ) &
   watcher_pid=$!
-
-  cleanup_login() {
-    if [[ -n ${remote_cli_pid} ]]; then
-      terminate_remote_cli "${remote_cli_pid}"
-      wait "${remote_cli_pid}" 2>/dev/null || true
-    fi
-    if [[ -n ${watcher_pid} ]]; then
-      /bin/kill -TERM "${watcher_pid}" 2>/dev/null || true
-      wait "${watcher_pid}" 2>/dev/null || true
-    fi
-  }
-  trap cleanup_login EXIT
-  trap 'exit 129' HUP
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
 
   set +e
   wait "${remote_cli_pid}"

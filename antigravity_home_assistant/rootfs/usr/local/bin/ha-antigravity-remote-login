@@ -21,42 +21,7 @@ if (( $# != 0 )); then
   exit 64
 fi
 
-readonly RUNTIME_DIR=/run/antigravity-ha
-readonly LOGIN_LOCK=${RUNTIME_DIR}/remote-login.lock
-runtime_metadata=$(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a' -- "${RUNTIME_DIR}" \
-  2>/dev/null) || runtime_metadata=''
-if [[ -L ${RUNTIME_DIR} || ! -d ${RUNTIME_DIR} \
-  || ! ${runtime_metadata} =~ ^4[0-9a-fA-F]{3}:[0-9]+:[0-9]+:0:0:700$ \
-  || $(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a' -- "${RUNTIME_DIR}" \
-      2>/dev/null) != "${runtime_metadata}" ]]; then
-  printf '%s\n' 'Remote Control runtime directory is unavailable or unsafe.' >&2
-  exit 78
-fi
-if [[ -L ${LOGIN_LOCK} || ( -e ${LOGIN_LOCK} && ! -f ${LOGIN_LOCK} ) ]]; then
-  printf '%s\n' 'Remote Control login lock is unsafe.' >&2
-  exit 78
-fi
-if [[ ! -e ${LOGIN_LOCK} ]]; then
-  # noclobber makes concurrent first use converge on one inode without either
-  # caller truncating or replacing the other's lock file.
-  (set -o noclobber; : > "${LOGIN_LOCK}") 2>/dev/null || true
-fi
-lock_metadata=$(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a:%h:%s' -- "${LOGIN_LOCK}" \
-  2>/dev/null) || lock_metadata=''
-if [[ ! ${lock_metadata} =~ ^8[0-9a-fA-F]{3}:[0-9]+:[0-9]+:0:0:600:1:0$ \
-  || $(/usr/bin/stat -c '%f:%d:%i:%u:%g:%a:%h:%s' -- "${LOGIN_LOCK}" \
-      2>/dev/null) != "${lock_metadata}" ]]; then
-  printf '%s\n' 'Remote Control login lock metadata is unsafe.' >&2
-  exit 78
-fi
-
-exec /usr/bin/flock \
-  --exclusive \
-  --nonblock \
-  --close \
-  --conflict-exit-code 75 \
-  "${LOGIN_LOCK}" \
-  /usr/bin/env --default-signal=INT --default-signal=QUIT -i \
+exec /usr/bin/env --default-signal=INT --default-signal=QUIT -i \
   HOME=/data/home \
   LANG=C.UTF-8 \
   LC_ALL=C.UTF-8 \

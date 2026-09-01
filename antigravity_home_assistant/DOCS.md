@@ -38,10 +38,11 @@
 5. helper가 표시한 HTTPS URL을 신뢰하는 browser에서 열고, 같은 Google 계정으로
    로그인한 뒤 표시된 code를 터미널에 붙여 넣습니다. 인증 파일이나 code를 로그,
    screenshot 또는 issue에 남기지 마세요.
-6. 성공하면 실행 중인 service가 인증을 감지해 Remote를 자동으로 시작합니다. App을
-   재시작할 필요가 없습니다.
+6. helper의 인증 완료 메시지까지 기다립니다. 실행 중인 service는 인증용 프로세스가
+   완전히 종료된 뒤 Remote를 자동으로 시작하므로 App을 재시작할 필요가 없습니다.
 7. [Remote Control Dashboard](https://antigravity.google.com/)에 같은 계정으로
-   로그인하고 기본 instance `home-assistant`를 선택합니다.
+   로그인하고 기본 instance `home-assistant`와 `/config`의 새/default project를
+   선택합니다.
 
 Remote는 작업 시작, 진행 확인, plan·artifact 검토, 사용자 입력과 승인을 지원합니다.
 모바일 browser에서는 dashboard를 홈 화면에 설치하고 Antigravity가 제공하는 알림을
@@ -199,6 +200,26 @@ managed browser identity, local memory와 Antigravity customization도 빈 상�
 Home Assistant App backup을 복원하고, 서로 다른 버전의 runtime data를 섞지 마세요.
 
 ## 문제 해결
+
+### 첫 대화가 `file does not exist`로 실패함
+
+3.0의 1회 초기화는 App 소유 Antigravity project 파일도 삭제합니다. Remote
+Dashboard가 초기화 전 project 선택을 계속 보내면 첫 대화가 HTTP 500
+`file does not exist`로 실패할 수 있습니다.
+
+1. OAuth token이나 `/data`를 삭제하지 말고 실패한 대화를 닫습니다.
+2. 첫 인증 직후라면 App을 한 번 재시작하고 instance가 online이 될 때까지 5–10초
+   기다립니다. 이 단계는 인증용 instance와 상시 instance를 분리하지만 저장된 project
+   선택 자체를 지우지는 않습니다.
+3. Dashboard에서 올바른 instance와 새로 만든 유효 project를 명시적으로 선택하거나
+   project 밖의 새 대화를 선택합니다. 이전 project·실패 대화를 재개하지 마세요.
+4. 일반 새로고침에도 선택은 browser local storage에 남습니다. UI에서 유효 project로
+   바꿀 수 없으면 Remote Dashboard의 저장된 site data를 초기화한 뒤 `/config`의 새
+   project에서 다시 시작합니다.
+
+App log의 memory refresh 경고나 `home_assistant_browser_auto_auth` option은 이
+Remote project 오류와 별개입니다. 인증 파일, code 또는 token 내용은 확인하거나
+공유하지 마세요.
 
 ### Remote instance가 보이지 않음
 
