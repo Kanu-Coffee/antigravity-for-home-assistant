@@ -63,4 +63,7 @@ See the [English user guide](DOCS.en.md) for installation, configuration,
 security, and troubleshooting. A [한국어 안내](DOCS.md) is also available.
 
 This project is `experimental`. Automated checks are not evidence of behavior
-on real HAOS; unperformed device validation remains `NOT RUN`.
+on real HAOS; unperformed device validation remains `NOT RUN`. A user-provided
+read-only self-check on one 3.0.0 production device reported all seven categories
+as `PASS`, but no architecture or image digest was supplied, so it is not
+architecture-qualified 3.0.2 acceptance evidence.

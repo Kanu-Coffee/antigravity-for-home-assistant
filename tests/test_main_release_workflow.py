@@ -22,7 +22,7 @@ def test_main_release_is_manual_main_only_and_minimally_authorized() -> None:
         "candidate_run_attempt",
         "confirm",
     }
-    assert inputs["version"]["default"] == "3.0.1"
+    assert inputs["version"]["default"] == "3.0.2"
     assert workflow["permissions"] == {"contents": "read"}
     publish = workflow["jobs"]["publish"]
     assert publish["if"] == "github.ref == 'refs/heads/main'"
@@ -95,6 +95,9 @@ def test_main_release_notes_define_the_3_0_product_and_migration() -> None:
         "privacy-safe feedback",
         "AppArmor and Supervisor-token isolation",
         "Antigravity native permission prompts",
+        "one 3.0.0 production device",
+        "Architecture and immutable image digest were not supplied",
+        "not 3.0.2 release-qualified HAOS acceptance",
         "amd64 HAOS acceptance at publication: `NOT RUN`",
         "aarch64 HAOS acceptance at publication: `NOT RUN`",
         "Overall 3.0 HAOS acceptance at publication: `PARTIAL`",
@@ -131,7 +134,7 @@ def test_repository_advertises_the_numeric_tag_published_by_main_release() -> No
         )
     )
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
-    assert config["version"] == inputs["version"]["default"] == "3.0.1"
+    assert config["version"] == inputs["version"]["default"] == "3.0.2"
     assert (
         config["image"]
         == "ghcr.io/kanu-coffee/antigravity-for-home-assistant"

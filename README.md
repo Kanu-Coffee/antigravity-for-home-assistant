@@ -98,6 +98,10 @@ log_level: info
 
 이 프로젝트는 `experimental`입니다. source·container·emulated architecture 검증은
 실제 HAOS 증거가 아니며, 수행하지 않은 실기 결과는 `NOT RUN`으로 유지합니다.
+사용자가 제공한 3.0.0 실운영 읽기 전용 자기점검에서는 Remote, `/config`, 관리형
+도구, browser, memory, 구형 채널 제거와 민감 경로 격리 등 7개 항목이 모두
+`PASS`였습니다. 다만 architecture와 image digest가 없어 3.0.2의 architecture별
+릴리스 승인 증거로 확대하지 않습니다.
 문제 보고 전 [지원 안내](SUPPORT.md)를 확인하세요.
 
 비공식 커뮤니티 프로젝트이며 Google 또는 Home Assistant/Nabu Casa와 제휴하거나

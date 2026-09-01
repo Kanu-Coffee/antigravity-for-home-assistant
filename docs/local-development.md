@@ -6,12 +6,6 @@ commands, so it must not claim those runtime capabilities. The guidance shipped
 inside the App is the separate rootfs file at
 `antigravity_home_assistant/rootfs/usr/local/share/antigravity-ha/AGENTS.md`.
 
-The older Codex for Home Assistant project followed the same fundamental model:
-memory and feedback were exercised inside built images and fixture-based smoke
-tests rather than installed globally on the development host. Antigravity already
-ships both implementations; this setup makes safe, limited equivalents available
-to host development.
-
 ## Install
 
 Requirements are Git, Docker, and Node.js. From the repository root, run:
